@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, sage, shards, sight, stone, tanji, throw, walls, waterball};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, monk, sage, shards, sight, stone, tanji, throw, walls, waterball};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -58,6 +58,9 @@ pub struct Table {
     sprites: HashMap<u32, Vec<SpritePart>>,
     /// Camera shakes, which the client does in code (FUNC effects): how long after the start, and for how long.
     quakes: HashMap<u32, Vec<(Duration, Duration)>>,
+    /// Sounds and shakes of a skill's use packet (`skillwav`, `skillquake`).
+    skill_sounds: HashMap<u16, Vec<Sound>>,
+    skill_quakes: HashMap<u16, Vec<(Duration, Duration)>>,
     /// What skills' units on the ground show while they're there, by rathena's UNT_ number: an effect, a model.
     units: HashMap<u32, u32>,
     /// Units whose effect plays once and is kept rather than starting again.
@@ -120,6 +123,8 @@ impl Table {
             rings: HashMap::new(),
             sprites: HashMap::new(),
             quakes: HashMap::new(),
+            skill_sounds: HashMap::new(),
+            skill_quakes: HashMap::new(),
             units: HashMap::new(),
             units_once: std::collections::HashSet::new(),
             models: HashMap::new(),
@@ -196,6 +201,18 @@ impl Table {
                     let listener = fields.last() == Some(&"listener");
                     let sound = Sound { file: file.to_owned(), delay_ms: number(3).map_or(0, u64::from), random: number(4).zip(number(5)), listener };
                     table.sounds.entry(id).or_default().push(sound);
+                }
+                ["skillwav", _, file, ..] => {
+                    let Some(skill) = number(1) else { continue };
+                    let listener = fields.last() == Some(&"listener");
+                    let sound = Sound { file: file.to_owned(), delay_ms: number(3).map_or(0, u64::from), random: None, listener };
+                    table.skill_sounds.entry(skill as u16).or_default().push(sound);
+                }
+                ["skillquake", _, _, _] => {
+                    if let (Some(skill), Some(delay), Some(length)) = (number(1), number(2), number(3)) {
+                        let length = if length == 200 { QUAKE_SHORT } else { QUAKE_LONG };
+                        table.skill_quakes.entry(skill as u16).or_default().push((Duration::from_millis(delay.into()), length));
+                    }
                 }
                 ["part", _, _, text] => {
                     let Some(id) = number(1) else { continue };
@@ -1371,6 +1388,8 @@ pub struct Effects {
     holy_frames: HashMap<usize, Vec<Placed>>,
     /// Water Ball's three pictures' layers.
     water_frames: HashMap<u32, Vec<Placed>>,
+    /// The claw slash's layers by action and frame.
+    claw_frames: HashMap<(usize, usize), Vec<Placed>>,
     /// Sight Rasher's sprites' frames, plain white, by sprite and frame.
     sight_frames: HashMap<(&'static str, usize), Vec<Placed>>,
     /// Dark Strike's red ghost sprite's layers.
@@ -1670,6 +1689,11 @@ const SHIELD_CHARGE: u32 = 246;
 const PROVIDENCE: u32 = 248;
 const REFLECT_SHIELD: u32 = 252;
 const ABSORB_SPIRITS: u32 = 253;
+/// Investigate's sparks and claw slash and Asura Strike's streaks (`prims::monk`); Steel Body's ribbons (`prims::walls`).
+const INVESTIGATE_SPARKS: u32 = 264;
+const CLAW_SLASH: u32 = 267;
+const ASURA_STRIKE: u32 = 266;
+const RIBBONS: u32 = 261;
 const FIRE_PILLAR: u32 = 138;
 const VENOM_DUST: u32 = 171;
 const GUMGANG: u32 = 203;
@@ -1689,7 +1713,9 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 14] = [
+pub const AIMED: [u32; 16] = [
+    INVESTIGATE_SPARKS,
+    CLAW_SLASH,
     WATER_BALL,
     SOUL_STRIKE,
     FIRE_BALL,
@@ -1907,6 +1933,15 @@ impl Effects {
                 _ => burst::Burst::turn_undead(unit, now, rand),
             };
             self.prims.bursts.push(burst);
+        }
+        // Asura Strike's streaks stay where the target stood; Steel Body's ribbons follow their unit.
+        if id == ASURA_STRIKE {
+            self.textures.entry(monk::LENS.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, monk::LENS, true).ok());
+            self.prims.monk.asura(at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+        }
+        if let (RIBBONS, Target::Unit(unit)) = (id, target) {
+            self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
+            self.prims.walls.ribbons(unit, now);
         }
         // Intimidate's shards burst round the spot, for good.
         if id == INTIMIDATE {
@@ -2224,6 +2259,16 @@ impl Effects {
         strs
     }
 
+    /// The sounds and shakes a skill's use packet makes, wherever the caster is.
+    pub fn play_skill_sounds(&mut self, table: &Table, skill: u16, now: Instant) {
+        for sound in table.skill_sounds.get(&skill).into_iter().flatten() {
+            self.sounds.push((now + Duration::from_millis(sound.delay_ms), format!("{}.wav", sound.file), LISTENER));
+        }
+        for &(delay, length) in table.skill_quakes.get(&skill).into_iter().flatten() {
+            self.start_quake(now + delay, length);
+        }
+    }
+
     /// The camera shake this frame at `now`: `[sideways, distance, pitch_degrees]`, with the sign flipping each frame
     /// and fresh noise each frame; `None` when no shake runs.
     pub fn quake(&mut self, now: Instant) -> Option<[f32; 3]> {
@@ -2329,6 +2374,16 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.balls.thunder(from, to, now);
             }
+            INVESTIGATE_SPARKS => {
+                self.textures.entry(first::THUNDER_CENTER.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, first::THUNDER_CENTER, true).ok());
+                self.prims.monk.investigate(caster, to, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            CLAW_SLASH => {
+                self.sprites.entry(monk::CLAW.to_owned()).or_insert_with(|| SpriteSet::at(grf, monk::CLAW));
+                self.play_sounds(table, id, from, now);
+                // ponytail: the camera's longitude is its yaw in whole degrees, as the game's turning table reads it.
+                self.prims.monk.claw(from, to, self.yaw.to_degrees().floor() as i32, now);
+            }
             WATER_BALL => {
                 self.sprites.entry(waterball::SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, waterball::SPRITE));
                 self.play_sounds(table, id, from, now);
@@ -2364,6 +2419,7 @@ impl Effects {
         self.prims.boomerangs.advance(now, &position_of);
         self.prims.spheres.advance(now, position_of(None), |n| pick(0, n.saturating_sub(1)));
         self.prims.huujin.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        self.prims.monk.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for (file, at) in self.prims.throws.advance(now, &position_of) {
             self.sounds.push((now, file, at));
         }
@@ -2399,6 +2455,14 @@ impl Effects {
                 let frames = sprite.frames(0).max(1);
                 let layers = sprite.frame_plain(gpu, 0, Timing::Span((drawn.frame as f32 + 0.5) / frames as f32));
                 self.sight_frames.insert((drawn.sprite, drawn.frame), layers);
+            }
+        }
+        if let Some(Some(sprite)) = self.sprites.get_mut(monk::CLAW) {
+            for draw in self.prims.monk.claws(now) {
+                let frames = sprite.frames(draw.action).max(1);
+                self.claw_frames
+                    .entry((draw.action, draw.frame))
+                    .or_insert_with(|| sprite.frame_plain(gpu, draw.action, Timing::Span((draw.frame as f32 + 0.5) / frames as f32)));
             }
         }
         if let Some(Some(sprite)) = self.sprites.get_mut(waterball::SPRITE) {
@@ -2767,6 +2831,7 @@ impl Effects {
             .chain(sage)
             .chain(burst_rings)
             .chain(other_walls)
+            .chain(self.textures.get(monk::LENS).and_then(Option::as_ref).map(|texture| (texture, self.prims.monk.mesh(now), true)))
             .chain(self.textures.get(shards::TEXTURE).and_then(Option::as_ref).map(|texture| (texture, self.prims.shards.mesh(now), true)))
             .filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(forced_walls).chain(prims).collect()
@@ -2986,6 +3051,19 @@ impl Effects {
                     quads.push((sprite.texture(key), drawn.at, corners, [1.0, 1.0, 1.0, drawn.alpha.trunc().clamp(0.0, 255.0) / 255.0], false, false));
                 }
             }
+            // The claw slash: white at alpha 200, 2.5 times as big, over everything. `STR_RISE` is taken off again.
+            if let Some(Some(sprite)) = self.sprites.get(monk::CLAW) {
+                for draw in self.prims.monk.claws(now) {
+                    for &(key, position, size, layer_angle) in self.claw_frames.get(&(draw.action, draw.frame)).into_iter().flatten() {
+                        let corners = QUAD_UV.map(|[u, v]| {
+                            let uv = if draw.mirrored { [1.0 - u, v] } else { [u, v] };
+                            let [x, y] = world::sprite_corner(position, size, layer_angle + draw.turn, uv).0;
+                            [x * monk::CLAW_SCALE, y * monk::CLAW_SCALE + STR_RISE]
+                        });
+                        quads.push((sprite.texture(key), draw.at, corners, [1.0, 1.0, 1.0, monk::CLAW_ALPHA / 255.0], false, true));
+                    }
+                }
+            }
             // Water Ball's balls and their tails, white with their alpha.
             if let Some(Some(sprite)) = self.sprites.get(waterball::SPRITE) {
                 for drawn in self.prims.waterballs.drawn(now) {
@@ -3005,7 +3083,7 @@ impl Effects {
                 }
             }
             // First Aid's glow, Sprinkle Sand's specks and the undead heal's sparkles: camera-facing squares, added on.
-            for square in self.prims.first.squares(now, &position_of) {
+            for square in self.prims.first.squares(now, &position_of).into_iter().chain(self.prims.monk.squares(now)) {
                 let Some(Some(texture)) = self.textures.get(square.texture) else { continue };
                 let pixels = square.radius * 35.0 / world::CELL;
                 let corner = |j: u32| {
@@ -4035,7 +4113,7 @@ mod tests {
         assert_eq!((4 * glint_sets(203), 4 * glint_sets(254)), (4, 16));
         assert!(force_drawn(203) && force_drawn(138) && !force_drawn(254));
         assert_eq!(table.status(86), &[203, 166]);
-        assert_eq!(table.used(270), Some(&[(Who::Caster, 203)][..]));
+        assert_eq!(table.used(270), Some(&[(Who::Caster, 203), (Who::Caster, 261)][..]));
         // Berserk Pitcher's sound and quake at tick 18 (288 ms), heard at full volume from the listener's own place.
         assert_eq!(table.sounds[&220].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\ac_concentration", 288)]);
         assert_eq!(table.quakes[&220], [(Duration::from_millis(288), QUAKE_SHORT)]);
@@ -4061,7 +4139,9 @@ mod tests {
         assert_eq!(sounds(245), [("effect\\cru_holy cross", 0, true)]);
         assert_eq!(sounds(220), [("effect\\ac_concentration", 288, true)]);
         // Other sounds keep their place.
-        assert!(table.sounds.values().flatten().filter(|sound| sound.listener).count() == 3);
+        let mut listeners: Vec<u32> = table.sounds.iter().filter(|(_, sounds)| sounds.iter().any(|sound| sound.listener)).map(|(&id, _)| id).collect();
+        listeners.sort_unstable();
+        assert_eq!(listeners, [220, 227, 245, 266]);
     }
 
     #[test]
@@ -4171,5 +4251,34 @@ mod tests {
         for id in [255, 256] {
             assert_eq!(table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("_enemy_hit_wind1", 160)], "{id}");
         }
+    }
+
+    #[test]
+    fn endows_strips_ribbons_sparks_and_asura_play_as_the_game() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // The endows' wind at tick 10 and the strips' sound at tick 6; Steel Body's effect has no sound of its own.
+        assert_eq!((sounds(257), sounds(258)), (vec![("_enemy_hit_wind1", 160, false)], vec![("_enemy_hit_wind1", 160, false)]));
+        assert_eq!((sounds(269), sounds(270)), (vec![("effect\\복호격", 96, false)], vec![("effect\\복호격", 96, false)]));
+        assert!(!table.sounds.contains_key(&261) && !table.rings.contains_key(&261));
+        // Asura Strike's sound is heard at full volume, with a shake; Investigate's claw keeps its own at the caster.
+        assert_eq!(sounds(266), [("effect\\mon_아수라 패황권", 0, true)]);
+        assert_eq!(table.quakes[&266], [(Duration::ZERO, QUAKE_SHORT)]);
+        assert!(!table.floaters.contains_key(&266) && sounds(267) == [("effect\\mon_침투경", 0, false)]);
+        // The use packets of Steel Body, Explosion Spirits and SL_SKA sound at the listener, with a shake; the ribbons come with them.
+        for skill in [268, 270, 472] {
+            assert_eq!(table.skill_sounds[&skill].len(), 1, "{skill}");
+            assert!(table.skill_sounds[&skill][0].listener && table.skill_quakes[&skill] == [(Duration::ZERO, QUAKE_SHORT)]);
+        }
+        assert_eq!(table.skill_sounds[&268][0].file, "effect\\mon_맹룡과강");
+        assert_eq!((table.skill_sounds[&270][0].file.as_str(), table.skill_sounds[&472][0].file.as_str()), ("effect\\mon_폭기", "effect\\T_방어형"));
+        assert!(table.used(268).unwrap().contains(&(Who::Caster, 261)) && table.used(270).unwrap().contains(&(Who::Caster, 261)));
+        assert!(table.used(472).unwrap().contains(&(Who::Target, 261)));
+        assert_eq!(table.item(684), Some(261));
+        // Investigate: the sparks, then the claw, on each damage packet; both aimed at the target; Asura Strike on the target.
+        assert_eq!(table.struck(266), Some(&[(Who::Caster, 264), (Who::Caster, 267)][..]));
+        assert!(AIMED.contains(&264) && AIMED.contains(&267) && !AIMED.contains(&266));
+        assert_eq!(table.struck(271), Some(&[(Who::Target, 266)][..]));
+        assert!(force_drawn(261) && !force_drawn(266));
     }
 }
