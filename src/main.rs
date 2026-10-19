@@ -340,6 +340,10 @@ const AURA_EFFECT_ON: usize = 2994;
 const AURA_EFFECT_OFF: usize = 2995;
 const AURA_OFF_FIRST: usize = 2996;
 const EFFECTS_OFF: usize = 24;
+/// /quake: "Screen shake ON" / "Screen shake OFF".
+// ponytail: /quake's chat lines use the message table's 2805 and 2806.
+const QUAKE_ON: usize = 2805;
+const QUAKE_OFF: usize = 2806;
 /// Deals: "requests a deal", no one of that name, "can't overlap items", "no more than 10 kinds", how asking went
 /// (70 + the result), how it ended (75 done, 76 failed, 74 cancelled), too heavy.
 /// "Invalid Command", in yellow.
@@ -1401,9 +1405,8 @@ struct Game {
     snaps: Snaps,
     /// Where the cursor is drawn: the pointer, or the middle of what it snapped to.
     cursor_at: [f32; 2],
-    /// /camera: the camera sticks to the player (saved; off unless turned on); the earthquake's shake this frame.
+    /// /camera: the camera sticks to the player (saved; off unless turned on).
     camera_snap: bool,
-    quake_flip: bool,
     /// The last skill sent by aiming: ID, level and target.
     skill_sent: Option<(u16, u16, SkillTarget)>,
     /// The attack asked for with the mouse, and when the last attack packet went out; riding a mount that can't
@@ -1558,6 +1561,8 @@ struct CameraGoal {
     limits: Option<rustnarok_client::map::Viewpoint>,
     /// /zoom: outdoors the camera goes out to ZOOM_OUT_DISTANCE.
     zoom_out: bool,
+    /// A camera shake is running (when it stops, the look-at point, distance and pitch snap straight back).
+    shaking: bool,
 }
 
 impl CameraGoal {
@@ -1580,6 +1585,7 @@ impl CameraGoal {
             last_wheel: None,
             limits,
             zoom_out,
+            shaking: false,
         };
         match limits {
             Some(table) => {
@@ -1725,6 +1731,22 @@ impl CameraGoal {
         camera.yaw = (yaw + turn * step).to_radians();
         camera.pitch += (self.pitch.to_radians() - camera.pitch) * step;
         camera.distance += (self.distance() - camera.distance) * step;
+    }
+
+    /// Shakes the camera (`[sideways, distance, pitch_degrees]`), or snaps the look-at point, distance and pitch
+    /// straight back when the shake ends.
+    fn shake(&mut self, camera: &mut Camera, feet: world::Vector, quake: Option<[f32; 3]>) {
+        if let Some([side, distance, pitch]) = quake {
+            self.shaking = true;
+            camera.target[0] += camera.yaw.cos() * side;
+            camera.target[2] -= camera.yaw.sin() * side;
+            camera.distance += distance;
+            camera.pitch += pitch.to_radians();
+        } else if std::mem::replace(&mut self.shaking, false) {
+            camera.target = feet;
+            camera.distance = self.distance();
+            camera.pitch = self.pitch.to_radians();
+        }
     }
 }
 
@@ -5666,6 +5688,30 @@ mod tests {
         goal.press([200.0, 100.0], Instant::now(), false, false);
         goal.drag([300.0, 100.0], none);
         assert!(goal.yaw > 0.0);
+    }
+
+    #[test]
+    fn camera_shakes_and_snaps_back_at_the_end() {
+        let mut goal = CameraGoal::new(false);
+        let feet = [100.0, -5.0, 200.0];
+        let mut camera = goal.camera(feet);
+        let before = (camera.target, camera.distance, camera.pitch);
+
+        let start = Instant::now();
+        let mut effects = effects::Effects::default();
+        effects.start_quake(start, effects::QUAKE_LONG);
+        for frame in 0..10 {
+            let now = start + Duration::from_millis(frame * 16);
+            goal.ease(&mut camera, Duration::from_millis(16), feet, false);
+            goal.shake(&mut camera, feet, effects.quake(now));
+            assert!(goal.shaking);
+            assert_ne!((camera.target, camera.distance, camera.pitch), before);
+        }
+        // When the shake ends, the look-at point, distance and pitch snap straight back.
+        goal.ease(&mut camera, Duration::from_millis(16), feet, false);
+        goal.shake(&mut camera, feet, effects.quake(start + effects::QUAKE_LONG));
+        assert!(!goal.shaking);
+        assert_eq!((camera.target, camera.distance, camera.pitch), before);
     }
 
     #[test]

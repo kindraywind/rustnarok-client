@@ -486,7 +486,6 @@ impl App {
                     right_moved: false,
                     companion_mark: None,
                     camera_snap: settings_path("camerasnap").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
-                    quake_flip: false,
                     no_ctrl: settings_path("noctrl").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     snaps: Snaps::load(),
                     cursor_at: [-1.0; 2],
