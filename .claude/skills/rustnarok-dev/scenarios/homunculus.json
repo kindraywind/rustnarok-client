@@ -1,5 +1,5 @@
 {
-  "about": "A homunculus (issue #46): @makehomun makes a Lif, which shows and follows; the window (Alt+R) at the game's layout; feeding after its question; a new name typed into the name box asks first (No keeps the old one); @homlevel gives a skill point and the skill list raises Healing Hands; Alt+Shift + right click sends it at a Poring; Alt+T stops it following; vaporizing it shows. RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's homunculus (rathena's `homunculus` and `skill_homunculus` rows, and `char.homun_id` set to 0), or @makehomun is refused.",
+  "about": "A homunculus (issue #46): @makehomun makes a Lif, which shows and follows; the window (Alt+R) at the game's layout; feeding after its question; a new name typed into the name box asks first (No keeps the old one); @homlevel gives a skill point and the skill list raises Healing Hands; Alt+Shift + right click sends it at a Poring; Alt+T stops it following; vaporizing it shows (@blvl 50 first: it costs 50 SP; @blvl -50 at the end). RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's homunculus (rathena's `homunculus` and `skill_homunculus` rows, and `char.homun_id` set to 0), or @makehomun is refused.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -296,6 +296,12 @@
       "say": "@killmonster2"
     },
     {
+      "say": "@blvl 50"
+    },
+    {
+      "wait": 500
+    },
+    {
       "say": "@useskill 244 1 self"
     },
     {
@@ -317,6 +323,9 @@
     {
       "shot": "homunculus-vaporized",
       "threshold": 20
+    },
+    {
+      "say": "@blvl -50"
     }
   ]
 }
