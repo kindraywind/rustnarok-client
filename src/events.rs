@@ -1484,7 +1484,7 @@ impl App {
                         }
                     }
                 }
-                game.act(act, look_tables);
+                game.act(act, look_tables, grf);
             }
             MapEvent::Status { id, value } => {
                 let before = game.status.insert(id, value);
@@ -3207,7 +3207,7 @@ impl App {
                 let me = game.account_id;
                 let goal = if target == me { Some(game.player.cell) } else { game.units.get(&target).map(|actor| actor.cell) };
                 let caster = if source == me { Some(&mut game.player) } else { game.units.get_mut(&source) };
-                if let Some(caster) = caster {
+                if let Some(caster) = caster.filter(|_| skill_motions::cast_moves(cast_ms)) {
                     caster.face(goal.unwrap_or([i32::from(cell[0]), i32::from(cell[1])]));
                 }
                 if cast_ms > 0 {
@@ -3222,7 +3222,9 @@ impl App {
                     };
                 }
                 game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info, look_tables, &self.messages);
-                skill_effects(game, skill, "beginCastEffectId", source);
+                if skill_motions::cast_moves(cast_ms) {
+                    skill_effects(game, skill, "beginCastEffectId", source);
+                }
             }
             MapEvent::SkillHit { skill, level, act } => {
                 game.casts.remove(&(act.source != game.account_id).then_some(act.source));
@@ -3243,7 +3245,9 @@ impl App {
                     return;
                 }
                 let target_cell = if act.target == me { Some(game.player.cell) } else { game.units.get(&act.target).map(|actor| actor.cell) };
-                let scale = actor::attack_scale(act.source_speed, false);
+                let caster = if act.source == me { Some(&game.player) } else { game.units.get(&act.source) };
+                let bow = caster.is_some_and(|caster| caster.holds_bow(look_tables));
+                let scale = actor::attack_scale(act.source_speed, bow);
                 let gap = Duration::from_millis(skill_motions::hit_gap_ms(skill));
                 // A splash's other targets (Fire Ball's): the caster isn't touched again; one hit, no hit effects,
                 // landing with the main target's.
@@ -3255,7 +3259,10 @@ impl App {
                 } else {
                     let source = if act.source == me { Some(&mut game.player) } else { game.units.get_mut(&act.source) };
                     if let Some(source) = source {
-                        if let Some(cell) = target_cell.filter(|_| act.source != act.target) {
+                        // The caster turns to its target (a player's swing not always: `skill_motions::turns`).
+                        let mid_swing = source.playing(source.attack_motion(look_tables), Instant::now());
+                        let turns = source.kind != PLAYER || skill_motions::turns(skill_motions::motion(skill), mid_swing);
+                        if let Some(cell) = target_cell.filter(|_| act.source != act.target && turns) {
                             source.face(cell);
                         }
                         // Monsters swing as for an attack; players take the skill's motion (`skill_motion`).
@@ -3273,14 +3280,28 @@ impl App {
                         look_tables,
                         &self.messages,
                     );
-                    // Hits land on the motion's hit frame (else after the attack motion), each `hit_gap_ms` after the last.
-                    let hit_ms = hit_ms.unwrap_or(act.source_speed.max(0) as f32);
+                    // Hits land on the motion's hit frame (else after the attack motion), each `hit_gap_ms` after the last;
+                    // a swing with a bow shoots its arrow then, and its hits land with it.
+                    let shoots = bow && skill_motions::motion(skill) == skill_motions::Motion::Attack;
+                    if let Some(ms) = hit_ms.filter(|_| shoots) {
+                        game.shoot_arrow(grf, act.source, act.target, ms);
+                    }
+                    // Arrow Shower: arrows at the target and the cells round it, twice for an endured hit.
+                    if let Some(cell) = target_cell.filter(|_| skill == ARROW_SHOWER) {
+                        for _ in 0..if act.kind == 14 { 2 } else { 1 } {
+                            game.arrow_shower(grf, act.source, cell, Some(act.target));
+                        }
+                    }
+                    let hit_ms = hit_ms.map_or(act.source_speed.max(0) as f32, |ms| actor::bow_flight(ms, shoots));
                     game.skill_lands.insert(act.source, Instant::now() + Duration::from_secs_f32(hit_ms / 1000.0));
                     hit_ms
                 };
                 if act.damage != 0 && !(act.source == act.target && act.kind == 6) {
-                    let hits = net::Act { hits: if splash { 1 } else { act.hits }, ..act };
-                    game.show_hit(&hits, Some(hit_ms), gap, if splash { HitFrom::Splash } else { HitFrom::Skill });
+                    // A splash skill's preamble on its first target (Grimtooth's −30000): the hit effects alone.
+                    if !game::preamble(&act) {
+                        let hits = net::Act { hits: if splash { 1 } else { act.hits }, ..act };
+                        game.show_hit(&hits, Some(hit_ms), gap, if splash { HitFrom::Splash } else { HitFrom::Skill });
+                    }
                     // Hit by hit, as each lands: the skill's hit effects on the target; the second only with the first
                     // hit. A skill the table lacks: what comes at the target first (a bolt's arrows), then what shows
                     // as it lands.
@@ -3394,11 +3415,17 @@ impl App {
                     }
                     _ => {}
                 }
+                // The caster turns to the cell, but for Meteor Storm's meteors.
                 let caster = if source == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&source) };
-                if let Some(caster) = caster {
+                if let Some(caster) = caster.filter(|_| skill != skill_motions::METEOR_STORM) {
                     caster.face([i32::from(cell[0]), i32::from(cell[1])]);
                 }
                 game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Ground, 1.0, &self.skill_info, look_tables, &self.messages);
+                // Arrow Shower: arrows at the cells round the one picked (not a monster's).
+                let monster = game.units.get(&source).is_some_and(|actor| actor.kind == MONSTER);
+                if skill == ARROW_SHOWER && !monster {
+                    game.arrow_shower(grf, source, [i32::from(cell[0]), i32::from(cell[1])], None);
+                }
             }
             MapEvent::SkillUnit { id, kind, cell } => {
                 game.skill_units.insert(id, (kind, cell));

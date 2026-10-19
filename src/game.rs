@@ -11,12 +11,16 @@ pub(crate) fn unit_blocks(job: u16, walking: bool, hide_option: u32) -> bool {
     !walking && hide_option & 0x2 == 0 && !matches!(job, 45 | 111 | 139)
 }
 
-/// The cells units block for a click: each blocking unit's drawn cell, and ground skill units' cells.
+/// The cells units block for a click: each blocking unit's drawn cell, and ground skill units' cells but the unseen
+/// ones that only deal a skill's damage (UNT_DUMMYSKILL: Storm Gust's, Lord of Vermilion's).
 // ponytail: the ground skill units are the least certain rule (one line, easy to take out).
 pub(crate) fn blocked_cells(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u16; 2])>, now: Instant) -> std::collections::HashSet<[i32; 2]> {
     let standing = units.values().filter(|actor| unit_blocks(actor.job, actor.moving(), actor.hide_option)).map(|actor| actor::drawn_cell(actor.position(now)));
-    standing.chain(skill_units.values().map(|(_, cell)| cell.map(i32::from))).collect()
+    standing.chain(skill_units.values().filter(|(kind, _)| *kind != DUMMY_SKILL_UNIT).map(|(_, cell)| cell.map(i32::from))).collect()
 }
+
+/// rathena's UNT_DUMMYSKILL: an unseen skill unit on the ground that deals its skill's damage.
+const DUMMY_SKILL_UNIT: u32 = 0x86;
 
 impl Game {
     pub(crate) fn dialog_for(&mut self, npc: u32) -> &mut Dialog {
@@ -1213,6 +1217,33 @@ impl Game {
         self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);
     }
 
+    /// Where a unit's feet are drawn now.
+    fn feet(&self, unit: u32, now: Instant) -> Option<world::Vector> {
+        let actor = if unit == self.account_id { Some(&self.player) } else { self.units.get(&unit) }?;
+        Some(self.world.cell_position(actor.position(now)))
+    }
+
+    /// A bow's arrow from over `archer` at `target`, leaving after `wait_ms` (`arrows`).
+    pub(crate) fn shoot_arrow(&mut self, grf: &Grf, archer: u32, target: u32, wait_ms: f32) {
+        let now = Instant::now();
+        let Some(from) = self.feet(archer, now) else { return };
+        let aim = arrows::Aim::Unit((target != self.account_id).then_some(target));
+        self.effects.shoot_arrow(grf, from, aim, now, Duration::from_secs_f32(wait_ms.max(0.0) / 1000.0));
+    }
+
+    /// Arrow Shower's arrows from `archer` at points: the middles of the eight cells round `cell`, and `unit`'s feet
+    /// when one is hit there.
+    pub(crate) fn arrow_shower(&mut self, grf: &Grf, archer: u32, cell: [i32; 2], unit: Option<u32>) {
+        let now = Instant::now();
+        let Some(from) = self.feet(archer, now) else { return };
+        let round = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
+            .map(|step| self.world.cell_position([cell[0] + step[0], cell[1] + step[1]].map(|value| value as f32)));
+        let points: Vec<_> = unit.and_then(|unit| self.feet(unit, now)).into_iter().chain(round).collect();
+        for point in points {
+            self.effects.shoot_arrow(grf, from, arrows::Aim::Point(point), now, arrows::POINT_WAIT);
+        }
+    }
+
     /// An effect from `caster` aimed at where `target` stands (`effects::AIMED`: Soul Strike's ghosts, Fire Ball's
     /// balls…), told the skill's hit count.
     #[allow(clippy::too_many_arguments)]
@@ -2330,7 +2361,13 @@ impl Game {
         }
         let (job, kind) = (actor.job, actor.kind);
         let mut hit_ms = None;
-        if actor.kind == PLAYER {
+        // A cast without cast time, and Meteor Storm's meteors, leave the caster as it is.
+        let still = match packet {
+            overhead::Shout::Cast => !skill_motions::cast_moves(pace as u32),
+            overhead::Shout::Ground => skill == skill_motions::METEOR_STORM,
+            _ => false,
+        };
+        if actor.kind == PLAYER && !still {
             let now = Instant::now();
             let action = match (packet, skill_motions::motion(skill)) {
                 (overhead::Shout::Cast, _) if skill_motions::cast_standing(skill) => None,
@@ -2339,12 +2376,7 @@ impl Game {
                     None
                 }
                 (_, skill_motions::Motion::Keep) => None,
-                (_, skill_motions::Motion::Attack) => Some(
-                    actor
-                        .look
-                        .as_ref()
-                        .map_or(actor::combat_actions(actor.kind).0, |look| actor::attack_action(look.job, look.sex, tables.weapon_type(look.weapon))),
-                ),
+                (_, skill_motions::Motion::Attack) => Some(actor.attack_motion(tables)),
                 (_, skill_motions::Motion::Throw) => Some(5),
                 (_, skill_motions::Motion::ThirdAttack) => Some(11),
                 (_, skill_motions::Motion::PickUp) => Some(actor::PICKUP),
@@ -3407,7 +3439,7 @@ impl Game {
     }
 
     /// Starts the attacker's swing now; the number and the flinch come when the hit lands.
-    pub(crate) fn act(&mut self, act: net::Act, tables: &LookTables) {
+    pub(crate) fn act(&mut self, act: net::Act, tables: &LookTables, grf: &Grf) {
         // Sitting down and standing up.
         if matches!(act.kind, 2 | 3) {
             let who = if act.source == self.account_id { Some(&mut self.player) } else { self.units.get_mut(&act.source) };
@@ -3437,20 +3469,23 @@ impl Game {
         let target_cell = if act.target == me { Some(self.player.cell) } else { self.units.get(&act.target).map(|actor| actor.cell) };
         let source = if act.source == me { Some(&mut self.player) } else { self.units.get_mut(&act.source) };
         let mut hit_ms = None;
+        let mut bow = false;
         if let Some(source) = source {
             if let Some(cell) = target_cell {
                 source.face(cell);
             }
-            let attack = match &source.look {
-                Some(look) => actor::attack_action(look.job, look.sex, tables.weapon_type(look.weapon)),
-                None => actor::combat_actions(source.kind).0,
-            };
-            let bow = source.look.as_ref().is_some_and(|look| tables.weapon_type(look.weapon) == BOW);
+            let attack = source.attack_motion(tables);
+            bow = source.holds_bow(tables);
             let scale = actor::attack_scale(act.source_speed, bow);
             source.play_at_pace(attack, Instant::now(), scale, false);
             source.stand_ready();
             hit_ms = source.sprites.as_ref().and_then(|sprites| sprites.hit_ms(attack * 8 + usize::from(source.direction % 8), scale));
         }
+        // A bow shoots its arrow at the swing's hit frame; the hit lands with it.
+        if let Some(ms) = hit_ms.filter(|_| bow) {
+            self.shoot_arrow(grf, act.source, act.target, ms);
+        }
+        let hit_ms = hit_ms.map(|ms| actor::bow_flight(ms, bow));
         self.show_hit(&act, hit_ms, MULTI_HIT_DELAY, HitFrom::Attack);
     }
 
@@ -3508,6 +3543,12 @@ impl Game {
     }
 }
 
+/// A splash skill's preamble on its first target (Grimtooth's damage −30000, type 6): its hit effects, and no number,
+/// MISS or flinch.
+pub(crate) fn preamble(act: &net::Act) -> bool {
+    act.kind == 6 && act.damage < 0
+}
+
 /// Whether a hit doesn't flinch its target: misses aside, an endured hit or a lucky dodge. A skill's endured multi-hit
 /// does flinch (each hit comes with a running total, which no longer counts as endured), and so does every hit from a
 /// skill's ground unit.
@@ -3540,6 +3581,9 @@ mod tests {
         assert!(endured(14, HitFrom::Splash) && !endured(5, HitFrom::Splash) && !endured(14, HitFrom::Skill));
         // A ground unit's single hit shows the total; a skill's single hit doesn't.
         assert!(shows_total(1, HitFrom::Unit) && !shows_total(1, HitFrom::Skill) && shows_total(2, HitFrom::Skill));
+        // Grimtooth's preamble (type 6, −30000) shows its hit effects alone; a real miss (0) and a hit aren't one.
+        let act = |kind, damage| net::Act { source: 1, target: 2, source_speed: 432, target_speed: 288, damage, sp: false, hits: 1, kind, left_damage: 0 };
+        assert!(preamble(&act(6, -30000)) && !preamble(&act(8, 0)) && !preamble(&act(8, 120)) && !preamble(&act(6, 50)));
     }
 
     #[test]
@@ -3566,6 +3610,12 @@ mod tests {
         // A dead one still blocks while it fades.
         units.get_mut(&1).unwrap().remove_at = Some(now + std::time::Duration::from_secs(1));
         assert!(blocked_cells(&units, &skill_units, now).contains(&[12, 10]));
+        // An Ice Wall blocks its cell; the unseen units of Storm Gust and Lord of Vermilion (0x86) don't.
+        let mut skill_units = HashMap::new();
+        skill_units.insert(7, (0x8d, [3, 3]));
+        skill_units.insert(8, (0x86, [4, 4]));
+        let taken = blocked_cells(&HashMap::new(), &skill_units, now);
+        assert!(taken.contains(&[3, 3]) && !taken.contains(&[4, 4]));
         // A hiding player doesn't; a job-104 NPC does; a warp doesn't.
         assert!(!unit_blocks(4001, false, 0x2) && unit_blocks(4001, false, 0x4));
         assert!(unit_blocks(104, false, 0) && !unit_blocks(45, false, 0) && !unit_blocks(111, false, 0) && !unit_blocks(139, false, 0));

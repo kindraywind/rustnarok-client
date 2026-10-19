@@ -1096,6 +1096,9 @@ pub struct Effects {
     pub only_forced: bool,
     /// /mineffect: the lighter effects (`min_file`, the hit spark's ring only).
     pub min: bool,
+    /// Bows' arrows, and the arrow sprite's layers by direction.
+    arrows: crate::arrows::Arrows,
+    arrow: Vec<Vec<Placed>>,
 }
 
 /// The effects drawn even with /effect off (the data's ForceRenderEffect list): warp portals, Safety Wall, the
@@ -1659,6 +1662,17 @@ impl Effects {
         self.prims.soul_strike(from, to, hits, now);
     }
 
+    /// A bow's arrow from over the archer's `feet`, leaving `wait` after `now` (`arrows`).
+    pub fn shoot_arrow(&mut self, grf: &Grf, feet: Vector, aim: crate::arrows::Aim, now: Instant, wait: Duration) {
+        self.sprites.entry(crate::arrows::SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::arrows::SPRITE));
+        self.arrows.shoot(feet, aim, now, wait);
+    }
+
+    /// Arrows leaving now take their aim at where their units are (`position_of`).
+    pub fn aim_arrows(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) {
+        self.arrows.aim(now, position_of);
+    }
+
     /// Effects that finished go and those that repeat start again; sprites pick their images for `now`, seen through
     /// a camera turned `yaw` radians.
     pub fn advance(&mut self, gpu: &Gpu, now: Instant, yaw: f32) {
@@ -1676,6 +1690,9 @@ impl Effects {
         {
             let count = sprite.frames(0).max(1);
             self.spark_frames = (0..count).map(|frame| sprite.frame_at(gpu, 0, 0, Timing::Span(frame as f32 / count as f32))).collect();
+        }
+        if let Some(Some(sprite)) = self.sprites.get_mut(crate::arrows::SPRITE).filter(|_| !self.arrows.is_empty()) {
+            self.arrow = (0..8).map(|direction| sprite.frame_at(gpu, direction, 0, Timing::Loop(0.0))).collect();
         }
         for floating in self.floating.iter_mut().filter(|floating| floating.again && floating.end <= now) {
             let period = floating.end.duration_since(floating.start);
@@ -1998,6 +2015,16 @@ impl Effects {
                         let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * scale));
                         quads.push((sprite.texture(key), anchor, corners, [1.0, 1.0, 1.0, alpha], false, false));
                     }
+                }
+            }
+        }
+        // Arrows, each in the direction of its flight as the camera sees it.
+        if let Some(Some(sprite)) = self.sprites.get(crate::arrows::SPRITE) {
+            for (at, [x, z]) in self.arrows.flying(now) {
+                let seen = crate::actor::view_direction(x.atan2(-z).to_degrees(), self.yaw, true);
+                for &(key, position, size, layer_angle) in self.arrow.get(usize::from(seen)).into_iter().flatten() {
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0);
+                    quads.push((sprite.texture(key), at, corners, [1.0; 4], false, false));
                 }
             }
         }
@@ -2555,6 +2582,28 @@ mod tests {
         assert!(min_effect(false, Some(0b1000)) && min_effect(true, Some(0b1000)));
         assert!(!min_effect(false, Some(0b0111)) && min_effect(true, Some(0)));
         assert!(!min_effect(false, None) && min_effect(true, None));
+    }
+
+    #[test]
+    fn skills_play_their_rows_as_the_game() {
+        let table = Table::load();
+        let ms = Duration::from_millis;
+        // Meteor Storm: Meteor1–3 at random, one long shake 640 ms in.
+        assert_eq!(table.parts[&92][0].random, Some((1, 3)));
+        assert_eq!(table.quakes[&92], [(ms(640), QUAKE_LONG)]);
+        // Lord of Vermilion: four shakes and its 11 sounds; Bowling Bash's shockwave is silent.
+        assert_eq!(table.quakes[&90], [800, 1600, 2400, 3200].map(|at| (ms(at), QUAKE_LONG)));
+        let sounds: Vec<(&str, u64)> = table.sounds[&90].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect();
+        assert_eq!(sounds.len(), 11);
+        assert_eq!(sounds[..3], [("effect\\wizard_meteo", 0), ("effect\\hunter_blastmine", 0), ("effect\\hunter_blastmine", 160)]);
+        assert!(!table.sounds.contains_key(&149));
+        // Sonic Blow: its flash and SonicBlow.str on the caster.
+        assert_eq!(table.struck(136), Some(&[(Who::Caster, 121), (Who::Caster, 143)][..]));
+        // A skill's fallback effect never repeats one of its hit effects (Holy Light's 152 plays once, at the hit).
+        for (&skill, hit) in &table.hits {
+            let repeated = table.skill(skill, "effectId").into_iter().any(|effect| hit.contains(&Some(effect)));
+            assert!(table.struck(skill).is_some() || !repeated, "skill {skill}");
+        }
     }
 
     #[test]

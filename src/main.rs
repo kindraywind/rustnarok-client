@@ -47,6 +47,7 @@ mod achievement;
 mod actor;
 mod ambient;
 mod announce;
+mod arrows;
 mod aura;
 mod bank;
 mod basic_info;
@@ -532,6 +533,8 @@ fn rank_line(before: u32, now: u32) -> Option<usize> {
 }
 /// The bow's weapon type (rathena's W_BOW): its attack pace isn't capped.
 const BOW: u32 = 11;
+/// AC_SHOWER: its arrows fall round the cells it hits.
+const ARROW_SHOWER: u16 = 47;
 /// The Star Gladiator line, whose Miracle of Sun, Moon and Stars a map can turn off (rathena's `enum e_job`).
 const STAR_GLADIATORS: [u16; 10] = [4047, 4048, 4226, 4238, 4239, 4243, 4241, 4244, 4302, 4316];
 
