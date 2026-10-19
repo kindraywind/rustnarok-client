@@ -334,7 +334,7 @@ impl Game {
         let (body, head) = turned(sectors_from(self.player.rot, target), body, self.player.head_direction as u8, target);
         let _ = self.session.change_direction(body, head);
         self.player.set_direction((12 - body) % 8);
-        self.player.head_direction = u16::from(head);
+        self.player.set_head(u16::from(head));
     }
 
     /// What a left click on the world does: talk to an NPC, attack, swing once at a player, pick up an item, or

@@ -424,7 +424,7 @@ impl App {
         let mut sounds: Vec<(String, f32)> = game.player.sounds_now(now).into_iter().map(|sound| (sound, 1.0)).chain(hit_sounds).collect();
         let (action, timing) = game.player.animation(now);
         let head_direction = game.player.head_direction;
-        let player_seen = seen_direction(game.player.rot, yaw, rounds_facing(PLAYER, game.player.job, action));
+        let player_seen = seen_direction(game.player.rot, yaw, rounds_facing(game.player.drawn_job(), action));
         // Pushcarts, apart from the bodies (their textures are the cart's, and they cast no shadow of their own).
         // A cart's ACT has one action per direction; its frames turn the wheels, so they run only while walking.
         // ponytail: the cart's anchor half a cell behind its owner; place it against the real client.
@@ -524,7 +524,7 @@ impl App {
             }
             let (action, timing) = actor.animation(now);
             let head_direction = actor.head_direction;
-            let seen = seen_direction(actor.rot, yaw, rounds_facing(actor.kind, actor.job, action));
+            let seen = seen_direction(actor.rot, yaw, rounds_facing(actor.drawn_job(), action));
             // NPC names show under them; players' and monsters' on hover (below).
             if !silhouette && !actor.hidden && (actor.kind == NPC || actor.sprites.is_none()) {
                 labels.push((actor.name.clone(), feet, name_color(actor.kind, actor.job, actor.level, our_summons.contains(&Some(id)), own_level)));

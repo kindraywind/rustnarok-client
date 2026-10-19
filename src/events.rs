@@ -812,7 +812,7 @@ impl App {
             actor.hidden = HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB;
             actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
             actor.hide_option = unit.option;
-            actor.head_direction = unit.head_direction;
+            actor.set_head(unit.head_direction);
             actor.guild = unit.guild;
             actor
         };
@@ -850,7 +850,7 @@ impl App {
                 actor.level = unit.level;
                 actor.stop_at(unit.position.map(i32::from));
                 actor.set_direction(if !known && unit.kind == MONSTER && turned_round(unit.job) { (unit.direction + 4) % 8 } else { unit.direction });
-                actor.head_direction = unit.head_direction;
+                actor.set_head(unit.head_direction);
                 take_posture(actor, unit.posture, control::now());
                 if cue == Arrival::Fade {
                     actor.fade_in = Some(control::now());
@@ -880,8 +880,7 @@ impl App {
             MapEvent::Turn { id, direction, head_direction } => {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
-                    actor.set_direction(direction);
-                    actor.head_direction = head_direction;
+                    actor.turn(direction, head_direction, control::now());
                 }
             }
             MapEvent::UnitWalk { unit, to, start_time, sub } => {
