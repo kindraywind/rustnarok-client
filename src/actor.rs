@@ -1898,6 +1898,8 @@ pub struct Actor {
     pub fade_in: Option<Instant>,
     /// A dead player: lying there until revived (players aren't removed when they die).
     pub dead: bool,
+    /// Its cast bar is up (`Game::casts`), set each frame before `update`.
+    pub casting: bool,
     /// Hiding, cloaking or chase-walking (the unit's option has UNSEEN_OPTIONS).
     pub cloaked: bool,
     /// The option bits that hide it (`seen`).
@@ -1984,6 +1986,7 @@ impl Actor {
             fade: None,
             fade_in: None,
             dead: false,
+            casting: false,
             cloaked: false,
             hide_option: 0,
             body_state: 0,
@@ -2271,8 +2274,27 @@ impl Actor {
                 self.sliding = false;
             }
         }
-        self.last = now_ms;
+        // A player in its swing, sitting, dead, casting or in a skill's motion keeps the old time, so its first walking
+        // frame after one covers more of the step.
+        if !self.keeps_glide_clock(now) {
+            self.last = now_ms;
+        }
         self.position(now)
+    }
+
+    /// Whether this frame leaves the glide's last update time as it was: a player (our own or another) in its swing,
+    /// sitting, dead, casting or in a skill's motion. Every other unit, and a player standing, walking, flinching or
+    /// picking up, sets it every frame.
+    // ponytail: every one-shot action but a flinch and the pickup counts as a swing or a skill's motion, the special
+    // motions some skills play among them.
+    fn keeps_glide_clock(&self, now: Instant) -> bool {
+        if self.kind != 0 {
+            return false;
+        }
+        let (action, timing) = self.animation(now);
+        let (_, flinch, _) = combat_actions(self.kind);
+        let motion = matches!(timing, Timing::Once(..) | Timing::Span(_)) && action != flinch && action != PICKUP;
+        self.dead || self.sitting || self.casting || motion
     }
 
     /// Slides straight to `cell` from where it is drawn, over 200 ms, facing as it was. A long way jumps.
@@ -2769,6 +2791,43 @@ mod tests {
 
     fn assert_close(a: f32, b: f32) {
         assert!((a - b).abs() < 1e-3, "{a} != {b}");
+    }
+
+    /// How far a unit of `kind`, standing on (10, 10) and updated every 16 ms from 1000, moves on its first walking
+    /// frame at `start`: east, node 1 at (11, 10) 222 ms after that frame. `busy` sets it up at 1000 (a swing, a sit…).
+    /// A start of 1000 + 16k is 16 ms after the last frame.
+    fn first_walking_frame(kind: u8, start: u64, busy: impl Fn(&mut Actor)) -> f32 {
+        let mut unit = Actor::new("a".into(), None, [10, 10], 0, 150);
+        unit.kind = kind;
+        unit.set_map([20, 20]);
+        unit.update(ms(1000));
+        busy(&mut unit);
+        let mut at = 1016;
+        while at < start {
+            unit.update(ms(at));
+            at += 16;
+        }
+        unit.walk_from([10, 10], [8, 8], vec![[11, 10]], ms(start + 72), ms(start), true);
+        unit.update(ms(start))[0] - 10.0
+    }
+
+    #[test]
+    fn players_walk_out_of_a_motion_with_a_stale_frame_time() {
+        let swing = |unit: &mut Actor| unit.play(5, ms(1000), 2000.0, false);
+        // A player standing (16 ms since the last frame), and one walking out of a swing 200, 500 and 1000 ms old.
+        assert_close(first_walking_frame(0, 1016, |_| {}), 16.0 / 238.0);
+        assert_close(first_walking_frame(0, 1200, swing), 200.0 / 422.0);
+        assert_close(first_walking_frame(0, 1500, swing), 500.0 / 722.0);
+        assert_close(first_walking_frame(0, 2000, swing), 1000.0 / 1222.0);
+        // Sitting for a second, standing and walking in the same frame.
+        assert_close(first_walking_frame(0, 2000, |unit: &mut Actor| unit.sitting = true), 0.818);
+        // Casting too.
+        assert_close(first_walking_frame(0, 1200, |unit: &mut Actor| unit.casting = true), 200.0 / 422.0);
+        // A monster in its swing keeps a fresh time: 16 ms.
+        assert_close(first_walking_frame(5, 1208, |unit: &mut Actor| unit.play(2, ms(1000), 2000.0, false)), 16.0 / 238.0);
+        // A player being hit (flinching) or picking up keeps a fresh time too.
+        assert_close(first_walking_frame(0, 1208, |unit: &mut Actor| unit.play(6, ms(1000), 2000.0, false)), 16.0 / 238.0);
+        assert_close(first_walking_frame(0, 1208, |unit: &mut Actor| unit.play(PICKUP, ms(1000), 2000.0, false)), 16.0 / 238.0);
     }
 
     #[test]

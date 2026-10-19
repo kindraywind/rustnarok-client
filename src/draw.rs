@@ -356,6 +356,7 @@ impl App {
 
         // Move everyone, follow the player, then decode the sprite frames (mutably) before borrowing them.
         let walking = game.player.moving();
+        game.player.casting = game.casts.contains_key(&None);
         let player_cell = game.player.update(now);
         // ponytail: footprints alternate 326 and 327, one on each cell just left, only while we are chase-walking.
         // Others don't see the walker, so they don't see our prints. A new chase starts again at 326.
@@ -477,6 +478,7 @@ impl App {
         // Talkie Boxes saying their words stand where their traps were.
         let mut feet_of = game.talkie_spots.clone();
         for (&id, actor) in &mut game.units {
+            actor.casting = game.casts.contains_key(&Some(id));
             let cell = actor.update(now);
             actor.step_companions(actor::world_xz(cell), now);
             // Hidden units aren't drawn, except as black silhouettes while we have Clairvoyance. GM hide stays hidden.
