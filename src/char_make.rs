@@ -211,6 +211,15 @@ impl Make {
         offset(Self::origin(), local)
     }
 
+    /// Back, Make and the close button on screen (for the test driver).
+    pub fn button_boxes() -> [(&'static str, [f32; 4]); 3] {
+        let place = |local: [f32; 2], [width, height]: [f32; 2]| {
+            let [x, y] = Self::at(local);
+            [x, y, width, height]
+        };
+        [("make_back", place(BACK, [152.0, 27.0])), ("make_ok", place(MAKE, [152.0, 27.0])), ("make_close", place(CLOSE, [17.0, 16.0]))]
+    }
+
     fn styles(&self) -> usize {
         HAIRSTYLES[usize::from(self.doram)]
     }

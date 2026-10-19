@@ -863,6 +863,9 @@ fn state(app: &mut App) -> Value {
                 .chain(select.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
                 .collect();
         }
+        Scene::CharMake(..) => {
+            state["targets"] = crate::char_make::Make::button_boxes().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})).into();
+        }
         Scene::Game(game) => state["game"] = game_state(app, game),
         _ => {}
     }
