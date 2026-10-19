@@ -345,6 +345,11 @@ pub fn head_image(grf: &Grf, look: &Look) -> Option<RgbaImage> {
     spr.image(layer.kind, layer.image as usize, palette.as_ref())
 }
 
+/// The cell a drawn position (in cells, centres on the integers) is on: floor(p + 0.5) per axis.
+pub fn drawn_cell(position: [f32; 2]) -> [i32; 2] {
+    position.map(|value| (value + 0.5).floor() as i32)
+}
+
 /// The attack motion for a player's job and weapon type: action 5, 10 or 11.
 pub fn attack_action(job: u16, sex: u8, weapon_type: u32) -> usize {
     // Weapon types (the client's Weapon_IDs, rathena's weapon_type).
@@ -1870,6 +1875,10 @@ pub struct Actor {
     sliding: bool,
     /// A walk changed under way, gliding into its new path.
     blend: Option<Blend>,
+    /// Where it stands when a stop left it off its cell's centre (in cells), and frames left showing the walk after a
+    /// stop that put it on the stop cell's centre.
+    stand: Option<[f32; 2]>,
+    walk_frames: u8,
     /// Players only: 0 looking straight ahead, 1 and 2 turned to the sides.
     pub head_direction: u16,
     animation_started: Instant,
@@ -1953,6 +1962,8 @@ impl Actor {
             path: Vec::new(),
             leg: (cell.map(|value| value as f32), now),
             blend: None,
+            stand: None,
+            walk_frames: 0,
             step_ms: f32::from(speed.max(1)),
             distance: 0.0,
             stepped: Vec::new(),
@@ -2120,7 +2131,7 @@ impl Actor {
         if let Some(blend) = self.blend {
             return blend.at;
         }
-        let Some(&(next, _)) = self.path.first() else { return self.cell.map(|value| value as f32) };
+        let Some(&(next, _)) = self.path.first() else { return self.stand.unwrap_or(self.cell.map(|value| value as f32)) };
         let (from, progress) = (self.leg.0, self.progress(now));
         [from[0] + (next[0] as f32 - from[0]) * progress, from[1] + (next[1] as f32 - from[1]) * progress]
     }
@@ -2149,6 +2160,7 @@ impl Actor {
     pub fn walk_from(&mut self, from: [i32; 2], sub: [u8; 2], path: Vec<[i32; 2]>, begin: Instant, now: Instant, known: bool) {
         let drawn = self.position(now);
         self.start_walking(now);
+        self.stand = None;
         self.cell = from;
         let start = [0, 1].map(|axis| from[axis] as f32 + (f32::from(sub[axis]) - 8.0) / 16.0);
         let mut steps = arrivals(start, begin, &path, self.step_ms, 1.0);
@@ -2165,6 +2177,7 @@ impl Actor {
     /// Put on `cell` at once (a knockback): no slide, and what it was doing goes on.
     pub fn place_at(&mut self, cell: [i32; 2], now: Instant) {
         self.cell = cell;
+        self.stand = None;
         self.leg = (cell.map(|value| value as f32), now);
         self.blend = None;
         self.sliding = false;
@@ -2191,12 +2204,28 @@ impl Actor {
 
     pub fn stop_at(&mut self, cell: [i32; 2]) {
         self.cell = cell;
+        self.stand = None;
         self.sliding = false;
         self.blend = None;
         if !self.path.is_empty() {
             self.animation_started = Instant::now();
         }
         self.path.clear();
+    }
+
+    /// ZC_STOPMOVE: `stop` becomes its cell and its walk ends. Drawn on the stop cell, or with no path from the drawn
+    /// cell to it (`path`), it stands where it's drawn; else it goes to the stop cell's centre at once, showing its walk
+    /// for that frame. It faces as it was either way.
+    pub fn stop_drawn(&mut self, stop: [i32; 2], path: bool, now: Instant) {
+        let drawn = self.position(now);
+        let walking = !self.path.is_empty();
+        self.stop_at(stop);
+        if drawn_cell(drawn) == stop || !path {
+            self.stand = (drawn != stop.map(|value| value as f32)).then_some(drawn);
+        } else if walking {
+            self.walk_frames = 2;
+        }
+        self.leg = (self.position(now), now);
     }
 
     /// The cell its walk ends on (the one it's on when it isn't walking).
@@ -2216,8 +2245,10 @@ impl Actor {
     /// Advances along the path; returns the (fractional) cell the actor is at now.
     pub fn update(&mut self, now: Instant) -> [f32; 2] {
         self.stepped.clear();
+        self.walk_frames = self.walk_frames.saturating_sub(1);
         while let Some(&(next, arrives)) = self.path.first() {
-            if !self.sliding {
+            // A unit that doesn't move this step keeps its facing (knocked onto the next cell of its path).
+            if !self.sliding && next != self.cell {
                 let step = [next[0] - self.cell[0], next[1] - self.cell[1]];
                 self.direction = world::direction(step);
                 self.rot = angle_of(step);
@@ -2294,7 +2325,7 @@ impl Actor {
                 Pace::Stretch(_) => {}
             }
         }
-        let action = if self.moving() && !self.sliding {
+        let action = if (self.moving() && !self.sliding) || self.walk_frames > 0 {
             WALK
         } else if self.sitting {
             SIT
@@ -2365,6 +2396,54 @@ impl Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stops_where_drawn() {
+        assert_eq!([drawn_cell([13.5, 10.0]), drawn_cell([14.49, 10.0]), drawn_cell([13.49, 9.5])], [[14, 10], [14, 10], [13, 10]]);
+        // 150 ms a cell, walking east from (12, 10) to (16, 10); stopped at `at` ms with the stop cell (14, 10).
+        let start = Instant::now();
+        let walker = |at_ms: u64| {
+            let mut unit = Actor::new("Poring".into(), None, [12, 10], 0, 150);
+            unit.step_ms = 150.0;
+            unit.walk_from([12, 10], [8, 8], vec![[13, 10], [14, 10], [15, 10], [16, 10]], start, start, false);
+            let now = start + Duration::from_millis(at_ms);
+            unit.update(now);
+            (unit, now)
+        };
+        let east = 6;
+        // Drawn at 14.33: stands there, on cell 14, facing east.
+        let (mut unit, now) = walker(350);
+        let drawn = unit.position(now);
+        assert!((drawn[0] - 14.333).abs() < 0.01);
+        unit.stop_drawn([14, 10], true, now);
+        assert_eq!((unit.position(now), unit.cell, unit.direction, unit.moving()), (drawn, [14, 10], east, false));
+        // Drawn at 13.5: counts as cell 14, stays.
+        let (mut unit, now) = walker(225);
+        unit.stop_drawn([14, 10], true, now);
+        assert!((unit.position(now)[0] - 13.5).abs() < 0.01);
+        // Drawn at 13.4 (cell 13) with a path: on (14, 10) at once, still facing east, the walk shown one frame.
+        let (mut unit, now) = walker(210);
+        unit.stop_drawn([14, 10], true, now);
+        assert_eq!((unit.position(now), unit.direction), ([14.0, 10.0], east));
+        unit.update(now);
+        assert_eq!(unit.animation(now).0, WALK);
+        unit.update(now);
+        assert_ne!(unit.animation(now).0, WALK);
+        // No path from the drawn cell: stays where drawn, its cell the stop cell.
+        let (mut unit, now) = walker(210);
+        let drawn = unit.position(now);
+        unit.stop_drawn([14, 10], false, now);
+        assert_eq!((unit.position(now), unit.cell), (drawn, [14, 10]));
+        // Standing, a stop on its own cell: nothing moves.
+        let mut standing = Actor::new("Poring".into(), None, [5, 5], 0, 150);
+        standing.stop_drawn([5, 5], false, start);
+        assert_eq!(standing.position(start), [5.0, 5.0]);
+        // Knocked onto the next cell of its path: no (0, 0) step, the facing stays.
+        let (mut unit, now) = walker(100);
+        unit.place_at([13, 10], now);
+        unit.update(now);
+        assert_eq!(unit.direction, east);
+    }
 
     #[test]
     fn turns_images_for_flat_previews() {

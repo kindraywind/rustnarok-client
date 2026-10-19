@@ -1252,7 +1252,10 @@ impl App {
                     if slide {
                         actor.slide_to(cell, now);
                     } else if actor.sliding_to() != Some(cell) {
-                        actor.stop_at(cell);
+                        // Where it's drawn, unless it's drawn on another cell with a path to the stop cell.
+                        let from = actor::drawn_cell(actor.position(now));
+                        let path = world::find_path(&game.world.gat, from, cell).is_some();
+                        actor.stop_drawn(cell, path, now);
                     }
                 }
                 if id == game.account_id
