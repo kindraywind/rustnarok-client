@@ -544,6 +544,7 @@ impl App {
         let our_summons = [game.pet_id, game.homunculus_id, game.mercenary.as_ref().map(|mercenary| mercenary.id)];
         // Talkie Boxes saying their words stand where their traps were.
         let mut feet_of = game.talkie_spots.clone();
+        let mut rises = HashMap::from([(None, actor::glint_rise(true, game.player.job, game.player.option))]);
         for (&id, actor) in &mut game.units {
             actor.casting = game.casts.contains_key(&Some(id));
             let cell = actor.update(walk_now);
@@ -556,6 +557,7 @@ impl App {
             let silhouette = show == actor::Seen::Silhouette;
             let feet = game.world.cell_position(cell);
             feet_of.insert(id, feet);
+            rises.insert(Some(id), actor::glint_rise(actor.kind == PLAYER, actor.job, actor.option));
             if !silhouette {
                 let loudness = heard(f32::hypot(cell[0] - player_cell[0], cell[1] - player_cell[1]));
                 sounds.extend(actor.sounds_now(now).into_iter().map(|sound| (sound, loudness)));
@@ -2639,6 +2641,7 @@ impl App {
             None => Some(player_feet),
             Some(id) => feet_of.get(&id).copied(),
         };
+        game.effects.rises = rises;
         game.effects.aim_arrows(now, feet_of_unit);
         game.effects.dim = game.map.trim_end_matches(".gat") == "ecl_fild01";
         game.effects.pitch = game.camera.pitch.to_degrees();

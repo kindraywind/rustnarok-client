@@ -279,6 +279,28 @@ fn body_scale(job: u16) -> f32 {
     }
 }
 
+/// How much higher the glints of a status sit over a unit's feet: a mounted job's own 6 (4 for a few), else a baby's or a
+/// Doram's lower term, else 6 riding and 0 on foot; none for anything but a player.
+pub fn glint_rise(player: bool, job: u16, option: u32) -> f32 {
+    if !player {
+        return 0.0;
+    }
+    match job {
+        13 | 21 | 4014 | 4022 | 4080..=4095 | 4278..=4281 => return 6.0,
+        4036 | 4044 | 4109..=4112 => return 4.0,
+        _ => {}
+    }
+    let riding = option & MOUNTS != 0;
+    match (baby_job(job), is_doram(job), riding) {
+        (true, _, true) => 4.0,
+        (true, _, false) => -1.0,
+        (_, true, true) => -3.0,
+        (_, true, false) => -2.0,
+        (_, _, true) => 6.0,
+        _ => 0.0,
+    }
+}
+
 /// Doram jobs live under 도람족 instead of 인간족.
 pub fn is_doram(job: u16) -> bool {
     matches!(job, 4217..=4221 | 4308 | 4315)
@@ -4138,5 +4160,17 @@ mod tests {
         // Cursed Circle darkens the body over any other state.
         actor.cursed = true;
         assert_eq!(actor.body_tint(), Some(CURSED_TINT));
+    }
+
+    #[test]
+    fn glints_sit_higher_on_riders_and_lower_on_babies_and_dorams() {
+        // A Peco Knight 6, a mounted dragon rider 6, the few at 4; a baby 4 riding and −1 on foot; a Doram −3 riding and −2 on foot.
+        assert_eq!([13, 21, 4014, 4085, 4278].map(|job| glint_rise(true, job, 0)), [6.0; 5]);
+        assert_eq!([4036, 4044, 4109, 4112].map(|job| glint_rise(true, job, 0)), [4.0; 4]);
+        assert_eq!((glint_rise(true, 4023, RIDING), glint_rise(true, 4023, 0)), (4.0, -1.0));
+        assert_eq!((glint_rise(true, 4218, RIDING), glint_rise(true, 4218, 0)), (-3.0, -2.0));
+        // Any other player: 6 riding, 0 on foot; monsters and NPCs 0.
+        assert_eq!((glint_rise(true, 7, RIDING), glint_rise(true, 7, 0), glint_rise(true, 1, 0)), (6.0, 0.0, 0.0));
+        assert_eq!((glint_rise(false, 13, RIDING), glint_rise(false, 4023, 0)), (0.0, 0.0));
     }
 }
