@@ -1479,7 +1479,7 @@ impl App {
             .icons(&sheet)
             .into_iter()
             .chain(game.guild.as_ref().map(|guild| game.guild_window.icons(guild, skill_info)).unwrap_or_default())
-            .chain(mercenary::SkillList::icons(&game.mercenary_skills, skill_info))
+            .chain(homunculus::SkillList::icons(&game.mercenary_skills, skill_info))
             .chain(homunculus::SkillList::icons(&game.homunculus_skills, skill_info))
             .chain(game.hotkeys.keys.iter().flatten().filter(|key| key.skill).filter_map(|key| skill_info.get(&(key.id as u16)).map(skills::icon_path)));
         let status_paths =
@@ -1804,7 +1804,8 @@ impl App {
                 Panel::MercenarySkills => {
                     if game.mercenary.is_some() {
                         let list = &game.mercenary_skill_list;
-                        list.draw(&mut layer, &assets.chrome, &assets.skills, icons, font, messages, &game.mercenary_skills, skill_info, pointer.0);
+                        let skills = &game.mercenary_skills;
+                        list.draw(&mut layer, &assets.chrome, &assets.companion_skills, &assets.skills, icons, font, messages, skills, 0, skill_info, pointer);
                     }
                 }
                 Panel::Homunculus => {
@@ -1817,7 +1818,20 @@ impl App {
                     if let Some(homunculus) = &game.homunculus {
                         let list = &game.homunculus_skill_list;
                         let skills = &game.homunculus_skills;
-                        list.draw(&mut layer, &assets.chrome, &assets.skills, icons, font, messages, skills, homunculus.skill_points, skill_info, pointer);
+                        let points = homunculus.skill_points;
+                        list.draw(
+                            &mut layer,
+                            &assets.chrome,
+                            &assets.companion_skills,
+                            &assets.skills,
+                            icons,
+                            font,
+                            messages,
+                            skills,
+                            points,
+                            skill_info,
+                            pointer,
+                        );
                     }
                 }
                 Panel::Cutin => {

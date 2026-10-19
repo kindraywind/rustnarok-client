@@ -1,19 +1,16 @@
 //! The player's mercenary: its window (Ctrl+R) with its values, contract and buttons, its skill list, and how the
 //! client steers it (rathena runs no AI for it: following the player is the client's).
 
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use rustnarok_client::grf::Grf;
-use rustnarok_client::lua::SkillInfo;
-use rustnarok_client::net::{Mercenary, Skill};
+use rustnarok_client::net::Mercenary;
 use rustnarok_client::text::Font;
 
 use crate::homunculus::{Gauge, gauge, gauge_text};
 use crate::render::{Gpu, Texture};
-use crate::skills;
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
-use crate::{Layer, UI, contains, screen};
+use crate::{Layer, UI, contains};
 
 const TITLE_ARCHER: usize = 1181;
 const TITLE_SWORDMAN: usize = 1182;
@@ -25,7 +22,7 @@ const EXPIRATION: usize = 1184;
 const LOYALTY: usize = 1185;
 const SUMMONS: usize = 1186;
 const KILLS: usize = 1187;
-const SKILLS_TITLE: usize = 1262;
+pub const SKILLS_TITLE: usize = 1262;
 /// The contract's end: a strftime pattern ("%m/%d %H:%M").
 pub const CONTRACT_PATTERN: usize = 1260;
 pub const EXPIRED: usize = 1266;
@@ -240,100 +237,6 @@ impl Window {
     }
 }
 
-// ponytail: the skill list as the guild window's skill page (a grid of boxes, no raising), four to a row.
-const SKILL_COLUMNS: usize = 4;
-const SKILL_SIDE: f32 = 8.0;
-const SKILL_WIDTH: f32 = SKILL_SIDE * 2.0 + SKILL_COLUMNS as f32 * skills::CELL[0];
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum SkillHit {
-    Title(TitleHit),
-    Skill(u16),
-    Window,
-}
-
-pub struct SkillList {
-    pub frame: Frame,
-}
-
-impl Default for SkillList {
-    fn default() -> Self {
-        Self { frame: Frame::new([((screen()[0] - SKILL_WIDTH) / 2.0).floor() - 160.0, 150.0], SKILL_WIDTH) }
-    }
-}
-
-impl SkillList {
-    pub fn height(count: usize) -> f32 {
-        TITLE_HEIGHT + 6.0 + count.div_ceil(SKILL_COLUMNS).max(1) as f32 * skills::CELL[1]
-    }
-
-    fn corner(index: usize) -> [f32; 2] {
-        let [column, row] = [index % SKILL_COLUMNS, index / SKILL_COLUMNS];
-        [SKILL_SIDE + column as f32 * skills::CELL[0] + (skills::CELL[0] - skills::BOX) / 2.0, TITLE_HEIGHT + 6.0 + row as f32 * skills::CELL[1]]
-    }
-
-    pub fn hit(&self, cursor: [f32; 2], skills: &[Skill]) -> Option<SkillHit> {
-        let local = self.frame.local(cursor, Self::height(skills.len()))?;
-        if let Some(hit) = self.frame.title_hit(local) {
-            return Some(SkillHit::Title(hit));
-        }
-        let index = (0..skills.len()).find(|&index| contains(Self::corner(index), [skills::BOX; 2], local));
-        Some(index.map_or(SkillHit::Window, |index| SkillHit::Skill(skills[index].id)))
-    }
-
-    /// Each skill's box on screen (for the test driver).
-    pub fn skill_boxes(&self, skills: &[Skill]) -> Vec<(u16, [f32; 4])> {
-        if !self.frame.open || self.frame.minimized {
-            return Vec::new();
-        }
-        skills
-            .iter()
-            .enumerate()
-            .map(|(index, skill)| {
-                let [x, y] = self.frame.at(Self::corner(index));
-                (skill.id, [x, y, skills::BOX, skills::BOX])
-            })
-            .collect()
-    }
-
-    pub fn icons(skills: &[Skill], info: &HashMap<u16, SkillInfo>) -> Vec<String> {
-        skills.iter().filter_map(|skill| info.get(&skill.id).map(skills::icon_path)).collect()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw<'a>(
-        &'a self,
-        layer: &mut Layer<'a>,
-        chrome: &'a Chrome,
-        skill_assets: &'a skills::Assets,
-        icons: &'a HashMap<String, Option<Texture>>,
-        font: &Font,
-        messages: &[String],
-        skills: &[Skill],
-        info: &HashMap<u16, SkillInfo>,
-        pointer: [f32; 2],
-    ) {
-        if !self.frame.open {
-            return;
-        }
-        let frame = &self.frame;
-        frame.draw_title(layer, chrome, messages.get(SKILLS_TITLE).map_or("", String::as_str), pointer);
-        if frame.minimized {
-            return;
-        }
-        let height = Self::height(skills.len()) - TITLE_HEIGHT;
-        layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [SKILL_WIDTH, height]));
-        layer.sprites.push((&chrome.border, frame.at([0.0, TITLE_HEIGHT]), [1.0, height]));
-        layer.sprites.push((&chrome.border, frame.at([SKILL_WIDTH - 1.0, TITLE_HEIGHT]), [1.0, height]));
-        layer.sprites.push((&chrome.border, frame.at([0.0, TITLE_HEIGHT + height - 1.0]), [SKILL_WIDTH, 1.0]));
-        for (index, skill) in skills.iter().enumerate() {
-            let info = info.get(&skill.id);
-            let name = info.map_or_else(|| skill.id.to_string(), |info| info.name.clone());
-            skills::draw_box(layer, skill_assets, icons, font, frame.at(Self::corner(index)), info, &name, skill.level);
-        }
-    }
-}
-
 // ponytail: the official client's own follow rule isn't in data.grf: more than 3 cells away, at most twice a second.
 const FOLLOW_DISTANCE: i32 = 3;
 const FOLLOW_EVERY: Duration = Duration::from_millis(500);
@@ -421,16 +324,5 @@ mod tests {
         assert_eq!(steering.order, None);
         steering.following = false;
         assert!(!steering.should_call([10, 10], [20, 10], now + Duration::from_secs(4)), "Ctrl+T");
-    }
-
-    #[test]
-    fn finds_a_skill_by_its_box() {
-        let mut list = SkillList::default();
-        list.frame.open = true;
-        let skills = [8207, 8221, 8222, 8223, 8224].map(|id| Skill { id, kind: 0, level: 1, sp: 0, range: 0, upgradable: false });
-        let boxes = list.skill_boxes(&skills);
-        let [x, y, w, h] = boxes[4].1;
-        assert_eq!(list.hit([x + w / 2.0, y + h / 2.0], &skills), Some(SkillHit::Skill(8224)));
-        assert_eq!(boxes[4].1[1] - boxes[0].1[1], skills::CELL[1], "the fifth starts the second row");
     }
 }

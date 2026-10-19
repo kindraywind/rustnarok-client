@@ -1509,9 +1509,17 @@ impl App {
                         Some(mercenary::Hit::Dismiss) => game.dismiss_asked = true,
                         _ => {}
                     },
-                    Panel::MercenarySkills => match game.mercenary_skill_list.hit(cursor, &game.mercenary_skills) {
-                        Some(mercenary::SkillHit::Title(title)) => game.mercenary_skill_list.frame.click_title(title),
-                        Some(mercenary::SkillHit::Skill(id)) => game.use_mercenary_skill(id, u16::MAX),
+                    // A press on a row selects it; Use uses the selected skill.
+                    Panel::MercenarySkills => match game.mercenary_skill_list.hit(cursor, &game.mercenary_skills, 0) {
+                        Some(homunculus::SkillHit::Close) => game.mercenary_skill_list.frame.open = false,
+                        Some(homunculus::SkillHit::Row(row)) => game.mercenary_skill_list.selected = game.mercenary_skills.get(row).map(|skill| skill.id),
+                        Some(homunculus::SkillHit::Use) => {
+                            let selected = game.mercenary_skill_list.selected;
+                            if let Some(skill) = game.mercenary_skills.iter().find(|skill| Some(skill.id) == selected && skill.level > 0) {
+                                let id = skill.id;
+                                game.use_mercenary_skill(id, u16::MAX);
+                            }
+                        }
                         _ => {}
                     },
                     Panel::Homunculus => match game.homunculus.as_ref().and_then(|_| game.homunculus_window.hit(cursor)) {
@@ -1535,8 +1543,17 @@ impl App {
                     Panel::HomunculusSkills => {
                         let points = game.homunculus.as_ref().map_or(0, |homunculus| homunculus.skill_points);
                         match game.homunculus_skill_list.hit(cursor, &game.homunculus_skills, points) {
-                            Some(homunculus::SkillHit::Title(title)) => game.homunculus_skill_list.frame.click_title(title),
-                            Some(homunculus::SkillHit::Skill(id)) => game.use_skill(id, u16::MAX),
+                            Some(homunculus::SkillHit::Close) => game.homunculus_skill_list.frame.open = false,
+                            Some(homunculus::SkillHit::Row(row)) => {
+                                game.homunculus_skill_list.selected = game.homunculus_skills.get(row).map(|skill| skill.id);
+                            }
+                            Some(homunculus::SkillHit::Use) => {
+                                let selected = game.homunculus_skill_list.selected;
+                                if let Some(skill) = game.homunculus_skills.iter().find(|skill| Some(skill.id) == selected && skill.level > 0) {
+                                    let id = skill.id;
+                                    game.use_skill(id, u16::MAX);
+                                }
+                            }
                             Some(homunculus::SkillHit::Raise(id)) => {
                                 let _ = game.session.skill_up(id);
                             }
@@ -1817,11 +1834,9 @@ impl App {
             game.cart.frame.drag_to(self.cursor, cart_height);
             game.pet_window.frame.drag_to(self.cursor, pet::PetWindow::height());
             game.mercenary_window.frame.drag_to(self.cursor, mercenary::Window::height());
-            let skills_height = mercenary::SkillList::height(game.mercenary_skills.len());
-            game.mercenary_skill_list.frame.drag_to(self.cursor, skills_height);
+            game.mercenary_skill_list.drag_to(self.cursor, game.mercenary_skills.len());
             game.homunculus_window.frame.drag_to(self.cursor, homunculus::Window::height());
-            let homunculus_skills_height = homunculus::SkillList::height(game.homunculus_skills.len());
-            game.homunculus_skill_list.frame.drag_to(self.cursor, homunculus_skills_height);
+            game.homunculus_skill_list.drag_to(self.cursor, game.homunculus_skills.len());
             game.talks.drag_to(self.cursor);
             if let Some(setup) = &mut game.friend_setup {
                 setup.frame.drag_to(self.cursor, whisper::FriendSetup::height());
@@ -2356,6 +2371,8 @@ impl App {
                 _ if game.quest_window.covers(self.cursor) => game.quest_window.scroll_by(rows, &game.quests, &self.quest_texts),
                 Some(Panel::Inventory) => game.inventory.wheel(rows),
                 Some(Panel::Cart) => game.cart.wheel(rows),
+                Some(Panel::HomunculusSkills) => game.homunculus_skill_list.scroll_by(rows, game.homunculus_skills.len()),
+                Some(Panel::MercenarySkills) => game.mercenary_skill_list.scroll_by(rows, game.mercenary_skills.len()),
                 Some(Panel::Skills) => {
                     let jobs = skills::tabs(&self.skill_trees, game.me.job, &game.skills);
                     let sheet =
@@ -2600,9 +2617,9 @@ impl App {
                     | game.cart.frame.drop_drag()
                     | game.pet_window.frame.drop_drag()
                     | game.mercenary_window.frame.drop_drag()
-                    | game.mercenary_skill_list.frame.drop_drag()
+                    | game.mercenary_skill_list.drop_drag()
                     | game.homunculus_window.frame.drop_drag()
-                    | game.homunculus_skill_list.frame.drop_drag()
+                    | game.homunculus_skill_list.drop_drag()
                     | game.storage.frame.drop_drag()
                     | game.storage.categories.iter_mut().fold(false, |any, category| category.frame.drop_drag() | category.stop_resize() | any)
                     | game.inventory.frame.drop_drag()
@@ -3208,21 +3225,20 @@ impl App {
                 Panel::Homunculus if game.homunculus.is_some() && game.homunculus_window.hit(cursor) == Some(homunculus::Hit::Window) => {
                     game.homunculus_window.frame.start_drag(cursor)
                 }
-                Panel::HomunculusSkills
-                    if game.homunculus_skill_list.hit(
-                        cursor,
-                        &game.homunculus_skills,
-                        game.homunculus.as_ref().map_or(0, |homunculus| homunculus.skill_points),
-                    ) == Some(homunculus::SkillHit::Title(TitleHit::Title)) =>
-                {
-                    game.homunculus_skill_list.frame.start_drag(cursor)
+                Panel::HomunculusSkills => {
+                    let points = game.homunculus.as_ref().map_or(0, |homunculus| homunculus.skill_points);
+                    match game.homunculus_skill_list.hit(cursor, &game.homunculus_skills, points) {
+                        Some(homunculus::SkillHit::Title) => game.homunculus_skill_list.frame.start_drag(cursor),
+                        Some(homunculus::SkillHit::Resize) => game.homunculus_skill_list.start_resize(cursor),
+                        _ => {}
+                    }
                 }
                 Panel::Mercenary if game.mercenary_window.hit(cursor) == Some(mercenary::Hit::Window) => game.mercenary_window.frame.start_drag(cursor),
-                Panel::MercenarySkills
-                    if game.mercenary_skill_list.hit(cursor, &game.mercenary_skills) == Some(mercenary::SkillHit::Title(TitleHit::Title)) =>
-                {
-                    game.mercenary_skill_list.frame.start_drag(cursor)
-                }
+                Panel::MercenarySkills => match game.mercenary_skill_list.hit(cursor, &game.mercenary_skills, 0) {
+                    Some(homunculus::SkillHit::Title) => game.mercenary_skill_list.frame.start_drag(cursor),
+                    Some(homunculus::SkillHit::Resize) => game.mercenary_skill_list.start_resize(cursor),
+                    _ => {}
+                },
                 Panel::Equipment if game.equipment.hit(cursor, &game.inventory.items) == Some(equipment::Hit::Title(TitleHit::Title)) => {
                     game.equipment.frame.start_drag(cursor)
                 }
