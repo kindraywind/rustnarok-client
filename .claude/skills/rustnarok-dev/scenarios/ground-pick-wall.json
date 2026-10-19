@@ -1,0 +1,15 @@
+{
+  "about": "The game's ground pick (issue #587): flat triangles per GAT cell and no step faces. At geffen 118,40 at the first camera, the pointer at (496, 360) is on the face of the raised ground just north of the player, looking at the camera. The game's pick finds no cell there: the no-walk cursor, and a click sends nothing. The client used to pick 118,41 on that face and walk there.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp geffen 118 40"}, {"settle": 1500},
+    {"expect": {"state": {"player.cell": [118, 40]}}},
+    {"move": [496, 360]}, {"wait": 300},
+    {"shot": "ground-pick-wall", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"expect": {"state": {"cursor": "NoWalk"}}},
+    {"click_on": {"point": [496, 360]}},
+    {"wait_for": {"sent": "0x035f", "ms": 800}, "none": true},
+    {"expect": {"state": {"player.cell": [118, 40]}}}
+  ]
+}

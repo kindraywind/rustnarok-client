@@ -552,6 +552,8 @@ pub enum MapEvent {
     OtherEquipment(Equipped),
     /// The pet window's automatic feeding box, as the server says.
     PetAutoFeed(bool),
+    /// The homunculus window's automatic feeding box, as the server says.
+    HomunculusAutoFeed(bool),
     /// The Show Equipment box: the server's answer to a click, or the saved state at a map change.
     ShowEquipment {
         shown: bool,

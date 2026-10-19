@@ -79,33 +79,123 @@ pub struct Camera {
     pub ground: f32,
 }
 
-/// The cell where a ray from `eye` first meets the ground (each cell's corner heights blended), up to the far plane.
-/// None past the map's edge.
-// ponytail: steps of a quarter cell, then halving; exact per-cell tests if cliffs ever pick wrong.
+/// No hit yet, and the reach of every box: the game's "far".
+const PICK_FAR: f32 = 999_999.0;
+
+/// The cell a ray from `eye` meets, as the game picks it: in map-centred GAT space (X = x − W·5, Z = z − H·5 with W, H
+/// half the GAT's size, Y = −y so heights are the GAT's own), two flat triangles per GAT cell and no step faces, the
+/// cells listed by a five-level quadtree (`pick_leaves`), the lowest t winning (the first tested on a tie). Only
+/// in-map cells; None when nothing is hit.
 fn ground_hit(gat: &Gat, eye: Vector, direction: Vector) -> Option<[i32; 2]> {
     let direction = normalize(direction);
-    let at = |t: f32| [0, 1, 2].map(|axis| eye[axis] + direction[axis] * t);
-    let under = |point: Vector| point[1] < -gat.height_at([point[0] / CELL, point[2] / CELL]);
-    let step = CELL / 4.0;
-    let mut t = 0.0;
-    while t < FAR {
-        if under(at(t + step)) {
-            let (mut above, mut below) = (t, t + step);
-            for _ in 0..12 {
-                let middle = (above + below) / 2.0;
-                if under(at(middle)) {
-                    below = middle;
-                } else {
-                    above = middle;
+    let [half_w, half_h] = [gat.width as i32 / 2, gat.height as i32 / 2];
+    let origin = [eye[0] - (half_w * 5) as f32, -eye[1], eye[2] - (half_h * 5) as f32];
+    let direction = [direction[0], -direction[1], direction[2]];
+    let mut leaves = Vec::new();
+    let [lo_x, lo_z] = [half_w, half_h].map(|half| -((half / 2) * 10) as f32);
+    let [hi_x, hi_z] = [half_w, half_h].map(|half| ((half - half / 2) * 10 - 1) as f32);
+    pick_leaves([lo_x, -PICK_FAR, lo_z], [hi_x, PICK_FAR, hi_z], 0, origin, direction, &mut leaves);
+    let column = |x: f32| (x / 5.0).floor() as i32 + 2 * (gat.width as i32 / 4);
+    let row = |z: f32| (z / 5.0).floor() as i32 + 2 * (gat.height as i32 / 4);
+    let (mut best, mut picked) = (PICK_FAR, None);
+    for (lo, hi) in leaves {
+        for cy in row(lo[2])..=row(hi[2]) {
+            for cx in column(lo[0])..=column(hi[0]) {
+                if cx < 0 || cy < 0 || cx as usize >= gat.width || cy as usize >= gat.height {
+                    continue;
+                }
+                let t = cell_t(gat, [half_w, half_h], [cx, cy], origin, direction);
+                if best > t {
+                    (best, picked) = (t, Some([cx, cy]));
                 }
             }
-            let hit = at(below);
-            let cell = [(hit[0] / CELL).floor() as i32, (hit[2] / CELL).floor() as i32];
-            return (cell[0] >= 0 && cell[1] >= 0 && (cell[0] as usize) < gat.width && (cell[1] as usize) < gat.height).then_some(cell);
         }
-        t += step;
     }
-    None
+    picked.filter(|_| best < PICK_FAR)
+}
+
+/// The quadtree's leaves a ray passes, in order: each node's four children (west-south, east-south, west-north,
+/// east-north), five levels down from the root, which itself isn't tested.
+fn pick_leaves(lo: Vector, hi: Vector, depth: u32, origin: Vector, direction: Vector, leaves: &mut Vec<(Vector, Vector)>) {
+    let mid = [(lo[0] + hi[0]) * 0.5, 0.0, (lo[2] + hi[2]) * 0.5];
+    let children = [
+        ([lo[0], lo[1], lo[2]], [mid[0], hi[1], mid[2]]),
+        ([mid[0], lo[1], lo[2]], [hi[0], hi[1], mid[2]]),
+        ([lo[0], lo[1], mid[2]], [mid[0], hi[1], hi[2]]),
+        ([mid[0], lo[1], mid[2]], [hi[0], hi[1], hi[2]]),
+    ];
+    for (lo, hi) in children {
+        if !ray_meets_box(lo, hi, origin, direction) {
+            continue;
+        }
+        if depth + 1 == 5 {
+            leaves.push((lo, hi));
+        } else {
+            pick_leaves(lo, hi, depth + 1, origin, direction, leaves);
+        }
+    }
+}
+
+/// The game's slab test of a ray against a box. An axis the ray is parallel to (|d| ≤ 1e-5) passes only through the
+/// middle 70 % of the box.
+fn ray_meets_box(lo: Vector, hi: Vector, origin: Vector, direction: Vector) -> bool {
+    let (mut near, mut far) = (-PICK_FAR, PICK_FAR);
+    for axis in 0..3 {
+        let centre = (hi[axis] + lo[axis]) * 0.5;
+        let half = hi[axis] - centre;
+        let relative = centre - origin[axis];
+        if direction[axis].abs() > 1e-5 {
+            let inverse = 1.0 / direction[axis];
+            let (t1, t2) = ((relative + half) * inverse, (relative - half) * inverse);
+            near = near.max(t1.min(t2));
+            far = far.min(t1.max(t2));
+            if near > far || far < 0.0 {
+                return false;
+            }
+        } else if relative.abs() > 0.7 * half {
+            return false;
+        }
+    }
+    if near > 0.0 { near <= PICK_FAR } else { far <= PICK_FAR }
+}
+
+/// Where a ray meets a GAT cell's two triangles, (SW, SE, NW) then (SE, NE, NW): the lower t, PICK_FAR for none.
+fn cell_t(gat: &Gat, [half_w, half_h]: [i32; 2], [cx, cy]: [i32; 2], origin: Vector, direction: Vector) -> f32 {
+    let [south_west, south_east, north_west, north_east] = gat.cells[cy as usize * gat.width + cx as usize].0;
+    let [x0, x1] = [(cx - half_w) * 5, (cx + 1 - half_w) * 5].map(|value| value as f32);
+    let [z0, z1] = [(cy - half_h) * 5, (cy + 1 - half_h) * 5].map(|value| value as f32);
+    let [sw, se, nw, ne] = [[x0, south_west, z0], [x1, south_east, z0], [x0, north_west, z1], [x1, north_east, z1]];
+    let mut t = PICK_FAR;
+    if let Some(hit) = triangle_t(origin, direction, sw, se, nw) {
+        t = hit.min(PICK_FAR);
+    }
+    if let Some(hit) = triangle_t(origin, direction, se, ne, nw) {
+        t = hit.min(t);
+    }
+    t
+}
+
+/// The game's ray–triangle test, in its order of operations; no t ≥ 0 test and no far limit.
+fn triangle_t(origin: Vector, direction: Vector, v0: Vector, v1: Vector, v2: Vector) -> Option<f32> {
+    let gat_dot = |a: Vector, b: Vector| (a[1] * b[1] + a[0] * b[0]) + a[2] * b[2];
+    let (edge1, edge2) = (subtract(v1, v0), subtract(v2, v0));
+    let p = cross(direction, edge2);
+    let determinant = gat_dot(p, edge1);
+    if -1e-5 < determinant && determinant < 1e-5 {
+        return None;
+    }
+    let inverse = 1.0 / determinant;
+    let s = subtract(origin, v0);
+    let u = gat_dot(s, p) * inverse;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let q = cross(s, edge1);
+    let v = gat_dot(q, direction) * inverse;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    Some(gat_dot(q, edge2) * inverse)
 }
 
 /// A frame's camera: view-projection plus the basis billboards and picking need.
@@ -365,8 +455,8 @@ struct MeshOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec
 
 // Effects stand in front of what they play on, pulled toward the camera.
 @vertex fn effect_vs(@location(0) feet: vec3<f32>, @location(1) offset: vec2<f32>, @location(2) uv: vec2<f32>,
-                     @location(3) tint: vec4<f32>) -> SpriteOutput {
-    var out = sprite_vertex(feet, offset, uv, tint, vec2(0.0));
+                     @location(3) tint: vec4<f32>, @location(4) pixel: vec2<f32>) -> SpriteOutput {
+    var out = sprite_vertex(feet, offset, uv, tint, pixel);
     out.position.z = max(out.position.z - 0.01 * out.position.w, 0.0);
     out.depth = max(out.depth - 0.01, 0.0);
     return out;
@@ -418,8 +508,9 @@ fn sprite_depth(feet: f32, below: f32, [slope, bias, nudge]: [f32; 3]) -> f32 {
 }
 
 /// An effect's quad: texture, where it plays, its corners' offsets in sprite pixels (top left, top right, bottom right,
-/// bottom left; y down), a color to multiply it by, and whether it adds to what's behind instead of covering it.
-pub type EffectQuad<'a> = (&'a Texture, Vector, [[f32; 2]; 4], [f32; 4], bool);
+/// bottom left; y down), a color to multiply it by, whether it adds to what's behind instead of covering it, and whether
+/// it's an STR's: `STR_RISE` screen pixels up, drawn last over everything with no depth test.
+pub type EffectQuad<'a> = (&'a Texture, Vector, [[f32; 2]; 4], [f32; 4], bool, bool);
 
 /// An effect shape in the world: texture, triangles (position, texture coordinates, color) and whether it adds on.
 pub type EffectMesh<'a> = (&'a Texture, Vec<MeshVertex>, bool);
@@ -436,6 +527,8 @@ pub struct World {
     pub gat: Gat,
     /// One RGB light per GAT cell, from the ground lightmaps.
     cell_light: Vec<[f32; 3]>,
+    /// The ground tiles' corner heights (south-west, south-east, north-west, north-east; up is +), and tiles a row.
+    tile_heights: (Vec<[f32; 4]>, usize),
     /// RSM 2 instances whose tracks play, and the buffer they're posed into each frame.
     animated: Vec<Animated>,
     animated_buffer: Option<wgpu::Buffer>,
@@ -466,6 +559,8 @@ pub struct World {
     soft_pipeline: wgpu::RenderPipeline,
     /// Effects blended over, and added on; the same for effect shapes.
     effect_pipelines: [wgpu::RenderPipeline; 2],
+    /// STRs: no depth test, over everything.
+    str_pipelines: [wgpu::RenderPipeline; 2],
     mesh_pipelines: [wgpu::RenderPipeline; 2],
     depth: RefCell<Option<([u32; 2], wgpu::TextureView)>>,
 }
@@ -574,36 +669,44 @@ impl World {
             bind_group_layouts: &[Some(&globals_layout), Some(&gpu.texture_layout), Some(&gpu.texture_layout)],
             immediate_size: 0,
         });
-        let pipeline =
-            |entry: &str, fragment: &str, buffer: wgpu::VertexBufferLayout, blend: Option<wgpu::BlendState>, depth_write: bool| -> wgpu::RenderPipeline {
-                gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some(&format!("{entry}_vs")),
-                        compilation_options: Default::default(),
-                        buffers: &[buffer],
-                    },
-                    primitive: Default::default(),
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: DEPTH_FORMAT,
-                        depth_write_enabled: Some(depth_write),
-                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                        stencil: Default::default(),
-                        bias: Default::default(),
-                    }),
-                    multisample: Default::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some(fragment),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState { format: gpu.config.format, blend, write_mask: wgpu::ColorWrites::ALL })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            };
+        let pipeline_compared = |entry: &str,
+                                 fragment: &str,
+                                 buffer: wgpu::VertexBufferLayout,
+                                 blend: Option<wgpu::BlendState>,
+                                 depth_write: bool,
+                                 compare: wgpu::CompareFunction|
+         -> wgpu::RenderPipeline {
+            gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some(&format!("{entry}_vs")),
+                    compilation_options: Default::default(),
+                    buffers: &[buffer],
+                },
+                primitive: Default::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(depth_write),
+                    depth_compare: Some(compare),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fragment),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState { format: gpu.config.format, blend, write_mask: wgpu::ColorWrites::ALL })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipeline = |entry: &str, fragment: &str, buffer: wgpu::VertexBufferLayout, blend: Option<wgpu::BlendState>, depth_write: bool| {
+            pipeline_compared(entry, fragment, buffer, blend, depth_write, wgpu::CompareFunction::LessEqual)
+        };
         const GROUND_ATTRIBUTES: [wgpu::VertexAttribute; 5] =
             wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x2, 4 => Float32x4];
         let ground_layout = || wgpu::VertexBufferLayout {
@@ -631,6 +734,10 @@ impl World {
         let effect_pipelines = [
             pipeline("effect", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false),
             pipeline("effect", "sprite_fs", sprite_buffer_layout(), Some(additive), false),
+        ];
+        let str_pipelines = [
+            pipeline_compared("effect", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false, wgpu::CompareFunction::Always),
+            pipeline_compared("effect", "sprite_fs", sprite_buffer_layout(), Some(additive), false, wgpu::CompareFunction::Always),
         ];
         let mesh_buffer_layout =
             || wgpu::VertexBufferLayout { array_stride: size_of::<MeshVertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &MESH_ATTRIBUTES };
@@ -677,6 +784,7 @@ impl World {
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
         let cell_light = cell_lights(&gnd, &gat);
+        let tile_heights = (gnd.cubes.iter().map(|cube| cube.heights.map(|height| -height)).collect(), gnd.width);
         Ok(Self {
             animated,
             animated_buffer,
@@ -684,6 +792,7 @@ impl World {
             ambient,
             gat,
             cell_light,
+            tile_heights,
             textures,
             lightmap,
             vertices,
@@ -702,6 +811,7 @@ impl World {
             shadow_pipeline,
             soft_pipeline,
             effect_pipelines,
+            str_pipelines,
             mesh_pipelines,
             depth: RefCell::new(None),
         })
@@ -718,10 +828,24 @@ impl World {
         [(cell[0] + 0.5) * CELL, -height, (cell[1] + 0.5) * CELL]
     }
 
+    /// A quad over a GAT cell at the corner heights of the whole ground tile it's a quarter of (as the ground cursor
+    /// draws it): corners south-west, south-east, north-west, north-east.
+    pub fn cell_quad(&self, cell: [i32; 2]) -> Option<[Vector; 4]> {
+        cell_quad(&self.tile_heights.0, self.tile_heights.1, cell)
+    }
+
     /// The map light on a unit drawn at `feet`: that GAT cell's triple, or full bright off the map.
     pub fn sprite_light(&self, feet: Vector) -> [f32; 3] {
         light_at(&self.cell_light, self.gat.width, self.gat.height, feet)
     }
+}
+
+/// A GAT cell's quad at the corner heights of its ground tile (`tiles`, `wide` a row), or None off the map.
+fn cell_quad(tiles: &[[f32; 4]], wide: usize, [x, y]: [i32; 2]) -> Option<[Vector; 4]> {
+    let tile = usize::try_from(y / 2).ok()? * wide + usize::try_from(x / 2).ok().filter(|&column| column < wide)?;
+    let [south_west, south_east, north_west, north_east] = *tiles.get(tile)?;
+    let (x0, x1, z0, z1) = (x as f32 * CELL, (x + 1) as f32 * CELL, y as f32 * CELL, (y + 1) as f32 * CELL);
+    (x >= 0 && y >= 0).then_some([[x0, south_west, z0], [x1, south_east, z0], [x0, north_west, z1], [x1, north_east, z1]])
 }
 
 /// The cell and its four edge neighbours. Light changes in a step at the cell border, with no blend.
@@ -892,8 +1016,9 @@ impl WorldPass for WorldFrame<'_> {
         let effect_vertices: Vec<SpriteVertex> = self
             .effects
             .iter()
-            .flat_map(|&(_, feet, corners, tint, _)| {
-                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel: [0.0; 2], plane: [0.0; 3] };
+            .flat_map(|&(_, feet, corners, tint, _, on_top)| {
+                let pixel = if on_top { [0.0, -crate::effects::STR_RISE] } else { [0.0; 2] };
+                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel, plane: [0.0; 3] };
                 let [top_left, top_right, bottom_right, bottom_left] =
                     [corner(0, [0.0, 0.0]), corner(1, [1.0, 0.0]), corner(2, [1.0, 1.0]), corner(3, [0.0, 1.0])];
                 [top_left, top_right, bottom_left, bottom_left, top_right, bottom_right]
@@ -1001,11 +1126,15 @@ impl WorldPass for WorldFrame<'_> {
         }
         if let Some(buffer) = &effect_buffer {
             pass.set_vertex_buffer(0, buffer.slice(..));
-            for (index, (texture, .., additive)) in self.effects.iter().enumerate() {
-                let first = index as u32 * 6;
-                pass.set_pipeline(&world.effect_pipelines[usize::from(*additive)]);
-                pass.set_bind_group(1, texture.bind_group(), &[]);
-                pass.draw(first..first + 6, 0..1);
+            // The STRs last, in the order they came, over everything.
+            for top in [false, true] {
+                for (index, (texture, .., additive, on_top)) in self.effects.iter().enumerate().filter(|(_, quad)| quad.5 == top) {
+                    let first = index as u32 * 6;
+                    let pipelines = if *on_top { &world.str_pipelines } else { &world.effect_pipelines };
+                    pass.set_pipeline(&pipelines[usize::from(*additive)]);
+                    pass.set_bind_group(1, texture.bind_group(), &[]);
+                    pass.draw(first..first + 6, 0..1);
+                }
             }
         }
     }
@@ -1410,30 +1539,77 @@ fn heap_sink<T>(heap: &mut [usize], items: &[T], key: impl Fn(&T) -> i32, from: 
     heap_rise(heap, items, key, from, at);
 }
 
-/// Whether a player at `from` can hit `to` with `range` (rathena's `check_distance_client`: circular, and a cell longer on straight lines).
-pub fn in_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
-    let (dx, dy) = ((from[0] - to[0]) as f32, (from[1] - to[1]) as f32);
-    ((dx * dx + dy * dy).sqrt() - 0.1) as i32 <= range
+/// Where a click on `target` walks from `from` (the cell the player is drawn on): the target when it's `free` (in the
+/// map, walkable, not blocked by a unit) and `reachable` (the path search); otherwise the game's fallback line. Along
+/// the major axis (x on a tie) the major coordinate steps from the click's toward `from`'s, giving up on reaching it;
+/// the minor one is `minor_click + (m − m_click) · d_minor / d_major`, truncated. At each step the first free cell of
+/// the 3×3, in a fixed order, is the only candidate: the goal when reachable, else no walk.
+pub fn walk_goal(target: [i32; 2], from: [i32; 2], free: impl Fn([i32; 2]) -> bool, reachable: impl Fn([i32; 2]) -> bool) -> Option<[i32; 2]> {
+    const AROUND: [[i32; 2]; 9] = [[0, 0], [1, 0], [1, 1], [1, -1], [-1, 0], [-1, 1], [-1, -1], [0, 1], [0, -1]];
+    if free(target) && reachable(target) {
+        return Some(target);
+    }
+    let delta = [from[0] - target[0], from[1] - target[1]];
+    let major = usize::from(delta[0].abs() < delta[1].abs());
+    let minor = 1 - major;
+    if delta[major] == 0 {
+        return None;
+    }
+    let step = delta[major].signum();
+    let mut m = target[major];
+    while m != from[major] {
+        let mut at = [0; 2];
+        at[major] = m;
+        at[minor] = target[minor] + (m - target[major]) * delta[minor] / delta[major];
+        if let Some(cell) = AROUND.iter().map(|around| [at[0] + around[0], at[1] + around[1]]).find(|&cell| free(cell)) {
+            return reachable(cell).then_some(cell);
+        }
+        m += step;
+    }
+    None
 }
 
 /// RO's direction index (0 south, then clockwise: south-west, west, ... south-east) for a step.
-/// Where a walk aimed at `target` from `from` goes: the target when `ok` takes it; otherwise, stepping from the
-/// target back toward `from` along a straight line, the first cell `ok` takes in the 3×3 around each step, in a fixed
-/// order. None once the line reaches `from`'s row or column.
-// ponytail: the target's own 3×3 is tried even when it's on `from`'s row or column.
-pub fn walk_goal(target: [i32; 2], from: [i32; 2], ok: impl Fn([i32; 2]) -> bool) -> Option<[i32; 2]> {
-    const AROUND: [[i32; 2]; 9] = [[0, 0], [1, 0], [1, 1], [1, -1], [-1, 0], [-1, 1], [-1, -1], [0, 1], [0, -1]];
-    let steps = (target[0] - from[0]).abs().max((target[1] - from[1]).abs());
-    for step in 0..steps {
-        let at = [0, 1].map(|axis| target[axis] + ((from[axis] - target[axis]) as f32 * step as f32 / steps as f32).round() as i32);
-        if step > 0 && (at[0] == from[0] || at[1] == from[1]) {
-            return None;
-        }
-        if let Some(cell) = AROUND.iter().map(|around| [at[0] + around[0], at[1] + around[1]]).find(|&cell| ok(cell)) {
-            return Some(cell);
-        }
+/// A drawn position (a fractional cell from `Actor::position`, cell centres on whole numbers) as a point on the
+/// ground plane in world units: (p + 0.5) × 5 on each axis.
+// ponytail: measured from the map's corner; the game measures from its centre, which gives the same cells on even-sized
+// maps (all of them) and can differ only by f32 rounding exactly on a cell edge.
+pub fn drawn_point(position: [f32; 2]) -> [f32; 2] {
+    position.map(|value| (value + 0.5) * CELL)
+}
+
+/// The cell a ground point is over.
+pub fn floor_cell(point: [f32; 2]) -> [i32; 2] {
+    point.map(|value| (value / CELL).floor() as i32)
+}
+
+/// How far an attack reaches across between two ground points: the flat distance, then with the difference of the
+/// ground heights under them.
+pub fn attack_distance(gat: &Gat, from: [f32; 2], to: [f32; 2]) -> f32 {
+    let [dx, dz] = [to[0] - from[0], to[1] - from[1]];
+    let flat = (dx * dx + dz * dz).sqrt();
+    let dy = gat.height_at(to.map(|value| value / CELL)) - gat.height_at(from.map(|value| value / CELL));
+    (flat * flat + dy * dy).sqrt()
+}
+
+/// In reach to attack at `range` cells: range × 5 + 5.5 world units or less (a NaN is out).
+pub fn in_attack_reach(distance: f32, range: i32) -> bool {
+    (range * 5) as f32 + 5.5 >= distance
+}
+
+/// Where a chase walks: range × 5 world units short of the aim point, on the line from the player's point; off the
+/// map or not walkable, the first walkable neighbour (the `pickup_spot` order) of that cell, else the last one tried.
+pub fn chase_cell(gat: &Gat, from: [f32; 2], aim: [f32; 2], range: i32) -> [i32; 2] {
+    const NEXT: [[i32; 2]; 8] = [[1, 0], [1, 1], [1, -1], [-1, 0], [-1, 1], [-1, -1], [0, 1], [0, -1]];
+    let away = [from[0] - aim[0], from[1] - aim[1]];
+    let inverse = 1.0 / (away[1] * away[1] + away[0] * away[0]).sqrt();
+    let reach = (range * 5) as f32;
+    let cell = floor_cell([aim[0] + away[0] * inverse * reach, aim[1] + away[1] * inverse * reach]);
+    if gat.walkable(cell) {
+        return cell;
     }
-    None
+    let tried = NEXT.map(|[x, y]| [cell[0] + x, cell[1] + y]);
+    tried.into_iter().find(|&next| gat.walkable(next)).unwrap_or(tried[7])
 }
 
 pub fn direction(step: [i32; 2]) -> u8 {
@@ -1452,6 +1628,41 @@ pub fn direction(step: [i32; 2]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chases_to_range_short_of_the_target() {
+        let flat = |wall: Option<[i32; 2]>| Gat {
+            width: 64,
+            height: 64,
+            cells: (0..64 * 64).map(|index| ([0.0; 4], u8::from(Some([index % 64, index / 64]) == wall))).collect(),
+        };
+        let open = flat(None);
+        let chase = |gat: &Gat, from: [f32; 2], aim: [f32; 2], range| chase_cell(gat, drawn_point(from), drawn_point(aim), range);
+        let target = [40.0, 32.0];
+        assert_eq!(chase(&open, [34.0, 32.0], target, 1), [39, 32]);
+        assert_eq!(chase(&open, [35.0, 27.0], target, 1), [39, 31]);
+        assert_eq!(chase(&open, [34.0, 30.0], target, 3), [37, 31]);
+        assert_eq!(chase(&open, [29.0, 25.0], target, 9), [32, 27]);
+        // The cell is a wall: its first neighbour, the target's own cell.
+        assert_eq!(chase(&flat(Some([39, 32])), [34.0, 32.0], target, 1), [40, 32]);
+        // A slow target drawn halfway to (41, 33).
+        assert_eq!(chase(&open, [34.0, 32.0], [40.5, 32.5], 1), [40, 32]);
+    }
+
+    #[test]
+    fn reaches_across_the_drawn_distance_with_height() {
+        let gat = |rise: f32| Gat { width: 16, height: 16, cells: (0..256).map(|index| ([if index % 16 >= 3 { rise } else { 0.0 }; 4], 0)).collect() };
+        let reach =
+            |gat: &Gat, to: [f32; 2], range| in_attack_reach(attack_distance(gat, drawn_point([1.0, 1.0]), drawn_point([1.0 + to[0], 1.0 + to[1]])), range);
+        let flat = gat(0.0);
+        assert!(reach(&flat, [2.0, 0.0], 1));
+        assert!(!reach(&flat, [2.0, 1.0], 1));
+        // Two cells straight with the target's ground higher: 3.2 units in, 3.3 out.
+        assert!(reach(&gat(-3.2), [2.0, 0.0], 1));
+        assert!(!reach(&gat(-3.3), [2.0, 0.0], 1));
+        assert!(reach(&flat, [10.0, 0.0], 9) && reach(&flat, [7.0, 7.0], 9) && !reach(&flat, [7.0, 8.0], 9));
+        assert!(!in_attack_reach(f32::NAN, 9));
+    }
 
     #[test]
     fn places_an_rsm_2_vertex_without_centring() {
@@ -1483,18 +1694,48 @@ mod tests {
         // Open ground from 0 to 19 each way, with a wall from x 10 to 12 for y 10 to 12.
         let wall = |[x, y]: [i32; 2]| (10..=12).contains(&x) && (10..=12).contains(&y);
         let open = |cell: [i32; 2]| cell.iter().all(|value| (0..20).contains(value)) && !wall(cell);
-        assert_eq!(walk_goal([5, 9], [0, 0], open), Some([5, 9]));
+        let any = |_: [i32; 2]| true;
+        assert_eq!(walk_goal([5, 9], [0, 0], open, any), Some([5, 9]));
         // A click on the wall's edge: its own 3×3, (1,0) first.
-        assert_eq!(walk_goal([12, 11], [0, 0], open), Some([13, 11]));
+        assert_eq!(walk_goal([12, 11], [0, 0], open, any), Some([13, 11]));
         // The middle of the wall has nothing open around it: one step back toward the player, (1,-1) is.
-        assert_eq!(walk_goal([11, 11], [0, 0], open), Some([11, 9]));
-        // An island that can't be reached: everything from x 15 on; steps back until it's left.
-        let reachable = |cell: [i32; 2]| open(cell) && cell[0] < 15;
-        assert_eq!(walk_goal([18, 5], [0, 0], reachable), Some([14, 4]));
-        // A line that reaches the player's row gives up.
+        assert_eq!(walk_goal([11, 11], [0, 0], open, any), Some([11, 9]));
+        // An island that can't be reached (x from 15): the first free cell is the only candidate, so nothing.
+        assert_eq!(walk_goal([18, 5], [0, 0], open, |cell: [i32; 2]| cell[0] < 15), None);
+        // Nothing free on the line: it gives up only on reaching the player's major coordinate.
         let nothing = |_: [i32; 2]| false;
-        assert_eq!(walk_goal([18, 5], [0, 5], nothing), None);
-        assert_eq!(walk_goal([3, 3], [3, 3], open), None);
+        assert_eq!(walk_goal([18, 5], [0, 5], nothing, any), None);
+        // The player's own cell: no path to itself.
+        let path = |from: [i32; 2]| move |cell: [i32; 2]| cell != from;
+        assert_eq!(walk_goal([3, 3], [3, 3], open, path([3, 3])), None);
+    }
+
+    #[test]
+    fn falls_back_along_the_games_line() {
+        fn grid(width: i32, wall: impl Fn([i32; 2]) -> bool) -> impl Fn([i32; 2]) -> bool {
+            move |cell: [i32; 2]| cell.iter().all(|value| (0..width).contains(value)) && !wall(cell)
+        }
+        // Walls x 9–11 × y 9–11: from (20, 15), a click on (10, 10) → (12, 10) (the minor truncates).
+        let free = grid(40, |[x, y]: [i32; 2]| (9..=11).contains(&x) && (9..=11).contains(&y));
+        let open = Gat { width: 40, height: 40, cells: (0..1600).map(|index| ([0.0; 4], u8::from(!free([index % 40, index / 40])))).collect() };
+        let reach = |from: [i32; 2]| move |cell: [i32; 2]| find_path(&open, from, cell).is_some();
+        assert_eq!(walk_goal([10, 10], [20, 15], &free, reach([20, 15])), Some([12, 10]));
+        // Walls x 10–14 × y 13–17: from (3, 15), a click on (12, 15) on the player's row goes on along it → (9, 15).
+        let free = grid(30, |[x, y]: [i32; 2]| (10..=14).contains(&x) && (13..=17).contains(&y));
+        assert_eq!(walk_goal([12, 15], [3, 15], free, |_: [i32; 2]| true), Some([9, 15]));
+        // Walls (6, 5), (7, 4), (7, 5), (7, 6): from (5, 5), a click on (6, 5): the candidate is the player's own cell.
+        let free = grid(20, |cell: [i32; 2]| [[6, 5], [7, 4], [7, 5], [7, 6]].contains(&cell));
+        assert_eq!(walk_goal([6, 5], [5, 5], free, |cell: [i32; 2]| cell != [5, 5]), None);
+        // A wall on x = 10 for every y: from (5, 15), a click on (12, 18): the first free cell is behind the wall.
+        let free = grid(30, |[x, _]: [i32; 2]| x == 10);
+        assert_eq!(walk_goal([12, 18], [5, 15], free, |cell: [i32; 2]| cell[0] < 10), None);
+        // 149 nodes: from (20, 20), (67, 20) is a goal and (68, 20) gives nothing.
+        let field = Gat { width: 100, height: 100, cells: vec![([0.0; 4], 0); 10_000] };
+        let free = |cell: [i32; 2]| field.walkable(cell);
+        let reach = |cell: [i32; 2]| find_path(&field, [20, 20], cell).is_some();
+        assert_eq!(walk_goal([67, 20], [20, 20], free, reach), Some([67, 20]));
+        assert_eq!(walk_goal([68, 20], [20, 20], free, reach), None);
+        assert_eq!(walk_goal([20, 20], [20, 20], free, reach), None);
     }
 
     #[test]
@@ -1510,15 +1751,6 @@ mod tests {
         let (offset, pixel) = sprite_corner([-5.0, -5.0], [10.0, 10.0], 90.0, [0.0, 0.0]);
         assert!(close(offset, [5.0, -5.0]), "{offset:?}");
         assert!(close(pixel, [1.5, 0.5]), "{pixel:?}");
-    }
-
-    #[test]
-    fn melee_reach_matches_the_server() {
-        assert!(in_reach([5, 5], [5, 5], 1));
-        assert!(in_reach([5, 5], [6, 6], 1));
-        assert!(in_reach([5, 5], [7, 5], 1));
-        assert!(!in_reach([5, 5], [7, 6], 1));
-        assert!(in_reach([0, 0], [10, 1], 9));
     }
 
     #[test]
@@ -1594,6 +1826,15 @@ mod tests {
     }
 
     #[test]
+    fn the_ground_cursor_takes_its_tiles_heights() {
+        // Two tiles a row: cell (3, 1) is the north-east quarter of tile (1, 0) but keeps that tile's whole slope.
+        let tiles = [[0.0; 4], [1.0, 2.0, 3.0, 4.0], [0.0; 4], [0.0; 4]];
+        let quad = cell_quad(&tiles, 2, [3, 1]).unwrap();
+        assert_eq!(quad, [[15.0, 1.0, 5.0], [20.0, 2.0, 5.0], [15.0, 3.0, 10.0], [20.0, 4.0, 10.0]]);
+        assert!(cell_quad(&tiles, 2, [4, 0]).is_none() && cell_quad(&tiles, 2, [0, 4]).is_none() && cell_quad(&tiles, 2, [-1, 0]).is_none());
+    }
+
+    #[test]
     fn paths_are_the_servers() {
         // The server's own search gives these (rows listed bottom first): on open ground the diagonal steps come
         // first, and round a wall the ties fall as its heap leaves them.
@@ -1643,36 +1884,76 @@ mod tests {
         // East is to the right, north is up the screen.
         assert!(view.project([110.0, 0.0, 100.0]).unwrap()[0] > 0.5);
         assert!(view.project([100.0, 0.0, 110.0]).unwrap()[1] < 0.5);
-        // The middle of the screen picks the target's cell on flat ground.
+        // A pixel right of the middle picks the target's cell on flat ground. The middle column itself is a ray parallel
+        // to x at turn 0, and like the game's it picks nothing there for this cell.
         let flat = Gat { width: 40, height: 40, cells: vec![([0.0; 4], 0); 1600] };
-        assert_eq!(view.pick_ground([0.5, 0.5], &flat), Some([20, 20]));
+        assert_eq!(view.pick_ground([0.5 + 1.0 / 1024.0, 0.5], &flat), Some([20, 20]));
+        assert_eq!(view.pick_ground([0.5, 0.5], &flat), None);
     }
 
     #[test]
     fn picks_the_ground_drawn_under_the_pointer() {
-        // Ten by ten cells of flat ground; a pit at (5, 5), ten deep (negative heights are up); a block at (5, 6),
-        // twenty high.
-        let ground = |block: bool| {
-            let mut gat = Gat { width: 10, height: 10, cells: vec![([0.0; 4], 0); 100] };
-            gat.cells[5 * 10 + 5].0 = [10.0; 4];
-            if block {
-                gat.cells[6 * 10 + 5].0 = [-20.0; 4];
-            }
-            gat
+        let flat = |width: usize, height: usize| Gat { width, height, cells: vec![([0.0; 4], 0); width * height] };
+        // 20 × 20, cell (10, 10) raised 10: a ray that reaches its rising face passes under it.
+        let mut raised = flat(20, 20);
+        raised.cells[10 * 20 + 10].0 = [-10.0; 4];
+        let slant = [0.05, -1.0, 1.0];
+        assert_eq!(ground_hit(&raised, [51.0, 33.0, 20.0], slant), None);
+        assert_eq!(ground_hit(&raised, [51.0, 37.0, 20.0], slant), Some([10, 11]));
+        assert_eq!(ground_hit(&flat(20, 20), [51.0, 33.0, 20.0], slant), Some([10, 10]));
+        assert_eq!(ground_hit(&flat(20, 20), [51.0, 37.0, 20.0], slant), Some([10, 11]));
+        // From outside the map: the row y = 0 raised 40, hit from beyond the south edge.
+        let mut wall = flat(20, 20);
+        for x in 0..20 {
+            wall.cells[x].0 = [-40.0; 4];
+        }
+        assert_eq!(ground_hit(&wall, [52.5, 60.0, -30.0], slant), Some([11, 6]));
+        // A ray parallel to x: only the middle 70 % of each quadtree box passes.
+        let picked: Vec<i32> = (0..20).filter(|&x| ground_hit(&flat(20, 20), [x as f32 * 5.0 + 2.5, 30.0, 22.0], [0.0, -1.0, 1.0]) == Some([x, 10])).collect();
+        assert_eq!(picked, [1, 3, 6, 11, 16]);
+        assert!((0..20).all(|x| ground_hit(&flat(20, 20), [x as f32 * 5.0 + 2.5, 30.0, 22.0], [0.01, -1.0, 1.0]) == Some([x, 10])));
+        // An odd half width lists one cell west of the box.
+        assert_eq!(ground_hit(&flat(42, 40), [1.25, 30.0, 22.0], [0.3, -1.0, 1.0]), None);
+        assert_eq!(ground_hit(&flat(40, 40), [1.25, 30.0, 22.0], [0.3, -1.0, 1.0]), Some([2, 10]));
+    }
+
+    #[test]
+    fn the_quadtree_picks_as_testing_every_cell() {
+        let gat = Gat { width: 40, height: 40, cells: vec![([0.0; 4], 0); 1600] };
+        let half = [20, 20];
+        let mut seed = 12345u32;
+        let mut random = || {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            (seed >> 8) as f32 / (1u32 << 24) as f32
         };
-        let (flat, gat) = (ground(false), ground(true));
-        let toward = |from: Vector, to: Vector| subtract(to, from);
-        let eye = [25.0, 50.0, -20.0];
-        // Flat ground: where the ray meets y = 0.
-        assert_eq!(ground_hit(&flat, eye, toward(eye, [37.0, 0.0, 41.0])), Some([7, 8]));
-        // The block stops a ray bound for the cell behind it, at its near side.
-        assert_eq!(ground_hit(&flat, eye, toward(eye, [25.0, 0.0, 35.0])), Some([5, 7]));
-        assert_eq!(ground_hit(&gat, eye, toward(eye, [25.0, 0.0, 35.0])), Some([5, 6]));
-        // A steep ray over the pit reaches its floor.
-        let above = [27.5, 100.0, 20.0];
-        assert_eq!(ground_hit(&gat, above, toward(above, [27.5, -10.0, 27.5])), Some([5, 5]));
-        // Off the map's edge: none.
-        assert_eq!(ground_hit(&gat, eye, toward(eye, [25.0, 0.0, -10.0])), None);
+        for _ in 0..500 {
+            let eye = [random() * 200.0, 20.0 + random() * 60.0, random() * 200.0];
+            let direction = normalize([random() - 0.5, -0.3 - random(), random() - 0.5]);
+            let origin = [eye[0] - 100.0, -eye[1], eye[2] - 100.0];
+            let flipped = [direction[0], -direction[1], direction[2]];
+            let (mut best, mut every) = (PICK_FAR, None);
+            for cy in 0..40 {
+                for cx in 0..40 {
+                    let t = cell_t(&gat, half, [cx, cy], origin, flipped);
+                    if best > t {
+                        (best, every) = (t, Some([cx, cy]));
+                    }
+                }
+            }
+            assert_eq!(ground_hit(&gat, eye, direction), every.filter(|_| best < PICK_FAR), "{eye:?} {direction:?}");
+        }
+    }
+
+    #[test]
+    fn a_cell_is_two_flat_triangles() {
+        // Corners (SW, SE, NW, NE) = (0, 0, 0, −10): flat in the first triangle, 5 up at three quarters across both ways.
+        let gat = Gat { width: 2, height: 2, cells: vec![([0.0, 0.0, 0.0, -10.0], 0); 4] };
+        let height_at = |fx: f32, fz: f32| {
+            let origin = [(fx - 1.0) * 5.0, -100.0, (fz - 1.0) * 5.0];
+            100.0 - cell_t(&gat, [1, 1], [0, 0], origin, [0.0, 1.0, 0.0])
+        };
+        assert!(height_at(0.25, 0.25).abs() < 1e-4);
+        assert!((height_at(0.75, 0.75) - 5.0).abs() < 1e-4);
     }
 
     use rustnarok_client::map::{Cube, Surface};

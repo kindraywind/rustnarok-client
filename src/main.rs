@@ -110,6 +110,7 @@ mod pick_list;
 mod picking;
 mod pickup;
 mod pin;
+mod prims;
 mod quest;
 mod quest_notice;
 mod quest_tracker;
@@ -734,6 +735,8 @@ const TALK_REFUSED: usize = 4027;
 const SKILL_ACTION: usize = 12;
 /// How far over the ground the magic square under a ground cast floats, so the ground doesn't cover it.
 const CAST_SQUARE_LIFT: f32 = 0.2;
+/// The ground cursor's tint (0x6600ffaa): green-blue, 40% opaque.
+const GROUND_CURSOR_TINT: [f32; 4] = [0.0, 1.0, 170.0 / 255.0, 102.0 / 255.0];
 /// The navigation arrow sits this far over the head; routes the player starts may use every service.
 // ponytail: the client's arrow height and its services for a route picked by hand are estimates.
 const NAVI_ARROW_RISE: f32 = 12.0;
@@ -955,9 +958,9 @@ fn attack_goal(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u1
 }
 
 /// Skill units on the ground a plain attack breaks (rathena's `battle_check_target` takes them): Ice Wall, Blast Mine,
-/// Claymore Trap, Reverberation, Poem of Netherworld and the four Windhawk traps.
+/// Claymore Trap, Reverberation, Poem of Netherworld, Wall of Thorns and the four Windhawk traps.
 fn attackable_ground_unit(kind: u32) -> bool {
-    matches!(kind, 0x8d | 0x8f | 0x98 | 0xda | 0xde | 0x5174..=0x5177)
+    matches!(kind, 0x8d | 0x8f | 0x98 | 0xda | 0xde | 0xe6 | 0x5174..=0x5177)
 }
 
 fn warp_pick_rect(view: &world::View, feet: world::Vector) -> Option<[f32; 4]> {
@@ -1053,6 +1056,15 @@ fn pitch_range(indoor: bool, ctrl: bool) -> [f32; 2] {
 }
 /// "Disconnected from the server."
 const DISCONNECTED_MESSAGE: usize = 3;
+/// "Failed to Connect to Server."
+const CONNECT_FAILED: usize = 1;
+/// The wait box's lines: "Please wait...", and the one for making and deleting characters.
+const WAIT_MESSAGE: usize = 122;
+const MAKING_MESSAGE: usize = 123;
+/// In the wait box (at the login window's place): the text's area, and Cancel.
+const WAIT_TEXT: [f32; 2] = [10.0, 22.0];
+const WAIT_TEXT_WIDTH: f32 = 260.0;
+const WAIT_CANCEL: [f32; 2] = [119.0, 95.0];
 /// The loading screen's progress bar.
 const LOADING_BAR: [f32; 2] = [240.0, 15.0];
 
@@ -1103,15 +1115,16 @@ struct Game {
     auto_walk: Option<[u16; 2]>,
     /// Walking by the mouse: when the last walk was sent and where, how many were sent, whether the held button
     /// keeps walking (and when it last tried), and the last press (when, and whether the pointer moved since).
-    last_move: Option<Instant>,
+    last_move: Option<u64>,
     walk_goal: Option<[i32; 2]>,
     walks: u32,
     walk_held: bool,
-    last_walk_try: Option<Instant>,
-    /// A walk asked for during the player's own swing, sent when the swing ends.
-    walk_after_swing: Option<[i32; 2]>,
+    last_walk_try: Option<u64>,
+    stored_walk: StoredWalk,
     /// The client's skill table: names, levels to pick, ranges by level.
     skill_info: HashMap<u16, SkillInfo>,
+    /// Big monsters: the jobs standing on a radius of r cells (`lua::location_radii`).
+    location_radii: HashMap<u16, f32>,
     press_mark: Option<(Instant, [f32; 2], bool)>,
     auto_say: Option<String>,
     /// The blob under every character.
@@ -1182,6 +1195,9 @@ struct Game {
     progress: ProgressBar,
     /// The magic squares under ground skills being cast, by caster (None = the player); each goes with its cast.
     cast_squares: HashMap<Option<u32>, cast_square::Square>,
+    /// The ground cursor (Alt+Home, on at the start): whether it's on, and the cell it shows.
+    ground_cursor: bool,
+    ground_mark: Option<[i32; 2]>,
     /// Units that may use their next combo skill (None = the player): when the window opened and how long it lasts.
     combos: HashMap<Option<u32>, (Instant, Duration)>,
     /// Units locked together by Blade Stop or Cursed Circle: source and target.
@@ -1417,7 +1433,14 @@ struct Game {
     /// The attack asked for with the mouse, and when the last attack packet went out; riding a mount that can't
     /// attack.
     attack: Option<Attack>,
-    last_attack: Option<Instant>,
+    last_attack: Option<u64>,
+    /// The attack as the last frame left it, for a 0x0139 after it ended.
+    attack_was: Option<Attack>,
+    /// The cell the last walk toward an attack asked for (`chase_walk`), when that was asked (whole ms), and the
+    /// player's drawn action and whether it was dead at the last frame (`clears_walk_cell`).
+    walk_cell: Option<[i32; 2]>,
+    last_chase_walk: Option<u64>,
+    player_motion: (usize, bool),
     riding: bool,
     /// ChangeChatMode (/bm): the chat line stays closed and letter keys are shortcuts.
     chat_mode: battle_mode::Mode,
@@ -1483,8 +1506,9 @@ struct Game {
     homunculus_window: homunculus::Window,
     homunculus_skill_list: homunculus::SkillList,
     homunculus_steering: mercenary::Steering,
-    homunculus_rename: Option<String>,
-    homunculus_hunger: Option<u16>,
+    homunculus_asked: Option<HomunculusAsked>,
+    /// The hunger the starving line was last said at.
+    homunculus_warned: Option<u16>,
     /// The player's elemental: its unit, HP, max HP, SP and max SP.
     elemental: Option<(u32, [u32; 4])>,
     /// Chat rooms over their owners' heads (by owner), and where their signs were last drawn (room ID, password).
@@ -2084,8 +2108,6 @@ enum Asked {
     Mail(u16),
     /// An inventory item, into the material window.
     Material(u16),
-    /// The homunculus's new name.
-    HomunculusName,
     /// A Talkie Box's message, before it's placed at the cell.
     TalkieBox {
         level: u16,
@@ -2238,6 +2260,15 @@ enum QueueAsked {
     Lobby(String, Instant),
 }
 
+/// A homunculus question waiting for OK: feed it, delete it, rename it (to this), or why a name was turned down.
+enum HomunculusAsked {
+    Feed,
+    Delete,
+    Rename(String),
+    // ponytail: drawn as the question box; the game's has OK alone.
+    Refused(usize),
+}
+
 /// A pet question waiting for OK: feed it, or rename it (to this).
 enum PetAsked {
     Feed,
@@ -2352,6 +2383,8 @@ enum BoxQuestion {
     Notice(usize),
     /// The master hands the guild to this member (2924, both %s their name).
     GuildLeader { account: u32, character: u32, name: String },
+    /// A plain notice in these words, OK only (a quest link to a quest no list has).
+    Said(String),
 }
 
 impl BoxQuestion {
@@ -2364,6 +2397,7 @@ impl BoxQuestion {
             Self::LastRow => party::IN_THE_LAST_ROW,
             Self::Notice(message) => *message,
             Self::GuildLeader { .. } => GUILD_LEADER_ASKS,
+            Self::Said(_) => 0,
         }
     }
 
@@ -2372,13 +2406,14 @@ impl BoxQuestion {
         let template = messages.get(self.message()).map_or("", String::as_str);
         match self {
             Self::GuildLeader { name, .. } => rustnarok_client::messages::fill(template, &[name, name]),
+            Self::Said(words) => words.clone(),
             _ => template.to_owned(),
         }
     }
 
     /// Whether it asks (OK and Cancel), else it tells (OK alone).
     fn asks(&self) -> bool {
-        !matches!(self, Self::OnlyLeader | Self::LastRow | Self::Notice(_))
+        !matches!(self, Self::OnlyLeader | Self::LastRow | Self::Notice(_) | Self::Said(_))
     }
 }
 
@@ -2510,8 +2545,9 @@ enum Scene {
         selected: usize,
     },
     Login,
-    /// A request is in flight; the inner scene stays on screen without reacting.
-    Waiting(Box<Scene>),
+    /// A request is in flight (`Wait` says which: its box and time limit); the inner scene stays on screen without
+    /// reacting.
+    Waiting(Wait, Box<Scene>),
     ServerSelect {
         accepted: LoginAccepted,
         selected: usize,
@@ -2533,6 +2569,60 @@ enum Scene {
         then: Then,
         back: Box<Scene>,
     },
+    /// The client closes (a box's OK led here).
+    Quit,
+}
+
+/// What a request waits for: the box over it and how long before the client gives up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Wait {
+    /// The login's answer.
+    Login,
+    /// The char server, after picking a server (or back from a map).
+    CharServer,
+    /// Game Start, until the char server names the map server.
+    Start,
+    /// The map server, from connecting to entering the map.
+    Map,
+    /// Making or deleting a character.
+    Making,
+    /// Another char server request (a deletion's reserve or cancel, a slot move, a rename): no box.
+    Quiet,
+    /// A pick on the server list (a scene of its own, timed from when it opened).
+    ServerList,
+}
+
+/// How a wait goes on after so long.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum WaitEnd {
+    Keep,
+    /// "Failed to Connect to Server." and the login window, as Cancel does.
+    GiveUp,
+    /// "Failed to Connect to Server.", then the client closes.
+    Quit,
+}
+
+impl Wait {
+    /// The box's line: "Please wait..." (122), or 123 for making and deleting; none for the quiet ones.
+    fn message(self) -> Option<usize> {
+        match self {
+            Wait::Login | Wait::CharServer | Wait::Start | Wait::Map => Some(WAIT_MESSAGE),
+            Wait::Making => Some(MAKING_MESSAGE),
+            Wait::Quiet | Wait::ServerList => None,
+        }
+    }
+
+    /// The limits: 15 s for the login's answer and the map server, 80 s for the char server, and 15 s to pick a server
+    /// before the client closes.
+    fn end(self, elapsed: Duration) -> WaitEnd {
+        let ms = elapsed.as_millis();
+        match self {
+            Wait::Login | Wait::Map if ms >= 15_000 => WaitEnd::GiveUp,
+            Wait::CharServer if ms >= 80_000 => WaitEnd::GiveUp,
+            Wait::ServerList if ms >= 15_000 => WaitEnd::Quit,
+            _ => WaitEnd::Keep,
+        }
+    }
 }
 
 /// Esc on a screen before a map: the login window, the service list and the server list ask to quit; character
@@ -2542,7 +2632,17 @@ fn pre_map_escape(scene: &Scene) -> Option<(usize, Then)> {
     match scene {
         Scene::Login | Scene::Connections { .. } | Scene::ServerSelect { .. } => Some((QUIT_MESSAGE, Then::Quit)),
         Scene::CharSelect(_) => Some((RETURN_TO_LOGIN_MESSAGE, Then::BackToLogin)),
+        // Making a character, Esc asks to quit (Return and the X go back).
+        Scene::CharMake(..) => Some((QUIT_MESSAGE, Then::Quit)),
         _ => None,
+    }
+}
+
+/// What a refused character's box closes onto: character select, not the make window.
+fn after_make_refused(scene: Scene) -> Scene {
+    match scene {
+        Scene::CharMake(_, select) => Scene::CharSelect(select),
+        scene => scene,
     }
 }
 
@@ -2567,14 +2667,14 @@ impl Scene {
     /// The scene drawn as the base layer, under any message box or wait.
     fn base(&self) -> &Scene {
         match self {
-            Scene::Waiting(inner) | Scene::Message(_, inner) | Scene::Confirm(_, _, inner) | Scene::Prompt { back: inner, .. } => inner.base(),
+            Scene::Waiting(_, inner) | Scene::Message(_, inner) | Scene::Confirm(_, _, inner) | Scene::Prompt { back: inner, .. } => inner.base(),
             scene => scene,
         }
     }
 
     fn base_mut(&mut self) -> &mut Scene {
         match self {
-            Scene::Waiting(inner) | Scene::Message(_, inner) | Scene::Confirm(_, _, inner) | Scene::Prompt { back: inner, .. } => inner.base_mut(),
+            Scene::Waiting(_, inner) | Scene::Message(_, inner) | Scene::Confirm(_, _, inner) | Scene::Prompt { back: inner, .. } => inner.base_mut(),
             scene => scene,
         }
     }
@@ -2631,6 +2731,8 @@ struct Assets {
     link_line: Texture,
     /// The magic square under a ground cast.
     magic_target: Option<Texture>,
+    /// The ground cursor's square.
+    ground_grid: Option<Texture>,
     aura: aura::Textures,
     escape: escape::Assets,
     options: options::Assets,
@@ -2750,6 +2852,7 @@ impl Assets {
             url_line: gpu.solid([links::URL_COLOR[0], links::URL_COLOR[1], links::URL_COLOR[2], 0xFF]),
             link_line: gpu.solid([links::NPC_COLOR[0], links::NPC_COLOR[1], links::NPC_COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
+            ground_grid: gpu.try_load_texture(grf, "data\\texture\\grid.tga", false).ok(),
             aura: aura::Textures::load(gpu, grf),
             escape: escape::Assets::load(gpu, grf),
             options: options::Assets::load(gpu, grf),
@@ -3092,12 +3195,19 @@ fn deal_box_position() -> [f32; 2] {
     [((width - 640.0) / 2.0 + 185.0).floor(), (300.0 * height / 480.0).floor()]
 }
 
-fn dialog_position(dialog: &Texture) -> [f32; 2] {
-    dialog_position_of(dialog.size)
+fn dialog_position(_dialog: &Texture) -> [f32; 2] {
+    dialog_position_of(screen())
 }
 
-fn dialog_position_of(size: [f32; 2]) -> [f32; 2] {
-    [((screen()[0] - size[0]) / 2.0).floor(), ((screen()[1] - size[1]) / 1.5).floor()]
+/// Message boxes (280×120), before a map and on one: (W − 640) / 2 + 185 across, (H − 480) / 2 + 180 down; (377, 324)
+/// at 1024×768.
+fn dialog_position_of(screen: [f32; 2]) -> [f32; 2] {
+    [((screen[0] - 640.0) / 2.0 + 185.0).floor(), ((screen[1] - 480.0) / 2.0 + 180.0).floor()]
+}
+
+/// The service and server lists: centred across, two thirds of the free height down.
+fn service_position(window: &Texture) -> [f32; 2] {
+    [((screen()[0] - window.size[0]) / 2.0).floor(), ((screen()[1] - window.size[1]) / 1.5).floor()]
 }
 
 /// An attack asked for with the mouse.
@@ -3109,10 +3219,30 @@ struct Attack {
     held: bool,
     /// The attack packet went out.
     sent: bool,
-    /// A walk toward it went out (to where), and when a cell in reach was last looked for.
-    chased: bool,
-    chase_cell: Option<[i32; 2]>,
-    last_chase: Option<Instant>,
+    /// Fixed at the click (`slow_target`): a fast target is chased toward where it's walking to, every CHASE_GAP_MS;
+    /// a slow one toward where it's drawn, every ATTACK_GAP_MS.
+    fast: bool,
+    /// Ice Wall or a trap (a skill unit on the ground): its own reach and chase (`ground_unit_reach`), and a 0x0139
+    /// ends it.
+    ground: bool,
+}
+
+/// The attack a 0x0139 brings back on `target`, not sent, fast and slow swapped (anything but fast becomes fast).
+/// The one under way keeps its Ctrl and held state; one that had ended comes back the way its click left it: one
+/// swing, or kept up with Ctrl or /noctrl.
+fn rearmed(attack: Option<Attack>, was: Option<Attack>, target: u32) -> Attack {
+    let (continuous, held) = match (attack, was) {
+        (Some(attack), _) => (attack.continuous, attack.held),
+        (None, Some(was)) => (was.continuous, false),
+        (None, None) => (true, false),
+    };
+    let fast = !attack.or(was).is_some_and(|attack| attack.fast);
+    Attack { held, fast, ..Attack::new(target, continuous) }
+}
+
+/// Whether a 0x0139 for `target` ends the attack instead of bringing it back: one on Ice Wall or a trap.
+fn too_far_ends(attack: Option<Attack>, was: Option<Attack>, target: u32) -> bool {
+    attack.or(was).is_some_and(|attack| attack.ground && attack.target == target)
 }
 
 /// What letting go of the button does to an attack.
@@ -3125,7 +3255,7 @@ enum Release {
 
 impl Attack {
     fn new(target: u32, continuous: bool) -> Self {
-        Self { target, continuous, held: true, sent: false, chased: false, chase_cell: None, last_chase: None }
+        Self { target, continuous, held: true, sent: false, fast: true, ground: false }
     }
 
     fn release(&mut self) -> Release {
@@ -3142,9 +3272,10 @@ impl Attack {
     }
 }
 
-/// An attack packet goes no sooner than this after the last; out of reach, a cell in reach is looked for this often.
-const ATTACK_GAP: Duration = Duration::from_millis(1200);
-const CHASE_GAP: Duration = Duration::from_millis(450);
+/// A chase walk goes more than this many whole ms after the last one: toward a fast target, a slow one. An attack
+/// packet goes more than ATTACK_GAP_MS after the last one too.
+const CHASE_GAP_MS: u64 = 450;
+const ATTACK_GAP_MS: u64 = 1200;
 /// "Attacks and skills cannot be used when your Weight is over 90%.", "Unable to attack while riding."
 const OVERWEIGHT: usize = 307;
 const RIDING_NO_ATTACK: usize = 1885;
@@ -3154,14 +3285,97 @@ const ALL_RIDING: u16 = 613;
 const NO_CTRL_ON: usize = 717;
 const NO_CTRL_OFF: usize = 718;
 
-/// In reach to attack: at most range × 5 + 5.5 world units away (a cell is 5).
-fn in_attack_reach(from: [i32; 2], to: [i32; 2], range: i32) -> bool {
-    let [dx, dy] = [(from[0] - to[0]) as f32, (from[1] - to[1]) as f32];
-    dx.hypot(dy) * 5.0 <= range as f32 * 5.0 + 5.5
+/// What the player is doing, as far as a pending attack goes (`Game::player_motion`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PlayerMotion {
+    Stand,
+    Walk,
+    Flinch,
+    Cast,
+    /// A skill's motion.
+    Skill,
+    /// Its own swing, the pickup, sitting, dead.
+    Other,
 }
 
-fn may_attack(last: Option<Instant>, now: Instant) -> bool {
-    last.is_none_or(|last| now.saturating_duration_since(last) >= ATTACK_GAP)
+/// Whether a pending attack is worked on (reach, chase, send) in this motion; otherwise it waits. Standing, walking
+/// or flinching; casting too for Sage, Professor and Baby Sage; casting and skill motions too for Gunslinger, Ninja,
+/// Taekwon and every job after. One on a ground skill unit: in skill motions too, never casting.
+fn attack_works(motion: PlayerMotion, job: u16, ground: bool) -> bool {
+    let later = matches!(job, 24 | 25 | 4046..=4360);
+    match motion {
+        PlayerMotion::Stand | PlayerMotion::Walk | PlayerMotion::Flinch => true,
+        PlayerMotion::Cast => !ground && (later || matches!(job, 16 | 4017 | 4039)),
+        PlayerMotion::Skill => ground || later,
+        PlayerMotion::Other => false,
+    }
+}
+
+/// What an attack in reach does now.
+#[derive(Debug, PartialEq)]
+enum AttackSend {
+    Send,
+    Wait,
+    /// A single swing let go of before it reached, in reach too soon after the last attack packet: dropped.
+    Drop,
+}
+
+/// The attack packet goes more than ATTACK_GAP_MS whole ms after the last one. Sooner, a single swing let go of is
+/// dropped and anything else waits.
+fn attack_send(attack: &Attack, last: Option<u64>, now: u64) -> AttackSend {
+    if last.is_none_or(|last| now > last + ATTACK_GAP_MS) {
+        AttackSend::Send
+    } else if !attack.continuous && !attack.held {
+        AttackSend::Drop
+    } else {
+        AttackSend::Wait
+    }
+}
+
+/// In reach of Ice Wall or a trap: max(5, attack range) cells, flat, from the player's drawn point to the unit's cell
+/// centre.
+fn ground_unit_reach(from: [f32; 2], centre: [f32; 2], attack_range: i32) -> (bool, i32) {
+    let range = attack_range.max(5);
+    let [dx, dz] = [centre[0] - from[0], centre[1] - from[1]];
+    ((range * 5) as f32 + 5.5 >= (dx * dx + dz * dz).sqrt(), range)
+}
+
+/// What a world press does to what's pending: whether it ends the attack, and whether it drops a pending skill or
+/// pickup. One pending action at a time: an attack click replaces the attack and drops the others, a pickup click or
+/// a ground walk ends the attack (the pickup or walk then takes the place of a pending skill or pickup itself). A
+/// double press and an NPC click leave everything.
+fn press_ends(click: &WorldClick, double: bool) -> (bool, bool) {
+    match click {
+        _ if double => (false, false),
+        WorldClick::Talk(_) => (false, false),
+        WorldClick::Attack(_) => (true, true),
+        WorldClick::Swing(_) | WorldClick::PickUp(_) | WorldClick::Warp | WorldClick::Ground => (true, false),
+    }
+}
+
+/// A target is slow when 4/3 of the player's ms per cell (whole ms, truncated) is less than its own; otherwise fast.
+fn slow_target(own_ms: f32, target_ms: f32) -> bool {
+    (4 * own_ms as u32) / 3 < target_ms as u32
+}
+
+/// One frame of a chase out of reach: the cell to ask a walk to, when it isn't the walk cell already and more than
+/// `gap` whole ms passed since the last chase walk. It becomes the walk cell, asked for at `now`, whether or not the
+/// move limit then lets it out.
+fn chase_walk(cell: [i32; 2], walk_cell: &mut Option<[i32; 2]>, last_chase: &mut Option<u64>, gap: u64, now: u64) -> Option<[i32; 2]> {
+    if *walk_cell == Some(cell) || last_chase.is_some_and(|last| now <= last + gap) {
+        return None;
+    }
+    (*walk_cell, *last_chase) = (Some(cell), Some(now));
+    Some(cell)
+}
+
+/// Whether the player's own motion changed in a way that clears the walk cell: anything but starting a walk (a stop,
+/// a swing, a flinch, sitting or standing up, a cast, the pickup, dying), and nothing while dead. Standing ready or
+/// not is the same motion.
+fn clears_walk_cell(before: (usize, bool), now: usize) -> bool {
+    let standing = |action| if action == actor::READY { actor::IDLE } else { action };
+    let (action, dead) = before;
+    !dead && standing(action) != standing(now) && now != actor::WALK
 }
 
 /// Why an attack can't start: weight at 90% or more, riding a mount that can't attack.
@@ -3195,19 +3409,67 @@ enum AimAt {
     Player,
 }
 
-/// A skill's range in cells at `level`: its range by level (1 where the table has none) plus what the skill list adds
-/// to it at the learned level; the list's range when the table has nothing.
-fn skill_range(per_level: &[u16], level: u16, learned: u16, listed: u16) -> f32 {
+/// A skill's range in cells at `level`: r1 + listed − r2, with r1 its range at `level` (1 where `AttackRange` has
+/// none) and r2 its range at the learned level, capped at `MaxLv` when the entry has one (0 where none, or at level
+/// 0). Listed + 1 when the entry has no ranges.
+fn skill_range(per_level: &[u16], max_lv: Option<u16>, level: u16, learned: u16, listed: u16) -> f32 {
     if per_level.is_empty() {
-        return f32::from(listed.max(1));
+        return f32::from(listed) + 1.0;
     }
-    let at = |level: u16| per_level.get(usize::from(level.max(1)) - 1).map_or(1.0, |&range| f32::from(range));
-    at(level) + f32::from(listed) - at(learned)
+    let at = |level: u16| usize::from(level).checked_sub(1).and_then(|index| per_level.get(index)).map(|&range| f32::from(range));
+    let learned = max_lv.map_or(learned, |max| learned.min(max));
+    at(level).unwrap_or(1.0) + f32::from(listed) - at(learned).unwrap_or(0.0)
 }
 
-/// Whether a skill reaches from `from` to `to` (cells, drawn positions): within range × 5 + 5.5 world units.
-fn skill_in_reach(from: [f32; 2], to: [f32; 2], range: f32) -> bool {
-    f32::hypot(to[0] - from[0], to[1] - from[1]) * world::CELL <= range * world::CELL + 5.5
+/// In reach at `range` cells: range × 5 + 5.5 world units or more than the distance (a NaN is out).
+fn skill_in_reach(distance: f32, range: f32) -> bool {
+    range * world::CELL + 5.5 >= distance
+}
+
+/// Jobs 1181 and 1284 count as big monsters whatever their radius.
+fn big_job(job: u16) -> bool {
+    matches!(job, 1181 | 1284)
+}
+
+/// The reach distance to a big monster: 20 units less for jobs 1181 and 1284, 4 × (r + 1) less for one standing on a
+/// radius of r > 0 cells, never below 0.
+fn reach_to(distance: f32, job: u16, radius: f32) -> f32 {
+    let cut = if big_job(job) {
+        20.0
+    } else if radius > 0.0 {
+        4.0 * (radius + 1.0)
+    } else {
+        0.0
+    };
+    (distance - cut).max(0.0)
+}
+
+/// How a unit skill's walk toward a big monster shifts the cell it sends, s cells by the angle θ (degrees, from the
+/// player toward the target).
+fn shift_by_angle(theta: f32, s: i32) -> [i32; 2] {
+    match theta {
+        theta if theta < 25.0 => [0, s],
+        theta if theta < 70.0 => [s, s],
+        theta if theta < 115.0 => [s, 0],
+        theta if theta < 160.0 => [s, -s],
+        theta if theta < 205.0 => [0, -s],
+        theta if theta < 250.0 => [-s, s],
+        theta if theta < 295.0 => [-s, 0],
+        theta if theta < 340.0 => [-s, -s],
+        _ => [0, s],
+    }
+}
+
+/// The cell a unit skill's walk sends toward a big monster at `aim` from `from` (ground points): shifted by
+/// `shift_by_angle` with s = 5 for jobs 1181 and 1284, else the radius; other targets' cells as they are.
+fn big_walk_cell(cell: [i32; 2], job: u16, radius: f32, from: [f32; 2], aim: [f32; 2]) -> [i32; 2] {
+    let s = if big_job(job) { 5 } else { radius as i32 };
+    if s <= 0 {
+        return cell;
+    }
+    let theta = (aim[0] - from[0]).atan2(-(aim[1] - from[1])).to_degrees().rem_euclid(360.0);
+    let [dx, dy] = shift_by_angle(theta, s);
+    [cell[0] + dx, cell[1] + dy]
 }
 
 /// Whether a press while aiming takes the unit: a monster with Shift up and another player with Shift down, the other
@@ -3335,8 +3597,8 @@ const NO_MAGNIFIER: usize = 2735;
 
 /// What a left click on the world does (`Game::world_click`).
 enum WorldClick {
-    /// A warp portal's cell.
-    Warp([i32; 2]),
+    /// A warp portal: a press on it is a ground press.
+    Warp,
     Talk(u32),
     Attack(u32),
     Swing(u32),
@@ -3344,20 +3606,71 @@ enum WorldClick {
     Ground,
 }
 
-/// CZ_REQUEST_MOVE goes no sooner than this after the last one; a walk asked for sooner is dropped. The held button
-/// tries again this often.
-const MOVE_GAP: Duration = Duration::from_millis(300);
+/// CZ_REQUEST_MOVE goes only more than this many whole milliseconds after the last one; a walk asked for sooner is
+/// dropped. The held button tries again as often.
+const MOVE_GAP_MS: u64 = 300;
 /// Two presses this close, the pointer not moved at all between them, make a double press.
 const DOUBLE_PRESS: Duration = Duration::from_millis(500);
 
-fn may_move(last: Option<Instant>, now: Instant) -> bool {
-    last.is_none_or(|last| now.saturating_duration_since(last) >= MOVE_GAP)
+/// The start of the whole-ms clock (`whole_ms`), set as the client starts.
+static START: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+
+/// Whole milliseconds of a monotonic clock, as the walk timers and walks count them.
+fn whole_ms(at: Instant) -> u64 {
+    at.saturating_duration_since(*START).as_millis() as u64
 }
 
-/// Whether the held button walks toward the pointer now: held, nothing pending (an item being picked up), and
-/// MOVE_GAP since the last try.
-fn follows_pointer(held: bool, pending: bool, last_try: Option<Instant>, now: Instant) -> bool {
-    held && !pending && last_try.is_none_or(|last| now.saturating_duration_since(last) > MOVE_GAP)
+/// Whether a walk may go out at `now` (whole ms): more than MOVE_GAP_MS after the last one.
+fn may_move(last: Option<u64>, now: u64) -> bool {
+    last.is_none_or(|last| now > last + MOVE_GAP_MS)
+}
+
+/// Whether the held button walks toward the pointer now: held, nothing pending (an item being picked up), and more
+/// than MOVE_GAP_MS whole milliseconds since the last try.
+fn follows_pointer(held: bool, pending: bool, last_try: Option<u64>, now: u64) -> bool {
+    held && !pending && last_try.is_none_or(|last| now > last + MOVE_GAP_MS)
+}
+
+/// A walk goal clicked while the player is busy (`Actor::busy`: a swing, the pickup, a skill's motion, sitting), kept
+/// until that ends and then sent as it is, through the MOVE_GAP_MS rule. A map change clears it.
+#[derive(Default)]
+struct StoredWalk {
+    goal: Option<[i32; 2]>,
+    was_busy: bool,
+}
+
+impl StoredWalk {
+    /// A click found `goal`: it ends the pending pickup or skill, then is kept while busy (a later one replaces it).
+    /// The goal to send now, if not busy.
+    fn click<T>(&mut self, goal: [i32; 2], busy: bool, pending: &mut Option<T>) -> Option<[i32; 2]> {
+        *pending = None;
+        self.goal = busy.then_some(goal);
+        (!busy).then_some(goal)
+    }
+
+    /// Once a frame: the kept goal when the player has just stopped being busy, unless it died.
+    fn frame(&mut self, busy: bool, dead: bool) -> Option<[i32; 2]> {
+        let ended = std::mem::replace(&mut self.was_busy, busy) && !busy;
+        if ended && !dead { self.goal.take() } else { None }
+    }
+}
+
+/// The left button as the world reads it: once a frame, as the game polls it. A press is the button down now and up
+/// at the last read; `due` is a press since then that no window took. A press and release between two reads does
+/// nothing in the world.
+#[derive(Default)]
+struct ButtonRead {
+    was_down: bool,
+    due: bool,
+}
+
+impl ButtonRead {
+    /// This frame's read: whether the world takes a press now.
+    fn read(&mut self, down: bool) -> bool {
+        let pressed = down && !self.was_down && self.due;
+        (self.was_down, self.due) = (down, false);
+        pressed
+    }
 }
 
 /// A press now, after the last one counted (when, where, and whether the pointer moved off since): whether it's a
@@ -3368,11 +3681,34 @@ fn press_pair(last: Option<(Instant, [f32; 2], bool)>, now: Instant, cursor: [f3
     (double, (!double).then_some((now, cursor, false)))
 }
 
-/// Whether the button held down after a double press on the ground goes on following the pointer: as after a first
-/// press, not with Ctrl or Shift, nor sitting.
-// ponytail: only when the double press was on the ground.
-fn double_holds(ctrl: bool, shift: bool, sitting: bool) -> bool {
-    !ctrl && !shift && !sitting
+/// What a press on the ground (or a warp) or a held try does with the cell under the pointer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GroundAct {
+    Walk,
+    Turn,
+    Nothing,
+}
+
+/// A press on the ground or a warp: nothing with Ctrl or the right button down; a turn with Shift, in a chat room or
+/// sitting; else a walk. Nothing where no cell is under the pointer.
+fn ground_press(ctrl: bool, shift: bool, sitting: bool, in_room: bool, right_down: bool, cell: bool) -> GroundAct {
+    match () {
+        _ if ctrl || right_down || !cell => GroundAct::Nothing,
+        _ if shift || in_room || sitting => GroundAct::Turn,
+        _ => GroundAct::Walk,
+    }
+}
+
+/// A held try, once MOVE_GAP_MS has passed with nothing pending and the pointer off the windows: None (no try, the
+/// try time left alone) with Ctrl down or no cell under the pointer; else a turn or a walk as a press decides, the
+/// right button aside.
+fn held_try(ctrl: bool, shift: bool, sitting: bool, in_room: bool, cell: bool) -> Option<GroundAct> {
+    (!ctrl && cell).then(|| ground_press(false, shift, sitting, in_room, false, true))
+}
+
+/// Whether a world press starts the hold (`walk_held`, the try time now): every press but one on something to attack.
+fn press_holds(click: &WorldClick) -> bool {
+    !matches!(click, WorldClick::Attack(_) | WorldClick::Swing(_))
 }
 
 /// Whether a press now, after the last one (when, and whether the pointer moved since), is a double press.
@@ -3380,10 +3716,16 @@ fn double_press(last: Option<(Instant, [f32; 2], bool)>, now: Instant) -> bool {
     last.is_some_and(|(at, _, moved)| !moved && now.saturating_duration_since(at) < DOUBLE_PRESS)
 }
 
-/// How far the pointer may wander from a press and still count as still there (a double click, a click not a
-/// drag), in canvas pixels: a hand's tremor on a mouse or trackpad, which a scaled window turns into fractions.
+/// How far the pointer may wander from a right press and still count as still there (the camera's double click, a
+/// click not a drag), in canvas pixels: a hand's tremor on a mouse or trackpad, which a scaled window turns into
+/// fractions.
 // ponytail: an estimate; one canvas pixel was too strict on a scaled window.
 const POINTER_SLACK: f32 = 2.0;
+
+/// Whether the pointer at `to` is on another whole canvas pixel than at `from`: a left double press allows no slack.
+fn left_pixel(from: [f32; 2], to: [f32; 2]) -> bool {
+    from.map(f32::floor) != to.map(f32::floor)
+}
 
 /// Whether the pointer at `to` has moved off a press at `from`.
 fn moved_off(from: [f32; 2], to: [f32; 2]) -> bool {
@@ -3544,60 +3886,105 @@ fn wrap_plain(font: &text::Font, text: &str, width: f32, used: f32, color: &mut 
     lines
 }
 
-// ponytail: placeholder wording; the client's own messages live in msgstringtable.csv, map them once observed.
-/// The client message for a login refusal (AC_REFUSE_LOGIN) or a ban notice (SC_NOTIFY_BAN).
-fn login_error_message(error: &LoginError) -> usize {
-    match *error {
-        LoginError::Refused(code) => match code {
-            0 => 6,
-            1 => 267,
-            2 => 8,
-            3 => 3,
-            4 => 266,
-            5 => 310,
-            6 => 449,
-            7 => 439,
-            8 => 681,
-            9..=15 => 703 + code as usize - 9,
-            17 => 1380,
-            18 => 1381,
-            19 => 1751,
-            20 => 1752,
-            21 => 1786,
-            22..=27 | 30 => 3440,
-            28 => 2731,
-            29 => 2732,
-            33 => 2682,
-            36 => 3453,
-            99 => 368,
-            100 => 809,
-            101 => 810,
-            102 => 811,
-            103 => 859,
-            104 => 860,
-            105 => 1372,
-            106 => 1293,
-            108 => 1393,
-            109 => 1394,
-            110 => 2345,
-            112 => 2410,
-            242 => 3439,
-            243 => 3687,
-            244 => 4190,
-            _ => 9,
-        },
-        LoginError::Notified(code) => match code {
-            1 => 4,
-            2 => 5,
-            3 => 241,
-            4 => 264,
-            5 => 305,
-            6 => 764,
-            8 => 440,
-            _ => 3,
-        },
-        // "Failed to connect to the server."
-        LoginError::Io(_) => 1,
+/// A login refusal's (AC_REFUSE_LOGIN) line by code; none for 3 and codes the game's table doesn't know.
+fn login_refusal_message(code: u32) -> Option<usize> {
+    Some(match code {
+        0 => 6,
+        1 => 267,
+        2 => 8,
+        4 => 266,
+        5 => 310,
+        6 => 449,
+        7 => 439,
+        8 => 681,
+        9..=15 => 703 + code as usize - 9,
+        17 => 1380,
+        18 => 1381,
+        19 => 1751,
+        20 => 1752,
+        21 => 1786,
+        22..=27 | 30 => 3440,
+        28 => 2731,
+        29 => 2732,
+        33 => 2682,
+        36 => 3453,
+        99 => 368,
+        100 => 809,
+        101 => 810,
+        102 => 811,
+        103 => 859,
+        104 => 860,
+        105 => 1372,
+        106 => 1293,
+        108 => 1393,
+        109 => 1394,
+        110 => 2345,
+        112 => 2410,
+        242 => 3439,
+        243 => 3687,
+        244 => 4190,
+        _ => return None,
+    })
+}
+
+/// A login refusal's box: none for 16 (straight back to the login window); 6, 17 and 100 with the block's date in it;
+/// 3 and unknown codes "Rejected from Server." with the code after it.
+fn login_refusal_text(code: u32, date: &str, messages: &[String]) -> Option<String> {
+    let message = |id: usize| messages.get(id).map_or("", String::as_str);
+    match (code, login_refusal_message(code)) {
+        (16, _) => None,
+        (6 | 17 | 100, Some(id)) => Some(rustnarok_client::messages::fill(message(id), &[&date])),
+        (_, Some(id)) => Some(message(id).to_owned()),
+        (_, None) => Some(format!("{}({code})", message(9))),
+    }
+}
+
+/// An old client (5) or a deleted account (99): the client closes after the box.
+fn login_refusal_quits(code: u32) -> bool {
+    matches!(code, 5 | 99)
+}
+
+/// A ban notice's (SC_NOTIFY_BAN) line before a map.
+fn ban_message(code: u8) -> usize {
+    match code {
+        0 => 3,
+        1 => 4,
+        2 => 5,
+        3 => 241,
+        4 => 264,
+        5 => 305,
+        6 => 438,
+        7 => 439,
+        8 => 440,
+        9 => 529,
+        10 => 530,
+        11..=14 => 575 + usize::from(code) - 11,
+        16 => 606,
+        17 => 607,
+        18 => 678,
+        100 => 1123,
+        101 => 1178,
+        102 => 1179,
+        103..=105 => 1309 + usize::from(code) - 103,
+        108 => 1582,
+        109 => 1583,
+        110 => 1589,
+        113 => 2021,
+        114 => 2344,
+        116 => 3635,
+        _ => 3,
+    }
+}
+
+/// The char server refusing the account (HC_REFUSE_ENTER): the line, and whether it goes back to the server list
+/// (118, 119) rather than the login window.
+fn char_refusal(code: u8) -> (usize, bool) {
+    match code {
+        1 => (208, false),
+        111 => (1865, false),
+        118 => (3818, true),
+        119 => (2929, true),
+        _ => (9, false),
     }
 }
 
@@ -3640,6 +4027,7 @@ struct App {
     monster_sizes: HashMap<u16, f32>,
     /// Shadow width by sprite job, in cells (`actor::shadow_factor`).
     shadow_factors: HashMap<u16, f32>,
+    location_radii: HashMap<u16, f32>,
     /// Pets' tables and what they say.
     pets: pet::Data,
     /// The achievements (the translation's achievements.lub) and the titles they give, by ID.
@@ -3696,6 +4084,7 @@ struct App {
     effect_table: effects::Table,
     /// Quests' titles, descriptions and summaries.
     quest_texts: HashMap<u32, quest::QuestText>,
+    quest_filters: quest::Filters,
     /// Sound out, the player's sound settings, and the music each map plays.
     audio: Option<sound::Audio>,
     sound: sound::Settings,
@@ -3719,6 +4108,9 @@ struct App {
     assets: Option<Assets>,
     scene: Scene,
     char_session: Option<CharSession>,
+    /// When the wait up now began, and when the server list opened (their time limits).
+    wait_began: Instant,
+    server_list_opened: Instant,
     /// The login servers the data folder's clientinfo.xml lists, and the one picked.
     connections: Vec<rustnarok_client::clientinfo::Connection>,
     connection: usize,
@@ -3730,7 +4122,6 @@ struct App {
     /// The game went back to character select at least once.
     returned: bool,
     /// The slot of the character last played, selected again back at character select.
-    played_slot: Option<usize>,
     /// The login that's in progress: what the char and map servers need to see.
     account: Option<LoginAccepted>,
     /// The character chosen to play, until its map is entered.
@@ -3739,6 +4130,8 @@ struct App {
     /// achievements, at login), handled once the game is on.
     entering: Option<(MapSession, String)>,
     early_events: Vec<MapEvent>,
+    /// Map packets heard since the last frame, applied at the start of the next.
+    frame_events: Vec<MapEvent>,
     /// Our guess of the server's tick, to place walks in time; and whether a map has loaded since the last
     /// ZC_NOTIFY_TIME (the first one after a load sets the clock outright).
     server_clock: actor::ServerClock,
@@ -3755,6 +4148,9 @@ struct App {
     mouse_down: bool,
     /// Clicks on the char-server list, so a second one on the same row enters it.
     server_clicks: window::Clicks,
+    /// The right button is down: a left press on the ground then neither walks nor turns.
+    right_down: bool,
+    button: ButtonRead,
     /// Dev switch RUSTNAROK_CLIENT_CLICKS: when (after entering the map), where, and where to drag to, last first.
     auto_input: Vec<ScriptedInput>,
     blink_start: Instant,
@@ -3782,9 +4178,17 @@ impl App {
         self.started.elapsed().as_millis() as u32
     }
 
-    fn wait(&mut self) {
+    fn wait(&mut self, wait: Wait) {
         let scene = std::mem::replace(&mut self.scene, Scene::Login);
-        self.scene = Scene::Waiting(Box::new(scene));
+        self.wait_began = Instant::now();
+        self.scene = Scene::Waiting(wait, Box::new(scene));
+    }
+
+    /// Cancel on the wait box, or a wait past its limit: disconnected, "Failed to Connect to Server.", the login window.
+    fn give_up(&mut self) {
+        self.char_session = None;
+        self.entering = None;
+        self.message(self.message_text(CONNECT_FAILED), Scene::Login);
     }
 
     fn message(&mut self, text: impl Into<String>, back: Scene) {
@@ -3807,7 +4211,7 @@ impl App {
 
     /// Sends the login (the dev switch's too, which skips the button's checks).
     fn send_login(&mut self) {
-        self.wait();
+        self.wait(Wait::Login);
         let proxy = self.proxy.clone();
         let [id, password] = self.fields.clone();
         let (server, version) = self.login_server();
@@ -3862,7 +4266,7 @@ impl App {
         }) {
             Ok(session) => {
                 self.char_session = Some(session);
-                self.wait();
+                self.wait(Wait::CharServer);
             }
             Err(_) => self.message("서버에 접속할 수 없습니다.", Scene::Login),
         }
@@ -3877,7 +4281,7 @@ impl App {
         match self.char_session.as_mut().map(|session| session.select(character.slot)) {
             Some(Ok(())) => {
                 self.playing = Some(character);
-                self.wait();
+                self.wait(Wait::Start);
             }
             _ => self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login),
         }
@@ -3908,6 +4312,11 @@ impl App {
                 }
                 return;
             }
+            Action::Notice => {
+                let back = std::mem::replace(&mut self.scene, Scene::Login);
+                self.message(self.message_text(char_select::NOTICE_MESSAGE), back);
+                return;
+            }
             Action::Reserve(id) => self.char_session.as_mut().map(|session| session.reserve_delete(id)),
             Action::CancelReserve(id) => self.char_session.as_mut().map(|session| session.cancel_delete(id)),
             Action::Delete(id) => return self.ask(DELETE_QUESTION, Then::AskBirthdate(id)),
@@ -3924,7 +4333,7 @@ impl App {
             }
         };
         match sent {
-            Some(Ok(())) => self.wait(),
+            Some(Ok(())) => self.wait(Wait::Quiet),
             _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
         }
     }
@@ -3983,6 +4392,8 @@ impl App {
                 }
                 None if game.storage.typing => game.storage.type_text(text),
                 None if game.pet_window.typing => game.pet_window.name_text.get_or_insert_with(String::new).push_str(text),
+                None if game.homunculus_window.typing => game.homunculus_window.name_text.get_or_insert_with(String::new).push_str(text),
+                None if game.quest_window.typing => game.quest_window.type_text(text),
                 None if game.booking.as_ref().is_some_and(|window| window.focus.is_some()) => game.booking.as_mut().unwrap().type_text(text),
                 None if game.guild_window.typing.is_some() => {
                     if let Some(guild) = &game.guild {
@@ -4053,7 +4464,7 @@ impl App {
                 birthdate => {
                     let sent = self.char_session.as_mut().map(|session| session.delete(id, birthdate.trim_start_matches('-')));
                     if let Some(Ok(())) = sent {
-                        self.wait();
+                        self.wait(Wait::Making);
                     }
                 }
             }
@@ -4067,12 +4478,12 @@ impl App {
                 let Scene::CharMake(make, _) = &self.scene else { return };
                 let (name, slot, color, hair, job, sex) = (make.name.trim().to_owned(), make.slot, make.color, make.hair, u32::from(make.job()), make.sex());
                 match self.char_session.as_mut().map(|session| session.make(&name, slot, color, hair, job, sex)) {
-                    Some(Ok(())) => self.wait(),
+                    Some(Ok(())) => self.wait(Wait::Making),
                     _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
                 }
             }
-            char_make::Action::ShortName => {
-                let text = self.message_text(char_make::SHORT_NAME_MESSAGE);
+            char_make::Action::Refused(line) => {
+                let text = self.message_text(line);
                 let back = std::mem::replace(&mut self.scene, Scene::Login);
                 self.message(text, back);
             }
@@ -4115,7 +4526,7 @@ impl App {
                 self.scene = Scene::Prompt { text, input: String::new(), then: Then::Delete(id), back: Box::new(back) };
             }
             Then::Delete(id) => match self.char_session.as_mut().map(|session| session.delete(id, &input)) {
-                Some(Ok(())) => self.wait(),
+                Some(Ok(())) => self.wait(Wait::Making),
                 _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
             },
             Then::Move(from, to, moves) => {
@@ -4123,7 +4534,7 @@ impl App {
                     select.moved_to = Some(usize::from(to));
                 }
                 match self.char_session.as_mut().map(|session| session.move_slot(u16::from(from), u16::from(to), moves)) {
-                    Some(Ok(())) => self.wait(),
+                    Some(Ok(())) => self.wait(Wait::Quiet),
                     _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
                 }
             }
@@ -4137,7 +4548,7 @@ impl App {
                 self.scene = Scene::Confirm(text, Then::Rename(id, name), Box::new(back));
             }
             Then::Rename(id, name) => match self.char_session.as_mut().map(|session| session.rename(id, &name)) {
-                Some(Ok(())) => self.wait(),
+                Some(Ok(())) => self.wait(Wait::Quiet),
                 _ => self.message(self.message_text(DISCONNECTED_MESSAGE), Scene::Login),
             },
         }
@@ -4153,7 +4564,7 @@ impl App {
     /// Back to the scene under a finished request.
     fn settle(&mut self) {
         self.scene = match std::mem::replace(&mut self.scene, Scene::Login) {
-            Scene::Waiting(inner) => *inner,
+            Scene::Waiting(_, inner) => *inner,
             scene => scene,
         };
     }
@@ -4252,6 +4663,9 @@ impl ApplicationHandler<NetEvent> for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
         match event {
             NetEvent::Control(request) => control::run(self, event_loop, request),
+            // ponytail: in the game every map packet waits for the next frame, so none overtakes a move queued before
+            // it; only the moves, the stops and the clock need to. They wait as long as frames do.
+            NetEvent::Map(event) if matches!(self.scene, Scene::Game(_)) => self.frame_events.push(event),
             event => {
                 control::observe(&event);
                 self.net_event(event);
@@ -4341,6 +4755,24 @@ impl ApplicationHandler<NetEvent> for App {
             }
         }
         self.auto_input(event_loop);
+        self.read_button();
+        // The char server hears from the client every 12 s at character select and creation.
+        if let Some(session) = &mut self.char_session
+            && matches!(self.scene.base(), Scene::CharSelect(_) | Scene::CharMake(..))
+        {
+            let _ = session.keep_alive(Instant::now());
+        }
+        // Waits past their limits.
+        let end = match &self.scene {
+            Scene::Waiting(wait, _) if self.loading.is_none() => wait.end(self.wait_began.elapsed()),
+            Scene::ServerSelect { .. } => Wait::ServerList.end(self.server_list_opened.elapsed()),
+            _ => WaitEnd::Keep,
+        };
+        match end {
+            WaitEnd::Keep => {}
+            WaitEnd::GiveUp => self.give_up(),
+            WaitEnd::Quit => self.message(self.message_text(CONNECT_FAILED), Scene::Quit),
+        }
         let tick = self.client_tick();
         match &mut self.scene {
             Scene::Game(game) => {
@@ -4351,22 +4783,37 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 // The view the player leaves is kept for the next map of its kind.
                 self.saved_view.follow(&game.camera_goal, Instant::now(), self.save_view);
-                // The held button follows the pointer: another walk each time MOVE_GAP has passed since the last
-                // try, not over a window, nor while an attack or a pickup is on its way.
+                // The held button follows the pointer: another walk each time more than MOVE_GAP_MS has passed since
+                // the last try, not over a window, nor while an attack or a pickup is on its way.
                 let now = Instant::now();
                 game.attack_step(now);
                 game.pending_step(now);
-                if let Some(cell) = game.walk_after_swing.filter(|_| !game.player.swinging(control::now())) {
-                    game.walk_after_swing = None;
-                    game.walk_toward(cell, now);
+                // The walk cell goes with a change of the player's own motion.
+                let action = game.player.animation(control::now()).0;
+                if clears_walk_cell(game.player_motion, action) {
+                    game.walk_cell = None;
                 }
-                if follows_pointer(game.walk_held, game.pending.is_some(), game.last_walk_try, now)
+                game.player_motion = (action, game.player.dead);
+                // The goal kept while busy goes out as it is when the player stops being busy (not on dying).
+                if let Some(goal) = game.stored_walk.frame(game.player.busy(control::now()), game.player.dead) {
+                    game.send_walk(goal, now);
+                }
+                // Each try decides again: Ctrl does nothing, Shift, a chat room or sitting turn, else a walk.
+                if follows_pointer(game.walk_held, game.pending.is_some() || game.attack.is_some(), game.last_walk_try, whole_ms(now))
+                    && !game.trade_or_storage()
                     && let Some(assets) = &self.assets
                     && !game.on_ui(self.cursor, assets.message.size)
-                    && let Some(cell) = game.ground_cell(self.cursor)
                 {
-                    game.last_walk_try = Some(now);
-                    game.walk_toward(cell, now);
+                    let cell = game.ground_cell(self.cursor);
+                    let (ctrl, shift) = (self.modifiers.control_key(), self.modifiers.shift_key());
+                    if let (Some(cell), Some(act)) = (cell, held_try(ctrl, shift, game.player.sitting, game.room.is_some(), cell.is_some())) {
+                        game.last_walk_try = Some(whole_ms(now));
+                        match act {
+                            GroundAct::Walk => drop(game.walk_toward(cell, now)),
+                            GroundAct::Turn => game.turn_to(cell),
+                            GroundAct::Nothing => {}
+                        }
+                    }
                 }
                 if game.entered.elapsed() > Duration::from_secs(1) {
                     if let Some(cell) = game.auto_walk.take() {
@@ -4521,6 +4968,7 @@ impl ApplicationHandler<NetEvent> for App {
 }
 
 fn main() {
+    std::sync::LazyLock::force(&START);
     // Every panic, also a caught one (a packet skipped), goes to crash.log in the settings folder with its backtrace:
     // a bundled app's stderr goes nowhere.
     // ponytail: the file only grows; cap it if a server ever sends a stream of unreadable packets.
@@ -4582,6 +5030,10 @@ fn main() {
     let monster_sizes = lua::monster_sizes(&grf);
     let shadow_factors = lua::shadow_factors(&grf).unwrap_or_else(|error| {
         eprintln!("no shadow table: {error}");
+        HashMap::new()
+    });
+    let location_radii = lua::location_radii(&grf).unwrap_or_else(|error| {
+        eprintln!("no NPC location radii: {error}");
         HashMap::new()
     });
     let items = lua::item_info(&grf).unwrap_or_else(|error| {
@@ -4658,6 +5110,7 @@ fn main() {
     // Several servers: the list comes first, as in the official client (dev logins take the first).
     let picking = connections.len() > 1 && std::env::var_os("RUSTNAROK_CLIENT_SERVER").is_none() && std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none();
     let quest_texts = quest::texts(&grf);
+    let quest_filters = quest::Filters::load(&grf);
     let sound = sound::Settings::load();
     let graphics = options::GraphicsSettings::load();
     let shortcuts = options::ShortcutSettings::load();
@@ -4675,6 +5128,7 @@ fn main() {
         job_names,
         monster_sizes,
         shadow_factors,
+        location_radii,
         pets,
         achievement_info,
         synthesis_boxes,
@@ -4700,6 +5154,7 @@ fn main() {
         map_names,
         worlds,
         quest_texts,
+        quest_filters,
         skill_info,
         skill_descriptions,
         skill_trees,
@@ -4731,6 +5186,8 @@ fn main() {
         connections,
         connection: 0,
         char_session: None,
+        wait_began: Instant::now(),
+        server_list_opened: Instant::now(),
         char_server: 0,
         quitting: false,
         tab_held: false,
@@ -4739,6 +5196,7 @@ fn main() {
         playing: None,
         entering: None,
         early_events: Vec::new(),
+        frame_events: Vec::new(),
         server_clock: actor::ServerClock::default(),
         map_loaded: false,
         fields: [saved_id().unwrap_or_default(), String::new()],
@@ -4755,6 +5213,8 @@ fn main() {
             .unwrap_or([-1.0; 2]),
         mouse_down: false,
         server_clicks: window::Clicks::default(),
+        right_down: false,
+        button: ButtonRead::default(),
         auto_input: {
             let start = std::env::var("RUSTNAROK_CLIENT_CLICKS_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(4);
             let point = |text: &str| -> Option<[f32; 2]> {
@@ -4783,7 +5243,6 @@ fn main() {
         started: Instant::now(),
         screenshot: std::env::var("RUSTNAROK_CLIENT_SCREENSHOT").ok(),
         scripted: false,
-        played_slot: None,
     };
     if !picking && !app.connections.is_empty() {
         app.choose_connection(0);
@@ -5425,14 +5884,64 @@ mod tests {
 
     #[test]
     fn skills_reach_by_level_and_world_distance() {
-        // Fire Bolt's table: 9 at every level. A list that says 10 at the learned level adds 1 at any level.
-        assert_eq!(skill_range(&[9; 10], 3, 10, 10), 10.0);
-        assert_eq!(skill_range(&[1, 2, 3], 1, 3, 3), 1.0, "a range that grows by level, used at level 1");
-        assert_eq!(skill_range(&[], 5, 5, 0), 1.0, "nothing known: 1");
-        assert_eq!(skill_range(&[], 5, 5, 9), 9.0);
-        // range x 5 + 5.5 world units: 9 cells reach 10.1 cells away, not 10.2.
-        assert!(skill_in_reach([0.0, 0.0], [10.1, 0.0], 9.0) && !skill_in_reach([0.0, 0.0], [10.2, 0.0], 9.0));
-        assert!(skill_in_reach([0.0, 0.0], [1.0, 1.0], 1.0));
+        // r1 + listed − r2, the learned level capped at MaxLv.
+        let ranges = [1, 2, 3, 4, 5];
+        assert_eq!(skill_range(&ranges, Some(5), 3, 7, 11), 9.0);
+        assert_eq!(skill_range(&ranges, Some(5), 3, 4, 11), 10.0);
+        assert_eq!(skill_range(&ranges, None, 3, 7, 11), 14.0, "no MaxLv: no cap, and r2 is 0 past the table");
+        assert_eq!(skill_range(&ranges, Some(0), 3, 7, 11), 14.0, "MaxLv 0: r2 is 0");
+        assert_eq!(skill_range(&ranges, Some(5), 9, 3, 3), 1.0, "r1 is 1 past the table");
+        // No ranges in the entry (or no entry): listed + 1.
+        assert_eq!(skill_range(&[], Some(5), 5, 5, 1), 2.0);
+        assert_eq!(skill_range(&[], None, 5, 5, 3), 4.0);
+        // range × 5 + 5.5 world units: 9 cells reach 10.1 cells away, not 10.2.
+        assert!(skill_in_reach(10.1 * world::CELL, 9.0) && !skill_in_reach(10.2 * world::CELL, 9.0));
+        assert!(!skill_in_reach(f32::NAN, 9.0));
+        // On a unit, the distance takes the height: range 9 at (10, 0), 7.0 height units in, 7.5 out.
+        let gat = |rise: f32| rustnarok_client::map::Gat {
+            width: 32,
+            height: 32,
+            cells: (0..32 * 32).map(|index| ([if index % 32 >= 11 { rise } else { 0.0 }; 4], 0)).collect(),
+        };
+        let reach = |rise| skill_in_reach(world::attack_distance(&gat(rise), world::drawn_point([1.0, 1.0]), world::drawn_point([11.0, 1.0])), 9.0);
+        assert!(reach(-7.0) && !reach(-7.5));
+    }
+
+    #[test]
+    fn walks_a_skill_into_range_without_a_path() {
+        // Toward where the target is drawn, range 9 short: as a chase, no path needed.
+        let open = rustnarok_client::map::Gat { width: 64, height: 64, cells: vec![([0.0; 4], 0); 64 * 64] };
+        let walk =
+            |gat: &rustnarok_client::map::Gat, from: [f32; 2], aim: [f32; 2]| world::chase_cell(gat, world::drawn_point(from), world::drawn_point(aim), 9);
+        assert_eq!(walk(&open, [30.0, 32.0], [40.0, 32.0]), [31, 32]);
+        assert_eq!(walk(&open, [29.0, 25.0], [40.0, 32.0]), [32, 27]);
+        // A ground skill on wall cells: it walks up all the same.
+        let walled = rustnarok_client::map::Gat {
+            width: 64,
+            height: 64,
+            cells: (0..64 * 64).map(|index| ([0.0; 4], u8::from(index % 64 >= 48 || [index % 64, index / 64] == [50, 32]))).collect(),
+        };
+        assert_eq!(walk(&walled, [35.0, 32.0], [55.0, 32.0]), [46, 32]);
+        assert_eq!(walk(&walled, [35.0, 20.0], [50.0, 32.0]), [43, 26]);
+    }
+
+    #[test]
+    fn reaches_big_monsters_sooner() {
+        assert_eq!(reach_to(30.0, 1181, 0.0), 10.0);
+        assert_eq!(reach_to(30.0, 1284, 2.0), 10.0);
+        assert_eq!(reach_to(30.0, 1002, 1.0), 22.0);
+        assert_eq!(reach_to(5.0, 1002, 2.0), 0.0);
+        assert_eq!(reach_to(30.0, 1002, 0.0), 30.0);
+        // The cell a unit skill sends, shifted by the angle toward the target.
+        assert_eq!(
+            [0.0, 24.9, 25.0, 70.0, 205.0, 250.0, 340.0].map(|theta| shift_by_angle(theta, 2)),
+            [[0, 2], [0, 2], [2, 2], [2, 0], [-2, 2], [-2, 0], [0, 2]]
+        );
+        // Straight east of the player (θ 90): x + s; s = 5 for job 1181, the radius else, nothing for others.
+        let [from, aim] = [world::drawn_point([10.0, 10.0]), world::drawn_point([20.0, 10.0])];
+        assert_eq!(big_walk_cell([11, 10], 1181, 0.0, from, aim), [16, 10]);
+        assert_eq!(big_walk_cell([11, 10], 1900, 2.0, from, aim), [13, 10]);
+        assert_eq!(big_walk_cell([11, 10], 1002, 0.0, from, aim), [11, 10]);
     }
 
     #[test]
@@ -5480,14 +5989,141 @@ mod tests {
     }
 
     #[test]
+    fn chases_slow_and_fast_targets() {
+        // Slow when 4/3 of the player's ms per cell, truncated, is less than the target's.
+        assert!(!slow_target(150.0, 200.0) && slow_target(150.0, 201.0));
+        assert!(!slow_target(100.0, 133.0) && slow_target(100.0, 134.0));
+        // A walk goes out only to a new cell, more than the gap after the last chase walk.
+        let (mut walk_cell, mut last) = (None, None);
+        assert_eq!(chase_walk([39, 32], &mut walk_cell, &mut last, CHASE_GAP_MS, 1000), Some([39, 32]));
+        assert_eq!(chase_walk([39, 32], &mut walk_cell, &mut last, CHASE_GAP_MS, 2000), None, "the same cell");
+        assert_eq!(chase_walk([39, 33], &mut walk_cell, &mut last, CHASE_GAP_MS, 1450), None, "450 ms isn't more than 450");
+        assert_eq!(chase_walk([39, 33], &mut walk_cell, &mut last, CHASE_GAP_MS, 1451), Some([39, 33]));
+        assert_eq!(chase_walk([39, 34], &mut walk_cell, &mut last, ATTACK_GAP_MS, 2651), None);
+        assert_eq!(chase_walk([39, 34], &mut walk_cell, &mut last, ATTACK_GAP_MS, 2652), Some([39, 34]));
+        // A re-click on the monster being chased: the walk cell and the last walk are the player's, so nothing new.
+        assert_eq!(chase_walk([39, 34], &mut walk_cell, &mut last, CHASE_GAP_MS, 4000), None);
+        // A walk the move limit drops still set the walk cell: not asked for again while the cell stays.
+        assert!(!may_move(Some(4000), 4100));
+        assert_eq!(chase_walk([38, 34], &mut walk_cell, &mut last, CHASE_GAP_MS, 4100), Some([38, 34]));
+        assert_eq!(chase_walk([38, 34], &mut walk_cell, &mut last, CHASE_GAP_MS, 4700), None);
+        // Arrived mid-step: the drawn position crosses into the walk cell halfway from (37, 34) to (38, 34).
+        let arrived = |x: f32| Some(world::floor_cell(world::drawn_point([x, 34.0]))) == walk_cell;
+        assert!(!arrived(37.49) && arrived(37.5));
+        // The walk cell goes with the player's own motion, except starting a walk, and never while dead.
+        assert!(clears_walk_cell((actor::WALK, false), actor::IDLE));
+        assert!(clears_walk_cell((actor::IDLE, false), actor::SIT));
+        assert!(clears_walk_cell((actor::WALK, false), 5));
+        assert!(!clears_walk_cell((actor::IDLE, false), actor::WALK));
+        assert!(!clears_walk_cell((actor::READY, false), actor::IDLE));
+        assert!(!clears_walk_cell((8, true), actor::IDLE));
+        // 0x0139 swaps slow and fast and brings an ended single swing back as one swing, a Ctrl attack kept up.
+        let single = Attack { held: false, sent: true, fast: true, ..Attack::new(5, false) };
+        let again = rearmed(None, Some(single), 5);
+        assert!(!again.fast && !again.sent && again.action() == net::ACT_ATTACK);
+        let kept = Attack { sent: true, fast: false, ..Attack::new(5, true) };
+        let again = rearmed(None, Some(kept), 5);
+        assert!(again.fast && again.action() == net::ACT_ATTACK_REPEAT);
+        assert!(rearmed(None, None, 7).fast);
+    }
+
+    #[test]
+    fn works_on_an_attack_only_in_some_motions() {
+        use PlayerMotion::*;
+        // Any job: standing, walking, flinching; not its own swing, the pickup or sitting.
+        for job in [0, 7, 4008] {
+            assert!([Stand, Walk, Flinch].into_iter().all(|motion| attack_works(motion, job, false)));
+            assert!(!attack_works(Other, job, false) && !attack_works(Cast, job, false) && !attack_works(Skill, job, false));
+        }
+        // Casting too for Sage, Professor and Baby Sage.
+        assert!([16, 4017, 4039].into_iter().all(|job| attack_works(Cast, job, false) && !attack_works(Skill, job, false)));
+        // Casting and skill motions for Gunslinger, Ninja, Taekwon and later.
+        assert!([24, 25, 4046, 4211, 4360].into_iter().all(|job| attack_works(Cast, job, false) && attack_works(Skill, job, false)));
+        assert!(!attack_works(Cast, 4361, false));
+        // Ice Wall and traps: skill motions too, never casting.
+        assert!(attack_works(Skill, 0, true) && !attack_works(Cast, 16, true) && !attack_works(Other, 0, true));
+    }
+
+    #[test]
+    fn decides_presses_and_held_tries_on_the_ground() {
+        use GroundAct::*;
+        // (ctrl, shift, sitting, chat room, right button, cell)
+        assert_eq!(ground_press(false, false, false, false, false, true), Walk);
+        assert_eq!(ground_press(true, false, false, false, false, true), Nothing);
+        assert_eq!(ground_press(false, false, false, false, true, true), Nothing, "the right button down");
+        assert_eq!(ground_press(false, false, false, false, false, false), Nothing, "no cell");
+        for (shift, sitting, room) in [(true, false, false), (false, true, false), (false, false, true), (true, true, true)] {
+            assert_eq!(ground_press(false, shift, sitting, room, false, true), Turn);
+            assert_eq!(ground_press(true, shift, sitting, room, false, true), Nothing);
+        }
+        // Every mix: a press walks only with nothing of these.
+        for bits in 0..64u8 {
+            let [ctrl, shift, sitting, room, right, cell] = [0, 1, 2, 3, 4, 5].map(|bit| bits & (1 << bit) != 0);
+            let expected = if ctrl || right || !cell {
+                Nothing
+            } else if shift || sitting || room {
+                Turn
+            } else {
+                Walk
+            };
+            assert_eq!(ground_press(ctrl, shift, sitting, room, right, cell), expected, "{bits:06b}");
+            // A held try: none with Ctrl or no cell (the try time stays); else the press's answer without the right button.
+            let held = held_try(ctrl, shift, sitting, room, cell);
+            assert_eq!(held, (!ctrl && cell).then(|| ground_press(false, shift, sitting, room, false, true)), "{bits:06b}");
+        }
+        // Letting go of Shift mid-hold walks at the next try.
+        assert_eq!([held_try(false, true, false, false, true), held_try(false, false, false, false, true)], [Some(Turn), Some(Walk)]);
+        // The hold starts on every press but an attack.
+        assert!([WorldClick::Ground, WorldClick::Warp, WorldClick::Talk(1), WorldClick::PickUp(2)].iter().all(press_holds));
+        assert!(!press_holds(&WorldClick::Attack(3)) && !press_holds(&WorldClick::Swing(3)));
+    }
+
+    #[test]
+    fn keeps_one_pending_action() {
+        // (ends the attack, drops a pending skill or pickup)
+        assert_eq!(press_ends(&WorldClick::Attack(5), false), (true, true));
+        assert_eq!(press_ends(&WorldClick::PickUp(9), false), (true, false));
+        assert_eq!(press_ends(&WorldClick::Ground, false), (true, false));
+        assert_eq!(press_ends(&WorldClick::Warp, false), (true, false));
+        assert_eq!(press_ends(&WorldClick::Talk(7), false), (false, false), "an NPC click leaves the attack");
+        assert_eq!(press_ends(&WorldClick::Attack(5), true), (false, false), "a double press does nothing");
+        assert_eq!(press_ends(&WorldClick::Ground, true), (false, false));
+    }
+
+    #[test]
+    fn sends_an_attack_more_than_1200_ms_apart() {
+        let kept = Attack::new(5, true);
+        assert_eq!(attack_send(&kept, None, 0), AttackSend::Send);
+        assert_eq!(attack_send(&kept, Some(1000), 2200), AttackSend::Wait);
+        assert_eq!(attack_send(&kept, Some(1000), 2201), AttackSend::Send);
+        // Held: waits for the gap too.
+        assert_eq!(attack_send(&Attack::new(5, false), Some(1000), 2000), AttackSend::Wait);
+        // A single swing let go of before reach, in reach too soon: dropped, not sent later.
+        let single = Attack { held: false, ..Attack::new(5, false) };
+        assert_eq!(attack_send(&single, Some(1000), 2200), AttackSend::Drop);
+        assert_eq!(attack_send(&single, Some(1000), 2201), AttackSend::Send);
+    }
+
+    #[test]
+    fn reaches_walls_and_traps_from_their_own_range() {
+        // A melee weapon: max(5, 1) cells, 30.5 units, flat, to the cell's centre.
+        let from = world::drawn_point([10.0, 10.0]);
+        let reach = |dx: f32, dy: f32| ground_unit_reach(from, world::drawn_point([10.0 + dx, 10.0 + dy]), 1);
+        assert_eq!(reach(6.0, 0.0), (true, 5));
+        assert!(reach(6.0, 1.0).0 && !reach(6.0, 2.0).0);
+        // A bow's 9 cells stay 9.
+        assert_eq!(ground_unit_reach(from, world::drawn_point([20.0, 10.0]), 9), (true, 9));
+        // Its walk: 25 units short of the centre, on the line from the player.
+        let gat = rustnarok_client::map::Gat { width: 40, height: 40, cells: vec![([0.0; 4], 0); 1600] };
+        assert_eq!(world::chase_cell(&gat, from, world::drawn_point([20.0, 10.0]), 5), [15, 10]);
+        // A 0x0139 for it ends it, where a monster's comes back.
+        let wall = Attack { ground: true, sent: true, ..Attack::new(3354, true) };
+        assert!(too_far_ends(Some(wall), None, 3354) && too_far_ends(None, Some(wall), 3354));
+        assert!(!too_far_ends(Some(Attack::new(5, true)), None, 5) && !too_far_ends(None, None, 3354));
+    }
+
+    #[test]
     fn attacks_as_the_player_asked() {
-        // Reach: range × 5 + 5.5 units.
-        assert!(in_attack_reach([0, 0], [2, 0], 1));
-        assert!(!in_attack_reach([0, 0], [2, 1], 1));
-        assert!(in_attack_reach([0, 0], [10, 0], 9) && !in_attack_reach([0, 0], [11, 0], 9));
-        let start = Instant::now();
-        assert!(may_attack(None, start) && !may_attack(Some(start), start + Duration::from_millis(1199)));
-        assert!(may_attack(Some(start), start + ATTACK_GAP));
         // Kept up: letting go changes nothing.
         let mut kept = Attack::new(5, true);
         assert_eq!((kept.release(), kept.action()), (Release::Keep, net::ACT_ATTACK_REPEAT));
@@ -5526,32 +6162,75 @@ mod tests {
         assert_eq!(pickup_step([13, 11], [14, 10], Some([14, 10])), PickStep::PickUp);
         assert_eq!(pickup_step([14, 10], [14, 10], None), PickStep::PickUp);
         // A walk the move limit held back is asked for again on a later frame, once.
-        let start = Instant::now();
-        let (mut walked, mut last) = (None, Some(start));
+        let (mut walked, mut last) = (None, Some(0));
         let mut walks = Vec::new();
-        for ms in [100, 200, 299, 300, 350, 700] {
-            let now = start + Duration::from_millis(ms);
-            if pickup_step([10, 10], [14, 10], walked) == PickStep::Walk && may_move(last, now) {
-                (walked, last) = (Some([14, 10]), Some(now));
+        for ms in [100, 200, 299, 300, 301, 350, 700] {
+            if pickup_step([10, 10], [14, 10], walked) == PickStep::Walk && may_move(last, ms) {
+                (walked, last) = (Some([14, 10]), Some(ms));
                 walks.push(ms);
             }
         }
-        assert_eq!(walks, [300]);
-        // The held button follows the pointer only once nothing is pending, MOVE_GAP after its last try.
-        assert!(!follows_pointer(true, true, None, start));
-        assert!(follows_pointer(true, false, None, start));
-        assert!(!follows_pointer(true, false, Some(start), start + Duration::from_millis(300)));
-        assert!(follows_pointer(true, false, Some(start), start + Duration::from_millis(301)));
-        assert!(!follows_pointer(false, false, None, start));
+        assert_eq!(walks, [301]);
+        // The held button follows the pointer only once nothing is pending, more than MOVE_GAP_MS after its last try.
+        assert!(!follows_pointer(true, true, None, 0));
+        assert!(follows_pointer(true, false, None, 0));
+        assert!(!follows_pointer(true, false, Some(1000), 1300));
+        assert!(follows_pointer(true, false, Some(1000), 1301));
+        assert!(!follows_pointer(false, false, None, 0));
+    }
+
+    #[test]
+    fn keeps_a_goal_clicked_while_busy() {
+        let mut stored = StoredWalk::default();
+        let mut pending = Some("pickup");
+        // Not busy: the goal goes now, and the pickup is over.
+        assert_eq!(stored.click([5, 5], false, &mut pending), Some([5, 5]));
+        assert_eq!(pending, None);
+        // During the pickup motion: nothing goes, the goal is kept; a second click replaces it.
+        pending = Some("pickup");
+        assert_eq!(stored.frame(true, false), None);
+        assert_eq!(stored.click([7, 7], true, &mut pending), None);
+        assert_eq!(pending, None, "a goal ends the pending pickup even when it isn't sent");
+        assert_eq!(stored.click([8, 9], true, &mut pending), None);
+        assert_eq!(stored.frame(true, false), None);
+        // It goes out as it is when the motion ends (not worked out again), once.
+        assert_eq!(stored.frame(false, false), Some([8, 9]));
+        assert_eq!(stored.frame(false, false), None);
+        // Still through the 300 ms rule: a motion ending 200 ms after the last send drops it.
+        assert!(!may_move(Some(1000), 1200));
+        // Dying isn't the end of a motion that sends it.
+        stored.frame(true, false);
+        stored.click([3, 3], true, &mut pending);
+        assert_eq!(stored.frame(false, true), None);
+    }
+
+    #[test]
+    fn reads_the_button_once_a_frame() {
+        // Pressed and let go between two frames: nothing in the world.
+        let mut button = ButtonRead { due: true, ..ButtonRead::default() };
+        assert!(!button.read(false));
+        // Pressed before a frame: that frame's read takes it, once while held.
+        button.due = true;
+        assert!(button.read(true));
+        assert!(!button.read(true));
+        // A press a window took isn't the world's.
+        assert!(!button.read(false));
+        assert!(!button.read(true));
     }
 
     #[test]
     fn walks_no_more_than_every_300_ms() {
         let start = Instant::now();
         let at = |ms: u64| start + Duration::from_millis(ms);
-        assert!(may_move(None, start));
-        assert!(!may_move(Some(start), at(299)));
-        assert!(may_move(Some(start), at(300)));
+        // More than 300 whole milliseconds: after a send at 1000, 1300 is too soon and 1301 goes.
+        assert!(may_move(None, 0));
+        assert!(!may_move(Some(1000), 1300));
+        assert!(may_move(Some(1000), 1301));
+        // Held at 60 fps from a try at 0: the 18th frame (300.0 ms) makes no try, the 19th (316.7 ms) does.
+        let frame = |index: u32| (f64::from(index) * 1000.0 / 60.0) as u64;
+        assert!(!follows_pointer(true, false, Some(0), frame(18)));
+        assert!(follows_pointer(true, false, Some(0), frame(19)));
+        assert_eq!(whole_ms(at(5)) - whole_ms(at(3)), 2);
         // A second press: double only when soon and the pointer stayed still.
         assert!(double_press(Some((start, [0.0; 2], false)), at(400)));
         assert!(!double_press(Some((start, [0.0; 2], true)), at(400)));
@@ -5573,10 +6252,8 @@ mod tests {
         // A move off the press between two presses makes both fresh.
         let (_, first) = press_pair(None, start, [5.0, 5.0]);
         assert!(!press_pair(first.map(|(at, from, _)| (at, from, true)), at(200), [9.0, 5.0]).0);
-        // Held after a double press on the ground, the button follows the pointer; not with Ctrl, Shift or sitting.
-        assert!(
-            double_holds(false, false, false) && !double_holds(true, false, false) && !double_holds(false, true, false) && !double_holds(false, false, true)
-        );
+        // No slack for the left button: a whole pixel off is a move, 0.4 inside the same pixel isn't.
+        assert!(left_pixel([5.2, 5.0], [6.2, 5.0]) && !left_pixel([5.2, 5.0], [5.6, 5.0]));
     }
 
     #[test]
@@ -5624,7 +6301,7 @@ mod tests {
     #[test]
     fn attacks_walls_and_traps_on_their_cells() {
         // Which ground units a click attacks.
-        assert!([0x8d, 0x8f, 0x98, 0xda, 0xde, 0x5174, 0x5177].into_iter().all(attackable_ground_unit));
+        assert!([0x8d, 0x8f, 0x98, 0xda, 0xde, 0xe6, 0x5174, 0x5177].into_iter().all(attackable_ground_unit));
         assert!(![0x7e, 0x86, 0x8c, 0x90, 0x5173, 0x5178].into_iter().any(attackable_ground_unit));
         // The attack goes for the wall's cell, and ends once the wall is gone.
         let units = HashMap::new();
@@ -5675,11 +6352,51 @@ mod tests {
     }
 
     #[test]
+    fn gives_up_waiting_at_the_games_limits() {
+        let end = |wait: Wait, ms: u64| wait.end(Duration::from_millis(ms));
+        assert_eq!([end(Wait::Login, 14_999), end(Wait::Login, 15_000)], [WaitEnd::Keep, WaitEnd::GiveUp]);
+        assert_eq!([end(Wait::CharServer, 79_999), end(Wait::CharServer, 80_000)], [WaitEnd::Keep, WaitEnd::GiveUp]);
+        assert_eq!([end(Wait::Map, 14_999), end(Wait::Map, 15_000)], [WaitEnd::Keep, WaitEnd::GiveUp]);
+        assert_eq!([end(Wait::ServerList, 14_999), end(Wait::ServerList, 15_000)], [WaitEnd::Keep, WaitEnd::Quit]);
+        // Game Start before the map server, making and deleting, and the quiet requests wait as long as it takes.
+        assert!([Wait::Start, Wait::Making, Wait::Quiet].iter().all(|&wait| end(wait, 600_000) == WaitEnd::Keep));
+        // The box reads "Please wait..." but for making and deleting; the quiet ones show none.
+        assert_eq!([Wait::Login, Wait::Start, Wait::Making, Wait::Quiet].map(Wait::message), [Some(122), Some(122), Some(123), None]);
+    }
+
+    #[test]
+    fn places_message_boxes_as_the_game() {
+        assert_eq!(dialog_position_of([800.0, 600.0]), [265.0, 240.0]);
+        assert_eq!(dialog_position_of([1024.0, 768.0]), [377.0, 324.0]);
+    }
+
+    #[test]
+    fn words_login_refusals_bans_and_char_refusals() {
+        let mut messages: Vec<String> = (0..1400).map(|id| format!("m{id}")).collect();
+        messages[9] = "Rejected from Server.".into();
+        messages[449] = "You are prohibited to log in until %s.".into();
+        let text = |code: u32, date: &str| login_refusal_text(code, date, &messages);
+        assert_eq!(text(1, "").as_deref(), Some("m267"));
+        assert_eq!(text(3, "").as_deref(), Some("Rejected from Server.(3)"));
+        assert_eq!(text(31, "").as_deref(), Some("Rejected from Server.(31)"));
+        assert_eq!(text(6, "2026-10-19 12:00:00").as_deref(), Some("You are prohibited to log in until 2026-10-19 12:00:00."));
+        assert_eq!(text(16, ""), None);
+        assert!(login_refusal_quits(5) && login_refusal_quits(99) && !login_refusal_quits(1));
+        assert_eq!([0, 6, 7, 9, 12, 16, 104, 116, 15].map(ban_message), [3, 438, 439, 529, 576, 606, 1310, 3635, 3]);
+        assert_eq!([1, 111, 118, 119, 2].map(char_refusal), [(208, false), (1865, false), (3818, true), (2929, true), (9, false)]);
+    }
+
+    #[test]
     fn asks_before_leaving_a_screen_before_the_map() {
         assert!(matches!(pre_map_escape(&Scene::Login), Some((QUIT_MESSAGE, Then::Quit))));
         assert!(matches!(pre_map_escape(&Scene::Connections { selected: 0 }), Some((QUIT_MESSAGE, Then::Quit))));
-        let waiting = Scene::Waiting(Box::new(Scene::Login));
+        let waiting = Scene::Waiting(Wait::Quiet, Box::new(Scene::Login));
         assert!(pre_map_escape(&waiting).is_none(), "a box over the screen takes Esc itself");
+        // Making a character, Esc asks to quit.
+        let making = Scene::CharMake(Box::new(char_make::Make::blank(2)), Box::new(char_select::Select::new(Vec::new(), Vec::new(), 9)));
+        assert!(matches!(pre_map_escape(&making), Some((QUIT_MESSAGE, Then::Quit))));
+        // A refused name's box closes onto character select.
+        assert!(matches!(after_make_refused(making), Scene::CharSelect(_)));
     }
 
     #[test]

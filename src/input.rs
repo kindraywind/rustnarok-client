@@ -12,6 +12,8 @@ impl App {
         if let Scene::Game(game) = &mut self.scene {
             game.storage.typing = false;
             game.pet_window.typing = false;
+            game.homunculus_window.typing = false;
+            game.quest_window.typing = false;
             if let Some(trade) = &mut game.trade {
                 trade.typing = false;
             }
@@ -50,7 +52,7 @@ impl App {
             }
             // The server list: pick one, OK goes on to the login window, Cancel leaves the game.
             Scene::Connections { selected } => {
-                let service = dialog_position(&assets.service);
+                let service = service_position(&assets.service);
                 let list = offset(service, SERVER_LIST);
                 if let Some(row) = (0..self.connections.len()).find(|&row| contains(offset(list, [0.0, row as f32 * SERVER_ROW[1]]), SERVER_ROW, cursor)) {
                     *selected = row;
@@ -122,6 +124,12 @@ impl App {
                         open_page(game, page);
                     }
                 }
+                // The quest window at that quest, or a notice that no list has it.
+                links::Target::Quest(id) => {
+                    if !game.quest_window.show_quest(id, &game.quests, &self.quest_texts) {
+                        game.question_box = Some(BoxQuestion::Said(format!("Not found Quest Info = {id}")));
+                    }
+                }
                 links::Target::Tip => {}
             },
             Scene::Game(game) if game.deal_choice.is_some() => {
@@ -174,6 +182,16 @@ impl App {
                             game.escape = None;
                             let _ = game.session.restart(false);
                         }
+                    }
+                }
+            }
+            // The message box, over every window: OK (alone when it only tells) or Cancel.
+            Scene::Game(game) if game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+                let dialog = dialog_position(&assets.message);
+                let asks = game.question_box.as_ref().is_some_and(BoxQuestion::asks);
+                for (place, yes) in box_buttons(asks) {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        game.answer_box(yes, &self.messages);
                     }
                 }
             }
@@ -418,13 +436,12 @@ impl App {
                     }
                 }
                 Some(Choice::HomunculusStatus) => {
+                    let _ = game.session.homunculus_command(net::HOMUNCULUS_STATUS);
                     game.homunculus_window.frame.toggle();
                     game.raise(Panel::Homunculus);
                     game.sync_esc();
                 }
-                Some(Choice::HomunculusFeed) => {
-                    let _ = game.session.homunculus_command(net::HOMUNCULUS_FEED);
-                }
+                Some(Choice::HomunculusFeed) => game.homunculus_asked = Some(HomunculusAsked::Feed),
                 Some(Choice::HomunculusStandBy) => game.homunculus_steering.following = !game.homunculus_steering.following,
                 Some(Choice::CloseStall) => {
                     let _ = game.session.close_shop();
@@ -839,16 +856,6 @@ impl App {
                     _ => {}
                 }
             }
-            // The message box: OK (alone when it only tells) or Cancel.
-            Scene::Game(game) if game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
-                let dialog = dialog_position(&assets.message);
-                let asks = game.question_box.as_ref().is_some_and(BoxQuestion::asks);
-                for (place, yes) in box_buttons(asks) {
-                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
-                        game.answer_box(yes, &self.messages);
-                    }
-                }
-            }
             // The party's docked windows (setup, create, invite): choices, the edit box, OK and Cancel.
             Scene::Game(game) if game.party_dialog.as_ref().and_then(|dialog| dialog.hit(cursor)).is_some() => {
                 let dialog = game.party_dialog.as_mut().unwrap();
@@ -868,12 +875,12 @@ impl App {
                     }
                 }
             }
-            // Naming the homunculus: OK sends the name.
-            Scene::Game(game) if game.homunculus_rename.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            // A homunculus question: OK feeds, deletes or renames it.
+            Scene::Game(game) if game.homunculus_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
-                        game.answer_homunculus_name(yes);
+                        game.answer_homunculus(yes, &self.messages);
                     }
                 }
             }
@@ -1500,17 +1507,23 @@ impl App {
                         Some(mercenary::SkillHit::Skill(id)) => game.use_mercenary_skill(id, u16::MAX),
                         _ => {}
                     },
-                    Panel::Homunculus => match game.homunculus.as_ref().and_then(|homunculus| game.homunculus_window.hit(cursor, homunculus)) {
-                        Some(homunculus::Hit::Title(title)) => game.homunculus_window.frame.click_title(title),
-                        Some(homunculus::Hit::Feed) => {
-                            let _ = game.session.homunculus_command(net::HOMUNCULUS_FEED);
-                        }
+                    Panel::Homunculus => match game.homunculus.as_ref().and_then(|_| game.homunculus_window.hit(cursor)) {
+                        Some(homunculus::Hit::Close) => game.homunculus_window.frame.open = false,
+                        Some(homunculus::Hit::Feed) => game.homunculus_asked = Some(HomunculusAsked::Feed),
+                        Some(homunculus::Hit::Delete) => game.homunculus_asked = Some(HomunculusAsked::Delete),
                         Some(homunculus::Hit::Skills) => {
                             game.homunculus_skill_list.frame.toggle();
                             game.raise(Panel::HomunculusSkills);
                         }
-                        Some(homunculus::Hit::Rename) => game.amount = Some(window::Amount::name(Asked::HomunculusName, homunculus::RENAME_PROMPT)),
-                        _ => {}
+                        Some(homunculus::Hit::Rename) => game.ask_homunculus_rename(),
+                        Some(homunculus::Hit::NameBox) => {
+                            let name = game.homunculus.as_ref().map(|homunculus| game.homunculus_window.name(homunculus).to_owned()).unwrap_or_default();
+                            game.homunculus_window.name_text = Some(name);
+                            game.homunculus_window.typing = true;
+                        }
+                        // The box follows the server's answer.
+                        Some(homunculus::Hit::AutoFeed) => drop(game.session.homunculus_auto_feed(!game.homunculus_window.auto_feed)),
+                        Some(homunculus::Hit::Window) | None => {}
                     },
                     Panel::HomunculusSkills => {
                         let points = game.homunculus.as_ref().map_or(0, |homunculus| homunculus.skill_points);
@@ -1693,7 +1706,7 @@ impl App {
                 }
             }
             Scene::Game(game) => {
-                if game.store_open() {
+                if game.store_open() || game.trade_or_storage() {
                     return;
                 }
                 // Whatever is under the cursor (see `picking::pick`): talk to NPCs, attack monsters, pick items up. The
@@ -1703,7 +1716,7 @@ impl App {
                     WorldClick::Attack(_) => {}
                     WorldClick::Swing(id) => drop(game.session.act(id, net::ACT_ATTACK)),
                     // The rest went with the press.
-                    WorldClick::Talk(_) | WorldClick::PickUp(_) | WorldClick::Warp(_) | WorldClick::Ground => {}
+                    WorldClick::Talk(_) | WorldClick::PickUp(_) | WorldClick::Warp | WorldClick::Ground => {}
                 }
             }
             Scene::Message(..) => {
@@ -1719,7 +1732,13 @@ impl App {
                     self.dismiss();
                 }
             }
-            Scene::Waiting(_) => {}
+            // The wait box's Cancel.
+            Scene::Waiting(wait, _) => {
+                if wait.message().is_some() && hit(offset(login_position(), WAIT_CANCEL), &assets.cancel) {
+                    self.give_up();
+                }
+            }
+            Scene::Quit => {}
         }
     }
 
@@ -1728,7 +1747,7 @@ impl App {
         if let Scene::Game(game) = &mut self.scene {
             let cursor = self.cursor;
             if let Some((_, from, moved)) = &mut game.press_mark {
-                *moved |= moved_off(*from, cursor);
+                *moved |= left_pixel(*from, cursor);
             }
             if game.right_press.is_some_and(|(from, _)| moved_off(from, cursor)) {
                 game.right_moved = true;
@@ -1864,6 +1883,7 @@ impl App {
 
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     pub(crate) fn right_button(&mut self, state: ElementState) {
+        self.right_down = state == ElementState::Pressed;
         // A right press lets go of a held drag and closes the box asking how many of an item.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Pressed
@@ -2576,11 +2596,102 @@ impl App {
             self.pointer_moved();
             let button = |app: &mut Self, state| if right { app.right_button(state) } else { app.left_button(event_loop, state) };
             button(self, ElementState::Pressed);
+            // Held over a frame, so the world reads the press.
+            self.read_button();
             if let Some(to) = to {
                 self.cursor = to;
                 self.pointer_moved();
             }
             button(self, ElementState::Released);
+        }
+    }
+
+    /// Whether a left press at the pointer is the world's: not over a window, nor while dragging, aiming or capturing,
+    /// nor with a store open.
+    fn world_takes_press(&self) -> bool {
+        let (Scene::Game(game), Some(assets)) = (&self.scene, &self.assets) else { return false };
+        game.dragging.is_none() && !game.on_ui(self.cursor, assets.message.size) && !game.store_open() && game.targeting.is_none() && !game.capturing
+    }
+
+    /// Whether a world press does anything: not with the trade or storage window open (it's taken, and dropped).
+    fn world_acts(&self) -> bool {
+        matches!(&self.scene, Scene::Game(game) if !game.trade_or_storage())
+    }
+
+    /// The left button read once a frame (`ButtonRead`): a press since the last read, still down, acts in the world
+    /// at the pointer now.
+    pub(crate) fn read_button(&mut self) {
+        if self.button.read(self.mouse_down) && self.world_takes_press() && self.world_acts() {
+            self.world_press();
+        }
+    }
+
+    /// A press on the ground walks there (in the frame that reads it), and holding the button keeps following the pointer. Shift turns
+    /// to face it, Ctrl does nothing, and sitting only turns. A second press within DOUBLE_PRESS with the pointer
+    /// still is ignored. Units and items are the click's (on release).
+    fn world_press(&mut self) {
+        let cursor = self.cursor;
+        let Scene::Game(game) = &mut self.scene else { return };
+        let now = Instant::now();
+        let (double, mark) = press_pair(game.press_mark, now, cursor);
+        game.press_mark = mark;
+        let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
+        // Alt + left press orders the mercenary (when it's out).
+        if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
+            return;
+        }
+        // One pending action at a time (`press_ends`).
+        let click = game.world_click(cursor, shift);
+        let (ends_attack, drops_pending) = press_ends(&click, double);
+        if ends_attack {
+            game.attack = None;
+        }
+        if drops_pending {
+            game.pending = None;
+            game.pending_walk = None;
+        }
+        // Every press but an attack starts the hold (a double press leaves the try time alone); each held try then
+        // decides again.
+        if press_holds(&click) {
+            game.walk_held = true;
+            if !double {
+                game.last_walk_try = Some(whole_ms(now));
+            }
+        }
+        let in_room = game.room.is_some();
+        match click {
+            // A double press does nothing in the world.
+            _ if double => {}
+            // Sitting or hidden (option 0x2): an attack click does nothing.
+            WorldClick::Attack(_) if game.player.sitting || game.player.option & 0x2 != 0 => {}
+            // A monster with Shift (without /noshift): nothing.
+            WorldClick::Attack(id) if shift && !game.no_shift && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER) => {}
+            // An attack: kept up with Ctrl or /noctrl (on someone else's homunculus always), otherwise while the
+            // button is held.
+            WorldClick::Attack(id) => {
+                let homunculus = game.units.get(&id).is_some_and(|actor| actor.kind == HOMUNCULUS);
+                let weight = |id: u16| game.status.get(&id).copied().unwrap_or(0);
+                match attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), game.riding) {
+                    Some(line) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
+                    None => {
+                        game.attack = Some(game.new_attack(id, ctrl || game.no_ctrl || homunculus));
+                        game.attack_step(now);
+                    }
+                }
+            }
+            WorldClick::Talk(id) => game.talk_to(id, &self.messages),
+            // Held, the button follows the pointer again once the item is picked up.
+            WorldClick::PickUp(id) if !game.player.sitting => game.pick_up(id, now),
+            // A warp is ground: the cell under the pointer, not the portal's own.
+            WorldClick::Warp | WorldClick::Ground => {
+                let cell = game.ground_cell(cursor);
+                match (cell, ground_press(ctrl, shift, game.player.sitting, in_room, self.right_down, cell.is_some())) {
+                    (Some(cell), GroundAct::Walk) => drop(game.walk_toward(cell, now)),
+                    (Some(cell), GroundAct::Turn) => game.turn_to(cell),
+                    _ => {}
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2590,6 +2701,13 @@ impl App {
         // A press on the right-click menu is the menu's (its choice is taken on the release), not the window's under it.
         if let Scene::Game(game) = &self.scene
             && game.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
+        {
+            return;
+        }
+        // So is a press on the message box: nothing under it starts a drag, so its release still clicks OK.
+        if let (Scene::Game(game), Some(assets)) = (&self.scene, &self.assets)
+            && game.question_box.is_some()
+            && contains(dialog_position(&assets.message), assets.message.size, cursor)
         {
             return;
         }
@@ -2640,74 +2758,9 @@ impl App {
                 return;
             }
         }
-        // A press on the ground walks there at once, and holding the button keeps following the pointer. Shift turns
-        // to face it, Ctrl does nothing, and sitting only turns. A second press within DOUBLE_PRESS with the pointer
-        // still is ignored. Units and items are the click's (on release).
-        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
-            && game.dragging.is_none()
-            && !game.on_ui(cursor, assets.message.size)
-            && !game.store_open()
-            && game.targeting.is_none()
-            && !game.capturing
-        {
-            let now = Instant::now();
-            let (double, mark) = press_pair(game.press_mark, now, cursor);
-            game.press_mark = mark;
-            let (shift, ctrl) = (self.modifiers.shift_key(), self.modifiers.control_key());
-            // Alt + left press orders the mercenary (when it's out).
-            if !double && self.modifiers.alt_key() && game.companion_press(false, cursor, shift) {
-                return;
-            }
-            // A new press ends the attack under way.
-            game.attack = None;
-            match game.world_click(cursor, shift) {
-                // A double press does nothing, but held on the ground the button goes on following the pointer.
-                WorldClick::Ground if double => {
-                    if double_holds(ctrl, shift, game.player.sitting) {
-                        game.walk_held = true;
-                    }
-                }
-                _ if double => {}
-                // A monster with Shift (without /noshift): nothing.
-                WorldClick::Attack(id) if shift && !game.no_shift && game.units.get(&id).is_some_and(|actor| actor.kind == MONSTER) => {}
-                // An attack: kept up with Ctrl or /noctrl (on someone else's homunculus always), otherwise while the
-                // button is held.
-                WorldClick::Attack(id) => {
-                    let homunculus = game.units.get(&id).is_some_and(|actor| actor.kind == HOMUNCULUS);
-                    let weight = |id: u16| game.status.get(&id).copied().unwrap_or(0);
-                    match attack_refused(weight(net::STATUS_WEIGHT), weight(net::STATUS_MAX_WEIGHT), game.riding) {
-                        Some(line) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
-                        None => {
-                            game.attack = Some(Attack::new(id, ctrl || game.no_ctrl || homunculus));
-                            game.attack_step(now);
-                        }
-                    }
-                }
-                WorldClick::Talk(id) => game.talk_to(id, &self.messages),
-                // Held, the button follows the pointer again once the item is picked up.
-                WorldClick::PickUp(id) if !game.player.sitting => {
-                    game.pick_up(id, now);
-                    game.walk_held = true;
-                    game.last_walk_try = Some(now);
-                }
-                WorldClick::Warp(cell) if !ctrl => {
-                    game.walk_toward(cell, now);
-                    game.walk_held = true;
-                    game.last_walk_try = Some(now);
-                }
-                WorldClick::Ground if !ctrl => {
-                    if let Some(cell) = game.ground_cell(cursor) {
-                        if shift || game.player.sitting {
-                            game.turn_to(cell);
-                        } else {
-                            game.walk_toward(cell, now);
-                            game.walk_held = true;
-                            game.last_walk_try = Some(now);
-                        }
-                    }
-                }
-                _ => {}
-            }
+        // A press the world takes is read with the frame (`ButtonRead`); the windows under it don't get it.
+        if self.world_takes_press() {
+            self.button.due = true;
             return;
         }
         // The big minimap is above the other windows, under the world map.
@@ -3071,10 +3124,7 @@ impl App {
                 Panel::Inventory if game.inventory.hit(cursor) == Some(inventory::Hit::Resize) => game.inventory.start_resize(cursor),
                 Panel::Cart if game.cart.hit(cursor) == Some(inventory::Hit::Resize) => game.cart.start_resize(cursor),
                 Panel::Pet if game.pet.is_some() && game.pet_window.hit(cursor) == Some(pet::Hit::Window) => game.pet_window.frame.start_drag(cursor),
-                Panel::Homunculus
-                    if game.homunculus.as_ref().and_then(|homunculus| game.homunculus_window.hit(cursor, homunculus))
-                        == Some(homunculus::Hit::Title(TitleHit::Title)) =>
-                {
+                Panel::Homunculus if game.homunculus.is_some() && game.homunculus_window.hit(cursor) == Some(homunculus::Hit::Window) => {
                     game.homunculus_window.frame.start_drag(cursor)
                 }
                 Panel::HomunculusSkills
@@ -3108,6 +3158,7 @@ impl App {
 
     pub(crate) fn close_message(&mut self) {
         if let Scene::Message(_, back) = std::mem::replace(&mut self.scene, Scene::Login) {
+            self.quitting |= matches!(*back, Scene::Quit);
             self.scene = *back;
         }
     }
@@ -3400,12 +3451,14 @@ impl App {
                     game.show_memorial();
                 }
             }
-            // ponytail: no window yet (commands, ground cursor, tip, hunting, flags). The key is eaten.
-            shortcuts::Action::Commands
-            | shortcuts::Action::GroundCursor
-            | shortcuts::Action::Tip
-            | shortcuts::Action::Hunting
-            | shortcuts::Action::Flag(_) => {}
+            // Off clears the square too.
+            // ponytail: the game leaves it where it was; nobody wants a square stuck on the ground.
+            shortcuts::Action::GroundCursor => {
+                game.ground_cursor = !game.ground_cursor;
+                game.ground_mark = game.ground_mark.filter(|_| game.ground_cursor);
+            }
+            // ponytail: no window yet (commands, tip, hunting, flags). The key is eaten.
+            shortcuts::Action::Commands | shortcuts::Action::Tip | shortcuts::Action::Hunting | shortcuts::Action::Flag(_) => {}
             shortcuts::Action::Macro(_)
             | shortcuts::Action::Screenshot
             | shortcuts::Action::Minimap
@@ -3562,7 +3615,7 @@ impl App {
                         self.make_action(action);
                     }
                 }
-                Key::Named(NamedKey::Escape) => self.make_action(char_make::Action::Back),
+                Key::Named(NamedKey::Escape) => self.escape_before_map(),
                 Key::Named(NamedKey::Backspace) => {
                     make.name.pop();
                 }
@@ -3681,8 +3734,8 @@ impl App {
             Scene::Game(game) if game.dismiss_asked && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_dismiss(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
-            Scene::Game(game) if game.homunculus_rename.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
-                game.answer_homunculus_name(*key == Key::Named(NamedKey::Enter));
+            Scene::Game(game) if game.homunculus_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
+                game.answer_homunculus(*key == Key::Named(NamedKey::Enter), &self.messages);
             }
             Scene::Game(game) if game.pet_asked.is_some() && matches!(key, Key::Named(NamedKey::Enter | NamedKey::Escape)) => {
                 game.answer_pet(*key == Key::Named(NamedKey::Enter), &self.pets, &self.items, &self.messages);
@@ -3828,6 +3881,13 @@ impl App {
                 }
                 window.search(&self.navi_tables);
             }
+            // The quest search box: Enter applies it, Esc leaves it.
+            Scene::Game(game) if game.quest_window.typing => match key {
+                Key::Named(NamedKey::Enter) => game.quest_window.apply_search(),
+                Key::Named(NamedKey::Escape) => game.quest_window.typing = false,
+                Key::Named(NamedKey::Backspace) => game.quest_window.backspace(),
+                _ => game.quest_window.type_text(event.text.as_deref().unwrap_or_default()),
+            },
             // The pet's name box: Enter keeps what's typed, Esc puts the name back.
             Scene::Game(game) if game.pet_window.typing => match key {
                 Key::Named(NamedKey::Enter) => game.pet_window.typing = false,
@@ -3841,6 +3901,21 @@ impl App {
                 _ => {
                     let typed: String = event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
                     game.pet_window.name_text.get_or_insert_with(String::new).push_str(&typed);
+                }
+            },
+            // The homunculus's name box, the same.
+            Scene::Game(game) if game.homunculus_window.typing => match key {
+                Key::Named(NamedKey::Enter) => game.homunculus_window.typing = false,
+                Key::Named(NamedKey::Escape) => {
+                    game.homunculus_window.name_text = None;
+                    game.homunculus_window.typing = false;
+                }
+                Key::Named(NamedKey::Backspace) => {
+                    game.homunculus_window.name_text.get_or_insert_with(String::new).pop();
+                }
+                _ => {
+                    let typed: String = event.text.as_deref().unwrap_or_default().chars().filter(|character| !character.is_control()).collect();
+                    game.homunculus_window.name_text.get_or_insert_with(String::new).push_str(&typed);
                 }
             },
             Scene::Game(game) if game.storage.typing => match key {
@@ -3998,7 +4073,7 @@ impl App {
                 Key::Named(NamedKey::Escape) => self.dismiss(),
                 _ => {}
             },
-            Scene::Waiting(_) => {}
+            Scene::Waiting(..) | Scene::Quit => {}
         }
     }
 }

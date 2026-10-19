@@ -271,7 +271,7 @@ fn draw99<'a>(
         }
         let half = size * PIXELS;
         let corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
-        quads.push((texture, at(drift[0], rise, drift[1]), corners, [color[0], color[1], color[2], alpha], true));
+        quads.push((texture, at(drift[0], rise, drift[1]), corners, [color[0], color[1], color[2], alpha], true, false));
     }
 }
 

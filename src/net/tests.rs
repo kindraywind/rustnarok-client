@@ -83,7 +83,18 @@ fn decodes_accept_and_refuse() {
     let mut refuse = vec![0u8; 26];
     refuse[..2].copy_from_slice(&AC_REFUSE_LOGIN.to_le_bytes());
     refuse[2] = 1;
-    assert!(matches!(decode_reply(&refuse), Err(LoginError::Refused(1))));
+    assert!(matches!(decode_reply(&refuse), Err(LoginError::Refused(1, ref date)) if date.is_empty()));
+    // A block's end date after the code.
+    refuse[2] = 6;
+    refuse[6..25].copy_from_slice(b"2026-10-19 12:00:00");
+    assert!(matches!(decode_reply(&refuse), Err(LoginError::Refused(6, ref date)) if date == "2026-10-19 12:00:00"));
+}
+
+#[test]
+fn pings_the_char_server_and_tells_refusals_from_bans() {
+    assert_eq!(encode_ping(2_000_001), [0x87, 0x01, 0x81, 0x84, 0x1E, 0x00]);
+    assert!(matches!(decode_char_packet(&[0x6C, 0x00, 118]), Some(CharEvent::Refused(118))));
+    assert!(matches!(decode_char_packet(&[0x81, 0x00, 8]), Some(CharEvent::Banned(8))));
 }
 
 #[test]
@@ -2463,7 +2474,7 @@ fn logs_into_local_rathena() {
     assert!(!matches!(first, MapEvent::Disconnected(_)), "{first:?}");
     drop(map);
 
-    assert!(matches!(login("127.0.0.1:6900", 0, user, "wrong password"), Err(LoginError::Refused(1))));
+    assert!(matches!(login("127.0.0.1:6900", 0, user, "wrong password"), Err(LoginError::Refused(1, _))));
 }
 
 #[test]

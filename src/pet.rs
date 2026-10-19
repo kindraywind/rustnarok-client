@@ -237,10 +237,11 @@ fn bar_middle(value: u32, ends: f32) -> f32 {
     ((BAR[2] - ends) * value as f32 / 100.0).trunc()
 }
 
-/// What a new name the rename button reads from the box is refused for: too long, or an item link in it.
-pub fn rename_refusal(name: &str) -> Option<usize> {
+/// What a new name the rename button reads from the box is refused for: too long (`too_long`, the message), or an item
+/// link in it. The homunculus's says so too.
+pub fn rename_refusal(name: &str, too_long: usize) -> Option<usize> {
     if name.len() >= NAME_BYTES {
-        Some(NAME_TOO_LONG)
+        Some(too_long)
     } else if name.contains("<ITEML>") || name.contains("</ITEML>") {
         Some(NAME_HAS_LINK)
     } else {
@@ -530,10 +531,10 @@ mod tests {
     #[test]
     fn checks_feeding_and_renaming_in_order() {
         assert_eq!([feeding(true, true), feeding(false, false), feeding(false, true)], [Feeding::Trading, Feeding::NoFood, Feeding::Send]);
-        assert_eq!(rename_refusal(&"a".repeat(24)), Some(NAME_TOO_LONG));
-        assert_eq!(rename_refusal("<ITEML>x"), Some(NAME_HAS_LINK));
-        assert_eq!(rename_refusal("x</ITEML>"), Some(NAME_HAS_LINK));
-        assert_eq!(rename_refusal(&"a".repeat(23)), None);
+        assert_eq!(rename_refusal(&"a".repeat(24), NAME_TOO_LONG), Some(NAME_TOO_LONG));
+        assert_eq!(rename_refusal("<ITEML>x", NAME_TOO_LONG), Some(NAME_HAS_LINK));
+        assert_eq!(rename_refusal("x</ITEML>", NAME_TOO_LONG), Some(NAME_HAS_LINK));
+        assert_eq!(rename_refusal(&"a".repeat(23), NAME_TOO_LONG), None);
     }
 
     #[test]

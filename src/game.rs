@@ -3,6 +3,21 @@
 
 use super::*;
 
+/// Whether a unit blocks a click on the cell it's drawn on: not while walking, not while hiding (option 0x2), never a
+/// warp or an NPC of job 111 or 139 (job 104 does). A dead one blocks until its fade ends: it stays in the units till then.
+// ponytail: derived from each unit's state at the click rather than kept as a table updated on each stand, swing,
+// flinch, sit and cast; the cells come out the same, except a swing or flinch while walking.
+pub(crate) fn unit_blocks(job: u16, walking: bool, hide_option: u32) -> bool {
+    !walking && hide_option & 0x2 == 0 && !matches!(job, 45 | 111 | 139)
+}
+
+/// The cells units block for a click: each blocking unit's drawn cell, and ground skill units' cells.
+// ponytail: the ground skill units are the least certain rule (one line, easy to take out).
+pub(crate) fn blocked_cells(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u16; 2])>, now: Instant) -> std::collections::HashSet<[i32; 2]> {
+    let standing = units.values().filter(|actor| unit_blocks(actor.job, actor.moving(), actor.hide_option)).map(|actor| actor::drawn_cell(actor.position(now)));
+    standing.chain(skill_units.values().map(|(_, cell)| cell.map(i32::from))).collect()
+}
+
 impl Game {
     pub(crate) fn dialog_for(&mut self, npc: u32) -> &mut Dialog {
         if self.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) {
@@ -159,69 +174,147 @@ impl Game {
 
     /// Attacks `target` and keeps at it, walking into reach first.
     pub(crate) fn attack(&mut self, target: u32) {
-        self.attack = Some(Attack::new(target, true));
+        self.attack = Some(self.new_attack(target, true));
         self.attack_step(Instant::now());
     }
 
-    /// Moves the attack along: once in reach (or once a walk toward it has ended) the one attack packet goes out, no
-    /// sooner than ATTACK_GAP after the last; out of reach, every CHASE_GAP a cell in reach is looked for, and walked
-    /// to when it changed. A target gone (or dying) ends it; after the packet the server keeps at it (or swings once).
+    /// An attack on `target` as clicked: fast or slow, and whether it's a skill unit on the ground.
+    pub(crate) fn new_attack(&self, target: u32, continuous: bool) -> Attack {
+        let ground = !self.units.contains_key(&target) && self.skill_units.contains_key(&target);
+        Attack { fast: self.fast_target(target), ground, ..Attack::new(target, continuous) }
+    }
+
+    /// What the player is doing, for a pending attack (`attack_works`).
+    pub(crate) fn player_motion(&self, now: Instant) -> PlayerMotion {
+        let player = &self.player;
+        if player.sitting || player.dead {
+            return PlayerMotion::Other;
+        }
+        if self.casts.contains_key(&None) {
+            return PlayerMotion::Cast;
+        }
+        let (action, timing) = player.animation(now);
+        let (swing, flinch, _) = actor::combat_actions(player.kind);
+        match action {
+            actor::WALK => PlayerMotion::Walk,
+            _ if !matches!(timing, actor::Timing::Once(..) | actor::Timing::Span(_)) => PlayerMotion::Stand,
+            _ if action == flinch => PlayerMotion::Flinch,
+            _ if action == swing || action == actor::PICKUP => PlayerMotion::Other,
+            _ => PlayerMotion::Skill,
+        }
+    }
+
+    /// Whether an attack on `target` chases it as a fast one (`slow_target`); ground skill units are.
+    pub(crate) fn fast_target(&self, target: u32) -> bool {
+        self.units.get(&target).is_none_or(|unit| !slow_target(self.player.step_ms, unit.step_ms))
+    }
+
+    /// Where the attack's target is drawn and where a chase aims, as ground points: a unit's drawn position, aimed at
+    /// the centre of the cell it walks to when fast; a ground skill unit's cell centre. None when it's gone.
+    fn attack_points(&self, attack: Attack, now: Instant) -> Option<([f32; 2], [f32; 2])> {
+        let cell = attack_goal(&self.units, &self.skill_units, attack.target)?;
+        let Some(unit) = self.units.get(&attack.target) else {
+            let centre = world::drawn_point(cell.map(|value| value as f32));
+            return Some((centre, centre));
+        };
+        let drawn = world::drawn_point(unit.position(now));
+        let aim = if attack.fast { world::drawn_point(unit.destination().map(|value| value as f32)) } else { drawn };
+        Some((drawn, aim))
+    }
+
+    /// Moves the attack along, from where the player and the target are drawn: in reach (`world::in_attack_reach`,
+    /// with heights) or arrived on the walk cell, the one attack packet goes out, no sooner than ATTACK_GAP after the
+    /// last; out of reach, a walk to the chase cell (`world::chase_cell`) when it isn't the walk cell and the target's
+    /// gap has passed (`chase_walk`). A target gone (or dying) ends it; after the packet the server keeps at it (or
+    /// swings once).
     pub(crate) fn attack_step(&mut self, now: Instant) {
         let Some(mut attack) = self.attack else { return };
-        let Some(goal) = attack_goal(&self.units, &self.skill_units, attack.target) else {
+        let clock = control::now();
+        let Some((drawn, aim)) = self.attack_points(attack, clock) else {
             self.attack = None;
             return;
         };
-        if attack.sent || self.store_open() {
+        if attack.sent || self.store_open() || !attack_works(self.player_motion(clock), self.player.job, attack.ground) {
             return;
         }
-        let from = self.player.cell;
-        if in_attack_reach(from, goal, self.attack_range) || (attack.chased && !self.player.moving()) {
-            if may_attack(self.last_attack, now) {
-                let _ = self.session.act(attack.target, attack.action());
-                self.last_attack = Some(now);
-                attack.sent = true;
+        let from = world::drawn_point(self.player.position(clock));
+        let gat = &self.world.gat;
+        let arrived = self.walk_cell == Some(world::floor_cell(from));
+        // Ice Wall and traps: their own range, flat, and a walk whenever the chase cell changes (no timer).
+        let (in_reach, range) = if attack.ground {
+            ground_unit_reach(from, drawn, self.attack_range)
+        } else {
+            let job = self.units.get(&attack.target).map_or(0, |unit| unit.job);
+            let distance = reach_to(world::attack_distance(gat, from, drawn), job, self.location_radius(job));
+            (world::in_attack_reach(distance, self.attack_range), self.attack_range)
+        };
+        if arrived || in_reach {
+            match attack_send(&attack, self.last_attack, whole_ms(now)) {
+                AttackSend::Send => {
+                    let _ = self.session.act(attack.target, attack.action());
+                    self.last_attack = Some(whole_ms(Instant::now()));
+                    attack.sent = true;
+                }
+                AttackSend::Drop => {
+                    self.attack_was = Some(attack);
+                    self.attack = None;
+                    return;
+                }
+                AttackSend::Wait => {}
             }
-        } else if attack.last_chase.is_none_or(|last| now.saturating_duration_since(last) >= CHASE_GAP) {
-            attack.last_chase = Some(now);
-            let path = world::find_path(&self.world.gat, from, goal);
-            let stop = path.and_then(|path| path.into_iter().find(|&cell| in_attack_reach(cell, goal, self.attack_range)));
-            if let Some(stop) = stop.filter(|&stop| attack.chase_cell != Some(stop))
-                && may_move(self.last_move, now)
+        } else {
+            let cell = world::chase_cell(gat, from, aim, range);
+            let gap = if attack.fast { CHASE_GAP_MS } else { ATTACK_GAP_MS };
+            let asked = if attack.ground {
+                (self.walk_cell != Some(cell)).then(|| *self.walk_cell.insert(cell))
+            } else {
+                chase_walk(cell, &mut self.walk_cell, &mut self.last_chase_walk, gap, whole_ms(now))
+            };
+            if let Some(cell) = asked
+                && may_move(self.last_move, whole_ms(now))
             {
-                self.last_move = Some(now);
-                attack.chase_cell = Some(stop);
-                attack.chased = true;
-                let _ = self.session.walk(stop.map(|value| value as u16));
+                self.last_move = Some(whole_ms(Instant::now()));
+                let _ = self.session.walk(cell.map(|value| value as u16));
             }
         }
+        self.attack_was = Some(attack);
         // A one swing that went out is over; so is one let go of.
         self.attack = Some(attack).filter(|attack| !(attack.sent && !attack.continuous && !attack.held));
     }
 
-    /// The cell under a point on screen, on the plane at the player's height.
+    /// The GAT cell the game picks under a point on screen (`world::ground_hit`), if any.
     pub(crate) fn ground_cell(&self, cursor: [f32; 2]) -> Option<[i32; 2]> {
         let view = self.camera.view(screen()[0] / screen()[1]);
-        view.pick_ground([cursor[0] / screen()[0], cursor[1] / screen()[1]], &self.world.gat)
+        // Through the pointer's whole canvas pixel (its corner), as the game picks.
+        view.pick_ground([cursor[0].floor() / screen()[0], cursor[1].floor() / screen()[1]], &self.world.gat)
     }
 
-    /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`: not blocked, nobody standing there, a
-    /// path to it); nothing when the last walk went out less than MOVE_GAP ago. Whether a walk was sent.
+    /// Walks to a cell, or as close to it as can be walked (`world::walk_goal`), judged from the cell the player is
+    /// drawn on. A goal ends the pending pickup or skill; while the player is busy (`Actor::busy`) it's stored and
+    /// goes out when that ends, otherwise it's sent by `send_walk`. Whether a walk was sent.
     pub(crate) fn walk_toward(&mut self, cell: [i32; 2], now: Instant) -> bool {
-        if self.player.swinging(control::now()) {
-            self.walk_after_swing = Some(cell);
-            return false;
-        }
-        if !may_move(self.last_move, now) {
-            return false;
-        }
-        let from = self.player.cell;
-        let taken: std::collections::HashSet<[i32; 2]> = self.units.values().filter(|actor| !actor.hidden).map(|actor| actor.cell).collect();
+        let clock = control::now();
+        let from = actor::drawn_cell(self.player.position(clock));
+        let taken = blocked_cells(&self.units, &self.skill_units, clock);
         let gat = &self.world.gat;
-        let open = |cell: [i32; 2]| gat.walkable(cell) && !taken.contains(&cell) && world::find_path(gat, from, cell).is_some();
-        let Some(goal) = world::walk_goal(cell, from, open) else { return false };
-        self.pending = None;
-        self.last_move = Some(now);
+        let free = |cell: [i32; 2]| gat.walkable(cell) && !taken.contains(&cell);
+        let reachable = |cell: [i32; 2]| world::find_path(gat, from, cell).is_some();
+        let Some(goal) = world::walk_goal(cell, from, free, reachable) else { return false };
+        let busy = self.player.busy(clock);
+        self.stored_walk.click(goal, busy, &mut self.pending).is_some_and(|goal| self.send_walk(goal, now))
+    }
+
+    /// Sends CZ_REQUEST_MOVE to `goal` when more than MOVE_GAP_MS whole milliseconds passed since the last one; sooner
+    /// it's dropped. With a Laphine or reform window open it counts as sent but nothing goes out (rathena refuses it
+    /// then). Whether it counted.
+    pub(crate) fn send_walk(&mut self, goal: [i32; 2], now: Instant) -> bool {
+        if !may_move(self.last_move, whole_ms(now)) {
+            return false;
+        }
+        self.last_move = Some(whole_ms(Instant::now()));
+        if self.synthesis.is_some() || self.upgrade.is_some() || self.reform.is_some() {
+            return true;
+        }
         self.walk_goal = Some(goal);
         self.walks += 1;
         let _ = self.session.walk(goal.map(|value| value as u16));
@@ -249,7 +342,7 @@ impl Game {
         match hovered(&self.hit_boxes, cursor, shift) {
             Some(Owner::Unit(id)) => match self.units.get(&id).map(|actor| actor.kind) {
                 // A warp portal: walk onto it.
-                Some(NPC) if self.units[&id].job == WARP_JOB => WorldClick::Warp(self.units[&id].cell),
+                Some(NPC) if self.units[&id].job == WARP_JOB => WorldClick::Warp,
                 Some(NPC) => WorldClick::Talk(id),
                 Some(MONSTER) => WorldClick::Attack(id),
                 // Players: an attack where the map (or Shift, or /noshift) says so; one swing a click on a siege map.
@@ -347,6 +440,11 @@ impl Game {
         let _ = self.session.talk(id);
     }
 
+    /// The trade or storage window is open: the world takes no presses and the held button makes no tries.
+    pub(crate) fn trade_or_storage(&self) -> bool {
+        self.trade.is_some() || self.storage.frame.open
+    }
+
     pub(crate) fn talk_blocks(&self) -> bool {
         talk_holds(self.dialog.as_ref().is_some_and(|dialog| dialog.talking), self.casts.contains_key(&None))
     }
@@ -397,9 +495,9 @@ impl Game {
                         let _ = self.session.pick_up(id);
                     }
                     // The walk goes to the cell next to the item on the player's side (`pending_walk` notes the item).
-                    PickStep::Walk if may_move(self.last_move, now) => {
+                    PickStep::Walk if may_move(self.last_move, whole_ms(now)) => {
                         let spot = pickup_spot(self.player.cell, at, |cell| self.world.gat.walkable(cell));
-                        self.last_move = Some(now);
+                        self.last_move = Some(whole_ms(Instant::now()));
                         self.pending_walk = Some((at, now));
                         let _ = self.session.walk(spot.map(|value| value as u16));
                     }
@@ -408,43 +506,48 @@ impl Game {
                     _ => {}
                 }
             }
-            // A skill: sent the moment it's in reach (walking or not), or once the walk there ended; out of reach, a walk
-            // toward a cell in range on the way to where the target is going, again whenever that changes. It waits
-            // while the player swings, casts or sits; a target out of sight ends it.
-            Some((Pending::Skill { id, level, target }, arrived)) => {
+            // A skill: sent the moment it's in reach (walking or not) or on arriving on the walk cell; out of reach, a
+            // walk to the chase cell toward where the target is drawn (a cell's centre on the ground) whenever it
+            // isn't the walk cell, with no path needed. Only while the player stands, walks or flinches; a target
+            // whose unit is gone ends it (a dying one is still there).
+            Some((Pending::Skill { id, level, target }, _)) => {
                 let clock = control::now();
-                if self.player.swinging(clock) || self.casts.contains_key(&None) || self.player.sitting {
+                if !matches!(self.player_motion(clock), PlayerMotion::Stand | PlayerMotion::Walk | PlayerMotion::Flinch) {
                     return;
                 }
+                let from = world::drawn_point(self.player.position(clock));
+                let range = self.skill_range(id, level);
+                let gat = &self.world.gat;
+                // Where it aims, the reach distance, and a big monster's job and radius (the sent cell shifts).
                 let toward = match target {
-                    SkillTarget::Unit(unit) if unit == self.account_id => Some((self.player.position(clock), self.player.cell)),
-                    SkillTarget::Unit(unit) => {
-                        self.units.get(&unit).filter(|actor| actor.remove_at.is_none()).map(|actor| (actor.position(clock), actor.destination()))
+                    SkillTarget::Unit(unit) if unit == self.account_id => Some((from, 0.0, None)),
+                    SkillTarget::Unit(unit) => self.units.get(&unit).map(|actor| {
+                        let drawn = world::drawn_point(actor.position(clock));
+                        let radius = self.location_radius(actor.job);
+                        (drawn, reach_to(world::attack_distance(gat, from, drawn), actor.job, radius), Some((actor.job, radius)))
+                    }),
+                    SkillTarget::Cell(cell) => {
+                        let centre = world::drawn_point(cell.map(|value| value as f32));
+                        Some((centre, (centre[0] - from[0]).hypot(centre[1] - from[1]), None))
                     }
-                    SkillTarget::Cell(cell) => Some((cell.map(|value| value as f32), cell)),
                 };
-                let Some((at, goal)) = toward else {
+                let Some((aim, distance, big)) = toward else {
                     self.pending = None;
                     return;
                 };
-                let range = self.skill_range(id, level);
-                let walked = arrived.is_some() && !self.player.moving();
-                if skill_in_reach(self.player.position(clock), at, range) || walked {
+                if skill_in_reach(distance, range) || self.walk_cell == Some(world::floor_cell(from)) {
                     self.pending = None;
                     self.pending_walk = None;
                     self.send_skill(id, level, target);
-                } else if self.pending_walk.is_none_or(|(toward, _)| toward != goal) && may_move(self.last_move, now) {
-                    let reach = range.max(1.0) as i32;
-                    match world::find_path(&self.world.gat, self.player.cell, goal)
-                        .and_then(|path| path.into_iter().find(|&cell| world::in_reach(cell, goal, reach)))
-                    {
-                        Some(stop) => {
-                            self.last_move = Some(now);
-                            self.pending_walk = Some((goal, now));
-                            self.pending = Some((Pending::Skill { id, level, target }, None));
-                            let _ = self.session.walk(stop.map(|value| value as u16));
-                        }
-                        None => self.pending = None,
+                    return;
+                }
+                let cell = world::chase_cell(gat, from, aim, range as i32);
+                if self.walk_cell != Some(cell) {
+                    self.walk_cell = Some(cell);
+                    if may_move(self.last_move, whole_ms(now)) {
+                        let sent = big.map_or(cell, |(job, radius)| big_walk_cell(cell, job, radius, from, aim));
+                        self.last_move = Some(whole_ms(Instant::now()));
+                        let _ = self.session.walk(sent.map(|value| value as u16));
                     }
                 }
             }
@@ -469,7 +572,7 @@ impl Game {
             Panel::Pet => self.pet.is_some() && self.pet_window.hit(cursor).is_some(),
             Panel::Mercenary => self.mercenary.is_some() && self.mercenary_window.hit(cursor).is_some(),
             Panel::MercenarySkills => self.mercenary.is_some() && self.mercenary_skill_list.hit(cursor, &self.mercenary_skills).is_some(),
-            Panel::Homunculus => self.homunculus.as_ref().is_some_and(|homunculus| self.homunculus_window.hit(cursor, homunculus).is_some()),
+            Panel::Homunculus => self.homunculus.is_some() && self.homunculus_window.hit(cursor).is_some(),
             Panel::HomunculusSkills => self
                 .homunculus
                 .as_ref()
@@ -827,7 +930,7 @@ impl Game {
             BoxQuestion::GuildLeader { account, character, .. } => {
                 let _ = self.session.move_members(&[(account, character, 0)]);
             }
-            BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) => {}
+            BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) | BoxQuestion::Said(_) => {}
         }
     }
 
@@ -1033,6 +1136,8 @@ impl Game {
         if self.store_open() {
             return;
         }
+        // One pending action: the skill takes the attack's place.
+        self.attack = None;
         // Out of reach it walks there first: `pending_step` checks every frame.
         self.pending = Some((Pending::Skill { id, level, target }, None));
         self.pending_walk = None;
@@ -1049,12 +1154,20 @@ impl Game {
         false
     }
 
-    /// The range in cells of skill `id` at `level`: its range for that level, plus what the skill list adds at the
-    /// learned level.
+    /// The range in cells of skill `id` at `level` (`skill_range`): 5 for skill 10000, 1 for one the player doesn't
+    /// have (not listed, not an item's).
     pub(crate) fn skill_range(&self, id: u16, level: u16) -> f32 {
-        let known = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id);
-        let per_level = self.skill_info.get(&id).map_or(&[][..], |info| &info.attack_range);
-        skill_range(per_level, level, known.map_or(level, |skill| skill.level), known.map_or(1, |skill| skill.range))
+        if id == 10000 {
+            return 5.0;
+        }
+        let Some(known) = self.skills.iter().chain(&self.item_skill).find(|skill| skill.id == id) else { return 1.0 };
+        let info = self.skill_info.get(&id);
+        skill_range(info.map_or(&[][..], |info| &info.attack_range), info.and_then(|info| info.max_lv), level, known.level, known.range)
+    }
+
+    /// The radius a unit's job stands on (`lua::location_radii`), 0 for most.
+    pub(crate) fn location_radius(&self, job: u16) -> f32 {
+        self.location_radii.get(&job).copied().unwrap_or(0.0)
     }
 
     /// Sends a skill walked into range (refused while its cooldown runs).
@@ -1076,6 +1189,21 @@ impl Game {
 
     /// Plays an effect on a unit from a moment on (a hit when it lands).
     pub(crate) fn play_effect_from(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant) {
+        self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);
+    }
+
+    /// Soul Strike's ghosts from `caster` to `target`, a ghost a hit.
+    pub(crate) fn soul_strike(&mut self, grf: &Grf, caster: u32, target: u32, hits: u16) {
+        let cell = |unit: u32| if unit == self.account_id { Some(self.player.cell) } else { self.units.get(&unit).map(|actor| actor.cell) };
+        if let (Some(from), Some(to)) = (cell(caster), cell(target)) {
+            let [from, to] = [from, to].map(|cell| self.world.cell_position(cell.map(|value| value as f32)));
+            self.effects.soul_strike(grf, from, to, hits, Instant::now());
+        }
+    }
+
+    /// Plays an effect on a unit told the skill's hit count (a bolt drops an arrow a hit).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn play_effect_hits(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant, hits: u16) {
         let key = (unit != self.account_id).then_some(unit);
         let cell = match key {
             None => Some(self.player.cell),
@@ -1083,7 +1211,12 @@ impl Game {
         };
         if let Some(cell) = cell {
             let at = self.world.cell_position(cell.map(|value| value as f32));
-            self.effects.play(gpu, grf, table, effect, effects::Target::Unit(key), at, start);
+            self.effects.play_hits(gpu, grf, table, effect, effects::Target::Unit(key), at, start, hits);
+            // EF_HIT1 is made in code, turned by the way the target faces.
+            if effect == EF_HIT1 {
+                let facing = key.map_or(Some(self.player.direction), |id| self.units.get(&id).map(|actor| actor.direction));
+                self.effects.play_hit(gpu, grf, key, facing.unwrap_or(0), start);
+            }
         }
     }
 
@@ -1640,6 +1773,8 @@ impl Game {
             || self.guild_window.typing.is_some()
             || self.storage.typing
             || self.pet_window.typing
+            || self.homunculus_window.typing
+            || self.quest_window.typing
             || self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some())
             || self.talks.typing()
             || self.away_prompt.is_some()
@@ -1744,7 +1879,7 @@ impl Game {
             || self.leader_asked.is_some()
             || self.question_box.is_some()
             || self.dismiss_asked
-            || self.homunculus_rename.is_some()
+            || self.homunculus_asked.is_some()
             || self.pet_asked.is_some()
             || self.friend_asked.is_some()
             || self.party_invite.is_some()
@@ -1763,7 +1898,7 @@ impl Game {
             || (self.minimap_shown() && minimap::covers(cursor))
             || self.reason_box.as_ref().is_some_and(|reason| reason.hit(cursor, screen()).is_some())
             || self.minimap_window.covers(cursor)
-            || (asking && contains(dialog_position_of(message), message, cursor))
+            || (asking && contains(dialog_position_of(screen()), message, cursor))
             || self.on_npc_window(cursor)
             || self.talk_blocks()
             || self.amount.is_some()
@@ -1840,7 +1975,6 @@ impl Game {
             | Asked::VendPrice(_)
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
-            | Asked::HomunculusName
             | Asked::TalkieBox { .. } => None,
         };
         match amount {
@@ -1863,12 +1997,6 @@ impl Game {
                 self.aim_skill(SkillTarget::Cell(cell));
                 Ok(())
             }
-            // The same once-only question for the homunculus.
-            Asked::HomunculusName if !name.is_empty() => {
-                self.homunculus_rename = Some(name.to_owned());
-                Ok(())
-            }
-            Asked::HomunculusName => Ok(()),
             Asked::BuyingPrice(index, item_id) => {
                 if let Some(setup) = &mut self.buying_setup {
                     setup.set_price(index, item_id, amount.value());
@@ -1948,7 +2076,7 @@ impl Game {
                 have if amount > have => Ok(()),
                 _ => self.session.drop_item(index, amount as u16),
             },
-            Asked::RoomPassword(_) | Asked::HomunculusName | Asked::BuyingPrice(..) | Asked::BuyingAmount(_) | Asked::TalkieBox { .. } => Ok(()),
+            Asked::RoomPassword(_) | Asked::BuyingPrice(..) | Asked::BuyingAmount(_) | Asked::TalkieBox { .. } => Ok(()),
             Asked::VendPrice(index) => {
                 if let Some(setup) = &mut self.vend_setup {
                     setup.prices.insert(index, amount);
@@ -2337,10 +2465,10 @@ impl Game {
         push(GuildCreate, self.guild_companion.create.as_ref().is_some_and(|create| !create.disband));
         push(GuildDisband, self.guild_companion.create.as_ref().is_some_and(|create| create.disband));
         push(GuildTip, self.guild_companion.tip.is_some());
-        push(PartyAsked, self.question_box.as_ref().is_some_and(|asked| !matches!(asked, BoxQuestion::Notice(_))));
-        push(Notice, matches!(self.question_box, Some(BoxQuestion::Notice(_))));
+        push(PartyAsked, self.question_box.as_ref().is_some_and(|asked| !matches!(asked, BoxQuestion::Notice(_) | BoxQuestion::Said(_))));
+        push(Notice, matches!(self.question_box, Some(BoxQuestion::Notice(_) | BoxQuestion::Said(_))));
         push(DismissAsked, self.dismiss_asked);
-        push(HomunculusRename, self.homunculus_rename.is_some());
+        push(HomunculusAsked, self.homunculus_asked.is_some());
         push(PetAsked, self.pet_asked.is_some());
         push(CashShopBuy, self.cashshop_buy_asked);
         push(GuildAsked, self.guild_asked.is_some());
@@ -2469,7 +2597,7 @@ impl Game {
             || self.leader_asked.is_some()
             || self.question_box.is_some()
             || self.dismiss_asked
-            || self.homunculus_rename.is_some()
+            || self.homunculus_asked.is_some()
             || self.pet_asked.is_some()
             || self.cashshop_buy_asked
             || self.guild_asked.is_some()
@@ -2535,8 +2663,8 @@ impl Game {
             self.answer_dismiss(false, messages);
             return;
         }
-        if self.homunculus_rename.is_some() {
-            self.answer_homunculus_name(false);
+        if self.homunculus_asked.is_some() {
+            self.decline_homunculus();
             return;
         }
         if self.pet_asked.is_some() {
@@ -2736,7 +2864,7 @@ impl Game {
             GuildCreate | GuildDisband => self.guild_companion.create = None,
             GuildTip => self.guild_companion.tip = None,
             DismissAsked => self.answer_dismiss(false, &[]),
-            HomunculusRename => self.answer_homunculus_name(false),
+            HomunculusAsked => self.decline_homunculus(),
             PetAsked => self.decline_pet(),
             CashShopBuy => self.cashshop_buy_asked = false,
             GuildAsked => {
@@ -2980,7 +3108,7 @@ impl Game {
         let Some(pet) = &self.pet else { return };
         let name = self.pet_window.name(pet).to_owned();
         self.pet_window.typing = false;
-        self.pet_asked = Some(match pet::rename_refusal(&name) {
+        self.pet_asked = Some(match pet::rename_refusal(&name, pet::NAME_TOO_LONG) {
             Some(why) => PetAsked::Refused(why),
             None => PetAsked::Rename(name),
         });
@@ -3134,18 +3262,54 @@ impl Game {
         self.homunculus_id = None;
         self.homunculus_skills.clear();
         self.homunculus_steering = mercenary::Steering::default();
-        self.homunculus_rename = None;
-        self.homunculus_hunger = None;
+        self.homunculus_asked = None;
+        self.homunculus_warned = None;
+        self.homunculus_window.name_text = None;
+        self.homunculus_window.typing = false;
         if close {
             self.homunculus_window.frame.open = false;
             self.homunculus_skill_list.frame.open = false;
         }
     }
 
-    /// Answers the rename question: OK names the homunculus.
-    pub(crate) fn answer_homunculus_name(&mut self, yes: bool) {
-        if let Some(name) = self.homunculus_rename.take().filter(|_| yes) {
-            let _ = self.session.rename_homunculus(&name);
+    /// The homunculus window's rename button, on what the name box holds: turned down, or asked.
+    pub(crate) fn ask_homunculus_rename(&mut self) {
+        let Some(homunculus) = &self.homunculus else { return };
+        let name = self.homunculus_window.name(homunculus).to_owned();
+        self.homunculus_window.typing = false;
+        self.homunculus_asked = Some(match pet::rename_refusal(&name, homunculus::NAME_TOO_LONG) {
+            Some(why) => HomunculusAsked::Refused(why),
+            None => HomunculusAsked::Rename(name),
+        });
+    }
+
+    /// Answers the homunculus question. Feeding: not while trading. Deleting: it's gone. Renaming: sent (rathena turns
+    /// down a second one).
+    pub(crate) fn answer_homunculus(&mut self, yes: bool, messages: &[String]) {
+        if !yes {
+            return self.decline_homunculus();
+        }
+        match self.homunculus_asked.take() {
+            Some(HomunculusAsked::Feed) if self.trade.is_some() => {
+                self.chat_line(messages.get(homunculus::FEED_WHILE_TRADING).cloned().unwrap_or_default(), CHAT_ERROR);
+            }
+            Some(HomunculusAsked::Feed) => drop(self.session.homunculus_command(net::HOMUNCULUS_FEED)),
+            Some(HomunculusAsked::Delete) => {
+                let _ = self.session.homunculus_command(net::HOMUNCULUS_DELETE);
+                self.forget_homunculus(true);
+            }
+            Some(HomunculusAsked::Rename(name)) => {
+                let _ = self.session.rename_homunculus(&name);
+                self.homunculus_window.name_text = None;
+            }
+            Some(HomunculusAsked::Refused(_)) | None => {}
+        }
+    }
+
+    /// No to the homunculus question: a refused rename puts the old name back in the box.
+    pub(crate) fn decline_homunculus(&mut self) {
+        if let Some(HomunculusAsked::Rename(_)) = self.homunculus_asked.take() {
+            self.homunculus_window.name_text = None;
         }
     }
 
@@ -3281,5 +3445,58 @@ impl Game {
                 self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift, source: None });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustnarok_client::map::Gat;
+
+    #[test]
+    fn units_block_where_they_stand() {
+        let gat = Gat { width: 30, height: 30, cells: vec![([0.0; 4], 0); 900] };
+        let now = Instant::now();
+        let mut units = HashMap::new();
+        let mut monster = Actor::new("Poring".into(), None, [10, 10], 0, 150);
+        monster.job = 1002;
+        units.insert(1, monster);
+        let skill_units = HashMap::new();
+        let goal = |units: &HashMap<u32, Actor>, from: [i32; 2], click: [i32; 2]| {
+            let taken = blocked_cells(units, &skill_units, now);
+            world::walk_goal(click, from, |cell| gat.walkable(cell) && !taken.contains(&cell), |cell| world::find_path(&gat, from, cell).is_some())
+        };
+        // A standing monster on (10, 10): a click there from (15, 12) goes to (11, 10).
+        assert_eq!(goal(&units, [15, 12], [10, 10]), Some([11, 10]));
+        // Walking, it blocks nothing.
+        units.get_mut(&1).unwrap().walk_from([10, 10], [8, 8], vec![[10, 11], [10, 12]], now, now, true);
+        assert_eq!(goal(&units, [15, 12], [10, 10]), Some([10, 10]));
+        // Stopped on (12, 10), it blocks that cell.
+        units.get_mut(&1).unwrap().stop_at([12, 10]);
+        assert!(blocked_cells(&units, &skill_units, now).contains(&[12, 10]));
+        // A dead one still blocks while it fades.
+        units.get_mut(&1).unwrap().remove_at = Some(now + std::time::Duration::from_secs(1));
+        assert!(blocked_cells(&units, &skill_units, now).contains(&[12, 10]));
+        // A hiding player doesn't; a job-104 NPC does; a warp doesn't.
+        assert!(!unit_blocks(4001, false, 0x2) && unit_blocks(4001, false, 0x4));
+        assert!(unit_blocks(104, false, 0) && !unit_blocks(45, false, 0) && !unit_blocks(111, false, 0) && !unit_blocks(139, false, 0));
+    }
+
+    #[test]
+    fn judges_clicks_from_the_drawn_cell() {
+        // Walking (10, 10) → (11, 10) → (12, 11) at 150 ms a cell: at 100 ms it's on (11, 10), at 300 ms on (12, 11).
+        let start = Instant::now();
+        let mut player = Actor::new("Me".into(), None, [10, 10], 0, 150);
+        player.step_ms = 150.0;
+        player.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 11]], start, start, false);
+        let at = |ms: u64| start + std::time::Duration::from_millis(ms);
+        player.update(at(100));
+        assert_eq!(actor::drawn_cell(player.position(at(100))), [11, 10]);
+        player.update(at(300));
+        assert_eq!(actor::drawn_cell(player.position(at(300))), [12, 11]);
+        // A click on the cell it's drawn on sends nothing: no path to itself.
+        let gat = Gat { width: 30, height: 30, cells: vec![([0.0; 4], 0); 900] };
+        let from = [11, 10];
+        assert_eq!(world::walk_goal(from, from, |cell| gat.walkable(cell), |cell| world::find_path(&gat, from, cell).is_some()), None);
     }
 }

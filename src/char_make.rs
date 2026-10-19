@@ -15,32 +15,36 @@ use crate::{Layer, UI, contains, offset, screen};
 const WINDOW: [f32; 2] = [794.0, 422.0];
 /// bg_back2.tga is laid where the select screen's window was.
 const BACKDROP: [f32; 2] = [997.0, 626.0];
-const TITLE: [f32; 2] = [45.0, 15.0];
-const CLOSE: [f32; 2] = [767.0, 9.0];
-const RACES: [[f32; 2]; 2] = [[20.0, 33.0], [20.0, 202.0]];
+const TITLE: [f32; 2] = [44.0, 17.0];
+const TITLE_COLOR: [u8; 3] = [0x5F, 0x5F, 0x5F];
+/// The window sits 70 px above the middle.
+const ABOVE_MIDDLE: f32 = 70.0;
+const CLOSE: [f32; 2] = [768.0, 9.0];
+const RACES: [[f32; 2]; 2] = [[21.0, 36.0], [21.0, 202.0]];
 const RACE_SIZE: [f32; 2] = [364.0, 166.0];
 /// Inside a race panel: its name on the chip, the description, and where its figure stands.
 const RACE_TITLE: [f32; 2] = [45.0, 22.0];
 const RACE_TEXT: [f32; 2] = [110.0, 22.0];
 const RACE_TEXT_WIDTH: f32 = 230.0;
 const RACE_FEET: [f32; 2] = [60.0, 136.0];
-const GENDERS: [[f32; 2]; 2] = [[435.0, 55.0], [498.0, 55.0]];
+const GENDERS: [[f32; 2]; 2] = [[437.0, 59.0], [500.0, 59.0]];
 /// The preview stands on the pedestal in the middle of the gradient, between the turn buttons.
-const MODEL_FEET: [f32; 2] = [498.0, 235.0];
-const TURNS: [[f32; 2]; 2] = [[426.0, 224.0], [548.0, 224.0]];
-const NAME_FIELD: [f32; 2] = [421.0, 259.0];
-const NAME_SIZE: [f32; 2] = [158.0, 34.0];
-const CHECK: [f32; 2] = [421.0, 296.0];
-const HAIR_TITLE: [f32; 2] = [612.0, 42.0];
-const HAIR_GRID: [f32; 2] = [612.0, 60.0];
+const MODEL_FEET: [f32; 2] = [500.0, 228.0];
+const TURNS: [[f32; 2]; 2] = [[426.0, 179.0], [551.0, 179.0]];
+const NAME_FIELD: [f32; 2] = [435.0, 268.0];
+const NAME_SIZE: [f32; 2] = [130.0, 20.0];
+const HAIR_TITLE: [f32; 2] = [609.0, 46.0];
+const HAIR_GRID: [f32; 2] = [606.0, 59.0];
+/// A hairstyle cell, and the steps between cells across and down.
 const HAIR_CELL: [f32; 2] = [36.0, 37.0];
+const HAIR_STEP: [f32; 2] = [38.0, 37.0];
 const HAIR_COLUMNS: usize = 4;
-const COLOR_TITLE: [f32; 2] = [609.0, 283.0];
-const COLORS: [f32; 2] = [613.0, 304.0];
-const COLOR_STEP: f32 = 26.0;
+const COLOR_TITLE: [f32; 2] = [609.0, 287.0];
+const COLORS: [f32; 2] = [619.0, 306.0];
+const COLOR_STEP: [f32; 2] = [27.0, 24.0];
 const COLOR_COLUMNS: usize = 5;
-const BACK: [f32; 2] = [25.0, 378.0];
-const MAKE: [f32; 2] = [617.0, 378.0];
+const BACK: [f32; 2] = [25.0, 379.0];
+const MAKE: [f32; 2] = [616.0, 379.0];
 const WHITE: [u8; 3] = [255, 255, 255];
 const BLACK: [u8; 3] = [0, 0, 0];
 const DESCRIPTION: [u8; 3] = [0x55, 0x55, 0x55];
@@ -57,8 +61,8 @@ const HAIR_MESSAGE: usize = 3346;
 const COLOR_MESSAGE: usize = 3347;
 const MAKE_MESSAGE: usize = 3345;
 const BACK_MESSAGE: usize = 3351;
-const CHECK_MESSAGE: usize = 3348;
 pub const SHORT_NAME_MESSAGE: usize = 21;
+pub const NAME_HAS_LINK: usize = 2812;
 
 pub struct Assets {
     backdrop: Texture,
@@ -76,7 +80,6 @@ pub struct Assets {
     /// Each color: off, on, over, press.
     colors: Vec<[Texture; 4]>,
     button: [Texture; 3],
-    check: [Texture; 3],
     close: [Texture; 3],
     black: Texture,
 }
@@ -102,7 +105,6 @@ impl Assets {
             ],
             colors: (1..=HAIR_COLORS).map(|color| lit(&format!("color{color:02}"))).collect(),
             button: pressable("bt_make"),
-            check: pressable("bt_doublecheck"),
             close: pressable("bt_close"),
             black: gpu.solid([0, 0, 0, 255]),
         }
@@ -118,7 +120,6 @@ pub enum Hit {
     Hair(usize),
     Color(usize),
     Name,
-    Check,
     Make,
     Back,
     Close,
@@ -129,9 +130,26 @@ pub enum Hit {
 pub enum Action {
     /// Send CH_MAKE_CHAR.
     Make,
-    /// The name is too short to check or make.
-    ShortName,
+    /// The name is refused with this box.
+    Refused(usize),
     Back,
+}
+
+/// What Create does with a name, in order: under 4 bytes and with an item link, a box; a name the game keeps for
+/// itself (Gravity, or "[gm" at its first or second byte), nothing at all; else it's sent.
+pub fn name_action(name: &str) -> Option<Action> {
+    let bytes = net::encode_text(name).to_ascii_lowercase();
+    let reserved =
+        name.contains("그라비티") || bytes.windows(7).any(|window| window == b"gravity") || [0, 1].iter().any(|&at| bytes.get(at..at + 3) == Some(&b"[gm"[..]));
+    if bytes.len() < 4 {
+        Some(Action::Refused(SHORT_NAME_MESSAGE))
+    } else if name.contains("<ITEML>") || name.contains("</ITEML>") {
+        Some(Action::Refused(NAME_HAS_LINK))
+    } else if reserved {
+        None
+    } else {
+        Some(Action::Make)
+    }
 }
 
 pub struct Make {
@@ -158,6 +176,12 @@ impl Make {
         make
     }
 
+    /// A make window with no figures, for tests.
+    #[cfg(test)]
+    pub fn blank(slot: u8) -> Self {
+        Self { slot, doram: false, male: true, hair: 1, color: 0, name: String::new(), preedit: String::new(), direction: 0, figures: [None, None, None] }
+    }
+
     pub fn job(&self) -> u16 {
         RACE_JOBS[usize::from(self.doram)]
     }
@@ -180,7 +204,7 @@ impl Make {
     }
 
     fn origin() -> [f32; 2] {
-        [((screen()[0] - WINDOW[0]) / 2.0).floor(), ((screen()[1] - WINDOW[1]) / 2.0).floor()]
+        [((screen()[0] - WINDOW[0]) / 2.0).floor(), ((screen()[1] - WINDOW[1]) / 2.0).floor() - ABOVE_MIDDLE]
     }
 
     fn at(local: [f32; 2]) -> [f32; 2] {
@@ -192,11 +216,11 @@ impl Make {
     }
 
     fn hair_cell(style: usize) -> [f32; 2] {
-        Self::at([HAIR_GRID[0] + (style % HAIR_COLUMNS) as f32 * HAIR_CELL[0], HAIR_GRID[1] + (style / HAIR_COLUMNS) as f32 * HAIR_CELL[1]])
+        Self::at([HAIR_GRID[0] + (style % HAIR_COLUMNS) as f32 * HAIR_STEP[0], HAIR_GRID[1] + (style / HAIR_COLUMNS) as f32 * HAIR_STEP[1]])
     }
 
     fn color_cell(color: usize) -> [f32; 2] {
-        Self::at([COLORS[0] + (color % COLOR_COLUMNS) as f32 * COLOR_STEP, COLORS[1] + (color / COLOR_COLUMNS) as f32 * COLOR_STEP])
+        Self::at([COLORS[0] + (color % COLOR_COLUMNS) as f32 * COLOR_STEP[0], COLORS[1] + (color / COLOR_COLUMNS) as f32 * COLOR_STEP[1]])
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
@@ -216,13 +240,7 @@ impl Make {
         if let Some(color) = (0..HAIR_COLORS).find(|&color| contains(Self::color_cell(color), [22.0, 22.0], cursor)) {
             return Some(Hit::Color(color));
         }
-        let hit = [
-            (NAME_FIELD, NAME_SIZE, Hit::Name),
-            (CHECK, [157.0, 24.0], Hit::Check),
-            (MAKE, [152.0, 27.0], Hit::Make),
-            (BACK, [152.0, 27.0], Hit::Back),
-            (CLOSE, [17.0, 16.0], Hit::Close),
-        ];
+        let hit = [(NAME_FIELD, NAME_SIZE, Hit::Name), (MAKE, [152.0, 27.0], Hit::Make), (BACK, [152.0, 27.0], Hit::Back), (CLOSE, [17.0, 16.0], Hit::Close)];
         hit.into_iter().find(|&(place, size, _)| inside(place, size)).map(|(.., hit)| hit)
     }
 
@@ -240,19 +258,12 @@ impl Make {
             }
             Hit::Hair(style) => self.hair = style as u16 + 1,
             Hit::Color(color) => self.color = color as u16,
-            Hit::Check => return (!self.name_long_enough()).then_some(Action::ShortName),
-            Hit::Make => return Some(if self.name_long_enough() { Action::Make } else { Action::ShortName }),
+            Hit::Make => return name_action(self.name.trim()),
             Hit::Back | Hit::Close => return Some(Action::Back),
             Hit::Race(_) | Hit::Name => return None,
         }
         self.dress(grf, tables);
         None
-    }
-
-    // ponytail: rathena has no packet to check a new name, so the check only looks at its length.
-    /// The client's rule: at least 2 Hangul or 4 Latin letters (4 bytes in the code page).
-    fn name_long_enough(&self) -> bool {
-        net::encode_text(self.name.trim()).len() >= 4
     }
 
     /// Typed text, kept within what the server takes.
@@ -297,7 +308,7 @@ impl Make {
         let backdrop = [((screen()[0] - BACKDROP[0]) / 2.0).floor(), ((screen()[1] - BACKDROP[1]) / 2.0).floor()];
         layer.sprites.push((&assets.backdrop, backdrop, assets.backdrop.size));
         layer.sprites.push((&assets.window, Self::at([0.0; 2]), assets.window.size));
-        layer.texts.push((message(TITLE_MESSAGE).to_owned(), Self::at(TITLE), BLACK));
+        layer.texts.push((message(TITLE_MESSAGE).to_owned(), Self::at(TITLE), TITLE_COLOR));
 
         // The races, each with its figure standing on the panel's pedestal.
         for race in 0..2 {
@@ -335,7 +346,6 @@ impl Make {
         if caret {
             layer.sprites.push((&assets.black, [name_place[0] + font.width(&typed).round(), name_place[1] + 1.0], [1.0, font.line_height() - 2.0]));
         }
-        button(layer, font, &assets.check[look(Hit::Check)], Self::at(CHECK), message(CHECK_MESSAGE));
 
         // Hairstyles and colors.
         layer.texts.push((message(HAIR_MESSAGE).to_owned(), Self::at(HAIR_TITLE), BLACK));
@@ -384,10 +394,49 @@ mod tests {
             figures: [None, None, None],
         };
         make.type_text("ab");
-        assert!(!make.name_long_enough());
+        assert_eq!(name_action(&make.name), Some(Action::Refused(SHORT_NAME_MESSAGE)));
         make.type_text("가나다라마바사아자차카타");
         // Two Latin bytes and ten 2-byte Hangul syllables fill 22 of the 23 bytes; the rest don't fit.
         assert_eq!(make.name, "ab가나다라마바사아자차");
-        assert!(make.name_long_enough());
+        assert_eq!(name_action(&make.name), Some(Action::Make));
+    }
+
+    #[test]
+    fn checks_names_in_order() {
+        // Too short first, then an item link (boxes); Gravity and a "[gm" start do nothing at all.
+        assert_eq!(name_action("ab<ITEML>"), Some(Action::Refused(NAME_HAS_LINK)));
+        assert_eq!(name_action("x</ITEML>y"), Some(Action::Refused(NAME_HAS_LINK)));
+        assert_eq!(name_action("abc"), Some(Action::Refused(SHORT_NAME_MESSAGE)));
+        assert_eq!([name_action("Gravity1"), name_action("[GM]Bob"), name_action("x[gmBob"), name_action("그라비티맨")], [None, None, None, None]);
+        assert_eq!(name_action("xy[gm"), Some(Action::Make), "[gm at the third byte");
+        assert_eq!(name_action("Bobby"), Some(Action::Make));
+    }
+
+    #[test]
+    fn lays_the_window_out() {
+        // At 1024×768: the corner (115, 103), the turn buttons, the name box, a hairstyle and a colour cell.
+        assert_eq!(Make::origin(), [115.0, 103.0]);
+        assert_eq!(TURNS.map(Make::at), [[541.0, 282.0], [666.0, 282.0]]);
+        assert_eq!(Make::at(NAME_FIELD), [550.0, 371.0]);
+        assert_eq!([Make::hair_cell(5), Make::color_cell(6)], [Make::at([644.0, 96.0]), Make::at([646.0, 330.0])]);
+        let make = Make {
+            slot: 2,
+            doram: false,
+            male: true,
+            hair: 1,
+            color: 0,
+            name: String::new(),
+            preedit: String::new(),
+            direction: 0,
+            figures: [None, None, None],
+        };
+        let inside = |place: [f32; 2]| offset(Make::at(place), [2.0, 2.0]);
+        assert_eq!(make.hit(inside(TURNS[1])), Some(Hit::Turn(-1)));
+        assert_eq!(make.hit(inside(NAME_FIELD)), Some(Hit::Name));
+        assert_eq!(make.hit(inside(MAKE)), Some(Hit::Make));
+        assert_eq!(make.hit(inside(BACK)), Some(Hit::Back));
+        assert_eq!(make.hit(inside(CLOSE)), Some(Hit::Close));
+        assert_eq!(make.hit(inside(GENDERS[1])), Some(Hit::Gender(1)));
+        assert_eq!(make.hit(inside(RACES[1])), Some(Hit::Race(1)));
     }
 }

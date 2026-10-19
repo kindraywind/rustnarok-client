@@ -119,6 +119,13 @@ impl Str {
     }
 }
 
+impl Str {
+    /// The last frame any layer has a key at: the effect ends after it, whatever the header's frame count says.
+    pub fn last_key(&self) -> i32 {
+        self.layers.iter().flat_map(|layer| layer.keys.iter().map(|key| key.frame)).max().unwrap_or(0)
+    }
+}
+
 impl Layer {
     /// The quad at `frame` (fractional), or None while the layer shows nothing: the last setting key before it,
     /// moved by the adding key right after it.
@@ -168,7 +175,8 @@ impl Layer {
             2 => (start.texture + step.delay * delta).min(count - 1.0),
             3 => (start.texture + step.delay * delta).rem_euclid(count),
             4 => (start.texture - step.delay * delta).rem_euclid(count),
-            _ => 0.0,
+            // No texture motion: the setting key's texture stays.
+            _ => start.texture,
         };
         Some(State {
             texture: texture.max(0.0) as usize,
@@ -222,5 +230,12 @@ mod tests {
         let state = layer.state(3.0).unwrap();
         assert_eq!(state.position, [323.0, 314.0]);
         assert!((state.color[3] - 0.7).abs() < 1e-6 && state.additive);
+        // An adding key with no texture motion keeps the setting key's texture.
+        let set = Key { texture: 2.0, ..set };
+        let layer = Layer { textures: vec!["a.bmp".into(), "b.bmp".into(), "c.bmp".into()], keys: vec![set, Key { texture: 0.0, ..add }] };
+        assert_eq!(layer.state(3.0).unwrap().texture, 2);
+        // The effect ends at its last key, not at the header's frame count.
+        let effect = Str { fps: 60, frames: 160, layers: vec![Layer { textures: vec![], keys: vec![set, Key { frame: 120, ..set }] }] };
+        assert_eq!(effect.last_key(), 120);
     }
 }
