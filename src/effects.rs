@@ -698,6 +698,168 @@ impl HitSpark {
     }
 }
 
+/// A band round a unit's feet: an arc (degrees, 360 closed) from a turn, its foot `radius` out on the ground, leaning
+/// `lean` degrees above the ground, `height` tall at most, at an alpha of 0 to 255.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Band {
+    arc: f32,
+    turn: f32,
+    radius: f32,
+    lean: f32,
+    height: f32,
+    alpha: f32,
+}
+
+/// Quads along a band.
+const BAND_QUADS: usize = 20;
+
+/// A band's 21 points from the feet: each its foot on the ground and its top, `height(s)` along the lean.
+// ponytail: 0° points north (+z) and turns go toward the east.
+fn band_points(band: &Band, height: impl Fn(usize) -> f32) -> Vec<(Vector, Vector)> {
+    let (lean_sin, lean_cos) = band.lean.to_radians().sin_cos();
+    (0..=BAND_QUADS)
+        .map(|s| {
+            let (sin, cos) = (band.turn + s as f32 * band.arc / BAND_QUADS as f32).to_radians().sin_cos();
+            let (out, up) = (band.radius + height(s) * lean_cos, height(s) * lean_sin);
+            ([sin * band.radius, 0.0, cos * band.radius], [sin * out, up, cos * out])
+        })
+        .collect()
+}
+
+/// A band's triangles at the feet `at`: u = s / 21 along it, v from the foot (0) to the top (1).
+fn band_mesh(at: Vector, band: &Band, height: impl Fn(usize) -> f32, color: [f32; 3]) -> Vec<MeshVertex> {
+    let tint = [color[0], color[1], color[2], band.alpha.clamp(0.0, 255.0) / 255.0];
+    let vertex = |point: Vector, s: usize, v: f32| MeshVertex { position: std::array::from_fn(|axis| at[axis] + point[axis]), uv: [s as f32 / 21.0, v], tint };
+    let points = band_points(band, height);
+    (0..BAND_QUADS)
+        .flat_map(|s| {
+            let ((foot, top), (next_foot, next_top)) = (points[s], points[s + 1]);
+            let [a, b, c, d] = [vertex(foot, s, 0.0), vertex(top, s, 1.0), vertex(next_foot, s + 1, 0.0), vertex(next_top, s + 1, 1.0)];
+            [a, b, c, b, c, d]
+        })
+        .collect()
+}
+
+/// A cast's aura (EF_BEGINSPELL 12 and the elements' 54–59), made in code: bands round the caster's feet, blooming or
+/// turning for the whole cast, moved to the feet every 16 ms tick.
+struct CastAura {
+    effect: u32,
+    unit: Option<u32>,
+    start: Instant,
+    /// How long it lasts, in ticks.
+    ticks: u32,
+}
+
+/// How long a cast's aura lasts: the cast time in 16 ms ticks, at least 56 for 12 and 58 and 70 for the rest.
+fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
+    (cast_ms / 16).max(if matches!(effect, 12 | 58) { 56 } else { 70 })
+}
+
+/// An aura's texture, colour and whether it adds on.
+fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
+    match effect {
+        58 => ("ring_white", [0xFF, 0xFF, 0xFF], true),
+        54 => ("ring_blue", [0xC3, 0xC3, 0xFF], false),
+        55 => ("ring_yellow", [0xFF, 0xAF, 0xAF], true),
+        57 => ("ring_yellow", [0xFF, 0xFF, 0xFF], false),
+        56 => ("Magic_Green", [0xFF, 0xFF, 0xFF], false),
+        59 => ("Magic_Violet", [0xFF, 0xFF, 0xFF], false),
+        _ => ("ring_yellow", [0xFF, 0xFF, 0xAA], true),
+    }
+}
+
+fn aura_texture(effect: u32) -> String {
+    format!("data\\texture\\effect\\{}.tga", aura_look(effect).0)
+}
+
+/// The blooming bands' first alphas (two sets of four), their heights and turns.
+const BLOOM_ALPHAS: [[i32; 4]; 2] = [[180, 135, 90, 45], [160, 115, 70, 25]];
+const BLOOM_HEIGHTS: [f32; 4] = [20.0, 19.0, 18.0, 17.0];
+const BLOOM_TURNS: [f32; 4] = [180.0, 270.0, 0.0, 90.0];
+
+/// Blooming band `band` of set `set` (12 and 58) `age` ticks into an aura of `ticks`: each tick it widens 0.07 and leans
+/// 1° less (at 10° it's gone), gaining 10 alpha while under radius 4 and losing 3 from there; gone, it starts again at
+/// 3.37 leaning 74° while the aura has more than 30 ticks to go. An aura of 60 ticks or less starts every band at alpha
+/// 0, band k 5k ticks late. None before it starts or while gone.
+fn bloom(set: usize, band: usize, ticks: u32, age: u32) -> Option<Band> {
+    let short = ticks <= 60;
+    let late = if short { 5 * band as u32 } else { 0 };
+    let since = age.checked_sub(late)?;
+    // Hundredths of a unit, so the 0.07 steps meet 4.0 exactly.
+    let (mut radius, mut lean, mut alpha) = (410, 80, if short { 0 } else { BLOOM_ALPHAS[set][band] });
+    for tick in 0..=since {
+        alpha = if radius < 400 { alpha + 10 } else { (alpha - 3).max(0) };
+        radius += 7;
+        lean -= 1;
+        if lean <= 10 {
+            alpha = 0;
+        }
+        if alpha == 0 && late + tick + 30 < ticks {
+            (radius, lean) = (337, 74);
+        }
+    }
+    (alpha > 0).then(|| Band {
+        arc: 360.0,
+        turn: BLOOM_TURNS[band],
+        radius: radius as f32 / 100.0,
+        lean: lean as f32,
+        height: BLOOM_HEIGHTS[band],
+        alpha: alpha as f32,
+    })
+}
+
+/// A blooming band's top waving along it: h·(1 + 0.3·sin 9s°·sin θ), θ = (age + 90k)° for bands 0–1 and 2·(age + 45k)°
+/// for bands 2–3.
+fn bloom_height(band: usize, height: f32, age: u32, s: usize) -> f32 {
+    let k = band as f32;
+    let theta = if band < 2 { age as f32 + 90.0 * k } else { 2.0 * (age as f32 + 45.0 * k) };
+    height * (1.0 + 0.3 * (9.0 * s as f32).to_radians().sin() * theta.to_radians().sin())
+}
+
+/// The turning bands (54–57, 59): three open 315° arcs and a faint column, `age` ticks into an aura of `ticks`. The arcs
+/// turn 3, 4 and 5° a tick; in the last 40 ticks everything fades, 5 a tick (the column 2).
+fn turning(band: usize, ticks: u32, age: u32) -> Band {
+    let fading = age.saturating_sub(ticks.saturating_sub(40)) as f32;
+    if band == 3 {
+        let alpha = if age == 0 { 70.0 } else { 60.0 };
+        return Band { arc: 360.0, turn: 0.0, radius: 4.0, lean: 89.0, height: 250.0, alpha: (alpha - 2.0 * fading).max(0.0) };
+    }
+    let k = band as f32;
+    Band {
+        arc: 315.0,
+        turn: 90.0 * k + (3.0 + k) * age as f32,
+        radius: 4.5 + 0.5 * k,
+        lean: [70.0, 57.0, 45.0][band],
+        height: [25.0, 22.0, 19.0][band],
+        alpha: (180.0 - 5.0 * fading).max(0.0),
+    }
+}
+
+/// A turning arc's top along it: h·sin 9s°, rising with sin(age°) over the first 90 ticks.
+// ponytail: the column stands its full height all along.
+fn turning_height(band: usize, height: f32, age: u32, s: usize) -> f32 {
+    if band == 3 {
+        return height;
+    }
+    height * (9.0 * s as f32).to_radians().sin() * (age.min(90) as f32).to_radians().sin()
+}
+
+impl CastAura {
+    /// Its bands at a tick, each with its height along it.
+    fn bands(&self, age: u32) -> Vec<(Band, Vec<f32>)> {
+        let heights = |band: usize, height: f32, wave: fn(usize, f32, u32, usize) -> f32| (0..=BAND_QUADS).map(|s| wave(band, height, age, s)).collect();
+        if matches!(self.effect, 12 | 58) {
+            (0..2)
+                .flat_map(|set| (0..4).filter_map(move |band| bloom(set, band, self.ticks, age).map(|shape| (band, shape))))
+                .map(|(band, shape)| (shape, heights(band, shape.height, bloom_height)))
+                .collect()
+        } else {
+            // ponytail: earth (56) and poison (59) turn like water, fire and wind.
+            (0..4).map(|band| turning(band, self.ticks, age)).enumerate().map(|(band, shape)| (shape, heights(band, shape.height, turning_height))).collect()
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Effects {
     loaded: HashMap<String, Option<Rc<Loaded>>>,
@@ -720,6 +882,7 @@ pub struct Effects {
     /// The skill unit type of each ground unit shown, for what it shows when it changes (a trap going off).
     unit_kinds: HashMap<u32, u32>,
     hits: Vec<HitSpark>,
+    auras: Vec<CastAura>,
 }
 
 /// A whole number in `from..=to`.
@@ -961,6 +1124,14 @@ impl Effects {
         self.hits.push(HitSpark { start, anchor: Anchor::Unit(unit), way, sparks: sparks(way, random), placed: Vec::new() });
     }
 
+    /// A cast's aura (12 or 54–59) on a unit (None = the player) for a cast of `cast_ms`, replacing its last one.
+    pub fn play_aura(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, effect: u32, cast_ms: u32, start: Instant) {
+        let texture = aura_texture(effect);
+        self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+        self.auras.retain(|aura| aura.unit != unit);
+        self.auras.push(CastAura { effect, unit, start, ticks: aura_ticks(effect, cast_ms) });
+    }
+
     /// Queues a camera shake starting at `start` for `length` (`QUAKE_SHORT` or `QUAKE_LONG`).
     pub fn start_quake(&mut self, start: Instant, length: Duration) {
         let length = if length == QUAKE_SHORT { QUAKE_SHORT } else { QUAKE_LONG };
@@ -1080,6 +1251,7 @@ impl Effects {
             animation.placed = sprite.frame_at(gpu, index, 0, Timing::Span(progress));
             true
         });
+        self.auras.retain(|aura| (now.saturating_duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) < aura.ticks as f32);
         // ponytail: the sparks show particle1's first action, frame 0.
         self.hits.retain_mut(|hit| {
             if hit.tick(now) >= HIT_TICKS {
@@ -1137,6 +1309,7 @@ impl Effects {
 
     pub fn forget(&mut self, unit: u32) {
         self.hits.retain(|hit| !hit.anchor.on(unit));
+        self.auras.retain(|aura| aura.unit != Some(unit));
         self.playing.retain(|playing| !playing.anchor.on(unit));
         self.floating.retain(|floating| !floating.anchor.on(unit));
         self.rings.retain(|ring| !ring.anchor.on(unit));
@@ -1163,7 +1336,18 @@ impl Effects {
             let Some(Some(texture)) = self.textures.get(RING_TEXTURE) else { return None };
             Some((texture, hit.ring(hit.tick(now), at), false))
         });
-        rings.chain(models).chain(hits).collect()
+        let auras = self.auras.iter().filter(|aura| aura.start <= now).flat_map(|aura| {
+            let age = (now.duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) as u32;
+            let (_, color, additive) = aura_look(aura.effect);
+            let color = color.map(|value| f32::from(value) / 255.0);
+            let texture = self.textures.get(&aura_texture(aura.effect)).and_then(Option::as_ref);
+            let at = position_of(aura.unit);
+            texture.zip(at).map(|(texture, at)| {
+                let triangles = aura.bands(age).iter().flat_map(|(band, heights)| band_mesh(at, band, |s| heights[s], color)).collect();
+                (texture, triangles, additive)
+            })
+        });
+        rings.chain(models).chain(hits).chain(auras).collect()
     }
 
     /// Every effect quad showing now; `position_of` gives a unit's feet (None = the player).
@@ -1358,6 +1542,47 @@ mod tests {
         let ice = &table.sounds[&26][0];
         assert_eq!((ice.file.as_str(), ice.delay_ms, ice.random), ("effect\\ef_icearrow%d", 0, Some((1, 3))));
         assert!((0..100).map(|_| pick(1, 3)).all(|picked| (1..=3).contains(&picked)));
+    }
+
+    #[test]
+    fn lays_bands_round_the_feet() {
+        // Radius 4 leaning 60°, 10 high: the top 5 further out and 8.66 up; s = 10 halfway round, s = 20 back.
+        let band = Band { arc: 360.0, turn: 0.0, radius: 4.0, lean: 60.0, height: 10.0, alpha: 255.0 };
+        let points = band_points(&band, |_| 10.0);
+        let near = |a: Vector, b: Vector| a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-4);
+        assert!(near(points[0].0, [0.0, 0.0, 4.0]) && near(points[0].1, [0.0, 8.660_254, 9.0]));
+        assert!(near(points[10].0, [0.0, 0.0, -4.0]) && near(points[10].1, [0.0, 8.660_254, -9.0]));
+        assert!(near(points[20].0, points[0].0));
+        // A 90° arc from 90°: s = 20 ends a quarter round.
+        let quarter = band_points(&Band { arc: 90.0, turn: 90.0, ..band }, |_| 0.0);
+        assert!(near(quarter[0].0, [4.0, 0.0, 0.0]) && near(quarter[20].0, [0.0, 0.0, -4.0]));
+        assert_eq!(band_mesh([0.0; 3], &band, |_| 10.0, [1.0; 3]).len(), BAND_QUADS * 6);
+    }
+
+    #[test]
+    fn blooms_turns_and_fades_cast_auras() {
+        // At least 56 ticks for 12 and 58, 70 for the elements; else the cast time in ticks.
+        assert_eq!([aura_ticks(12, 0), aura_ticks(58, 2000), aura_ticks(55, 500), aura_ticks(55, 1500)], [56, 125, 70, 93]);
+        // The faintest band fades out by tick 8 and starts again at 3.37 leaning 74°: 9 ticks up to 90, 30 down, 39 in all.
+        let shape = |age: u32| bloom(1, 3, 1000, age);
+        assert_eq!(shape(8), None);
+        let first = shape(9).unwrap();
+        assert_eq!((first.radius, first.lean, first.alpha), (3.44, 73.0, 10.0));
+        let top = shape(17).unwrap();
+        assert_eq!((top.radius, top.alpha), (4.0, 90.0));
+        assert_eq!(shape(18).unwrap().alpha, 87.0);
+        assert_eq!(shape(47), None);
+        assert_eq!(shape(48), Some(first));
+        // Within 30 ticks of the aura's end a band that fades out stays gone: the start at 47 plays out to 86.
+        assert!(bloom(1, 3, 100, 85).is_some() && (86..100).all(|age| bloom(1, 3, 100, age).is_none()));
+        // A short aura: every band from nothing, band k 5k ticks late.
+        assert_eq!((bloom(0, 2, 56, 9), bloom(0, 2, 56, 10)), (None, None));
+        assert_eq!(bloom(0, 2, 56, 11).unwrap().alpha, 10.0);
+        // The elements' arcs turn 3, 4, 5° a tick and rise over 90 ticks; everything fades in the last 40.
+        assert_eq!([turning(0, 200, 10).turn, turning(2, 200, 10).turn], [30.0, 230.0]);
+        assert!((turning_height(0, 25.0, 30, 10) - 12.5).abs() < 1e-4 && (turning_height(0, 25.0, 200, 10) - 25.0).abs() < 1e-4);
+        assert_eq!([turning(0, 200, 160).alpha, turning(0, 200, 161).alpha, turning(0, 200, 199).alpha], [180.0, 175.0, 0.0]);
+        assert_eq!([turning(3, 200, 0).alpha, turning(3, 200, 1).alpha, turning(3, 200, 161).alpha], [70.0, 60.0, 58.0]);
     }
 
     #[test]
