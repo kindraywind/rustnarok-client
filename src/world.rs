@@ -1154,11 +1154,25 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd) -> ModelMesh {
     (vertices, draws, names, rsm_2, animated)
 }
 
+/// A walk's path: the search with the game's 149-node limit.
+pub fn find_path(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]>> {
+    search(gat, from, to, Some(WALK_NODES))
+}
+
+/// The navigation trail's path: the same search with no limit.
+pub fn find_trail(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]>> {
+    search(gat, from, to, None)
+}
+
+/// The most cells a walk's search reaches: the start is the first, and the 150th ends it with no path.
+const WALK_NODES: usize = 149;
+
 /// Cells walked from `from` to `to` (excluding `from`), 8-directional; diagonals need both sides open. The server's
 /// search, step for step, so both walk the same cells: A* at 10 a straight step and 14 a diagonal, with 10 times the
 /// Manhattan distance left as the estimate, neighbours tried from south-east round anticlockwise, and a binary heap on
 /// that sum alone, ties falling where the heap leaves them. A walk across open ground takes its diagonal steps first.
-pub fn find_path(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]>> {
+/// At most `limit` cells are reached; there's no path from a cell to itself.
+fn search(gat: &Gat, from: [i32; 2], to: [i32; 2], limit: Option<usize>) -> Option<Vec<[i32; 2]>> {
     use std::collections::HashMap;
 
     struct Node {
@@ -1169,7 +1183,7 @@ pub fn find_path(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]
         open: bool,
     }
     if from == to {
-        return Some(Vec::new());
+        return None;
     }
     if !gat.walkable(to) {
         return None;
@@ -1178,10 +1192,7 @@ pub fn find_path(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]
     let mut nodes = vec![Node { cell: from, parent: None, cost: 0, sum: estimate(from), open: true }];
     let mut known = HashMap::from([(from, 0)]);
     let mut heap = vec![0];
-    // rathena caps searches too; this keeps a click across the map from stalling a frame.
-    let mut budget = 20_000;
-    while !heap.is_empty() && budget > 0 {
-        budget -= 1;
+    while !heap.is_empty() {
         let current = heap_pop(&mut heap, &nodes, |node| node.sum);
         nodes[current].open = false;
         let (cell, spent) = (nodes[current].cell, nodes[current].cost);
@@ -1228,7 +1239,11 @@ pub fn find_path(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]
                     }
                 }
                 Some(_) => {}
+                // A cell reached the first time is a new node; one past the limit ends the search with no path.
                 None => {
+                    if limit.is_some_and(|limit| nodes.len() >= limit) {
+                        return None;
+                    }
                     known.insert(next, nodes.len());
                     nodes.push(Node { cell: next, parent: Some(current), cost, sum: cost + estimate(next), open: true });
                     heap_push(&mut heap, &nodes, |node| node.sum, nodes.len() - 1);
@@ -1412,6 +1427,28 @@ mod tests {
         assert!(find_path(&gat, [0, 0], [1, 1]).is_none());
         assert_eq!(direction([0, 1]), 4);
         assert_eq!(direction([1, -1]), 7);
+    }
+
+    #[test]
+    fn walk_searches_stop_at_149_cells() {
+        let open = Gat { width: 120, height: 120, cells: vec![([0.0; 4], 0); 120 * 120] };
+        assert_eq!(find_path(&open, [60, 60], [107, 60]).map(|path| path.len()), Some(47));
+        assert_eq!(find_path(&open, [60, 60], [108, 60]), None);
+        assert_eq!(find_path(&open, [40, 40], [69, 69]).map(|path| path.len()), Some(29));
+        assert_eq!(find_path(&open, [40, 40], [70, 70]), None);
+        // The trail has no limit.
+        assert_eq!(find_trail(&open, [60, 60], [108, 60]).map(|path| path.len()), Some(48));
+        // A wall across rows: round it is too far for a walk, not for the trail.
+        let mut cells = vec![([0.0; 4], 0); 27 * 12];
+        for x in 3..=23 {
+            cells[5 * 27 + x].1 = 1;
+        }
+        let walled = Gat { width: 27, height: 12, cells };
+        assert_eq!(find_path(&walled, [13, 3], [13, 7]), None);
+        assert!(find_trail(&walled, [13, 3], [13, 7]).is_some_and(|path| path.last() == Some(&[13, 7])));
+        // No path from a cell to itself.
+        assert_eq!(find_path(&open, [5, 5], [5, 5]), None);
+        assert_eq!(find_trail(&open, [5, 5], [5, 5]), None);
     }
 
     #[test]
