@@ -6,6 +6,7 @@
 # ring <effect id> <name=value;...>: a textured cylinder growing, turning and fading
 # spr <effect id> <sprite under data\sprite\이팩트\ without .spr> <follows the unit 1/0> <name=value;... or ->: a sprite's animation
 # func <effect id> quake <delay ms> <duration ms>: what the client does in code for the effect; quake shakes the camera
+# length <effect id> <ticks>: how long an effect's STR plays (16 ms ticks) when shorter than its keys; on a ground unit it starts again 8 ticks before that (Quagmire's 95: 20)
 # unit <skill unit type> <effect id> [once]: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there (once: played once and kept, not started again)
 # rsm <skill unit type> <model under data\model\ without .rsm, or an .rsm2 with its extension>: the model standing on such a unit's cell (traps)
 # wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
@@ -4019,12 +4020,12 @@ unit	127	25
 unit	237	25
 unit	128	317
 unit	129	316
-unit	130	91
+unit	130	91	once
 unit	131	319	once
 unit	132	318	once
 unit	135	138	once
 unit	197	138	once
-unit	136	97
+unit	136	97	once
 unit	141	74	once
 unit	195	74	once
 unit	196	74	once
@@ -4063,7 +4064,7 @@ unit	208	829
 unit	218	856
 unit	219	1276
 unit	220	920
-unit	221	926
+unit	221	926	once
 unit	222	860
 unit	224	1080
 unit	225	772	once
@@ -4293,3 +4294,19 @@ status	1337	2305
 status	1338	2306
 status	1339	2302
 status	1339	2303
+length	25	40
+length	568	100
+length	569	60
+length	609	100
+length	622	100
+length	704	100
+length	706	100
+length	709	70
+length	728	100
+length	959	60
+length	975	40
+length	987	100
+length	988	100
+length	1020	100
+length	920	40
+length	95	150

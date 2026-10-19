@@ -455,8 +455,8 @@ struct MeshOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec
 
 // Effects stand in front of what they play on, pulled toward the camera.
 @vertex fn effect_vs(@location(0) feet: vec3<f32>, @location(1) offset: vec2<f32>, @location(2) uv: vec2<f32>,
-                     @location(3) tint: vec4<f32>) -> SpriteOutput {
-    var out = sprite_vertex(feet, offset, uv, tint, vec2(0.0));
+                     @location(3) tint: vec4<f32>, @location(4) pixel: vec2<f32>) -> SpriteOutput {
+    var out = sprite_vertex(feet, offset, uv, tint, pixel);
     out.position.z = max(out.position.z - 0.01 * out.position.w, 0.0);
     out.depth = max(out.depth - 0.01, 0.0);
     return out;
@@ -508,8 +508,9 @@ fn sprite_depth(feet: f32, below: f32, [slope, bias, nudge]: [f32; 3]) -> f32 {
 }
 
 /// An effect's quad: texture, where it plays, its corners' offsets in sprite pixels (top left, top right, bottom right,
-/// bottom left; y down), a color to multiply it by, and whether it adds to what's behind instead of covering it.
-pub type EffectQuad<'a> = (&'a Texture, Vector, [[f32; 2]; 4], [f32; 4], bool);
+/// bottom left; y down), a color to multiply it by, whether it adds to what's behind instead of covering it, and whether
+/// it's an STR's: `STR_RISE` screen pixels up, drawn last over everything with no depth test.
+pub type EffectQuad<'a> = (&'a Texture, Vector, [[f32; 2]; 4], [f32; 4], bool, bool);
 
 /// An effect shape in the world: texture, triangles (position, texture coordinates, color) and whether it adds on.
 pub type EffectMesh<'a> = (&'a Texture, Vec<MeshVertex>, bool);
@@ -558,6 +559,8 @@ pub struct World {
     soft_pipeline: wgpu::RenderPipeline,
     /// Effects blended over, and added on; the same for effect shapes.
     effect_pipelines: [wgpu::RenderPipeline; 2],
+    /// STRs: no depth test, over everything.
+    str_pipelines: [wgpu::RenderPipeline; 2],
     mesh_pipelines: [wgpu::RenderPipeline; 2],
     depth: RefCell<Option<([u32; 2], wgpu::TextureView)>>,
 }
@@ -666,36 +669,44 @@ impl World {
             bind_group_layouts: &[Some(&globals_layout), Some(&gpu.texture_layout), Some(&gpu.texture_layout)],
             immediate_size: 0,
         });
-        let pipeline =
-            |entry: &str, fragment: &str, buffer: wgpu::VertexBufferLayout, blend: Option<wgpu::BlendState>, depth_write: bool| -> wgpu::RenderPipeline {
-                gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some(&format!("{entry}_vs")),
-                        compilation_options: Default::default(),
-                        buffers: &[buffer],
-                    },
-                    primitive: Default::default(),
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: DEPTH_FORMAT,
-                        depth_write_enabled: Some(depth_write),
-                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                        stencil: Default::default(),
-                        bias: Default::default(),
-                    }),
-                    multisample: Default::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some(fragment),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState { format: gpu.config.format, blend, write_mask: wgpu::ColorWrites::ALL })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            };
+        let pipeline_compared = |entry: &str,
+                                 fragment: &str,
+                                 buffer: wgpu::VertexBufferLayout,
+                                 blend: Option<wgpu::BlendState>,
+                                 depth_write: bool,
+                                 compare: wgpu::CompareFunction|
+         -> wgpu::RenderPipeline {
+            gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some(&format!("{entry}_vs")),
+                    compilation_options: Default::default(),
+                    buffers: &[buffer],
+                },
+                primitive: Default::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(depth_write),
+                    depth_compare: Some(compare),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fragment),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState { format: gpu.config.format, blend, write_mask: wgpu::ColorWrites::ALL })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipeline = |entry: &str, fragment: &str, buffer: wgpu::VertexBufferLayout, blend: Option<wgpu::BlendState>, depth_write: bool| {
+            pipeline_compared(entry, fragment, buffer, blend, depth_write, wgpu::CompareFunction::LessEqual)
+        };
         const GROUND_ATTRIBUTES: [wgpu::VertexAttribute; 5] =
             wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x2, 4 => Float32x4];
         let ground_layout = || wgpu::VertexBufferLayout {
@@ -723,6 +734,10 @@ impl World {
         let effect_pipelines = [
             pipeline("effect", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false),
             pipeline("effect", "sprite_fs", sprite_buffer_layout(), Some(additive), false),
+        ];
+        let str_pipelines = [
+            pipeline_compared("effect", "sprite_fs", sprite_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false, wgpu::CompareFunction::Always),
+            pipeline_compared("effect", "sprite_fs", sprite_buffer_layout(), Some(additive), false, wgpu::CompareFunction::Always),
         ];
         let mesh_buffer_layout =
             || wgpu::VertexBufferLayout { array_stride: size_of::<MeshVertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &MESH_ATTRIBUTES };
@@ -796,6 +811,7 @@ impl World {
             shadow_pipeline,
             soft_pipeline,
             effect_pipelines,
+            str_pipelines,
             mesh_pipelines,
             depth: RefCell::new(None),
         })
@@ -1000,8 +1016,9 @@ impl WorldPass for WorldFrame<'_> {
         let effect_vertices: Vec<SpriteVertex> = self
             .effects
             .iter()
-            .flat_map(|&(_, feet, corners, tint, _)| {
-                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel: [0.0; 2], plane: [0.0; 3] };
+            .flat_map(|&(_, feet, corners, tint, _, on_top)| {
+                let pixel = if on_top { [0.0, -crate::effects::STR_RISE] } else { [0.0; 2] };
+                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel, plane: [0.0; 3] };
                 let [top_left, top_right, bottom_right, bottom_left] =
                     [corner(0, [0.0, 0.0]), corner(1, [1.0, 0.0]), corner(2, [1.0, 1.0]), corner(3, [0.0, 1.0])];
                 [top_left, top_right, bottom_left, bottom_left, top_right, bottom_right]
@@ -1109,11 +1126,15 @@ impl WorldPass for WorldFrame<'_> {
         }
         if let Some(buffer) = &effect_buffer {
             pass.set_vertex_buffer(0, buffer.slice(..));
-            for (index, (texture, .., additive)) in self.effects.iter().enumerate() {
-                let first = index as u32 * 6;
-                pass.set_pipeline(&world.effect_pipelines[usize::from(*additive)]);
-                pass.set_bind_group(1, texture.bind_group(), &[]);
-                pass.draw(first..first + 6, 0..1);
+            // The STRs last, in the order they came, over everything.
+            for top in [false, true] {
+                for (index, (texture, .., additive, on_top)) in self.effects.iter().enumerate().filter(|(_, quad)| quad.5 == top) {
+                    let first = index as u32 * 6;
+                    let pipelines = if *on_top { &world.str_pipelines } else { &world.effect_pipelines };
+                    pass.set_pipeline(&pipelines[usize::from(*additive)]);
+                    pass.set_bind_group(1, texture.bind_group(), &[]);
+                    pass.draw(first..first + 6, 0..1);
+                }
             }
         }
     }
