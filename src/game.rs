@@ -1121,6 +1121,12 @@ impl Game {
 
     /// Plays an effect on a unit from a moment on (a hit when it lands).
     pub(crate) fn play_effect_from(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant) {
+        self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);
+    }
+
+    /// Plays an effect on a unit told the skill's hit count (a bolt drops an arrow a hit).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn play_effect_hits(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant, hits: u16) {
         let key = (unit != self.account_id).then_some(unit);
         let cell = match key {
             None => Some(self.player.cell),
@@ -1128,7 +1134,7 @@ impl Game {
         };
         if let Some(cell) = cell {
             let at = self.world.cell_position(cell.map(|value| value as f32));
-            self.effects.play(gpu, grf, table, effect, effects::Target::Unit(key), at, start);
+            self.effects.play_hits(gpu, grf, table, effect, effects::Target::Unit(key), at, start, hits);
         }
     }
 
