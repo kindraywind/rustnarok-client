@@ -384,6 +384,7 @@ impl App {
                     cooldown_line: self.messages.get(COOLDOWN_REFUSED).cloned().unwrap_or_default(),
                     effects: effects::Effects::default(),
                     deal_choice: None,
+                    deal_frame: window::Frame::new(shop::deal_box_position(), shop::DEAL_SIZE[0]),
                     shop: None,
                     deal_confirm: None,
                     shop_asked: None,
@@ -1371,7 +1372,7 @@ impl App {
                 // The mirror's status ends with the warp.
                 game.boss = None;
                 game.materials = None;
-                game.deal_choice = None;
+                game.close_deal_choice();
                 game.attack = None;
                 // The merge window closes without a word.
                 if matches!(game.pick, Some((_, Picking::Merge))) {
@@ -3766,9 +3767,10 @@ impl App {
             MapEvent::DealChoice { npc } => {
                 game.dialog = None;
                 game.deal_choice = Some(npc);
+                game.deal_frame.open = true;
                 // Dev switch: answer at once.
                 if let Ok(deal) = std::env::var("RUSTNAROK_CLIENT_DEAL") {
-                    game.deal_choice = None;
+                    game.close_deal_choice();
                     let _ = game.session.choose_deal(npc, deal.starts_with("sell"));
                 }
             }
