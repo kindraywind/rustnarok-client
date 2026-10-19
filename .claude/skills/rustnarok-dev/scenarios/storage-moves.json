@@ -18,7 +18,7 @@
     {"wait_for": {"sent": "0x0128", "ms": 1500}, "none": true},
     {"wait_for": {"sent": "0x0365", "ms": 500}, "none": true},
     {"key": "Alt+W"}, {"wait": 400},
-    {"drag": [[60, 180], [60, 560]]}, {"wait": 300},
+    {"drag": [[440, 180], [440, 560]]}, {"wait": 300},
     {"expect": {"windows_open": ["Cart"]}},
     {"click_on": {"button": "storage_item:909"}, "button": "right", "mods": "Alt"},
     {"wait_for": {"sent": "0x0128", "ms": 3000}}, {"wait_for": {"packet": "0x00f6", "ms": 3000}}, {"wait": 300},

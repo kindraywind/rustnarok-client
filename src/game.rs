@@ -2621,6 +2621,10 @@ impl Game {
         if self.deal_confirm.is_some() {
             names.push("ConfirmDeal".into());
         }
+        // Not Esc's to close, but open.
+        if self.storage.frame.open {
+            names.push("Storage".into());
+        }
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
         }
