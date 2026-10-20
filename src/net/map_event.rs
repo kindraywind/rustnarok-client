@@ -186,6 +186,12 @@ pub enum MapEvent {
         effect: u32,
         num: Option<i32>,
     },
+    /// A unit's hat effects turn on or off (ZC_EQUIPMENT_EFFECT): the hat effects' numbers.
+    HatEffects {
+        id: u32,
+        on: bool,
+        effects: Vec<u16>,
+    },
     /// A level up, refining result and the like on a unit (ZC_NOTIFY_EFFECT): which kind.
     MiscEffect {
         id: u32,

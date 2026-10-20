@@ -1360,6 +1360,8 @@ const ZC_ACK_MAIL_LIST3: u16 = 0x0AC2;
 const ZC_ACK_GUILDSTORAGE_LOG: u16 = 0x09DA;
 const CZ_REQ_READ_MAIL: u16 = 0x09EA;
 const ZC_ACK_READ_RODEX: u16 = 0x0B63;
+/// A unit's hat effects, on or off (clif_hat_effect): length, unit, status, then each hat effect's number.
+const ZC_EQUIPMENT_EFFECT: u16 = 0x0A3B;
 const CZ_REQ_ZENY_FROM_MAIL: u16 = 0x09F1;
 const ZC_ACK_ZENY_FROM_MAIL: u16 = 0x09F2;
 const CZ_REQ_ITEM_FROM_MAIL: u16 = 0x09F3;

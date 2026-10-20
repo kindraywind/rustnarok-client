@@ -2730,6 +2730,12 @@ impl Effects {
         fx.launch(launch, &mut assets)
     }
 
+    /// A unit's hat effects (`None` = the player) turning on or off: the footprint hats start or end their world objects.
+    pub fn hat_effects(&mut self, gpu: &Gpu, grf: &Grf, owner: Option<u32>, on: bool, hats: &[u16]) {
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        world_fx::footprints::hats(fx, Some(owner), on, hats, &mut assets);
+    }
+
     /// The world objects' faces by draw list; `depth_of` sorts the translucent and adding lists.
     pub fn fx_lists(&self, seen: &world_fx::Seen, depth_of: impl Fn(Vector) -> f32) -> world_fx::Lists<EffectMesh<'_>> {
         world_fx::Lists::sort(self.fx.faces(seen), depth_of).map(|face| {
@@ -2764,8 +2770,8 @@ impl Effects {
             }
             return;
         }
-        // A registered world object.
-        if self.fx.registered(id) {
+        // A registered world object; the footprint classes come only with a hat effect.
+        if self.fx.registered(id) && !world_fx::footprints::is_class(id) {
             let owner = match target {
                 Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
                 _ => None,

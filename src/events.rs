@@ -3900,6 +3900,14 @@ impl App {
                     }
                 }
             }
+            MapEvent::HatEffects { id, on, effects } => {
+                let own = id == game.account_id;
+                if let Some(gpu) = gpu
+                    && (own || game.units.contains_key(&id))
+                {
+                    game.effects.hat_effects(gpu, grf, (!own).then_some(id), on, &effects);
+                }
+            }
             // Marriage: the wedding, the partner's name, divorce; adoption: being asked, and refusals.
             MapEvent::Congratulation(id) => {
                 if let Some(gpu) = gpu {
