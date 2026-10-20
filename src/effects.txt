@@ -1493,10 +1493,6 @@ ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=79.8;duration=20000;attachedEntity=true
 ring	377	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=50;duplicate=8;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
 ring	377	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=8;delayStart=50;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
-ring	399	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=500;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
-ring	399	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;delayStart=500;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
-ring	400	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=500;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
-ring	400	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;delayStart=500;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
 ring	454	alphaMax=0.8;animation=2;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=900;fade=true;green=1;height=4;red=1;rotate=true;textureName=ring_black;topSize=5;wav=effect/ef_beginspell
 ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=4.5;height=-4;duration=800
 ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=2.5;height=-4;duration=800
@@ -1883,10 +1879,15 @@ wav	391	effect\ef_incagility	0
 wav	390	effect\black_overthrust	0
 wav	392	effect\kyrie_guard	0
 wav	393	effect\애로우 발칸	480
-wav	394	effect\달빛세레나데	0
+wav	395	effect\소울 체인지	0
 wav	399	effect\헤드 크러쉬	0
-wav	400	effect\비트 조인트	0
-wav	403	effect\swordman_provoke	0
+wav	400	effect\비트 조인트	352
+wav	401	effect\EF_NapalmBeat	320
+wav	401	effect\EF_NapalmBeat	480
+wav	401	effect\EF_NapalmBeat	640
+wav	401	effect\EF_NapalmBeat	800
+wav	401	effect\EF_NapalmBeat	960
+wav	403	effect\swordman_provoke	400
 wav	409	effect\메테오 어썰트	0
 wav	426	effect\복호격	0
 wav	440	effect\아숨프티오	0

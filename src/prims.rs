@@ -8,6 +8,7 @@ pub mod blitz;
 pub mod bolts;
 pub mod boomerang;
 pub mod burst;
+pub mod dancer;
 pub mod first;
 pub mod ground;
 pub mod huujin;
@@ -158,6 +159,7 @@ pub struct Prims {
     pub knight: knight::Knight,
     pub transcend: transcend::Transcend,
     pub sniper: sniper::Sniper,
+    pub dancer: dancer::Dancer,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -542,6 +544,7 @@ impl Prims {
         self.walls.forget(unit);
         self.ground.forget(unit);
         self.transcend.forget(unit);
+        self.dancer.forget(unit);
     }
 
     /// The camera-facing squares for effect 793 at `now`.
@@ -603,6 +606,7 @@ impl Prims {
         self.waterballs.advance(now);
         self.shards.advance(now);
         self.stars.advance(now);
+        self.dancer.advance(now);
         self.ground.advance(now);
         self.walls.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
         self.stone.advance(now);

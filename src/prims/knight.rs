@@ -1,5 +1,6 @@
 //! The knight and crusader skills' code-made shapes, a 16 ms tick at a time: Spiral Pierce's ten pairs of cones (339), Soul
-//! Breaker's four slashes (361), Pressure's falling cross (365) and Martyr's Reckoning's 20 rays (366).
+//! Breaker's four slashes (361), Pressure's falling cross (365), Martyr's Reckoning's 20 rays (366) and Head Crush's and Joint Beat's 24
+//! (399, 400).
 //!
 //! A shape's own age a counts from 1 at its first tick.
 
@@ -26,8 +27,6 @@ const SLASH_TINT: [f32; 3] = [200.0 / 255.0, 200.0 / 255.0, 1.0];
 const CROSS_START: f32 = 115.0;
 const CROSS_LAND: u32 = 32;
 const FLASH_WAIT: u32 = 27;
-/// Martyr's Reckoning: 5 prims of 4 rays, an age behind by 24, the rays' tips 12 up.
-const RAYS: usize = 20;
 
 struct Spiral {
     unit: Option<u32>,
@@ -62,7 +61,48 @@ struct Ray {
     angle: f32,
 }
 
+/// What tells Martyr's Reckoning's rays from Head Crush's and Joint Beat's: the prims of four rays, the colour of each wedge and
+/// whether it is added on, and the caster's outline colour and the last tick it has it.
+pub struct RayLook {
+    prims: usize,
+    core: [f32; 3],
+    core_additive: bool,
+    edge: [f32; 3],
+    edge_additive: bool,
+    glow: [u8; 3],
+    glow_end: u32,
+}
+
+const fn channel(value: u8) -> f32 {
+    value as f32 / 255.0
+}
+
+/// 20 rays: a red wedge round a cyan core, both added on.
+const MARTYR_RAYS: RayLook = RayLook {
+    prims: 5,
+    core: [0.0, channel(250), channel(250)],
+    core_additive: true,
+    edge: [channel(250), 0.0, 0.0],
+    edge_additive: true,
+    glow: [0xFF, 0xC8, 0xC8],
+    glow_end: 40,
+};
+/// 24 rays: a yellow wedge, blended, round a blue core.
+const HEAD_CRUSH_RAYS: RayLook = RayLook {
+    prims: 6,
+    core: [0.0, 0.0, channel(250)],
+    core_additive: true,
+    edge: [channel(250), channel(250), 0.0],
+    edge_additive: false,
+    glow: [0xFF, 0xFF, 0xC8],
+    glow_end: 50,
+};
+/// 24 rays: a white wedge, blended, round a grey core.
+const JOINT_BEAT_RAYS: RayLook =
+    RayLook { prims: 6, core: [channel(50); 3], core_additive: true, edge: [channel(250); 3], edge_additive: false, glow: [0xFF; 3], glow_end: 50 };
+
 struct Martyr {
+    look: &'static RayLook,
     unit: Option<u32>,
     start: Instant,
     rays: Vec<Ray>,
@@ -142,6 +182,23 @@ pub fn ray_length(a: i32) -> f32 {
     2.0 * 1.15_f32.powi(a)
 }
 
+/// An angle below the ray's own, read from the game's tables: a negative one a degree up, one past 359 (only Head Crush's and
+/// Joint Beat's last ray gets there) 181 less.
+fn table_below(angle: f32) -> f32 {
+    if angle < 0.0 {
+        angle + 1.0
+    } else if angle >= 360.0 {
+        angle - 181.0
+    } else {
+        angle
+    }
+}
+
+/// An angle above the ray's own wraps past 359.
+fn table_above(angle: f32) -> f32 {
+    if angle >= 360.0 { angle - 360.0 } else { angle }
+}
+
 /// A point of the ray's plane at `angle` degrees: the plane contains the z axis turned by `plane`, 12 up.
 fn ray_point(plane: f32, length: f32, angle: f32) -> Vector {
     let (plane_sin, plane_cos) = plane.to_radians().sin_cos();
@@ -176,14 +233,28 @@ impl Knight {
     }
 
     /// Martyr's Reckoning on `unit`: 20 rays, per ray the plane's turn from `rand(n)`.
-    pub fn martyr(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
-        let mut rays = Vec::with_capacity(RAYS);
-        for i in 0..5 {
+    pub fn martyr(&mut self, unit: Option<u32>, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.rays(&MARTYR_RAYS, unit, now, rand);
+    }
+
+    /// Head Crush's 24 rays on `unit`.
+    pub fn head_crush(&mut self, unit: Option<u32>, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.rays(&HEAD_CRUSH_RAYS, unit, now, rand);
+    }
+
+    /// Joint Beat's 24 rays on `unit`.
+    pub fn joint_beat(&mut self, unit: Option<u32>, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.rays(&JOINT_BEAT_RAYS, unit, now, rand);
+    }
+
+    fn rays(&mut self, look: &'static RayLook, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let mut rays = Vec::with_capacity(look.prims * 4);
+        for i in 0..look.prims {
             for k in 0..4 {
                 rays.push(Ray { plane: rand(360) as f32, angle: (90 * k + 22 * i) as f32 });
             }
         }
-        self.martyrs.push(Martyr { unit, start: now, rays });
+        self.martyrs.push(Martyr { look, unit, start: now, rays });
     }
 
     /// A cross that has landed stays where the target stood; what ended goes.
@@ -272,16 +343,16 @@ impl Knight {
                 let wedge = |width: f32, rgb: [f32; 3], vertices: &mut Vec<MeshVertex>| {
                     let tint = [rgb[0], rgb[1], rgb[2], alpha / 255.0];
                     vertices.extend([
-                        MeshVertex { position: at(ray.angle - width), uv: [0.0, 1.0], tint },
-                        MeshVertex { position: at(ray.angle + width), uv: [1.0, 1.0], tint },
+                        MeshVertex { position: at(table_below(ray.angle - width)), uv: [0.0, 1.0], tint },
+                        MeshVertex { position: at(table_above(ray.angle + width)), uv: [1.0, 1.0], tint },
                         MeshVertex { position: middle, uv: [1.0, 0.0], tint },
                     ]);
                 };
-                wedge(2.0, [0.0, 250.0 / 255.0, 250.0 / 255.0], &mut core);
-                wedge(5.0, [250.0 / 255.0, 0.0, 0.0], &mut edge);
+                wedge(2.0, martyr.look.core, &mut core);
+                wedge(5.0, martyr.look.edge, &mut edge);
             }
-            walls.push(Wall { texture: RAY, vertices: edge, additive: true, forced: false });
-            walls.push(Wall { texture: RAY, vertices: core, additive: true, forced: false });
+            walls.push(Wall { texture: RAY, vertices: edge, additive: martyr.look.edge_additive, forced: false });
+            walls.push(Wall { texture: RAY, vertices: core, additive: martyr.look.core_additive, forced: false });
         }
         walls
     }
@@ -316,8 +387,8 @@ impl Knight {
         });
         breaking.or_else(|| {
             self.martyrs.iter().filter(|martyr| martyr.unit == unit).find_map(|martyr| {
-                passes(martyr.start, now).checked_sub(1).filter(|t| (20..=40).contains(t))?;
-                Some((crate::actor::GLOW_OUTLINE, Some([0xFF, 0xC8, 0xC8])))
+                passes(martyr.start, now).checked_sub(1).filter(|t| (20..=martyr.look.glow_end).contains(t))?;
+                Some((crate::actor::GLOW_OUTLINE, Some(martyr.look.glow)))
             })
         })
     }
@@ -462,5 +533,44 @@ mod tests {
         let glow = |tick: u32| knight.glow(Some(1), start + TICK * tick);
         assert_eq!(glow(20), Some((crate::actor::GLOW_OUTLINE, Some([0xFF, 0xC8, 0xC8]))));
         assert!(glow(19).is_none() && glow(40).is_some() && glow(41).is_none());
+    }
+
+    #[test]
+    fn head_crush_and_joint_beat_shoot_24_rays() {
+        let start = Instant::now();
+        let mut knight = Knight::default();
+        knight.head_crush(Some(1), start, |_| 0);
+        knight.joint_beat(Some(2), start, |_| 0);
+        assert_eq!((knight.martyrs[0].rays.len(), knight.martyrs[1].rays.len()), (24, 24));
+        // The angles 90k + 22i: 0 for (0, 0), 22 for (1, 0), 380 for (5, 3).
+        let angle = |i: usize, k: usize| knight.martyrs[0].rays[i * 4 + k].angle;
+        assert_eq!((angle(0, 0), angle(1, 0), angle(5, 3)), (0.0, 22.0, 380.0));
+        // The ray (5, 3): wedge 1 reads 378 as 197° and 382 wrapped as 22°, wedge 2 375 as 194° and 385 as 25°.
+        assert_eq!((table_below(378.0), table_above(382.0), table_below(375.0), table_above(385.0)), (197.0, 22.0, 194.0, 25.0));
+        assert_eq!((table_below(-2.0), table_above(359.0)), (-1.0, 359.0));
+        // Head Crush: wedge 1 #0000FA added on, wedge 2 #FAFA00 blended; Joint Beat #323232 added on and #FAFAFA blended.
+        let feet = [0.0; 3];
+        let walls = knight.meshes(start + TICK * 24, |_| Some(feet));
+        assert_eq!(walls.len(), 4);
+        assert!(!walls[0].additive && walls[1].additive && !walls[2].additive && walls[3].additive);
+        assert_eq!(walls[0].vertices[0].tint[..3], [250.0 / 255.0, 250.0 / 255.0, 0.0]);
+        assert_eq!(walls[1].vertices[0].tint[..3], [0.0, 0.0, 250.0 / 255.0]);
+        assert_eq!(walls[2].vertices[0].tint[..3], [250.0 / 255.0; 3]);
+        assert_eq!(walls[3].vertices[0].tint[..3], [50.0 / 255.0; 3]);
+        assert!(walls.iter().all(|wall| wall.vertices.len() == 24 * 3));
+        // The last ray's wedges are slivers across the centre: its first tip point is at 197°.
+        let last_core = &walls[1].vertices[23 * 3..];
+        let at_angle = |position: Vector| position[2].atan2(position[0]).to_degrees().rem_euclid(360.0);
+        assert!((at_angle(last_core[0].position) - 197.0).abs() < 0.01 && (at_angle(last_core[1].position) - 22.0).abs() < 0.01);
+        // The body: outline copies on ticks 20…50 only, #FFFFC8 for Head Crush and white for Joint Beat.
+        let glow = |unit: u32, tick: u32| knight.glow(Some(unit), start + TICK * tick);
+        assert_eq!(glow(1, 20), Some((crate::actor::GLOW_OUTLINE, Some([0xFF, 0xFF, 0xC8]))));
+        assert_eq!(glow(2, 50), Some((crate::actor::GLOW_OUTLINE, Some([0xFF; 3]))));
+        assert!(glow(1, 19).is_none() && glow(1, 51).is_none());
+        // Martyr's Reckoning keeps its 20 rays and its glow to tick 40.
+        let mut martyr = Knight::default();
+        martyr.martyr(Some(3), start, |_| 0);
+        assert_eq!(martyr.martyrs[0].rays.len(), 20);
+        assert!(martyr.glow(Some(3), start + TICK * 40).is_some() && martyr.glow(Some(3), start + TICK * 41).is_none());
     }
 }
