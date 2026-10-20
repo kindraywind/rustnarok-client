@@ -152,7 +152,7 @@ fn navi_tables(lua: &Lua) -> io::Result<NaviTables> {
         let table: mlua::Table = lua.globals().get(name).map_err(lua_error)?;
         table.pairs::<mlua::Value, mlua::Table>().map(|pair| pair.map(|(_, row)| row).map_err(lua_error)).collect()
     };
-    let text = |row: &mlua::Table, index: i64| row.get::<mlua::String>(index).map(|text| decode(&text)).unwrap_or_default();
+    let text = |row: &mlua::Table, index: i64| row.get::<mlua::LuaString>(index).map(|text| decode(&text)).unwrap_or_default();
     let number = |row: &mlua::Table, index: i64| row.get::<i64>(index).unwrap_or(0);
     let cell = |row: &mlua::Table, x: i64| [number(row, x) as u16, number(row, x + 1) as u16];
     let mut tables = NaviTables::default();
@@ -188,7 +188,7 @@ fn battlegrounds(lua: &Lua) -> io::Result<Vec<Battleground>> {
     let mut entries: Vec<(i64, Battleground)> = Vec::new();
     for pair in list.pairs::<i64, mlua::Table>() {
         let (index, entry) = pair.map_err(lua_error)?;
-        let text = |key: &str| entry.get::<mlua::String>(key).map(|text| decode(&text)).unwrap_or_default();
+        let text = |key: &str| entry.get::<mlua::LuaString>(key).map(|text| decode(&text)).unwrap_or_default();
         let number = |key: &str| entry.get::<u32>(key).unwrap_or(0);
         entries.push((
             index,
@@ -474,7 +474,7 @@ fn rgb_number(number: u32) -> Option<[u8; 3]> {
 
 /// The client's Lua strings are EUC-KR; in the newer tables those bytes were read as Windows-1252 and saved as
 /// UTF-8, which this undoes.
-fn decode(text: &mlua::String) -> String {
+fn decode(text: &mlua::LuaString) -> String {
     let bytes = text.as_bytes();
     if let Ok(utf8) = std::str::from_utf8(&bytes)
         && !utf8.is_ascii()
@@ -488,7 +488,7 @@ fn decode(text: &mlua::String) -> String {
 /// A Lua table of numbers to names.
 fn names<K: TryFrom<i64> + std::hash::Hash + Eq>(table: &mlua::Table) -> io::Result<HashMap<K, String>> {
     let mut names = HashMap::new();
-    for pair in table.pairs::<i64, mlua::String>() {
+    for pair in table.pairs::<i64, mlua::LuaString>() {
         let (id, name) = pair.map_err(lua_error)?;
         if let Ok(id) = K::try_from(id) {
             names.insert(id, decode(&name));
@@ -614,7 +614,7 @@ pub fn achievement_table(source: Vec<u8>) -> io::Result<HashMap<u32, Achievement
     let lua = new_lua()?;
     exec_bytes(&lua, ACHIEVEMENTS, source)?;
     let table: mlua::Table = lua.globals().get("achievement_tbl").map_err(lua_error)?;
-    let text = |table: &mlua::Table, key: &str| table.get::<Option<mlua::String>>(key).ok().flatten().map(|text| decode(&text)).unwrap_or_default();
+    let text = |table: &mlua::Table, key: &str| table.get::<Option<mlua::LuaString>>(key).ok().flatten().map(|text| decode(&text)).unwrap_or_default();
     let number = |table: &mlua::Table, key: &str| table.get::<Option<u32>>(key).ok().flatten().unwrap_or(0);
     let mut achievements = HashMap::new();
     for pair in table.pairs::<u32, mlua::Table>() {
@@ -899,9 +899,9 @@ fn layered(own: io::Result<HashMap<u32, ItemInfo>>, translated: Option<HashMap<u
 /// The items of a run iteminfo (`tbl`).
 fn items_in(lua: &Lua) -> io::Result<HashMap<u32, ItemInfo>> {
     let table: mlua::Table = lua.globals().get("tbl").map_err(lua_error)?;
-    let text = |entry: &mlua::Table, key: &str| entry.get::<mlua::String>(key).map(|text| decode(&text)).unwrap_or_default();
+    let text = |entry: &mlua::Table, key: &str| entry.get::<mlua::LuaString>(key).map(|text| decode(&text)).unwrap_or_default();
     let lines = |entry: &mlua::Table, key: &str| -> Vec<String> {
-        entry.get::<mlua::Table>(key).map(|lines| lines.sequence_values::<mlua::String>().flatten().map(|line| decode(&line)).collect()).unwrap_or_default()
+        entry.get::<mlua::Table>(key).map(|lines| lines.sequence_values::<mlua::LuaString>().flatten().map(|line| decode(&line)).collect()).unwrap_or_default()
     };
     let mut items = HashMap::new();
     for pair in table.pairs::<i64, mlua::Table>() {
@@ -996,10 +996,10 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
     let mut quests = HashMap::new();
     for pair in list.pairs::<i64, mlua::Table>() {
         let Ok((id, entry)) = pair else { continue };
-        let text = |key: &str| entry.get::<mlua::String>(key).map(|text| decode(&text)).unwrap_or_default();
+        let text = |key: &str| entry.get::<mlua::LuaString>(key).map(|text| decode(&text)).unwrap_or_default();
         let description = entry
             .get::<mlua::Table>("Description")
-            .map(|lines| lines.sequence_values::<mlua::String>().flatten().map(|line| decode(&line)).collect())
+            .map(|lines| lines.sequence_values::<mlua::LuaString>().flatten().map(|line| decode(&line)).collect())
             .unwrap_or_default();
         // Numbers or strings alike.
         let written = |key: &str| match entry.get::<mlua::Value>(key) {
@@ -1058,10 +1058,10 @@ fn quest_filter_table(lua: &Lua) -> io::Result<HashMap<i64, (String, Vec<String>
     let mut filters = HashMap::new();
     for pair in table.pairs::<i64, mlua::Table>() {
         let Ok((id, entry)) = pair else { continue };
-        let tooltip = entry.get::<mlua::String>("Tooltip").map(|text| decode(&text)).unwrap_or_default();
+        let tooltip = entry.get::<mlua::LuaString>("Tooltip").map(|text| decode(&text)).unwrap_or_default();
         let icons = entry
             .get::<mlua::Table>("QuestIcons")
-            .map(|icons| icons.sequence_values::<mlua::String>().flatten().map(|icon| decode(&icon)).collect())
+            .map(|icons| icons.sequence_values::<mlua::LuaString>().flatten().map(|icon| decode(&icon)).collect())
             .unwrap_or_default();
         filters.insert(id, (tooltip, icons));
     }
@@ -1079,7 +1079,7 @@ fn skill_descripts(lua: &Lua) -> io::Result<HashMap<u16, Vec<String>>> {
     for pair in list.pairs::<i64, mlua::Table>() {
         let Ok((id, lines)) = pair else { continue };
         if let Ok(id) = u16::try_from(id) {
-            descriptions.insert(id, lines.sequence_values::<mlua::String>().flatten().map(|line| decode(&line)).collect());
+            descriptions.insert(id, lines.sequence_values::<mlua::LuaString>().flatten().map(|line| decode(&line)).collect());
         }
     }
     Ok(descriptions)
@@ -1094,7 +1094,7 @@ fn skill_infos(lua: &Lua) -> io::Result<HashMap<u16, SkillInfo>> {
     let mut skills = HashMap::new();
     for pair in list.pairs::<i64, mlua::Table>() {
         let Ok((id, entry)) = pair else { continue };
-        let text = |value: mlua::Result<mlua::String>| value.map(|text| decode(&text)).unwrap_or_default();
+        let text = |value: mlua::Result<mlua::LuaString>| value.map(|text| decode(&text)).unwrap_or_default();
         let info = SkillInfo {
             resource: text(entry.get(1)),
             name: text(entry.get("SkillName")),
@@ -1241,7 +1241,7 @@ fn state_infos(lua: &Lua) -> io::Result<HashMap<u16, StateInfo>> {
             .sequence_values::<mlua::Table>()
             .flatten()
             .map(|line| {
-                let text = line.get::<mlua::String>(1).map(|text| decode(&text)).unwrap_or_default();
+                let text = line.get::<mlua::LuaString>(1).map(|text| decode(&text)).unwrap_or_default();
                 let color =
                     line.get::<mlua::Table>(2).ok().and_then(|color| Some([color.get::<u8>(1).ok()?, color.get::<u8>(2).ok()?, color.get::<u8>(3).ok()?]));
                 (text, color)
@@ -1400,13 +1400,13 @@ pub fn worlds(grf: &Grf) -> io::Result<(Vec<World>, [[u8; 4]; 2])> {
     let mut worlds = Vec::new();
     for entry in list.sequence_values::<mlua::Table>() {
         let entry = entry.map_err(lua_error)?;
-        let text = |index: usize| entry.get::<mlua::String>(index).map(|text| decode(&text)).unwrap_or_default();
+        let text = |index: usize| entry.get::<mlua::LuaString>(index).map(|text| decode(&text)).unwrap_or_default();
         let Ok(table) = globals.get::<mlua::Table>(text(2)) else { continue };
         let fields = table
             .sequence_values::<mlua::Table>()
             .flatten()
             .filter_map(|field| {
-                let map = decode(&field.get::<mlua::String>(2).ok()?).to_lowercase();
+                let map = decode(&field.get::<mlua::LuaString>(2).ok()?).to_lowercase();
                 let rect = [3, 4, 5, 6].map(|index| field.get::<f32>(index).unwrap_or(0.0));
                 Some(WorldArea { map: map.trim_end_matches(".rsw").to_owned(), rect })
             })
@@ -1468,7 +1468,7 @@ fn lua_flag(table: &mlua::Table, key: &str) -> bool {
 }
 
 fn lua_name(table: &mlua::Table, index: i64) -> String {
-    table.get::<mlua::String>(index).map(|text| decode(&text)).unwrap_or_default()
+    table.get::<mlua::LuaString>(index).map(|text| decode(&text)).unwrap_or_default()
 }
 
 /// `tblLapineDdukddakBox.sources` from the file's bytes. Its functions aren't called.
@@ -1974,7 +1974,7 @@ fn read_reform(entry: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> Option<Ref
         preserve_socket: flag(entry, "PreserveSocketItem", true),
         preserve_grade: flag(entry, "PreserveGrade", true),
         change_refine: i32::try_from(field_number(entry, "ChangeRefineValue").unwrap_or(0)).unwrap_or(0),
-        random_option: entry.get::<mlua::String>("RandomOptionCode").ok().map(|text| decode(&text)).unwrap_or_default(),
+        random_option: entry.get::<mlua::LuaString>("RandomOptionCode").ok().map(|text| decode(&text)).unwrap_or_default(),
     })
 }
 
@@ -2026,7 +2026,7 @@ fn hotkey_table(lua: &Lua, name: &str, table: u8, user: bool) -> io::Result<Vec<
     for pair in entries.pairs::<mlua::Value, mlua::Value>() {
         let (key, value) = pair.map_err(lua_error)?;
         let (Some(index), mlua::Value::Table(entry)) = (number(&key).and_then(|index| u16::try_from(index).ok()), value) else { continue };
-        let Some(exe) = entry.get::<mlua::String>("EXE").ok().map(|text| decode(&text)).filter(|exe| !exe.is_empty() && exe != "NULL") else {
+        let Some(exe) = entry.get::<mlua::LuaString>("EXE").ok().map(|text| decode(&text)).filter(|exe| !exe.is_empty() && exe != "NULL") else {
             continue;
         };
         // ponytail: KEY1 0 is unbound, the same as leaving it out (the save file omits a 0).
