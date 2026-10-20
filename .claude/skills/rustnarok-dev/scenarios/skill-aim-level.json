@@ -1,120 +1,38 @@
 {
-  "about": "Skills: a Mage picks Fire Bolt's level in the skill window (7), aims it at that level, turns the wheel to 8, and the aim balloon names the level (Fire Bolt Lv 8/10).",
+  "about": "The skill level beside the aiming cursor: an Acolyte aims Heal (28, level 10 learned) from the hotbar and the ring has a 10 to its right; the wheel down twice makes it 8; letting go of the aim (right press) takes the number away. The scenario takes the hotkey off again and goes back to Novice.",
   "account": "",
   "slot": 0,
   "steps": [
-    {
-      "say": "@job 2"
-    },
-    {
-      "wait": 1000
-    },
-    {
-      "say": "@allskill"
-    },
-    {
-      "wait": 1000
-    },
-    {
-      "key": "Alt+S"
-    },
-    {
-      "wait": 500
-    },
-    {
-      "expect": {
-        "windows_open": [
-          "Skills"
-        ]
-      }
-    },
-    {
-      "move": [
-        700,
-        600
-      ]
-    },
-    {
-      "click_on": {
-        "button": "skill_less:19"
-      }
-    },
-    {
-      "wait": 150
-    },
-    {
-      "click_on": {
-        "button": "skill_less:19"
-      }
-    },
-    {
-      "wait": 150
-    },
-    {
-      "click_on": {
-        "button": "skill_less:19"
-      }
-    },
-    {
-      "wait": 150
-    },
-    {
-      "shot": "fire-bolt-arrows",
-      "crop": [
-        230,
-        70,
-        580,
-        420
-      ]
-    },
-    {
-      "click_on": {
-        "skill": 19
-      },
-      "count": 2
-    },
-    {
-      "wait": 300
-    },
-    {
-      "expect": {
-        "state": {
-          "aimed_skill.id": 19,
-          "aimed_skill.level": 7
-        }
-      }
-    },
-    {
-      "wheel": [
-        500,
-        500,
-        -1
-      ]
-    },
-    {
-      "wait": 200
-    },
-    {
-      "expect": {
-        "state": {
-          "aimed_skill.level": 8
-        }
-      }
-    },
-    {
-      "shot": "fire-bolt-aim-level",
-      "crop": [
-        300,
-        30,
-        420,
-        90
-      ]
-    },
-    {
-      "key": "Escape"
-    },
-    {
-      "wait": 200
-    }
+    {"say": "@warp prontera 156 180"},
+    {"settle": 1500},
+    {"say": "@job 4"},
+    {"wait": 500},
+    {"say": "@allskill"},
+    {"wait": 500},
+    {"key": "Alt+S"},
+    {"wait": 400},
+    {"drag_on": [{"skill": 28}, {"hotkey": 0}]},
+    {"wait": 300},
+    {"key": "Alt+S"},
+    {"wait": 300},
+    {"key": "F1"},
+    {"wait": 300},
+    {"move": [640, 520]},
+    {"wait": 300},
+    {"expect": {"state": {"player.aiming.level": 10}}},
+    {"shot": "skill-aim-level-10", "crop": [560, 470, 160, 100], "threshold": 5},
+    {"wheel": [640, 520, 2]},
+    {"wait": 300},
+    {"expect": {"state": {"player.aiming.level": 8}}},
+    {"shot": "skill-aim-level-8", "crop": [560, 470, 160, 100], "threshold": 5},
+    {"click": [640, 520], "button": "right"},
+    {"wait": 300},
+    {"expect": {"state": {"player.aiming": null}}},
+    {"shot": "skill-aim-level-none", "crop": [560, 470, 160, 100], "threshold": 5},
+    {"drag_on": [{"hotkey": 0}, {"point": [700, 500]}]},
+    {"wait": 300},
+    {"expect": {"hotkeys": {"0": null}}},
+    {"say": "@job 0"},
+    {"wait": 500}
   ]
 }

@@ -1,11 +1,13 @@
 //! The client's mouse cursor (data\sprite\cursors.spr): animated, and changing with what's under it.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use rustnarok_client::grf::Grf;
 
 use crate::actor::{SpriteSet, Timing};
-use crate::render::{Gpu, Sprite};
+use crate::render::{Gpu, Sprite, Texture};
+use rustnarok_client::text::Font;
 
 /// Cursor actions in cursors.act.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -82,6 +84,22 @@ pub fn frame(kind: Kind, elapsed: Option<f32>, frames: usize) -> usize {
 
 /// Half a cell in sprite pixels (35 per cell).
 const HALF_CELL: f32 = 17.5;
+/// The skill level beside an aiming cursor: white digits with a black outline, `LEVEL_GAP` right of the ring's edge
+/// and centred on the hot spot.
+const LEVEL_SIZE: f32 = 20.0;
+const LEVEL_GAP: f32 = 6.0;
+const RING_HALF_WIDTH: f32 = 17.5;
+
+/// `text` in white with a 1 px black outline.
+fn outlined(font: &Font, text: &str) -> image::RgbaImage {
+    let (white, black) = (font.render_sized(text, [255; 3], LEVEL_SIZE), font.render_sized(text, [0; 3], LEVEL_SIZE));
+    let mut image = image::RgbaImage::new(white.width() + 2, white.height() + 2);
+    for (dx, dy) in [(0, 0), (1, 0), (2, 0), (0, 1), (2, 1), (0, 2), (1, 2), (2, 2)] {
+        image::imageops::overlay(&mut image, &black, dx, dy);
+    }
+    image::imageops::overlay(&mut image, &white, 1, 1);
+    image
+}
 
 pub struct Cursor {
     sprites: Option<SpriteSet>,
@@ -89,11 +107,13 @@ pub struct Cursor {
     since: Instant,
     /// When the left button went down (None: it's up).
     pressed: Option<Instant>,
+    /// The level numbers drawn so far.
+    numbers: HashMap<u16, Texture>,
 }
 
 impl Cursor {
     pub fn load(grf: &Grf) -> Self {
-        Self { sprites: SpriteSet::at(grf, "data\\sprite\\cursors"), kind: Kind::Default, since: Instant::now(), pressed: None }
+        Self { sprites: SpriteSet::at(grf, "data\\sprite\\cursors"), kind: Kind::Default, since: Instant::now(), pressed: None, numbers: HashMap::new() }
     }
 
     pub fn kind(&self) -> Kind {
@@ -117,11 +137,16 @@ impl Cursor {
         }
     }
 
-    /// The cursor's images with the hot spot at `position`, to draw over everything.
-    pub fn draw(&mut self, gpu: &Gpu, position: [f32; 2]) -> Vec<Sprite<'_>> {
+    /// The cursor's images with the hot spot at `position`, to draw over everything; while aiming (`level`), the
+    /// skill's level beside the ring.
+    pub fn draw(&mut self, gpu: &Gpu, font: &Font, position: [f32; 2], level: Option<u16>) -> Vec<Sprite<'_>> {
         // The pointer is outside the window.
         if position[0] < 0.0 || position[1] < 0.0 {
             return Vec::new();
+        }
+        let level = level.filter(|_| matches!(self.kind, Kind::Target | Kind::TargetValid));
+        if let Some(level) = level {
+            self.numbers.entry(level).or_insert_with(|| gpu.texture(&outlined(font, &level.to_string()), false));
         }
         let Some(sprites) = &mut self.sprites else { return Vec::new() };
         let (origin, hot_spot) = self.kind.layout();
@@ -136,7 +161,10 @@ impl Cursor {
         // The table's origins assume 2D sprite drawing, which lifts every layer half a cell (17.5px).
         let anchor = [position[0] - hot_spot[0] + origin[0], position[1] - hot_spot[1] + origin[1] - HALF_CELL];
         let sprites = &*sprites;
-        placed.into_iter().map(|(key, offset, size, _)| (sprites.texture(key), [anchor[0] + offset[0], anchor[1] + offset[1]], size)).collect()
+        let number = level
+            .and_then(|level| self.numbers.get(&level))
+            .map(|texture| (texture, [position[0] + RING_HALF_WIDTH + LEVEL_GAP - 1.0, position[1] - texture.size[1] / 2.0], texture.size));
+        placed.into_iter().map(|(key, offset, size, _)| (sprites.texture(key), [anchor[0] + offset[0], anchor[1] + offset[1]], size)).chain(number).collect()
     }
 }
 
@@ -157,5 +185,14 @@ mod tests {
         // Pressed past their last frame, the hand and the pick-up cursor hold it.
         assert_eq!([frame(Kind::Clickable, Some(1000.0), 3), frame(Kind::Pick, Some(500.0), 4)], [2, 3]);
         assert_eq!([frame(Kind::TargetValid, Some(150.0), 6), frame(Kind::Target, Some(150.0), 6)], [2, 1]);
+    }
+
+    #[test]
+    fn outlines_the_level_in_black_round_white_digits() {
+        let font = Font::load();
+        let image = outlined(&font, "10");
+        let plain = font.render_sized("10", [255; 3], LEVEL_SIZE);
+        assert_eq!((image.width(), image.height()), (plain.width() + 2, plain.height() + 2));
+        assert!(image.pixels().any(|pixel| pixel.0 == [255, 255, 255, 255]) && image.pixels().any(|pixel| pixel.0[..3] == [0, 0, 0] && pixel.0[3] > 0));
     }
 }
