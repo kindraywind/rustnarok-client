@@ -59,6 +59,7 @@ const GOLD_LAST: u32 = 119;
 /// Knuckle Arrow's lines' tints: #6969FF, #4141FF, #1919FF.
 const KNUCKLE_TINTS: [[f32; 3]; 3] = [[105.0 / 255.0, 105.0 / 255.0, 1.0], [65.0 / 255.0, 65.0 / 255.0, 1.0], [25.0 / 255.0, 25.0 / 255.0, 1.0]];
 const GOLD_TINTS: [[f32; 3]; 3] = [[1.0, 1.0, 225.0 / 255.0], [1.0, 1.0, 205.0 / 255.0], [1.0, 1.0, 185.0 / 255.0]];
+const SHOT_TINTS: [[f32; 3]; 3] = [[225.0 / 255.0, 1.0, 225.0 / 255.0], [205.0 / 255.0, 1.0, 205.0 / 255.0], [185.0 / 255.0, 1.0, 185.0 / 255.0]];
 const STRIP_TINTS: [[f32; 3]; 3] = [[225.0 / 255.0, 225.0 / 255.0, 1.0], [205.0 / 255.0, 205.0 / 255.0, 1.0], [185.0 / 255.0, 185.0 / 255.0, 1.0]];
 
 /// A whole angle as the game's tables read it: a negative one a degree up, one past 360 as a − 181.
@@ -365,6 +366,8 @@ pub enum LineKind {
     Pale,
     Gold,
     Knuckle,
+    /// Piercing Shot's pale green ones, the gold lines' numbers with other sizes.
+    Shot,
 }
 
 impl LineKind {
@@ -696,6 +699,11 @@ impl Brawl {
         self.make_lines(LineKind::Gold, from, to, now, rand);
     }
 
+    /// Piercing Shot's 32 pale green lines, the same way.
+    pub fn shot_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make_lines(LineKind::Shot, from, to, now, rand);
+    }
+
     /// Knuckle Arrow's 32 blue lines over everything, the same way.
     pub fn knuckle_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.make_lines(LineKind::Knuckle, from, to, now, rand);
@@ -707,12 +715,20 @@ impl Brawl {
             for _ in 0..4 {
                 let side = (15 + rand(11)) as f32 * if prim % 2 == 0 { -1.0 } else { 1.0 };
                 let phase = rand(200) as f32;
-                let half = if kind == LineKind::Gold { 0.5 + 0.1 * rand(6) as f32 } else { 0.3 + 0.1 * rand(4) as f32 };
-                let length = if kind == LineKind::Gold { (40 + rand(31)) as f32 } else { (20 + rand(31)) as f32 };
+                let half = match kind {
+                    LineKind::Gold => 0.5 + 0.1 * rand(6) as f32,
+                    LineKind::Shot => 0.4 + 0.1 * rand(4) as f32,
+                    _ => 0.3 + 0.1 * rand(4) as f32,
+                };
+                let length = match kind {
+                    LineKind::Gold => (40 + rand(31)) as f32,
+                    LineKind::Shot => (30 + rand(31)) as f32,
+                    _ => (20 + rand(31)) as f32,
+                };
                 let colour = rand(3) as usize;
                 let (speed, growth) = match kind {
                     LineKind::Gold => (1.0 + 0.1 * rand(11) as f32, 0.05),
-                    LineKind::Knuckle => (1.5 + 0.1 * rand(21) as f32, 0.05),
+                    LineKind::Knuckle | LineKind::Shot => (1.5 + 0.1 * rand(21) as f32, 0.05),
                     LineKind::Pale => (1.5 + 0.1 * rand(21) as f32, 0.0),
                 };
                 strips.push(Strip { side, phase, half, length, colour, speed, growth });
@@ -970,6 +986,7 @@ impl Brawl {
                 let rgb = match lines.kind {
                     LineKind::Gold => GOLD_TINTS[strip.colour],
                     LineKind::Knuckle => KNUCKLE_TINTS[strip.colour],
+                    LineKind::Shot => SHOT_TINTS[strip.colour],
                     LineKind::Pale => STRIP_TINTS[strip.colour],
                 };
                 let alpha = if lines.kind.fast() { gold_alpha(a) } else { strip_alpha(a) };
@@ -983,7 +1000,7 @@ impl Brawl {
                 vertices.extend([p, q, r, p, r, s]);
             }
             walls.push(Wall {
-                texture: if lines.kind == LineKind::Gold { GOLD_STRIP } else { STRIP },
+                texture: if matches!(lines.kind, LineKind::Gold | LineKind::Shot) { GOLD_STRIP } else { STRIP },
                 vertices,
                 additive: lines.kind == LineKind::Knuckle,
                 forced: false,
@@ -1361,6 +1378,42 @@ mod tests {
         // Dark Illusion's pale lines are unchanged.
         brawl.lines([0.0; 3], [40.0, 0.0, 0.0], start, |_| 0);
         assert!(brawl.lines[1].strips.iter().all(|strip| strip.growth == 0.0 && strip.speed == 1.5));
+    }
+
+    #[test]
+    fn piercing_shot_sends_32_pale_green_lines_along_the_shot() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.shot_lines([10.0, 1.0, 10.0], [50.0, 1.0, 10.0], start, |_| 0);
+        let lines = &brawl.lines[0];
+        assert_eq!((lines.kind, lines.strips.len(), lines.heading), (LineKind::Shot, 32, 0.0));
+        // Every draw 0: s = ∓15 alternating by prim, t 0, w 0.4, ℓ 30, colour byte 20, speed 1.5.
+        let first = &lines.strips[0];
+        assert_eq!((first.side, first.phase, first.half, first.length, first.colour, first.speed, first.growth), (-15.0, 0.0, 0.4, 30.0, 0, 1.5, 0.05));
+        assert_eq!(lines.strips[4].side, 15.0);
+        // The largest draws (10, 199, 3, 30, 2, 20): s = ∓25, t 199, w 0.7, ℓ 60, colour byte 22, speed 3.5.
+        let mut big = Brawl::default();
+        let draws = std::cell::RefCell::new(0);
+        big.shot_lines([0.0; 3], [0.0, 0.0, 40.0], start, |n| {
+            *draws.borrow_mut() += 1;
+            n - 1
+        });
+        let last = &big.lines[0].strips[0];
+        assert_eq!((last.side, last.phase, last.half, last.length, last.colour), (-25.0, 199.0, 0.1 * 3.0 + 0.4, 60.0, 2));
+        assert!((last.speed - 3.5).abs() < 1e-5 && (last.half - 0.7).abs() < 1e-5);
+        assert_eq!(*draws.borrow(), 32 * 6);
+        // Alpha at a = 1, 10, 20, 21, 120: 20, 200, 200, 198, 0; the speed grows 0.05 a tick; t wraps at 200.
+        assert_eq!([1, 10, 20, 21, 120].map(gold_alpha), [20.0, 200.0, 200.0, 198.0, 0.0]);
+        assert!(near(first.at(2) - first.at(1), 1.5 + 0.05 * 2.0));
+        assert!(big.lines[0].strips[0].at(5) < 200.0);
+        // #E1FFE1 / #CDFFCD / #B9FFB9, the normal blend on line3y, drawn over everything for ages 1 to 119 and gone after 120.
+        let walls = brawl.top_meshes(start, |_| None);
+        assert_eq!(walls.len(), 1);
+        assert!(!walls[0].additive && walls[0].texture == GOLD_STRIP && walls[0].vertices[0].tint[..3] == SHOT_TINTS[0]);
+        assert_eq!(SHOT_TINTS.map(|tint| tint.map(|channel| (channel * 255.0).round() as u8)), [[225, 255, 225], [205, 255, 205], [185, 255, 185]]);
+        assert!(!brawl.top_meshes(start + TICK * 118, |_| None).is_empty() && brawl.top_meshes(start + TICK * 120, |_| None).is_empty());
+        brawl.advance(start + TICK * 122, |_| 0);
+        assert!(brawl.lines.is_empty());
     }
 
     #[test]

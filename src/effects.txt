@@ -1925,7 +1925,9 @@ wav	618	effect\EF_FireArrow%d	240	1	3
 wav	619	effect\ef_icearrow%d	0	1	3
 wav	621	effect\풍인	0
 wav	622	effect\ef_thunderstorm	0
-wav	627	effect\디스암	0
+wav	623	effect\피어싱샷	448
+wav	624	effect\t_바람방출	16
+wav	627	effect\디스암	336
 wav	628	effect\bash3d5	0
 wav	630	effect\그림자베기	0
 wav	631	effect\다다미뒤집기	0
@@ -5189,6 +5191,9 @@ length	503	500
 length	506	100
 length	542	200
 length	544	99999999
+length	623	300
+length	624	200
+length	627	300
 length	572	300
 length	584	100
 length	590	200

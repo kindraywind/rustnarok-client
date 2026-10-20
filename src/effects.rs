@@ -14,7 +14,7 @@ use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, kicks, knight,
     linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, soul, souls, spears, sphere, spray, star, stone, tanji,
-    throw, transcend, walls, waterball, waves,
+    throw, transcend, walls, waterball, waves, wheels,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -2219,6 +2219,10 @@ const MAGIC_CIRCLE: u32 = 755;
 const POTION_BERSERK2: u32 = 756;
 const PURPLE_BODY: u32 = 768;
 const WEAPON_CRUSH: u32 = 770;
+/// Piercing Shot's lines, Kamaitachi's wheels (`prims::wheels`) and Disarm's guns.
+const PIERCING_LINES: u32 = 623;
+const KAMAITACHI: u32 = 624;
+const DISARM: u32 = 627;
 /// Renovatio's shafts, Hundred Spear's flashes, Oratio's ring (Detecting's) and Camouflage's translucent unit.
 const RENOVATIO: u32 = 719;
 const SPEAR_FLASH: u32 = 723;
@@ -2314,8 +2318,10 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 44] = [
+pub const AIMED: [u32; 46] = [
     STIN,
+    PIERCING_LINES,
+    KAMAITACHI,
     ESMA_DISCS,
     ESTUN_MOVER,
     FULL_BUSTER,
@@ -3064,6 +3070,12 @@ impl Effects {
             (MAGIC_CIRCLE, Target::Status(unit, _)) => {
                 self.textures.entry(circle::CIRCLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, circle::CIRCLE, true).ok());
                 self.prims.circles.oratio(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (DISARM, _) => {
+                for path in guard::GUNS {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.guard.disarm(at, now, |n| pick(0, n.saturating_sub(1)));
             }
             (WEAPON_CRUSH, _) => {
                 for path in guard::WEAPONS {
@@ -3821,6 +3833,16 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.soul.stin(from, to, now, |n| pick(0, n.saturating_sub(1)));
             }
+            PIERCING_LINES => {
+                self.textures.entry(brawl::GOLD_STRIP.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::GOLD_STRIP, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.brawl.shot_lines(from, to, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            KAMAITACHI => {
+                self.textures.entry(wheels::BLADE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, wheels::BLADE, false).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.wheels.throw(caster, from, to, now);
+            }
             ESMA_DISCS => {
                 self.textures.entry(linker::BLADE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, linker::BLADE, false).ok());
                 self.play_sounds(table, id, from, now);
@@ -4034,6 +4056,7 @@ impl Effects {
             self.prims.souls.launch_soul(unit, offset, now, |n| pick(0, n.saturating_sub(1)));
         }
         self.prims.linker.advance(now, &position_of);
+        self.prims.wheels.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         // Estun's mover launches 556, which has no look yet.
         let _ = self.prims.linker.take_launches();
         self.prims.kicks.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
@@ -4716,6 +4739,7 @@ impl Effects {
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
+            .chain(self.prims.wheels.meshes().into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
             .chain(self.prims.linker.meshes().into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
             .chain(
                 self.prims
@@ -7575,5 +7599,18 @@ mod tests {
         assert!(table.used(504).unwrap().contains(&(Who::Caster, MADNESS_BLUE)));
         assert!(table.used(505).unwrap().contains(&(Who::Caster, MADNESS_RED)) && table.used(517).unwrap().contains(&(Who::Caster, MADNESS_RED)));
         assert_eq!([HYOUSENSOU, 620, 622, MADNESS_BLUE, MADNESS_RED].map(|id| table.lengths[&id]), [250, 29_999, 100, 60, 60]);
+    }
+
+    #[test]
+    fn piercing_shot_kamaitachi_and_disarm_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        assert!(AIMED.contains(&PIERCING_LINES) && table.struck(514).unwrap().contains(&(Who::Caster, PIERCING_LINES)));
+        assert!(AIMED.contains(&KAMAITACHI) && table.struck(542).unwrap().contains(&(Who::Caster, KAMAITACHI)));
+        assert!(table.used(513).unwrap().contains(&(Who::Target, DISARM)));
+        assert_eq!(sounds(PIERCING_LINES), [("effect\\피어싱샷", 448)]);
+        assert_eq!(sounds(KAMAITACHI), [("effect\\t_바람방출", 16)]);
+        assert_eq!(sounds(DISARM), [("effect\\디스암", 336)]);
+        assert_eq!([PIERCING_LINES, KAMAITACHI, DISARM].map(|id| table.lengths[&id]), [300, 200, 300]);
     }
 }

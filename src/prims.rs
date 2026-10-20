@@ -52,6 +52,7 @@ pub mod transcend;
 pub mod walls;
 pub mod waterball;
 pub mod waves;
+pub mod wheels;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -199,6 +200,7 @@ pub struct Prims {
     pub chi: chi::Chi,
     pub soul: soul::Soul,
     pub linker: linker::Linker,
+    pub wheels: wheels::Wheels,
     pub kicks: kicks::Kicks,
     pub petals: petals::Petals,
     pub bodies: body::Bodies,
