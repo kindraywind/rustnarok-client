@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, burst, dancer, first, ground, guard, huujin, knight, monk, sage, shards, sight, sniper, songs, star, stone, tanji, throw,
-    transcend, walls, waterball,
+    balls, blitz, bolts, boomerang, burst, dancer, first, ground, guard, huujin, knight, monk, sage, shards, sight, sniper, songs, spray, star, stone, tanji,
+    throw, transcend, walls, waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1792,6 +1792,14 @@ const STEAL_COIN: u32 = 274;
 /// Joint Beat's rays (`prims::knight`) and Mind Breaker's flicker.
 /// Fog Wall's boxes, Full Strip's pieces, Preserve's dome and the flickers of Enchant Deadly Poison and Spiral Pierce's cast
 /// (`prims::guard`); Meteor Assault's slashes (`prims::knight`).
+/// Memorize's and Double Casting's flickers and Chase Walk's cast (`prims::guard`), Cart Termination's dots and Shield Chain's shields
+/// (`prims::spray`), Gravitation Field's spikes (`prims::stone`).
+const MEMORIZE: u32 = 505;
+const CART_TERMINATION: u32 = 518;
+const SHIELD_CHAIN: u32 = 520;
+const DOUBLE_CAST: u32 = 521;
+const GRAVITATION: u32 = 522;
+const CHASE_WALK_CAST: u32 = 1195;
 const FOG_WALL: u32 = 405;
 const METEOR_ASSAULT: u32 = 409;
 const ENCHANT_DEADLY_POISON: u32 = 493;
@@ -1935,6 +1943,12 @@ impl Effects {
     /// its sound), any other effect plays as it is.
     #[allow(clippy::too_many_arguments)]
     pub fn play_cast_aura(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, unit: Option<u32>, at: Vector, cast_ms: u32, now: Instant) {
+        // Chase Walk's cast spins the caster.
+        if id == CHASE_WALK_CAST {
+            self.play_sounds(table, id, at, now);
+            self.prims.guard.chase_walk(unit, cast_ms / crate::prims::TICK.as_millis() as u32, now);
+            return;
+        }
         // Spiral Pierce's cast: the caster glows and flickers yellow for the cast.
         if id == PIERCE_CAST {
             self.play_sounds(table, id, at, now);
@@ -2120,6 +2134,26 @@ impl Effects {
         if let (RIBBONS, Target::Unit(unit)) = (id, target) {
             self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
             self.prims.walls.ribbons(unit, now);
+        }
+        // Memorize and Double Casting flicker the body; Cart Termination's dots, Shield Chain's shields and Gravitation Field's spikes.
+        match (id, target) {
+            (MEMORIZE, Target::Unit(unit)) => self.prims.guard.memorize(unit, now),
+            (DOUBLE_CAST, Target::Unit(unit)) => self.prims.guard.double_cast(unit, now),
+            (CART_TERMINATION, Target::Unit(unit)) => {
+                self.textures.entry(spray::DOT.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, spray::DOT, true).ok());
+                self.prims.spray.termination(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (SHIELD_CHAIN, Target::Unit(unit)) => {
+                self.textures.entry(spray::SHIELD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, spray::SHIELD, true).ok());
+                self.prims.spray.chain(unit, now);
+            }
+            (GRAVITATION, Target::Ground) => {
+                for path in [stone::STONE, crate::prims::ICE_TEXTURE] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.stone.gravitation(at, now, None);
+            }
+            _ => {}
         }
         // Meteor Assault's slashes, Full Strip's shields and swords, Preserve's dome, Enchant Deadly Poison's flicker.
         match (id, target) {
@@ -2538,7 +2572,12 @@ impl Effects {
         self.unit_kinds.insert(id, kind);
         if let Some(&effect) = table.units.get(&kind) {
             // Volcano's, Deluge's, Violent Gale's and Land Protector's cells keep their loops, drawn in code.
-            if effect == FOG_WALL {
+            if effect == GRAVITATION {
+                for path in [stone::STONE, crate::prims::ICE_TEXTURE] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.stone.gravitation(at, now, Some(id));
+            } else if effect == FOG_WALL {
                 self.textures.entry(guard::FOG.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, guard::FOG, true).ok());
                 self.prims.guard.keep_fog(id, at, now, |n| pick(0, n.saturating_sub(1)));
             } else if effect == SPIDER_WEB {
@@ -2805,6 +2844,7 @@ impl Effects {
         self.prims.knight.advance(now, &position_of);
         self.prims.transcend.advance(now, &position_of);
         self.prims.sniper.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        self.prims.spray.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.monk.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for (file, at) in self.prims.throws.advance(now, &position_of) {
             self.sounds.push((now, file, at));
@@ -3057,9 +3097,9 @@ impl Effects {
             .or_else(|| self.prims.guard.glow(unit, now))
     }
 
-    /// How many degrees `unit` has been turned since this was last asked (Falcon Assault's spin).
-    pub fn turned(&mut self, unit: Option<u32>, now: Instant) -> f32 {
-        self.prims.sniper.turned(unit, now)
+    /// How many degrees `unit` has been turned since this was last asked (Falcon Assault's spin, Chase Walk's cast while it stands).
+    pub fn turned(&mut self, unit: Option<u32>, now: Instant, standing: bool) -> f32 {
+        self.prims.sniper.turned(unit, now) + self.prims.guard.turned(unit, now, standing)
     }
 
     /// A cast cut off: Twilight Alchemy's icons go.
@@ -3530,6 +3570,21 @@ impl Effects {
                         let corners = [corner(-half, -half), corner(half, -half), corner(half, half), corner(-half, half)];
                         quads.push((texture, at, corners, [red, green, blue, alpha / 255.0], true, true));
                     }
+                }
+            }
+            // Cart Termination's dots: soft squares facing the camera, added on.
+            if let Some(Some(texture)) = self.textures.get(spray::DOT) {
+                for dot in self.prims.spray.dots(now, &position_of) {
+                    let half = dot.half * PIXELS_PER_UNIT;
+                    let corners = [[-half, half], [half, half], [half, -half], [-half, -half]];
+                    quads.push((texture, dot.at, corners, [dot.tint[0], dot.tint[1], dot.tint[2], dot.alpha / 255.0], true, false));
+                }
+            }
+            // Shield Chain's shields and their ghosts: white squares facing the camera.
+            if let Some(Some(texture)) = self.textures.get(spray::SHIELD) {
+                for shield in self.prims.spray.shields(now, self.dim) {
+                    let corners = ground::plain_square(shield.spin, spray::Spray::shield_half() * PIXELS_PER_UNIT, false);
+                    quads.push((texture, shield.at, corners, [1.0, 1.0, 1.0, shield.alpha.trunc().clamp(0.0, 255.0) / 255.0], false, false));
                 }
             }
             // Full Strip's shields and swords: additive squares facing the camera, red.

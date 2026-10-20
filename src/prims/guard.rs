@@ -69,6 +69,28 @@ enum Flicker {
     Preserve,
     /// Spiral Pierce's cast: outline copies and yellow for its length, at most 141 ticks.
     Pierce(u32),
+    /// Memorize's yellow (ticks 10 to 35).
+    Memorize,
+    /// Double Casting's red strobe in a white glow (ticks 10 to 50).
+    DoubleCast,
+}
+
+/// Chase Walk's cast turning its caster.
+struct Walk {
+    unit: Option<u32>,
+    start: Instant,
+    length: u32,
+    done: u32,
+}
+
+/// What Chase Walk's cast turns its caster on tick t (from 0): faster as the cast goes on.
+pub fn spin_step(t: u32) -> f32 {
+    match t {
+        0..=15 => 12.0,
+        16..=30 => 18.0,
+        31..=40 => 24.0,
+        _ => 48.0,
+    }
 }
 
 struct Body {
@@ -83,6 +105,7 @@ pub struct Guard {
     strips: Vec<Strip>,
     domes: Vec<Dome>,
     bodies: Vec<Body>,
+    walks: Vec<Walk>,
 }
 
 /// A fog box's height at its age n: it breathes between 9.6 and 32 and rises over the first 89 ticks.
@@ -118,6 +141,10 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
     match flicker {
         Flicker::Poison => (e <= 80).then_some(if even { (GLOW_ADDITIVE, Some([0xFF, 0x00, 0xFF])) } else { (0, Some([255; 3])) }),
         Flicker::Preserve => (10..=30).contains(&e).then_some(if even { (GLOW_ADDITIVE, Some([0xFA; 3])) } else { (0, Some([255; 3])) }),
+        Flicker::Memorize => (10..=35).contains(&e).then_some(if even { (GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])) } else { (0, Some([255; 3])) }),
+        Flicker::DoubleCast => {
+            (10..=50).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) })
+        }
         Flicker::Pierce(length) => {
             (e < length.min(141)).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])) } else { (GLOW_OUTLINE, Some([255; 3])) })
         }
@@ -239,6 +266,35 @@ impl Guard {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Poison });
     }
 
+    /// Memorize's flicker on `unit`.
+    pub fn memorize(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Memorize });
+    }
+
+    /// Double Casting's strobe on `unit`.
+    pub fn double_cast(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::DoubleCast });
+    }
+
+    /// Chase Walk's cast: `unit` spins faster and faster while it stands, for `length` ticks.
+    pub fn chase_walk(&mut self, unit: Option<u32>, length: u32, now: Instant) {
+        self.walks.retain(|walk| walk.unit != unit);
+        self.walks.push(Walk { unit, start: now, length, done: 0 });
+    }
+
+    /// How many degrees `unit` turns since this was last asked: each tick of the cast it stands for adds its share.
+    pub fn turned(&mut self, unit: Option<u32>, now: Instant, standing: bool) -> f32 {
+        let mut degrees = 0.0;
+        for walk in self.walks.iter_mut().filter(|walk| walk.unit == unit) {
+            let due = passes(walk.start, now).min(walk.length);
+            if standing {
+                degrees += (walk.done..due).map(spin_step).sum::<f32>();
+            }
+            walk.done = walk.done.max(due);
+        }
+        degrees
+    }
+
     /// Spiral Pierce's cast on `unit` for `length` ticks: it replaces the last.
     pub fn pierce(&mut self, unit: Option<u32>, length: u32, now: Instant) {
         self.bodies.retain(|body| !(body.unit == unit && matches!(body.flicker, Flicker::Pierce(_))));
@@ -254,6 +310,7 @@ impl Guard {
         self.strips.retain(|strip| passes(strip.start, now) <= STRIP_TICKS);
         self.domes.retain(|dome| passes(dome.start, now) <= 200);
         self.bodies.retain(|body| passes(body.start, now) <= 300);
+        self.walks.retain(|walk| passes(walk.start, now) <= walk.length);
     }
 
     /// Every wall at `now`; `position_of` gives a unit's feet.
@@ -435,5 +492,39 @@ mod tests {
         assert!(pierce(&guard, 9).is_some() && pierce(&guard, 10).is_none());
         guard.cut_pierce();
         assert!(pierce(&guard, 0).is_none());
+    }
+
+    #[test]
+    fn memorize_double_casting_and_chase_walk_work_on_the_body() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.memorize(Some(1), start);
+        guard.double_cast(Some(2), start);
+        // Memorize: additive #FAFA64 on ticks 10, 12 … 34 (13), white normal on 11, 13 … 35; nothing on 9 and 36.
+        let memorize = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        assert_eq!(memorize(10), Some((crate::actor::GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64]))));
+        assert_eq!(memorize(11), Some((0, Some([255; 3]))));
+        assert_eq!((0..40).filter(|&tick| memorize(tick).is_some_and(|(flags, _)| flags != 0)).count(), 13);
+        assert!(memorize(9).is_none() && memorize(35).is_some() && memorize(36).is_none());
+        // Double Casting: outline copies on 10…50, additive #FF0000 on the even ticks, #FFFFFF on the odd.
+        let double = |tick: u32| guard.glow(Some(2), start + TICK * tick);
+        assert_eq!(double(10), Some((crate::actor::GLOW_OUTLINE | crate::actor::GLOW_ADDITIVE, Some([0xFF, 0, 0]))));
+        assert_eq!(double(11), Some((crate::actor::GLOW_OUTLINE, Some([255; 3]))));
+        assert!(double(9).is_none() && double(50).is_some() && double(51).is_none());
+        // Chase Walk: the turn after t ticks 180, 192, 444, 462, 678, 702, 1662 for t = 15, 16, 30, 31, 40, 41, 61.
+        let total = |ticks: u32| (0..ticks).map(spin_step).sum::<f32>();
+        assert_eq!([15, 16, 30, 31, 40, 41, 61].map(total), [180.0, 192.0, 444.0, 462.0, 678.0, 702.0, 1662.0]);
+        // It turns the caster as the ticks come, only while it stands, and not past the cast.
+        guard.chase_walk(Some(3), 62, start);
+        assert_eq!(guard.turned(Some(3), start, true), 12.0);
+        assert_eq!(guard.turned(Some(3), start, true), 0.0);
+        assert_eq!(guard.turned(Some(3), start + TICK * 4, true), 48.0);
+        assert_eq!(guard.turned(Some(3), start + TICK * 9, false), 0.0, "walking: those ticks are lost");
+        assert_eq!(guard.turned(Some(3), start + TICK * 10, true), 12.0);
+        let rest = guard.turned(Some(3), start + TICK * 100, true);
+        assert_eq!(rest, total(62) - total(11));
+        assert_eq!(guard.turned(Some(4), start + TICK * 5, true), 0.0, "another unit");
+        guard.advance(start + TICK * 70);
+        assert!(guard.walks.is_empty());
     }
 }

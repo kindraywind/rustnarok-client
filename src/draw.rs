@@ -452,7 +452,7 @@ impl App {
         let (action, timing) = game.player.animation(now);
         let head_direction = game.player.head_direction;
         // Falcon Assault spins whoever it hits.
-        let turned = game.effects.turned(None, now);
+        let turned = game.effects.turned(None, now, !game.player.moving());
         if turned != 0.0 {
             game.player.rot = (game.player.rot + turned).rem_euclid(360.0);
         }
@@ -571,7 +571,7 @@ impl App {
             }
             let (action, timing) = actor.animation(now);
             let head_direction = actor.head_direction;
-            let turned = game.effects.turned(Some(id), now);
+            let turned = game.effects.turned(Some(id), now, !actor.moving());
             if turned != 0.0 {
                 actor.rot = (actor.rot + turned).rem_euclid(360.0);
             }

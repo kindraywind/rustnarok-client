@@ -22,6 +22,7 @@ pub mod sight;
 pub mod sniper;
 pub mod songs;
 pub mod sparkle;
+pub mod spray;
 pub mod star;
 pub mod stone;
 pub mod tanji;
@@ -162,6 +163,7 @@ pub struct Prims {
     pub sniper: sniper::Sniper,
     pub dancer: dancer::Dancer,
     pub guard: guard::Guard,
+    pub spray: spray::Spray,
 }
 
 /// COLDHIT's shard and smoke textures.
