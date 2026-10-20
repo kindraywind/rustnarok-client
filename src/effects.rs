@@ -30,6 +30,8 @@ const STR_TICK_MS: f32 = 16.0;
 const WORLD_TINT_REACH: f32 = 4000.0;
 /// The most ticks the STR world copies run in one frame.
 const WORLD_TICKS_MAX: u32 = 10;
+/// The STR world copies' tick, exact: a float 16 ms comes out a hair long and drops every other tick at 16 ms frames.
+const WORLD_TICK: Duration = Duration::from_millis(16);
 /// An STR's (320, 240) sits this many screen pixels above its owner's feet, at any zoom.
 pub const STR_RISE: f32 = 80.0;
 
@@ -613,6 +615,11 @@ pub fn cannon_launches(table: &Table, min: bool, phi: i32, delay_ms: i32, playin
         return Vec::new();
     }
     std::iter::once((vortex, 0)).chain(cannon_sector(phi).map(|blade| (table.min_id(blade, min), delay_ms))).collect()
+}
+
+/// How many whole world ticks fit in `elapsed`.
+fn world_ticks(elapsed: Duration) -> u32 {
+    (elapsed.as_micros() / WORLD_TICK.as_micros()) as u32
 }
 
 /// A key's corner in sprite pixels from the anchor: STR space is centred on (320, 240).
@@ -2757,9 +2764,9 @@ impl Effects {
     /// and shakes they fire; then the drawn objects' frame step.
     pub fn advance_world(&mut self, gpu: &Gpu, grf: &Grf, now: Instant, scene: &world_str::Scene, seen: &world_fx::Seen) {
         let clock = self.world_clock.get_or_insert(now);
-        let due = str_frame(now.saturating_duration_since(*clock));
+        let due = world_ticks(now.saturating_duration_since(*clock));
         // A long stall (a loading screen) skips ahead rather than running every tick.
-        *clock = if due > WORLD_TICKS_MAX { now } else { *clock + Duration::from_secs_f32(STR_TICK_MS / 1000.0) * due };
+        *clock = if due > WORLD_TICKS_MAX { now } else { *clock + WORLD_TICK * due };
         if self.worlds.is_empty() && self.fx.is_empty() {
             return;
         }
@@ -5998,6 +6005,21 @@ mod tests {
                 assert_eq!(cannon_sector(cannon_phi(yaw, rot)), Some(id), "yaw {yaw}, direction {direction}");
             }
         }
+    }
+
+    #[test]
+    fn world_ticks_keep_pace_with_16_ms_frames() {
+        let start = Instant::now();
+        let mut clock = start;
+        let mut ticks = 0;
+        for frame in 1..=100 {
+            let now = start + Duration::from_millis(16 * frame);
+            let due = world_ticks(now - clock);
+            clock += WORLD_TICK * due;
+            ticks += due;
+        }
+        assert_eq!(ticks, 100);
+        assert_eq!(world_ticks(Duration::from_micros(15_999)), 0);
     }
 
     #[test]
