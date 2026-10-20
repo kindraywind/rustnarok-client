@@ -3556,7 +3556,14 @@ impl App {
                         for &(who, effect) in ground {
                             let effect = effects::storm_gust_effect(skill, effect, game.effects.min);
                             match who {
-                                effects::Who::Caster => game.play_effect(gpu, grf, table, effect, source),
+                                effects::Who::Caster => {
+                                    if effect == effects::EF_COLDTHROW {
+                                        let aim = game.world.cell_position(cell.map(f32::from));
+                                        game.cold_slower(gpu, grf, table, source, aim);
+                                    } else {
+                                        game.play_effect(gpu, grf, table, effect, source);
+                                    }
+                                }
                                 _ => game.play_effect_at(gpu, grf, table, effect, cell),
                             }
                         }
