@@ -13,8 +13,8 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, kicks, knight,
-    linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, snow, songs, soul, souls, spears, sphere, spray, star, stone,
-    tanji, throw, transcend, vortex, walls, waterball, waves, wheels,
+    linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sheet, sight, sniper, snow, songs, soul, souls, spears, sphere, spray, star,
+    stone, tanji, throw, transcend, vortex, walls, waterball, waves, wheels,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -55,6 +55,8 @@ struct Part {
     random: Option<(u32, u32)>,
     /// Plays once on a skill's ground unit, where the rest starts again until the unit goes.
     once: bool,
+    /// After the file's last key its last frame stays drawn to the effect's length (`hold`).
+    hold: bool,
 }
 
 /// A sprite's animation (SPR effects): a sprite under data\sprite\이팩트\, whether it follows the unit, and how it
@@ -198,7 +200,8 @@ impl Table {
                     let folder = if folder == "-" { String::new() } else { folder.to_owned() };
                     let random = number(5).zip(number(6));
                     let once = fields.last() == Some(&"once");
-                    table.parts.entry(id).or_default().push(Part { file: file.to_owned(), folder, attached: attached == "1", random, once });
+                    let hold = fields.last() == Some(&"hold");
+                    table.parts.entry(id).or_default().push(Part { file: file.to_owned(), folder, attached: attached == "1", random, once, hold });
                 }
                 ["area", kind, effect, lift] => {
                     if let (Ok(kind), Ok(effect), Ok(lift)) = (kind.parse(), effect.parse(), lift.parse()) {
@@ -483,6 +486,8 @@ struct Playing {
     /// The effect's own length in ticks, when shorter than its STR (or how often a ground unit's starts again).
     length: Option<u32>,
     effect: u32,
+    /// Keeps its last frame to the effect's length (`hold`).
+    hold: bool,
 }
 
 impl Playing {
@@ -496,6 +501,7 @@ impl Playing {
             again: self.again,
             length: self.length,
             effect: self.effect,
+            hold: self.hold,
         }
     }
 }
@@ -518,8 +524,18 @@ fn kept_layer_frame(effect: u32, index: usize, layer: &rustnarok_client::effect:
 }
 
 /// How many ticks an STR playing for `effect` is kept: to its last key, or its effect's length if shorter; Reject Sword's 200.
-fn playing_ticks(effect: u32, str: &Str, length: Option<u32>) -> u32 {
-    if effect == REJECT_SWORD { REJECT_SWORD_TICKS } else { str_ticks(str, length) }
+fn playing_ticks(effect: u32, str: &Str, length: Option<u32>, hold: bool) -> u32 {
+    match (effect == REJECT_SWORD, hold, length) {
+        (true, ..) => REJECT_SWORD_TICKS,
+        // A held picture lasts the effect's length, however short its file is.
+        (_, true, Some(length)) => length,
+        _ => str_ticks(str, length),
+    }
+}
+
+/// The frame an STR shows at `frame`: a held one stays on its last key's after the file ends.
+fn held_frame(str: &Str, hold: bool, frame: f32) -> f32 {
+    if hold { frame.min(str.last_key().max(0) as f32) } else { frame }
 }
 
 /// A skill unit whose effect plays on a grid of points round its cell: the unit, the effect, how far below the ground it is put,
@@ -688,12 +704,17 @@ impl Animation {
             Some("false") => false,
             _ => lasting && !flag("hold"),
         };
-        // `delayStart`: made late, nothing shows before.
-        let start = start + Duration::from_secs_f32(number("delayStart").unwrap_or(0.0).max(0.0) / 1000.0);
+        // `delay` (or `delayStart`): made late, nothing shows before.
+        let start = start + Duration::from_secs_f32(number("delay").or(number("delayStart")).unwrap_or(0.0).max(0.0) / 1000.0);
+        // `duration` (ms) ends a repeating one; `drawn` (ticks) ends one that plays once, whatever frames are left.
+        let lasts = number("duration")
+            .filter(|_| repeat)
+            .map(|ms| Duration::from_secs_f32(ms.max(0.0) / 1000.0))
+            .or(number("drawn").map(|ticks| Duration::from_millis(STR_TICK_MS as u64 * ticks.max(0.0) as u64)));
         Self {
             sprite: format!("data\\sprite\\이팩트\\{}", part.file),
             start,
-            end: number("duration").filter(|_| repeat).map(|ms| start + Duration::from_secs_f32(ms.max(0.0) / 1000.0)),
+            end: lasts.map(|lasts| start + lasts),
             anchor,
             action: number("frame").map(|action| action as usize),
             frame_ms: number("delayFrame").map(|ms| ms.max(1.0)),
@@ -2189,6 +2210,10 @@ const BASH: u32 = 16;
 const TURN_UNDEAD: u32 = 82;
 /// EF_SONICBLOW: Sonic Blow's ring, flat on the screen round the caster (`prims::burst`).
 const SONIC_BLOW: u32 = 121;
+/// EF_BLEEDING: Wide Bleeding's red wash over the screen (`prims::sheet`, drawn by `cover_quads`), and its STR claws.
+const WIDE_BLEEDING: u32 = 669;
+/// EF_SUMMONSLAVE: twenty white rays, then a smoke puff (`prims::burst`, the `spr` row).
+const SUMMON_SLAVE: u32 = 215;
 
 /// EF_SOULSTRIKE: ghosts from the caster to the target, a hit each (`prims`).
 const SOUL_STRIKE: u32 = 15;
@@ -3125,7 +3150,7 @@ impl Effects {
             }
             self.prims.bursts.push(burst::Burst::signum(unit, now + crate::prims::TICK * 30, 122, |n| pick(0, n.saturating_sub(1))));
         }
-        if let (BASH | TURN_UNDEAD | SONIC_BLOW | OVER_THRUST, Target::Unit(unit)) = (id, target) {
+        if let (BASH | TURN_UNDEAD | SONIC_BLOW | OVER_THRUST | SUMMON_SLAVE, Target::Unit(unit)) = (id, target) {
             for path in [burst::DISC, burst::RAY, burst::RING] {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             }
@@ -3133,6 +3158,7 @@ impl Effects {
             let burst = match id {
                 BASH => burst::Burst::bash(unit, now, burst::LIFE, rand),
                 SONIC_BLOW => burst::Burst::sonic_blow(unit, now),
+                SUMMON_SLAVE => burst::Burst::summon_slave(unit, now, table.lengths.get(&id).copied().unwrap_or(500), rand),
                 // A recast within its 40 ticks takes the place of the ring.
                 OVER_THRUST => {
                     self.prims.bursts.retain(|burst| !(burst.over_thrust && burst.unit == unit));
@@ -3141,6 +3167,11 @@ impl Effects {
                 _ => burst::Burst::turn_undead(unit, now, rand),
             };
             self.prims.bursts.push(burst);
+        }
+        // Wide Bleeding's red sheet over the view, made with its STR; it ignores /mineffect.
+        if let (WIDE_BLEEDING, Target::Unit(unit)) = (id, target) {
+            self.textures.entry(sheet::TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sheet::TEXTURE, false).ok());
+            self.prims.sheets.start(unit, now);
         }
         // Asura Strike's streaks stay where the target stood; Steel Body's ribbons follow their unit.
         if id == ASURA_STRIKE {
@@ -3936,6 +3967,7 @@ impl Effects {
                 again,
                 length: table.lengths.get(&id).copied(),
                 effect: id,
+                hold: part.hold,
             });
         }
     }
@@ -4578,6 +4610,7 @@ impl Effects {
         self.prims.souls.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.notes.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.emblems.advance(now);
+        self.prims.sheets.advance(now);
         self.prims.bodies.advance(now);
         self.prims.portal.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.sphere.advance(now, |n| pick(0, n.saturating_sub(1)));
@@ -4747,7 +4780,7 @@ impl Effects {
                     tails.push(previous);
                 }
             }
-            now < playing.start + tick * playing_ticks(playing.effect, &playing.loaded.animation, playing.length)
+            now < playing.start + tick * playing_ticks(playing.effect, &playing.loaded.animation, playing.length, playing.hold)
         });
         self.playing.extend(tails);
 
@@ -5089,6 +5122,13 @@ impl Effects {
         });
         meshes.extend(glows);
         meshes
+    }
+
+    /// Wide Bleeding's red sheet over the view, for a camera looking along `forward`: drawn last, unfogged, over everything.
+    pub fn cover_quads(&self, now: Instant, forward: Vector, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<world::CoverQuad<'_>> {
+        let Some(Some(texture)) = self.textures.get(sheet::TEXTURE).filter(|_| !self.only_forced) else { return Vec::new() };
+        let toward = forward.map(|axis| -axis);
+        self.prims.sheets.draws(now, toward, position_of).into_iter().map(|draw| (texture, draw.at, draw.corners, draw.uv, draw.tint)).collect()
     }
 
     /// The effect shapes showing now: cylinders and models.
@@ -5532,7 +5572,7 @@ impl Effects {
             let Some(at) = playing.anchor.place(&position_of) else { continue };
             let animation = &playing.loaded.animation;
             // Whole ticks: the state changes once each 16 ms, with nothing in between.
-            let frame = str_frame(now.duration_since(playing.start)) as f32;
+            let frame = held_frame(animation, playing.hold, str_frame(now.duration_since(playing.start)) as f32);
             for (index, (layer, textures)) in animation.layers.iter().zip(&playing.loaded.textures).enumerate() {
                 let state = layer.state(frame).or_else(|| kept_layer_frame(playing.effect, index, layer, frame).and_then(|kept| layer.state(kept)));
                 let Some(state) = state else { continue };
@@ -8806,5 +8846,88 @@ mod tests {
         assert_eq!(sounds_799, [("effect\\wl_stasis", 96, true)]);
         assert!(table.used(2209).unwrap().contains(&(Who::Caster, EF_STASIS)));
         assert!(table.status(453).contains(&EF_STASIS));
+    }
+
+    #[test]
+    fn summon_slave_earthquake_dragon_fear_and_wide_bleeding_have_their_rows_and_timing() {
+        let table = Table::load();
+        let ms = |duration: Duration| duration.as_millis();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        // 215: on the monster at the use, length 500, no sound; the smoke puff is made at tick 35 (560 ms) where it stood, once.
+        assert!(table.used(196).unwrap().contains(&(Who::Caster, SUMMON_SLAVE)));
+        assert_eq!(table.lengths[&SUMMON_SLAVE], 500);
+        assert!(!table.sounds.contains_key(&SUMMON_SLAVE));
+        let puff = &table.sprites[&SUMMON_SLAVE][0];
+        assert!(puff.file == "smoke" && !puff.attached && puff.parameters["delay"] == "560");
+        let now = Instant::now();
+        let puff = Animation::new(puff, SUMMON_SLAVE, now, Anchor::Unit(Some(1)), false);
+        assert_eq!(ms(puff.start - now), 560);
+        assert!(!puff.repeat && puff.end.is_none() && table.sprites[&SUMMON_SLAVE].len() == 1);
+        // A row without `delay` starts at once.
+        let plain = SpritePart { file: "smoke".to_owned(), attached: true, parameters: HashMap::new() };
+        assert_eq!(Animation::new(&plain, SUMMON_SLAVE, now, Anchor::Unit(Some(1)), false).start, now);
+
+        // 666: on the caster at each damage packet, length 100, the quake sound and three shakes as before.
+        assert!(table.struck(653).unwrap().contains(&(Who::Caster, 666)) && table.struck(750).unwrap().contains(&(Who::Caster, 666)));
+        assert_eq!(table.lengths[&666], 100);
+        assert_eq!(sounds(666), [("effect\\earth_quake", 0)]);
+        assert_eq!(table.quakes[&666].iter().map(|(delay, _)| ms(*delay)).collect::<Vec<_>>(), [0, 560, 1120]);
+        let crack = &table.sprites[&666][0];
+        assert!(crack.attached && table.sprites[&666].len() == 1);
+        let crack = Animation::new(crack, 666, now, Anchor::Unit(Some(1)), false);
+        assert!(!crack.repeat && crack.over && crack.first == 1.0 && crack.action == Some(0) && crack.scale == 1.0 && crack.alpha == 1.0);
+        assert_eq!((crack.frame_ms, crack.offset), (Some(64.0), [0.0, 0.0]));
+        // Frame ⌊a / 4⌋ + 1 of its 31: 1 at ages 0 and 3, 2 at 4, 25 at 96 and 98; 99 draws.
+        let frame = |age: u32| (animation_progress(16.0 * age as f32, 64.0, 31.0, 1.0, false) * 31.0) as usize;
+        assert_eq!([0, 3, 4, 96, 98].map(frame), [1, 1, 2, 25, 25]);
+        assert_eq!(ms(crack.end.unwrap() - crack.start), 1584);
+
+        // 668: dfear.str held to its length 28, the roar and the shake at tick 1.
+        assert!(table.struck(659).unwrap().contains(&(Who::Caster, 668)));
+        assert_eq!(table.lengths[&668], 28);
+        let rings = &table.parts[&668];
+        assert!(rings.len() == 1 && rings[0].file == "dfear" && rings[0].attached && rings[0].hold && !rings[0].once);
+        assert_eq!(sounds(668), [("effect\\dragonfear", 16)]);
+        assert_eq!(table.quakes[&668].iter().map(|(delay, _)| ms(*delay)).collect::<Vec<_>>(), [16]);
+
+        // 669: wideb.str held to its length 70, the sound at tick 1.
+        assert!(table.struck(665).unwrap().contains(&(Who::Caster, 669)) && table.struck(756).unwrap().contains(&(Who::Caster, 669)));
+        assert_eq!(table.lengths[&669], 70);
+        let claws = &table.parts[&669];
+        assert!(claws.len() == 1 && claws[0].file == "wideb" && claws[0].attached && claws[0].hold);
+        assert_eq!(sounds(669), [("effect\\wideb", 16)]);
+        // Other pictures are not held.
+        assert!(table.parts[&10].iter().all(|part| !part.hold));
+    }
+
+    #[test]
+    fn a_held_picture_keeps_its_last_frame_to_the_effects_length() {
+        let key = rustnarok_client::effect::Key {
+            frame: 0,
+            kind: 0,
+            position: [320.0, 240.0],
+            corners: [-10.0, 10.0, 10.0, -10.0, -10.0, -10.0, 10.0, 10.0],
+            texture: 0.0,
+            texture_motion: 0,
+            delay: 0.0,
+            angle: 0.0,
+            color: [1.0; 4],
+            source_blend: 5,
+            destination_blend: 6,
+        };
+        let layer = |last: i32| rustnarok_client::effect::Layer { textures: Vec::new(), keys: vec![key, rustnarok_client::effect::Key { frame: last, ..key }] };
+        // Dragon Fear: the last key is at frame 23, the effect lasts 28 ticks; a layer that ended earlier is not drawn at the end.
+        let str = Str { fps: 60, frames: 24, layers: vec![layer(11), layer(23)] };
+        assert_eq!(
+            (playing_ticks(668, &str, Some(28), true), playing_ticks(668, &str, Some(28), false), playing_ticks(668, &str, Some(10), true)),
+            (28, 24, 10)
+        );
+        let shown = |frame: u32| str.layers.iter().map(|layer| layer.state(held_frame(&str, true, frame as f32)).is_some()).collect::<Vec<_>>();
+        assert_eq!([23, 24, 27].map(shown), [[false, true]; 3]);
+        // Frame 23 and 24 … 27 are the same; a picture not held goes on counting.
+        assert!((24..28).all(|frame| held_frame(&str, true, frame as f32) == 23.0) && held_frame(&str, false, 24.0) == 24.0);
+        assert_eq!(held_frame(&str, true, 5.0), 5.0);
+        // Nothing is drawn from the tick after the length.
+        assert!(playing_ticks(669, &str, None, true) == 24);
     }
 }

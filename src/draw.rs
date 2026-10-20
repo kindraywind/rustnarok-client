@@ -2934,7 +2934,8 @@ impl App {
             billboards.extend(game.weather.world_sprites(&assets.weather));
         }
         // The overlay follows the player and stays up with /effect off. 334 is not an effect that switch hides.
-        let cover = blind_cover(&assets.blind_textures, player_feet, game.blind.alpha(now), game.blind.showing());
+        let mut cover = blind_cover(&assets.blind_textures, player_feet, game.blind.alpha(now), game.blind.showing());
+        cover.extend(game.effects.cover_quads(now, view.forward, feet_of_unit));
         let frame = WorldFrame {
             world: &game.world,
             view: &view,
