@@ -1266,6 +1266,14 @@ impl Game {
         }
     }
 
+    /// Jack Frost (WL_JACKFROST / NPC_JACKFROST, effect 801): ten lines of dark blue ice spikes in a star round `source`.
+    pub(crate) fn jack_frost(&mut self, gpu: &Gpu, grf: &Grf, source: u32, target: u32) {
+        let now = control::now();
+        if let (Some(from), Some(_)) = (self.feet(source, now), self.feet(target, now)) {
+            self.effects.jack_frost(gpu, grf, from, Instant::now(), |n| effects::pick(0, n.saturating_sub(1)));
+        }
+    }
+
     /// Plays an effect on a unit from a moment on (a hit when it lands).
     pub(crate) fn play_effect_from(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant) {
         self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);
@@ -1401,6 +1409,9 @@ impl Game {
         if shown.contains(&actor::AFTERIMAGE) {
             actor.blur(status, on);
         }
+        if shown.contains(&actor::HALLUCINATION_WALK) {
+            actor.hallucination(on);
+        }
         // Striking leaves white copies behind a player, standing or not.
         if shown.contains(&actor::STRIKING) {
             actor.strike(on && actor.look.is_some());
@@ -1413,7 +1424,7 @@ impl Game {
         let at = self.world.cell_position(actor.cell.map(|value| value as f32));
         let monster = actor::is_monster_job(job);
         if let Some(gpu) = gpu.filter(|_| on) {
-            for &effect in shown.iter().filter(|&&effect| effect != actor::AFTERIMAGE && effect != actor::STRIKING) {
+            for &effect in shown.iter().filter(|&&effect| effect != actor::AFTERIMAGE && effect != actor::STRIKING && effect != actor::HALLUCINATION_WALK) {
                 // Manhole's body is for the other units only; a monster in the hole only sounds.
                 if effect == effects::MANHOLE_BODY && monster {
                     self.effects.sound_of(table, effect, at, Instant::now());
