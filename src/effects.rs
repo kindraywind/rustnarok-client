@@ -13,8 +13,8 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, kicks, knight,
-    linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, soul, souls, spears, sphere, spray, star, stone, tanji,
-    throw, transcend, vortex, walls, waterball, waves, wheels,
+    linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, snow, songs, soul, souls, spears, sphere, spray, star, stone,
+    tanji, throw, transcend, vortex, walls, waterball, waves, wheels,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -2052,8 +2052,12 @@ pub const NAPALM_BEAT: u32 = 32;
 /// EF_HALLUTIME: white glints round a copy (`prims::sparkle`).
 pub const HALLUTIME: u32 = crate::prims::sparkle::EF_HALLUTIME;
 
+/// EF_COLDTHROW: Cold Slower's snowflakes thrown at the cell.
+pub const EF_COLDTHROW: u32 = 791;
 /// EF_STONERING: Sienna Execrate's bouncing Stapo (`data\sprite\몬스터\stapo`).
 pub const EF_STONERING: u32 = 797;
+/// EF_STASIS: Stasis's electric rings.
+pub const EF_STASIS: u32 = 799;
 /// EF_FROSTDIVER3: Jack Frost's star of dark blue ice spikes.
 pub const EF_FROSTDIVER3: u32 = 801;
 
@@ -2254,6 +2258,12 @@ const PRIME_CHARGE: u32 = 882;
 const DRAGON_RAYS: u32 = 885;
 const CHI_BURST: u32 = 886;
 const MOON_SPIN: u32 = 890;
+/// Severe Rainstorm's cast ribbons (`prims::songs`).
+const RAINSTORM_CAST: u32 = 1286;
+/// Cart Tornado's spin of its caster (`prims::brawl`).
+const CART_TORNADO: u32 = 1365;
+/// Cannon Spear's pale blue lines (`prims::brawl`).
+const CANNON_LINES: u32 = 1409;
 /// Sound of Destruction's red music notes (`prims::guard`).
 const SOUND_NOTES: u32 = 869;
 /// Dead Hill Here's Geographers, Poem of Netherworld's note, Randomize Spell's frames and Dance with Warg's Wargs (`prims::crowds`).
@@ -2516,8 +2526,9 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 51] = [
+pub const AIMED: [u32; 52] = [
     EF_TETRA,
+    CANNON_LINES,
     STIN,
     CROSS_LINES,
     ESWHOO_DISCS,
@@ -2773,6 +2784,16 @@ impl Effects {
         }
         // Shadow Form's cast aura shows with no sound; the sound comes with the skill packet.
         if id == SHADOW_CAST {
+            return;
+        }
+        // Severe Rainstorm's cast: two rings of music-note ribbons round the caster for the cast.
+        if id == RAINSTORM_CAST {
+            for path in songs::MUSIC {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            self.play_sounds(table, id, at, now);
+            let ticks = cast_ms / crate::prims::TICK.as_millis() as u32;
+            self.prims.songs.rain(unit, ticks, self.min, now);
             return;
         }
         // The Sura casts: bubble cones over two blue squares.
@@ -3103,6 +3124,7 @@ impl Effects {
                 self.prims.holes.reverb(at, now);
             }
             (MOON_SPIN, Target::Unit(unit)) => self.prims.brawl.moon_spin(unit, now),
+            (CART_TORNADO, Target::Unit(unit)) => self.prims.brawl.caster_spin(unit, now),
             (TIGER_CANNON_FX, _) => {
                 self.textures.entry(sniper::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sniper::RAY, true).ok());
                 self.prims.monk.tiger_cannon(at, now, self.min, |n| pick(0, n.saturating_sub(1)));
@@ -3265,6 +3287,13 @@ impl Effects {
                 self.prims.guard.accessory(at, now, |n| pick(0, n.saturating_sub(1)));
             }
             (MANHOLE_BODY, Target::Status(unit, _)) => self.prims.brawl.manhole(unit),
+            (EF_COLDTHROW, target) => {
+                let unit = match target {
+                    Target::Unit(unit) | Target::Status(unit, _) => unit,
+                    _ => None,
+                };
+                self.cold_slower(gpu, grf, table, unit, at, at, now);
+            }
             (EF_STONERING, target) => {
                 self.sprites.entry(STAPO_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, STAPO_SPRITE));
                 let action = stapo_action(pick(0, 1));
@@ -3273,6 +3302,16 @@ impl Effects {
                     _ => Anchor::At(at),
                 };
                 self.stapos.push(Stapo { start: now, anchor, action, placed: Vec::new() });
+            }
+            (EF_STASIS, target) => {
+                let unit = match target {
+                    Target::Unit(unit) | Target::Status(unit, _) => unit,
+                    _ => None,
+                };
+                for path in snow::THUNDER_BALLS {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.snow.stasis(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
             (EF_FROSTDIVER3, _) => {
                 self.jack_frost(gpu, grf, at, now, |n| pick(0, n.saturating_sub(1)));
@@ -4058,6 +4097,13 @@ impl Effects {
         self.prims.stone.frost_diver(from, to, now, |n| pick(0, n.saturating_sub(1)));
     }
 
+    /// Cold Slower (791): three prims of four snowflakes thrown from `feet` toward `aim`.
+    pub fn cold_slower(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, unit: Option<u32>, feet: Vector, aim: Vector, now: Instant) {
+        self.play_sounds(table, EF_COLDTHROW, feet, now);
+        self.textures.entry(snow::SNOW_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, snow::SNOW_TEXTURE, true).ok());
+        self.prims.snow.cold_slower(unit, feet, aim, now, |n| pick(0, n.saturating_sub(1)));
+    }
+
     /// Jack Frost (EF_FROSTDIVER3): 10 lines of Frost Diver spikes on source feet aimed 80 units out.
     pub fn jack_frost(&mut self, gpu: &Gpu, grf: &Grf, from: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.sounds.push((now, "jack_frost.wav".to_owned(), LISTENER));
@@ -4286,6 +4332,11 @@ impl Effects {
                 self.play_quakes(table, id, now);
                 self.prims.brawl.spear_lines(from, to, now, |n| pick(0, n.saturating_sub(1)));
                 self.prims.guard.spear(caster, now);
+            }
+            CANNON_LINES => {
+                self.textures.entry(brawl::GOLD_STRIP.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::GOLD_STRIP, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.brawl.cannon_lines(from, to, now, |n| pick(0, n.saturating_sub(1)));
             }
             GREAT_ECHO_V => {
                 self.textures.entry(spears::LINE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, spears::LINE, true).ok());
@@ -4729,6 +4780,7 @@ impl Effects {
             self.prims.kicks.status(unit, false);
         }
         self.prims.bodies.forget_status(unit, status);
+        self.prims.snow.forget_status(unit, status);
         if status == 330 {
             self.prims.circles.forget(unit);
         }
@@ -4779,7 +4831,8 @@ impl Effects {
         let flashing = mix_tints(flashing, self.prims.sniper.body_tint(unit, now));
         let flashing = mix_tints(flashing, self.prims.brawl.body_tint(unit, now));
         let flashing = mix_tints(flashing, self.prims.songs.body_tint(unit, now));
-        mix_tints(flashing, self.prims.transcend.body_tint(unit, now))
+        let flashing = mix_tints(flashing, self.prims.transcend.body_tint(unit, now));
+        mix_tints(flashing, self.prims.snow.body_tint(unit, now))
     }
 
     /// The body flags and colour an effect gives `unit` now (Full Protection's strobe).
@@ -4794,6 +4847,7 @@ impl Effects {
             .or_else(|| self.prims.guard.glow(unit, now))
             .or_else(|| self.prims.brawl.glow(unit, now))
             .or_else(|| self.prims.bodies.glow(unit, now))
+            .or_else(|| self.prims.snow.glow(unit, now))
     }
 
     /// How many degrees `unit` has been turned since this was last asked (Falcon Assault's spin, Chase Walk's cast while it stands).
@@ -5157,6 +5211,13 @@ impl Effects {
             .chain(self.prims.monk.meshes(now, false).into_iter().filter_map(|(path, vertices)| Some((self.textures.get(path)?.as_ref()?, vertices, true))))
             .chain(self.prims.shards.meshes(now).into_iter().filter_map(|(path, vertices)| Some((self.textures.get(path)?.as_ref()?, vertices, true))))
             .chain(self.prims.vortex.meshes().into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
+            .chain(
+                self.prims
+                    .snow
+                    .meshes(&position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(forced_walls).chain(prims).collect()
     }
@@ -5416,6 +5477,8 @@ impl Effects {
             quads.extend(self.prims.linker.quads(now, |path| self.textures.get(path).and_then(Option::as_ref)));
             // Recognized Spell's skill icons and Tetra Vortex's cards, facing the camera.
             quads.extend(self.prims.vortex.quads(now, self.yaw.to_degrees(), |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
+            // Cold Slower's snowflakes, facing the camera.
+            quads.extend(self.prims.snow.quads(now, |path| self.textures.get(path).and_then(Option::as_ref)));
             // Lope's motes and petals, facing the camera.
             quads.extend(self.prims.petals.quads(|path| self.textures.get(path).and_then(Option::as_ref)));
             // Lullaby Deep Sleep's notes, over everything (`STR_RISE` is taken off again).
@@ -7681,6 +7744,24 @@ mod tests {
     }
 
     #[test]
+    fn severe_rainstorm_cart_tornado_and_cannon_spear_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Severe Rainstorm's cast: four begin-spell sounds at tick 0, one per prim.
+        assert_eq!(table.cast_aura(2418, 0), Some(RAINSTORM_CAST));
+        assert_eq!(sounds(RAINSTORM_CAST), [("effect\\EF_BeginSpell", 0, false); 4]);
+        // Cart Tornado: 50 ticks on its caster, the sound at 80 ms.
+        assert_eq!(table.lengths[&CART_TORNADO], 50);
+        assert!(table.used(2476).unwrap().contains(&(Who::Caster, CART_TORNADO)));
+        assert_eq!(sounds(CART_TORNADO), [("effect\\T_회오리차기", 80, false)]);
+        // Cannon Spear: the lines from the caster at the target at each damage packet, the sound at the listener.
+        assert_eq!(table.lengths[&CANNON_LINES], 300);
+        assert!(AIMED.contains(&CANNON_LINES) && !aimed_at_centre(CANNON_LINES));
+        assert!(table.struck(2307).unwrap().contains(&(Who::Caster, CANNON_LINES)));
+        assert_eq!(sounds(CANNON_LINES), [("effect\\LG_CANNONSPEAR", 0, true)]);
+    }
+
+    #[test]
     fn rampage_blaster_cross_impact_and_reverberation_have_their_rows() {
         let table = Table::load();
         assert_eq!([RAMPAGE_BODY, CROSS_LINES, REVERB_FX].map(|id| table.lengths[&id]), [300, 300, 150]);
@@ -8410,5 +8491,22 @@ mod tests {
         assert!(AIMED.contains(&SOUL_UNITY) && table.used(2605).unwrap().contains(&(Who::Target, SOUL_UNITY)));
         assert!(!table.sounds.contains_key(&KAUTE_PALE) && !table.sounds.contains_key(&KAUTE_DARK) && !table.sounds.contains_key(&SOUL_UNITY));
         assert_eq!([ESWHOO_DISCS, KAUTE_PALE, KAUTE_DARK, SOUL_UNITY].map(|id| table.lengths[&id]), [200; 4]);
+    }
+
+    #[test]
+    fn cold_slower_and_stasis_have_their_rows() {
+        let table = Table::load();
+        // 791 EF_COLDTHROW: Cold Slower (skill 2260), length 200, sound ice_titan_attack at tick 0 at listener.
+        assert_eq!(table.lengths[&EF_COLDTHROW], 200);
+        let sounds_791 = table.sounds[&EF_COLDTHROW].iter().map(|s| (s.file.as_str(), s.delay_ms, s.listener)).collect::<Vec<_>>();
+        assert_eq!(sounds_791, [("ice_titan_attack", 0, true)]);
+        assert!(table.grounds[&2260].contains(&(Who::Caster, EF_COLDTHROW)));
+
+        // 799 EF_STASIS: Stasis (skill 2209, status 453), length 300, sound wl_stasis at tick 6 (96 ms) at listener.
+        assert_eq!(table.lengths[&EF_STASIS], 300);
+        let sounds_799 = table.sounds[&EF_STASIS].iter().map(|s| (s.file.as_str(), s.delay_ms, s.listener)).collect::<Vec<_>>();
+        assert_eq!(sounds_799, [("effect\\wl_stasis", 96, true)]);
+        assert!(table.used(2209).unwrap().contains(&(Who::Caster, EF_STASIS)));
+        assert!(table.status(453).contains(&EF_STASIS));
     }
 }

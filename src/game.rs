@@ -1274,6 +1274,16 @@ impl Game {
         }
     }
 
+    /// Cold Slower (791): three prims of four snowflakes thrown from caster's feet toward `aim`.
+    pub(crate) fn cold_slower(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, source: u32, aim: world::Vector) {
+        let key = (source != self.account_id).then_some(source);
+        let feet = self.feet(source, control::now()).unwrap_or_else(|| {
+            let cell = key.map_or(self.player.cell, |id| self.units.get(&id).map_or([0, 0], |actor| actor.cell));
+            self.world.cell_position(cell.map(|v| v as f32))
+        });
+        self.effects.cold_slower(gpu, grf, table, key, feet, aim, Instant::now());
+    }
+
     /// Plays an effect on a unit from a moment on (a hit when it lands).
     pub(crate) fn play_effect_from(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant) {
         self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);

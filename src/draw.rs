@@ -337,6 +337,21 @@ impl App {
         for (effect, at) in game.world.map_effects.due(crate::whole_ms(now), near) {
             game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, now);
         }
+        // The refine window's hammering: its sounds as the frames pass, and at its end the result's sound and chat line.
+        let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+        let carried = &game.inventory.items;
+        let carried_of = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
+        let cues = game.refine.as_mut().map(|window| window.advance(control::now(), carried_of, zeny)).unwrap_or_default();
+        for cue in cues {
+            match cue {
+                refine::Cue::Sound(file) => {
+                    if let Some(audio) = audio.as_mut() {
+                        audio.play(grf, file, 1.0);
+                    }
+                }
+                refine::Cue::Chat(id) => game.chat_line(messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM),
+            }
+        }
         // The map's ambient sounds, each on its cycle.
         if let Some(audio) = audio.as_mut() {
             let at = actor::world_xz(game.player.position(now));

@@ -1,5 +1,6 @@
 //! Song and alchemy effects built in code a 16 ms tick at a time: Twilight Alchemy's 320 drifting icons (573 to 575), Shrink's
-//! yellow flashes (599), Close Confine's red blinking and shaking (602), and the performers' four cones of red bubbles (840).
+//! yellow flashes (599), Close Confine's red blinking and shaking (602), the performers' four cones of red bubbles (840) and
+//! Severe Rainstorm's two rings of music-note ribbons (1286).
 
 use std::time::Instant;
 
@@ -42,6 +43,19 @@ pub const BUBBLES: [&str; 27] = [
     "data\\texture\\effect\\W_bubble25.tga",
     "data\\texture\\effect\\W_bubble26.tga",
     "data\\texture\\effect\\W_bubble27.tga",
+];
+
+/// Severe Rainstorm's note pictures, music_01 to music_09.
+pub const MUSIC: [&str; 9] = [
+    "data\\texture\\effect\\new_severerainstorm\\new_severerainstorm_cylinder\\music_01.tga",
+    "data\\texture\\effect\\new_severerainstorm\\new_severerainstorm_cylinder\\music_02.tga",
+    "data\\texture\\effect\\new_severerainstorm\\new_severerainstorm_cylinder\\music_03.tga",
+    "data\\texture\\effect\\new_severerainstorm\\new_severerainstorm_cylinder\\music_04.tga",
+    "data\\texture\\effect\\new_severerainstorm\\new_severerainstorm_cylinder\\music_05.tga",
+    "data\\texture\\effect\\new_severerainstorm\\new_severerainstorm_cylinder\\music_06.tga",
+    "data\\texture\\effect\\new_severerainstorm\\new_severerainstorm_cylinder\\music_07.tga",
+    "data\\texture\\effect\\new_severerainstorm\\new_severerainstorm_cylinder\\music_08.tga",
+    "data\\texture\\effect\\new_severerainstorm\\new_severerainstorm_cylinder\\music_09.tga",
 ];
 
 /// 80 prims of 4 icons.
@@ -100,6 +114,14 @@ struct Cone {
     by_length: bool,
 }
 
+/// Severe Rainstorm's cast: four prims of four bands, on the caster for `length` ticks (`min` is /mineffect).
+struct Rain {
+    unit: Option<u32>,
+    start: Instant,
+    length: u32,
+    min: bool,
+}
+
 /// A streak of Adaptation or Eternal Chaos, made on tick `born`: its yaw, how far from the unit, half-length, colour, and whether
 /// it falls instead of rising.
 struct Streak {
@@ -139,6 +161,7 @@ pub struct Songs {
     shrinks: Vec<Body>,
     confines: Vec<Body>,
     cones: Vec<Cone>,
+    rains: Vec<Rain>,
     dances: Vec<Dance>,
 }
 
@@ -266,6 +289,55 @@ pub fn cone_picture(a: u32) -> &'static str {
 
 const LEANS: [f32; 4] = [75.0, 63.0, 52.0, 40.0];
 
+/// Severe Rainstorm's bands: the radius of each of its four prims, the lean and start turn of each of a prim's four bands.
+const RAIN_RADII: [f32; 4] = [3.0, 3.0, 8.0, 8.0];
+const RAIN_LEANS: [f32; 4] = [60.0, 55.0, 65.0, 70.0];
+const RAIN_HEIGHT: f32 = 20.0;
+/// How far a band's arc reaches, as 21 points 6° apart.
+const RAIN_STEP: f32 = 6.0;
+
+/// A rain band's alpha at its age a (from 1) in a cast of `length` ticks: 5 a tick to 150 (80 under /mineffect), held, then 4
+/// less a tick over the last 45.
+pub fn rain_alpha(a: u32, length: u32, min: bool) -> f32 {
+    let top = if min { 80 } else { 150 };
+    let fade = a.saturating_sub(length.saturating_sub(46));
+    (5 * a).min(top).saturating_sub(4 * fade) as f32
+}
+
+/// Band k's turn at its age a: a degree a tick from 0, 90, 180 or 270.
+pub fn rain_turn(k: usize, a: u32) -> f32 {
+    ((90 * k as u32 + a) % 360) as f32
+}
+
+/// The picture at age a: music_02 first, then in turn.
+pub fn rain_picture(a: u32) -> &'static str {
+    MUSIC[(a % 9) as usize]
+}
+
+/// The ribbon's height at point s of band k at age a: a wave along the arc.
+pub fn rain_profile(k: usize, s: u32, a: u32) -> f32 {
+    let wave = if k < 2 { (a + 90 * k as u32) % 360 } else { (2 * (a + 45 * k as u32)) % 360 };
+    (9.0 * s as f32).to_radians().sin() * RAIN_HEIGHT * 0.3 * (wave as f32).to_radians().sin() + RAIN_HEIGHT
+}
+
+impl Rain {
+    /// The sixteen bands at age `a`, in one blended white pass; their feet are 5 under the caster's.
+    fn wall(&self, feet: Vector, a: u32) -> Wall {
+        let base = [feet[0], feet[1] - 5.0, feet[2]];
+        let alpha = rain_alpha(a, self.length, self.min) / 255.0;
+        let vertices = RAIN_RADII
+            .into_iter()
+            .flat_map(|radius| (0..4).map(move |k| (radius, k)))
+            .flat_map(|(radius, k)| {
+                let points: Vec<_> =
+                    (0..=20).map(|s| ring_point(base, rain_turn(k, a) + RAIN_STEP * s as f32, radius, rain_profile(k, s, a), RAIN_LEANS[k])).collect();
+                ring_quads(&points, alpha).into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] })
+            })
+            .collect();
+        Wall { texture: rain_picture(a), vertices, additive: false, forced: false }
+    }
+}
+
 impl Cone {
     fn walls(&self, feet: Vector, a: u32) -> [Wall; 2] {
         let alpha = if self.by_length { cone_alpha_in(self.length, a) } else { cone_alpha(a) };
@@ -354,6 +426,11 @@ impl Songs {
         self.cones.push(Cone { unit, start: now, length: length.max(120), rgb, strength: if min { 1.0 } else { 2.0 }, by_length: true });
     }
 
+    /// Severe Rainstorm's cast on `unit`: `length` ticks, at least 120; `min` is /mineffect.
+    pub fn rain(&mut self, unit: Option<u32>, length: u32, min: bool, now: Instant) {
+        self.rains.push(Rain { unit, start: now, length: length.max(120), min });
+    }
+
     /// Adaptation (`falling` false) or Eternal Chaos (`falling` true) on `unit`, for the status `status` if it is one: a streak
     /// made every second tick, its choices from `rand(n)` (0 to n − 1) in the order the game draws them.
     pub fn dance(&mut self, unit: Option<u32>, status: Option<u16>, falling: bool, now: Instant, mut rand: impl FnMut(u32) -> u32) {
@@ -419,6 +496,7 @@ impl Songs {
         self.shrinks.retain(|body| passes(body.start, now) <= SHRINK_TICKS);
         self.confines.retain(|body| passes(body.start, now) <= CONFINE_TICKS);
         self.cones.retain(|cone| passes(cone.start, now) <= cone.length);
+        self.rains.retain(|rain| passes(rain.start, now) <= rain.length);
         self.dances.retain(|dance| passes(dance.start, now) <= DANCE_TICKS);
     }
 
@@ -472,6 +550,12 @@ impl Songs {
             let (Some(feet), Some(a)) = (position_of(cone.unit), passes(cone.start, now).checked_sub(1)) else { continue };
             if a < if cone.by_length { cone.length - 1 } else { CONE_TICKS.min(cone.length - 1) } {
                 walls.extend(cone.walls(feet, a));
+            }
+        }
+        for rain in &self.rains {
+            let (Some(feet), a) = (position_of(rain.unit), passes(rain.start, now)) else { continue };
+            if (1..=rain.length).contains(&a) {
+                walls.push(rain.wall(feet, a));
             }
         }
         for dance in &self.dances {
@@ -651,6 +735,50 @@ mod tests {
         let mut sura = Songs::default();
         sura.cone(831, None, 200, start);
         assert!(sura.meshes(start + TICK * 150, |_| Some(feet)).is_empty());
+    }
+
+    #[test]
+    fn severe_rainstorm_wraps_the_caster_in_two_rings_of_music_ribbons() {
+        let start = Instant::now();
+        let mut songs = Songs::default();
+        songs.rain(None, 0, false, start);
+        assert_eq!(songs.rains[0].length, 120);
+        // Alpha at A = 1, 29, 30, 31: 5, 145, 150, 150; under /mineffect 5, 80, 80, 80.
+        assert_eq!([1, 29, 30, 31].map(|a| rain_alpha(a, 200, false)), [5.0, 145.0, 150.0, 150.0]);
+        assert_eq!([1, 15, 16, 31].map(|a| rain_alpha(a, 200, true)), [5.0, 75.0, 80.0, 80.0]);
+        // A cast of 200 ticks fades over the last 45: A = 154, 155, 192, 200 give 150, 146, 0, 0.
+        assert_eq!([154, 155, 192, 200].map(|a| rain_alpha(a, 200, false)), [150.0, 146.0, 0.0, 0.0]);
+        // The turn after A ticks is A from the band's start; the picture is the (A mod 9) + 1st.
+        assert_eq!([0, 1, 2, 3].map(|k| rain_turn(k, 1)), [1.0, 91.0, 181.0, 271.0]);
+        assert_eq!(rain_turn(0, 360), 0.0);
+        assert_eq!((rain_picture(1), rain_picture(9)), (MUSIC[1], MUSIC[0]));
+        // The ribbon is 20 high at its ends and waves 6 either side between.
+        assert!(near(rain_profile(0, 0, 1), 20.0) && near(rain_profile(0, 10, 1), 20.0 + 6.0 * 1.0_f32.to_radians().sin()));
+        // One blended white pass of 16 bands of 20 quads; a band's 21 points lie 6° apart on its radius, its foot 5 under the feet.
+        let feet = [10.0, 3.0, 20.0];
+        let walls = songs.meshes(start, |_| Some(feet));
+        assert_eq!(walls.len(), 1);
+        assert!(!walls[0].additive && walls[0].texture == MUSIC[1] && walls[0].vertices.len() == 16 * 20 * 6);
+        assert_eq!(walls[0].vertices[0].tint, [1.0, 1.0, 1.0, 5.0 / 255.0]);
+        let foot = |vertex: usize| walls[0].vertices[vertex].position;
+        // Band 0 of the first prim (radius 3): the first foot is at turn 1°, the second 6° on.
+        assert!(
+            near(foot(0)[1], -2.0) && near(foot(0)[0], 10.0 + 3.0 * 1.0_f32.to_radians().cos()) && near(foot(0)[2], 20.0 + 3.0 * 1.0_f32.to_radians().sin())
+        );
+        assert!(near(foot(2)[0], 10.0 + 3.0 * 7.0_f32.to_radians().cos()) && near(foot(2)[2], 20.0 + 3.0 * 7.0_f32.to_radians().sin()));
+        // The third prim's first band is on radius 8.
+        let outer = foot(2 * 4 * 20 * 6);
+        assert!(near(((outer[0] - 10.0).powi(2) + (outer[2] - 20.0).powi(2)).sqrt(), 8.0));
+        // It follows the caster, is drawn for A = 1 to its length, and goes after.
+        assert!(songs.meshes(start, |_| None).is_empty());
+        assert_eq!(songs.meshes(start + TICK * 119, |_| Some(feet)).len(), 1);
+        assert!(songs.meshes(start + TICK * 120, |_| Some(feet)).is_empty());
+        songs.advance(start + TICK * 123, None, |_, _| 0.0, |_| 0);
+        assert!(songs.rains.is_empty());
+        // A cast of 600 ms is 37 ticks, so 120 ticks; one of 4 000 ms keeps its 250.
+        let mut long = Songs::default();
+        long.rain(None, 250, false, start);
+        assert_eq!(long.rains[0].length, 250);
     }
 
     #[test]
