@@ -266,7 +266,7 @@ impl App {
             sprites.push((&assets.black, position, [1.0, font.line_height() - 2.0]));
         }
         self.cursor_look.set(cursor::Kind::Default);
-        sprites.extend(self.cursor_look.draw(gpu, self.cursor));
+        sprites.extend(self.cursor_look.draw(gpu, font, self.cursor, None));
 
         // With RUSTNAROK_CLIENT_AUTOSTART=<slot> the shot waits for the game; any other value stops at character select.
         let autostart = std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok();
@@ -2710,7 +2710,7 @@ impl App {
         let pitcher = game.targeting.is_some_and(|(id, _)| id == POTION_PITCHER);
         game.cursor_at = snap_point(under, aiming_unit, pitcher, game.snaps).unwrap_or(pointer.0);
         cursor_look.press(pointer.1);
-        sprites.extend(cursor_look.draw(gpu, game.cursor_at));
+        sprites.extend(cursor_look.draw(gpu, font, game.cursor_at, game.targeting.map(|(_, level)| level)));
 
         // With /effect off, effects still play on, unseen but for the force-drawn ones, and their sounds are still heard.
         let effects_on = self.graphics.effects_on;
