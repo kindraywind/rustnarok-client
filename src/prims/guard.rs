@@ -165,8 +165,18 @@ struct Body {
     flicker: Flicker,
 }
 
+/// Granitic Armor's, Kyomu's and Gensou's dark grey (963) on a unit: on while the status is, drifting back to white after.
+struct Grey {
+    unit: Option<u32>,
+    ended: Option<Instant>,
+}
+
+/// The dark grey (#696969).
+const GREY: [u8; 3] = [105; 3];
+
 #[derive(Default)]
 pub struct Guard {
+    greys: Vec<Grey>,
     fogs: Vec<Fog>,
     strips: Vec<Strip>,
     domes: Vec<Dome>,
@@ -491,7 +501,21 @@ impl Guard {
         self.bodies.retain(|body| !matches!(body.flicker, Flicker::Pierce(_)));
     }
 
+    /// The grey comes on `unit`, replacing any copy it had.
+    pub fn grey(&mut self, unit: Option<u32>) {
+        self.greys.retain(|grey| grey.unit != unit);
+        self.greys.push(Grey { unit, ended: None });
+    }
+
+    /// The grey goes from `unit`: it drifts back to white from `now`.
+    pub fn ungrey(&mut self, unit: Option<u32>, now: Instant) {
+        for grey in self.greys.iter_mut().filter(|grey| grey.unit == unit && grey.ended.is_none()) {
+            grey.ended = Some(now);
+        }
+    }
+
     pub fn advance(&mut self, now: Instant) {
+        self.greys.retain(|grey| grey.ended.is_none_or(|ended| now.saturating_duration_since(ended) < super::TICK * 19));
         self.strips.retain(|strip| passes(strip.start, now) <= STRIP_TICKS);
         self.domes.retain(|dome| passes(dome.start, now) <= 200);
         self.bodies.retain(|body| passes(body.start, now) <= 300);
@@ -579,6 +603,13 @@ impl Guard {
 
     /// The colour a flash left on `unit`'s body, fading back to white.
     pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
+        let grey = self.greys.iter().filter(|grey| grey.unit == unit).find_map(|grey| match grey.ended {
+            None => Some(GREY),
+            Some(ended) => fade_back(GREY, (now.saturating_duration_since(ended).as_millis() / super::TICK.as_millis()) as u32),
+        });
+        if grey.is_some() {
+            return grey;
+        }
         self.bodies.iter().filter(|body| body.unit == unit).find_map(|body| {
             let e = passes(body.start, now).checked_sub(1)?;
             match body.flicker {
@@ -610,6 +641,30 @@ mod tests {
 
     fn near(got: f32, want: f32) -> bool {
         (got - want).abs() < 0.01
+    }
+
+    #[test]
+    fn the_grey_status_tints_dark_and_drifts_back_to_white_in_19_ticks() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.grey(Some(1));
+        // #696969 every tick it is on, whatever the tick.
+        assert_eq!([0, 1, 1000].map(|tick| guard.body_tint(Some(1), start + TICK * tick)), [Some(GREY); 3]);
+        assert_eq!(guard.body_tint(Some(2), start), None);
+        // Another copy replaces it (never two).
+        guard.grey(Some(1));
+        assert_eq!(guard.greys.len(), 1);
+        // After the removal: 8 a channel a tick, 113 at 1, 249 at 18, white at 19.
+        guard.ungrey(Some(1), start);
+        let after = |ticks: u32| guard.body_tint(Some(1), start + TICK * ticks);
+        assert_eq!([after(0), after(1), after(18), after(19)], [Some(GREY), Some([113; 3]), Some([249; 3]), None]);
+        guard.advance(start + TICK * 19);
+        assert!(guard.greys.is_empty());
+        // The status coming on again before the drift ends starts again from grey.
+        guard.grey(Some(1));
+        guard.ungrey(Some(1), start);
+        guard.grey(Some(1));
+        assert_eq!(guard.body_tint(Some(1), start + TICK * 10), Some(GREY));
     }
 
     #[test]
