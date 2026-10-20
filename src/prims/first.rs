@@ -51,6 +51,9 @@ pub const FLASHER_FX: u32 = 99;
 pub const REMOVE_TRAP: u32 = 100;
 pub const DETECTING: u32 = 119;
 pub const ENCHANT_POISON: u32 = 125;
+/// Enchant Deadly Poison: the same sparkles round the caster's tick-0 place, 40 of them, those after tick 80 never drawn.
+pub const ENCHANT_DEADLY_POISON: u32 = 493;
+const EDP_LAST: u32 = 80;
 /// Enchant Poison's sparkles made after this tick are never drawn.
 const POISON_LAST: u32 = 210;
 
@@ -75,6 +78,7 @@ pub fn makes(effect: u32) -> bool {
             | REMOVE_TRAP
             | DETECTING
             | ENCHANT_POISON
+            | ENCHANT_DEADLY_POISON
     )
 }
 
@@ -93,6 +97,7 @@ fn length(effect: u32) -> u32 {
         FLASHER_FX => 250,
         REMOVE_TRAP => 70,
         DETECTING | ENCHANT_POISON => 250,
+        ENCHANT_DEADLY_POISON => 120,
         _ => 50,
     }
 }
@@ -274,6 +279,16 @@ impl First {
                     seed(born, y, [d, speed, scale, 0.0]);
                 }
             }
+            ENCHANT_DEADLY_POISON => {
+                // A sparkle every 3 ticks: yaw, distance, speed, size.
+                for born in (0..=117).step_by(3) {
+                    let y = rand(360) as f32;
+                    let d = (2 + rand(6)) as f32;
+                    let speed = (30 + rand(50)) as f32 / 100.0;
+                    let scale = (20 + rand(20)) as f32 / 100.0;
+                    seed(born, y, [d, speed, scale, 0.0]);
+                }
+            }
             ASPERSIO => {
                 // A sparkle every 5 ticks from 65 to 135, each with a bearing.
                 for born in (65..=135).step_by(5) {
@@ -372,6 +387,7 @@ impl First {
                     | REMOVE_TRAP
                     | DETECTING
                     | ENCHANT_POISON
+                    | ENCHANT_DEADLY_POISON
             ),
             at,
             seeds,
@@ -678,8 +694,9 @@ impl First {
                         particles.push(Particle { sprite: STAR, at: place, scale: 0.8, alpha, spin: 0.0 });
                     }
                 }
-                ENCHANT_POISON => {
-                    for seed in effect.seeds.iter().filter(|seed| seed.born <= POISON_LAST) {
+                ENCHANT_POISON | ENCHANT_DEADLY_POISON => {
+                    let last = if effect.id == ENCHANT_POISON { POISON_LAST } else { EDP_LAST };
+                    for seed in effect.seeds.iter().filter(|seed| seed.born <= last) {
                         let Some(a) = Self::age(effect, now, seed.born, 40) else { continue };
                         let [d, speed, scale, _] = seed.r;
                         let (sin, cos) = trig(seed.y);
@@ -1189,6 +1206,24 @@ mod tests {
         let particle = far.particles(tick(far_start, 0), |_| Some([100.0, 0.0, 100.0]))[0];
         assert!(near(f32::hypot(particle.at[0], particle.at[2]), 7.0) && particle.at[0] < 0.0 && near(particle.scale, 0.89));
         assert!(particle.at[0].abs() < 8.0, "{:?}", particle.at);
+    }
+
+    #[test]
+    fn enchant_deadly_poison_lifts_27_violet_sparkles() {
+        let (first, start) = effect_at(ENCHANT_DEADLY_POISON, |_| 0, false);
+        // A sparkle every 3 ticks: 40 made, those after tick 80 never drawn, so 27 show.
+        assert_eq!(first.list[0].seeds.iter().map(|seed| seed.born).collect::<Vec<_>>(), (0..=117).step_by(3).collect::<Vec<_>>());
+        let at = |e: u32| first.particles(tick(start, e), |_| Some([0.0; 3]));
+        assert_eq!((0..120).map(|e| at(e).iter().filter(|particle| particle.alpha == 25.0).count()).sum::<usize>(), 27);
+        assert!(at(81).iter().all(|particle| particle.alpha != 25.0) && !at(78).is_empty());
+        // Every draw 0: 2 out, speed 0.30, scale 0.20; each is drawn 40 times (the last of the first at tick 39).
+        let sparkle = at(0)[0];
+        assert!(near(f32::hypot(sparkle.at[0], sparkle.at[2]), 2.0) && near(sparkle.scale, 0.2) && sparkle.sprite == POISON_STAR);
+        assert!(!at(39).is_empty() && near(at(39)[0].at[1], 0.30 * 29.75));
+        assert!(near(at(39)[0].alpha, 0.0));
+        // It stays where the caster stood at tick 0.
+        let (moved, moved_start) = effect_at(ENCHANT_DEADLY_POISON, |_| 0, false);
+        assert!(near(moved.particles(tick(moved_start, 0), |_| Some([50.0; 3]))[0].at[0], 0.0));
     }
 
     #[test]
