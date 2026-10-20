@@ -1530,7 +1530,7 @@ spr	585	m_ef03	1	-
 spr	586	m_ef04	1	-
 spr	587	m_ef05	1	-
 spr	588	m_ef06	1	-
-spr	589	m_ef07	1	-
+spr	589	m_ef07	1	delayFrame=64;firstFrame=1;onTop=true
 spr	604	cconfine	1	stopAtEnd=true
 spr	612	합격_	1	-
 spr	630	그림자베기	1	-
@@ -1555,7 +1555,7 @@ spr	683	폭죽_화이트데이	1	-
 spr	684	폭죽_발렌타인	1	-
 spr	685	폭죽_생일	1	-
 spr	686	폭죽_크리스마스	1	-
-spr	729	mashofa	0	-
+spr	729	mashofa	1	delayFrame=64;firstFrame=1;onTop=true
 spr	1240	digital_space\digital_space	1	repeat=true
 # 326 EF_FOOT and 327 EF_FOOT2: a chase walk's footprints.
 # ponytail: no sprite file is confirmed (no data.grf here). A public effect catalog lists the textures
@@ -1944,7 +1944,6 @@ wav	566	effect\h_moonlight_2	0
 wav	567	effect\h_moonlight_3	0
 wav	579	_snore	0
 wav	587	dragon_breath	0
-wav	589	effect\t_보조마법	0
 wav	590	effect\priest_resurrection	0
 wav	604	effect\ef_hit6	0
 wav	599	effect\EF_BeginSpell	80
@@ -1994,14 +1993,16 @@ wav	686	effect\itempokjuk	0
 wav	708	effect\wizard_stormgust	0
 wav	717	effect\wewish	0
 wav	718	effect\ab_judex	0
-wav	719	effect\ab_renovation	0
 wav	721	effect\ab_adoramus	0
 wav	722	effect\wl_jackfrost	0
+wav	723	hundred	0
+wav	725	effect\priest_benedictio	0
 wav	726	effect\t_에너지방출	0
 wav	727	effect\crimson_r	0
 wav	731	dragon_h	0
 wav	732	effect\wizard_earthspike	0
 wav	734	effect\chainlight	0
+wav	744	effect\assasin_cloaking	0
 wav	799	effect\wl_stasis	0
 wav	802	effect\wl_whiteimprison	0
 wav	803	effect\wl_recognizedspell	0
@@ -4244,6 +4245,7 @@ struck	2031	caster	768
 struck	2031	target	589
 struck	2034	caster	768
 struck	2034	caster	773
+struck	2037	target	550
 struck	2055	caster	265
 struck	2056	caster	265
 struck	2218	caster	804
@@ -4342,6 +4344,8 @@ struck	8437	caster	935
 struck	8442	target	944
 struck	2259	target	787
 struck	2259	target	49
+struck	2327	target	548
+struck	2327	target	550
 struck	2336	target	458
 struck	2426	target	466
 used	6	target	67
@@ -5092,3 +5096,8 @@ skillwav	2013	_heal_effect	0	listener
 skillwav	2019	effect\흡기	0	listener
 skillwav	2263	effect\HOVERING	0	listener
 skillwav	2269	effect\ef_decagility	0	listener
+skillwav	2050	effect\AB_renovatio	0	listener
+skillwav	2205	effect\t_에너지방출	0	listener
+hitwav	2012	_enemy_hit_wind2	0	listener
+hitquake	2012	0	650
+hitwav	2031	effect\EF_PoisonAttack	0	listener

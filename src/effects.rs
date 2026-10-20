@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, dancer, first, ground, guard, huujin, knight, monk, sage, shards, sight, sniper, songs, spray, star, stone,
-    tanji, throw, transcend, walls, waterball,
+    balls, blitz, bolts, boomerang, brawl, burst, dancer, first, ground, guard, huujin, knight, monk, sage, shafts, shards, sight, sniper, songs, spray, star,
+    stone, tanji, throw, transcend, walls, waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -64,6 +64,9 @@ pub struct Table {
     /// Sounds and shakes of a skill's use packet (`skillwav`, `skillquake`).
     skill_sounds: HashMap<u16, Vec<Sound>>,
     skill_quakes: HashMap<u16, Vec<(Duration, Duration)>>,
+    /// The same for a skill's damage packet (`hitwav`, `hitquake`).
+    hit_sounds: HashMap<u16, Vec<Sound>>,
+    hit_quakes: HashMap<u16, Vec<(Duration, Duration)>>,
     /// What skills' units on the ground show while they're there, by rathena's UNT_ number: an effect, a model.
     units: HashMap<u32, u32>,
     /// Units whose effect plays once and is kept rather than starting again.
@@ -128,6 +131,8 @@ impl Table {
             quakes: HashMap::new(),
             skill_sounds: HashMap::new(),
             skill_quakes: HashMap::new(),
+            hit_sounds: HashMap::new(),
+            hit_quakes: HashMap::new(),
             units: HashMap::new(),
             units_once: std::collections::HashSet::new(),
             models: HashMap::new(),
@@ -210,6 +215,18 @@ impl Table {
                     let listener = fields.last() == Some(&"listener");
                     let sound = Sound { file: file.to_owned(), delay_ms: number(3).map_or(0, u64::from), random: None, listener };
                     table.skill_sounds.entry(skill as u16).or_default().push(sound);
+                }
+                ["hitwav", _, file, ..] => {
+                    let Some(skill) = number(1) else { continue };
+                    let listener = fields.last() == Some(&"listener");
+                    let sound = Sound { file: file.to_owned(), delay_ms: number(3).map_or(0, u64::from), random: None, listener };
+                    table.hit_sounds.entry(skill as u16).or_default().push(sound);
+                }
+                ["hitquake", _, _, _] => {
+                    if let (Some(skill), Some(delay), Some(length)) = (number(1), number(2), number(3)) {
+                        let length = if length == 200 { QUAKE_SHORT } else { QUAKE_LONG };
+                        table.hit_quakes.entry(skill as u16).or_default().push((Duration::from_millis(delay.into()), length));
+                    }
                 }
                 ["skillquake", _, _, _] => {
                     if let (Some(skill), Some(delay), Some(length)) = (number(1), number(2), number(3)) {
@@ -1808,6 +1825,14 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Renovatio's shafts, Hundred Spear's flashes, Oratio's ring (Detecting's) and Camouflage's translucent unit.
+const RENOVATIO: u32 = 719;
+const SPEAR_FLASH: u32 = 723;
+const ORATIO: u32 = 725;
+const CLOAKING: u32 = 744;
+/// Sky Net Blow's red flash and late shake.
+const RED_HIT: u32 = 548;
+const SKY_NET_SHAKE: u32 = 550;
 const QUAKE_BODY: u32 = 458;
 pub const REVERBERATION: u32 = 464;
 const SPINED_BODY: u32 = 466;
@@ -1895,7 +1920,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 28] = [
+pub const AIMED: [u32; 29] = [
+    SPEAR_FLASH,
     BLOOD_DRAIN,
     CHEMICAL,
     MARIONETTE_LINK,
@@ -2077,6 +2103,10 @@ impl Effects {
     /// What effect `id` draws, from `now` on.
     #[allow(clippy::too_many_arguments)]
     fn show(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        // Oratio's ring is Detecting's.
+        if id == ORATIO {
+            return self.show(gpu, grf, table, first::DETECTING, target, at, now);
+        }
         // Poem of Netherworld's blot: one to a unit, standing for its status however it is played.
         if let (NPC_STOP, Target::Unit(unit) | Target::Status(unit, _)) = (id, target) {
             self.animations.retain(|animation| {
@@ -2207,7 +2237,14 @@ impl Effects {
                 }
                 self.prims.brawl.windmill(unit, at, now, |n| pick(0, n.saturating_sub(1)));
             }
-            (QUAKE_BODY, Target::Unit(unit)) => self.prims.brawl.shake(unit, now),
+            (RENOVATIO, Target::Unit(_)) => {
+                self.textures.entry(shafts::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, shafts::CLOUD, true).ok());
+                self.prims.shafts.play(at, now);
+            }
+            (CLOAKING, Target::Status(unit, _)) => self.prims.brawl.cloak(unit, now),
+            (QUAKE_BODY, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 0, 34),
+            (SKY_NET_SHAKE, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 31, 50),
+            (RED_HIT, Target::Unit(unit)) => self.prims.brawl.red(unit, now),
             (SPINED_BODY, Target::Unit(unit)) => self.prims.brawl.swing(unit, now),
             (GREEN_BODY, Target::Unit(unit)) => self.prims.guard.green(unit, now),
             (HATED, Target::Unit(unit)) => {
@@ -2735,6 +2772,16 @@ impl Effects {
         }
     }
 
+    /// The sounds and shakes a skill's damage packet makes, wherever the caster is.
+    pub fn play_hit_sounds(&mut self, table: &Table, skill: u16, now: Instant) {
+        for sound in table.hit_sounds.get(&skill).into_iter().flatten() {
+            self.sounds.push((now + Duration::from_millis(sound.delay_ms), format!("{}.wav", sound.file), LISTENER));
+        }
+        for &(delay, length) in table.hit_quakes.get(&skill).into_iter().flatten() {
+            self.start_quake(now + delay, length);
+        }
+    }
+
     /// The camera shake this frame at `now`: `[sideways, distance, pitch_degrees]`, with the sign flipping each frame
     /// and fresh noise each frame; `None` when no shake runs.
     pub fn quake(&mut self, now: Instant) -> Option<[f32; 3]> {
@@ -2896,6 +2943,11 @@ impl Effects {
                 self.sprites.entry(waterball::SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, waterball::SPRITE));
                 self.play_sounds(table, id, from, now);
                 self.prims.waterballs.throw(from, to, now);
+            }
+            SPEAR_FLASH => {
+                self.sprites.entry(monk::SPEARS.to_owned()).or_insert_with(|| SpriteSet::at(grf, monk::SPEARS));
+                self.play_sounds(table, id, from, now);
+                self.prims.monk.hundred_spear(from, to, self.yaw.to_degrees().floor() as i32, now);
             }
             BLOOD_DRAIN => {
                 self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
@@ -3068,7 +3120,8 @@ impl Effects {
             let index = animation.action.unwrap_or(facing) % sprite.actions().max(1);
             let frames = sprite.frames(index).max(1) as f32;
             let frame_ms = animation.frame_ms.unwrap_or_else(|| sprite.index_ms(index).unwrap_or(100.0) / frames);
-            let pass = frames * frame_ms.max(1.0);
+            // Played once from a later frame, it ends after the frames it shows.
+            let pass = (frames - animation.first.min(frames - 1.0)) * frame_ms.max(1.0);
             let elapsed = now.saturating_duration_since(animation.start).as_secs_f32() * 1000.0;
             if animation.end.is_some_and(|end| now >= end) || (!animation.repeat && !animation.hold && elapsed >= pass) {
                 return false;
@@ -3152,6 +3205,10 @@ impl Effects {
     /// Stops what a status plays on its unit (None = the player).
     pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
         self.prims.songs.forget_status(unit, status);
+        // Camouflage, Stealth Field or Elemental Veil went off: the unit climbs back to opaque.
+        if matches!(status, 360 | 379 | 1301) {
+            self.prims.brawl.uncloak(unit, Instant::now());
+        }
         let on = |anchor: Anchor| matches!(anchor, Anchor::Status(each, kind) if each == unit && kind == status);
         self.status_prims.retain(|prim| !on(prim.anchor));
         self.auras.retain(|aura| !on(aura.anchor));
@@ -3207,6 +3264,11 @@ impl Effects {
     pub fn cut_twilight(&mut self) {
         self.prims.songs.cut_twilight();
         self.prims.guard.cut_pierce();
+    }
+
+    /// How opaque an effect draws `unit` now (Camouflage's translucence), 0 to 1.
+    pub fn cloak_alpha(&self, unit: Option<u32>, now: Instant) -> f32 {
+        self.prims.brawl.cloak_alpha(unit, now).unwrap_or(1.0)
     }
 
     /// Whether `unit`'s parts shake now (Close Confine's).
@@ -3415,6 +3477,9 @@ impl Effects {
                     .meshes(now, &position_of)
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
+                self.prims.shafts.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
             .chain(
                 self.prims
@@ -5299,5 +5364,38 @@ mod tests {
         assert!(!table.sounds.contains_key(&HATED));
         assert_eq!((table.skill_sounds[&2263][0].file.as_str(), table.skill_sounds[&2269][0].file.as_str()), ("effect\\HOVERING", "effect\\ef_decagility"));
         assert!(table.used(2263).unwrap().contains(&(Who::Caster, HATED)) && table.used(2013).unwrap().contains(&(Who::Caster, GREEN_BODY)));
+    }
+
+    #[test]
+    fn sky_net_blow_crush_strike_renovatio_hundred_spear_oratio_marsh_and_camouflage_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Sky Net Blow: the red flash and the late shake on its target; Cross Ripper Slasher the shake.
+        assert!(table.struck(2327).unwrap().contains(&(Who::Target, RED_HIT)) && table.struck(2327).unwrap().contains(&(Who::Target, SKY_NET_SHAKE)));
+        assert!(table.struck(2037).unwrap().contains(&(Who::Target, SKY_NET_SHAKE)));
+        assert!(table.casters.get(&2270) == Some(&Some(RED_HIT)) && table.casters.get(&2520) == Some(&Some(RED_HIT)));
+        // The splash: from frame 1, 4 ticks a frame, the 17 frames of 18, over everything; no sound of its own, the skills' with the damage.
+        for (effect, frames) in [(589, 18.0), (729, 16.0)] {
+            let part = &table.sprites[&effect][0];
+            let animation = Animation::new(part, effect, Instant::now(), Anchor::Unit(Some(1)), false);
+            assert!(animation.over && !animation.repeat && animation.frame_ms == Some(64.0) && animation.first == 1.0, "{effect}");
+            let frame = |tick: u32| (animation_progress(16.0 * tick as f32, 64.0, frames, 1.0, false) * frames) as usize;
+            let ends = (frames - 1.0) * 64.0 / 16.0;
+            assert_eq!(frame(0), 1);
+            assert_eq!(frame(4), 2);
+            assert_eq!(frame(ends as u32 - 1), frames as usize - 1);
+        }
+        assert!(!table.sounds.contains_key(&589) && !table.sounds.contains_key(&719));
+        assert_eq!((table.hit_sounds[&2012][0].file.as_str(), table.hit_sounds[&2031][0].file.as_str()), ("_enemy_hit_wind2", "effect\\EF_PoisonAttack"));
+        assert!(table.hit_sounds[&2012][0].listener && table.hit_quakes[&2012] == [(Duration::ZERO, QUAKE_LONG)]);
+        // Renovatio's sound belongs to the use; Hundred Spear's has no folder; Oratio's ring is Detecting's with its sound.
+        assert_eq!(table.skill_sounds[&2050][0].file, "effect\\AB_renovatio");
+        assert!(AIMED.contains(&SPEAR_FLASH) && table.struck(2004).unwrap().contains(&(Who::Caster, SPEAR_FLASH)));
+        assert_eq!(sounds(SPEAR_FLASH), [("hundred", 0, false)]);
+        assert_eq!(sounds(ORATIO), [("effect\\priest_benedictio", 0, false)]);
+        assert_eq!(table.skill_sounds[&2205][0].file, "effect\\t_에너지방출");
+        // Camouflage, Stealth Field and Elemental Veil: the cloaking sound at tick 0.
+        assert_eq!(sounds(CLOAKING), [("effect\\assasin_cloaking", 0, false)]);
+        assert!([360, 379, 1301].iter().all(|&status| table.status(status).contains(&CLOAKING)));
     }
 }

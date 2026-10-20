@@ -18,6 +18,7 @@ pub mod knight;
 pub mod monk;
 pub mod napalm;
 pub mod sage;
+pub mod shafts;
 pub mod shards;
 pub mod sight;
 pub mod sniper;
@@ -167,6 +168,7 @@ pub struct Prims {
     pub guard: guard::Guard,
     pub spray: spray::Spray,
     pub brawl: brawl::Brawl,
+    pub shafts: shafts::Shafts,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -661,6 +663,7 @@ impl Prims {
         self.napalms.retain(|napalm| napalm.alive(now));
         self.sparkles.retain(|sparkle| sparkle.alive(now));
         self.blues.retain(|blues| blues.alive(now));
+        self.shafts.advance(now);
         self.blitzes.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
     }
 

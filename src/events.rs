@@ -3428,6 +3428,10 @@ impl App {
                         }
                     }
                 }
+                // A skill's own sound and shake with its damage (Crush Strike's, Venom Pressure's), once for the packet's units.
+                if !splash {
+                    game.effects.play_hit_sounds(table, skill, Instant::now());
+                }
                 if table.struck(skill).is_none() {
                     skill_effects(game, skill, "effectId", act.target);
                 }
