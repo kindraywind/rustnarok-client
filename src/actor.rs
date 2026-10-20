@@ -2211,6 +2211,8 @@ pub const GLOW_SWING: u32 = 0x40;
 pub const GLOW_MANHOLE: u32 = 0x100000;
 /// Hovering's two blue copies of every part; their alpha (0 to 160) is in the top byte.
 pub const GLOW_BLUE: u32 = 0x4000;
+/// Swhoo's white copy of every part, added on; its alpha is in the top byte.
+pub const GLOW_WHITE: u32 = 0x200000;
 /// Sky Net Blow's two red copies of every part; their alpha is in the top byte.
 pub const GLOW_RED: u32 = 0x40000;
 /// Sound of Destruction's: four copies slide out of every part; the age n (0 to 69) of the effect's 30th tick on is in the upper half.
@@ -2322,6 +2324,10 @@ pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: 
                 copies.push(GlowCopy { additive: true, color: [color[0], color[1], color[2], alpha], grow: 0.0, offset: [0.0; 2] });
             }
         }
+    }
+    // Swhoo: one more copy of every part, added on in white.
+    if flags & GLOW_WHITE != 0 {
+        copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, (flags >> PARAM_SHIFT) as f32 / 255.0], grow: 0.0, offset: [0.0; 2] });
     }
     // Four white copies of every part slide right, left, down and up, fainter as they go.
     if flags & GLOW_SPREAD != 0 {
@@ -4602,5 +4608,14 @@ mod tests {
         // Gone from n = 193.
         late.leave_ghost(tick(1 + 192), [5.0; 3], &placed);
         assert!(late.ghosts.is_empty());
+    }
+
+    #[test]
+    fn a_white_flash_adds_one_white_copy_of_every_part() {
+        let (_, copies) = glow_copies(GLOW_WHITE | 250 << PARAM_SHIFT, None, PartGroup::Body, 0.0, 0.0, 1.0, true);
+        assert_eq!(copies.len(), 1);
+        assert!(copies[0].additive && copies[0].color == [1.0, 1.0, 1.0, 250.0 / 255.0] && copies[0].grow == 0.0);
+        let (_, none) = glow_copies(0, None, PartGroup::Gear, 0.0, 0.0, 1.0, true);
+        assert!(none.is_empty());
     }
 }

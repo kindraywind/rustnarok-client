@@ -12,9 +12,9 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, knight, mechanic, monk,
-    notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, souls, spears, sphere, spray, star, stone, tanji, throw, transcend, walls,
-    waterball, waves,
+    balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, knight, mechanic,
+    monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, souls, spears, sphere, spray, star, stone, tanji, throw, transcend,
+    walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -2069,6 +2069,11 @@ const ANTI_MAGIC: u32 = 675;
 /// EF_HITDARK's near-black sparks and Lope's motes and petals (`HitSpark`, `prims::petals`).
 pub const HIT_DARK: u32 = 180;
 const LOPE: u32 = 411;
+/// The kicks' and Swoo's body changes (`prims::body`).
+const PRESSED_BODY: u32 = 413;
+const KICKED_BODY: u32 = 415;
+const HIT_BODY: u32 = 417;
+const BABY_BODY: u32 = 420;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
 /// Resurrection's rings and the Call Partner portal's warp (`prims::portal`).
@@ -2799,6 +2804,10 @@ impl Effects {
                 }
                 self.prims.petals.lope(at, now);
             }
+            (PRESSED_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Squash, unit, now),
+            (KICKED_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Hop, unit, now),
+            (HIT_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Flash, unit, now),
+            (BABY_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Shrink, unit, now),
             (LULLABY, Target::Unit(unit)) => {
                 for (name, path) in notes::TEXTURES {
                     self.textures.entry(name.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
@@ -3820,6 +3829,7 @@ impl Effects {
         self.prims.souls.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.notes.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.emblems.advance(now);
+        self.prims.bodies.advance(now);
         self.prims.portal.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.sphere.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.petals.advance(now, |n| pick(0, n.saturating_sub(1)));
@@ -4189,6 +4199,7 @@ impl Effects {
             .or_else(|| self.prims.sniper.glow(unit, now))
             .or_else(|| self.prims.guard.glow(unit, now))
             .or_else(|| self.prims.brawl.glow(unit, now))
+            .or_else(|| self.prims.bodies.glow(unit, now))
     }
 
     /// How many degrees `unit` has been turned since this was last asked (Falcon Assault's spin, Chase Walk's cast while it stands).
@@ -4201,6 +4212,16 @@ impl Effects {
         self.prims.songs.cut_twilight();
         self.prims.guard.cut_pierce();
         self.prims.sphere.cut_hearts();
+    }
+
+    /// The factor an effect multiplies `unit`'s sprite by now (Swoo's shrink).
+    pub fn body_scale(&self, unit: Option<u32>, now: Instant) -> f32 {
+        self.prims.bodies.scale(unit, now)
+    }
+
+    /// Squashes or lifts the layers of `unit`'s frame (Down Kick, Counter Kick, Flash Kick).
+    pub fn reshape(&self, unit: Option<u32>, now: Instant, placed: &mut [Placed]) {
+        self.prims.bodies.reshape(unit, now, placed, |n| pick(0, n.saturating_sub(1)));
     }
 
     /// How opaque an effect draws `unit` now (Camouflage's translucence), 0 to 1.
@@ -7137,5 +7158,26 @@ mod tests {
         // At age 1 a glint's alpha is the lesser of its cycle's (148) and the age: 1; at 40 the cycle's own.
         assert_eq!((glint_at(WARMTH_ALPHAS[3], 1).0.min(1), glint_at(WARMTH_ALPHAS[3], 1).0), (1, 148));
         assert!(glint_at(WARMTH_ALPHAS[3], 40).0.min(40) <= 40);
+    }
+
+    #[test]
+    fn the_kicks_and_swoo_change_the_targets_body() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Down Kick squashes, Counter Kick and Flash Kick hop, Swhoo flashes, Swoo shrinks; the lengths and sounds.
+        assert!(table.struck(415).unwrap().contains(&(Who::Target, PRESSED_BODY)));
+        assert!(table.struck(419).unwrap().contains(&(Who::Target, KICKED_BODY)) && table.struck(2580).unwrap().contains(&(Who::Target, KICKED_BODY)));
+        assert!(table.struck(2604).unwrap().contains(&(Who::Target, HIT_BODY)) && table.used(470).unwrap().contains(&(Who::Target, BABY_BODY)));
+        assert_eq!([PRESSED_BODY, KICKED_BODY, HIT_BODY, BABY_BODY].map(|id| table.lengths[&id]), [50, 100, 100, 99_999]);
+        assert_eq!(sounds(PRESSED_BODY), [("effect\\T_내려찍기", 80, false)]);
+        assert_eq!(sounds(KICKED_BODY), [("effect\\EF_hit2", 272, false), ("effect\\EF_hit4", 400, false)]);
+        assert!(!table.sounds.contains_key(&HIT_BODY) && !table.sounds.contains_key(&BABY_BODY));
+        // They are the unit's own look: the body flags come with /effect off too (no `shows` gate on body_glow).
+        let mut effects = Effects { only_forced: true, ..Effects::default() };
+        let start = Instant::now();
+        effects.prims.bodies.start(body::Change::Flash, Some(3), start);
+        assert!(effects.body_glow(Some(3), start + crate::prims::TICK * 5).is_some());
+        effects.prims.bodies.start(body::Change::Shrink, Some(3), start);
+        assert!(effects.body_scale(Some(3), start + crate::prims::TICK * 50) == 0.5);
     }
 }

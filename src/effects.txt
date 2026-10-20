@@ -1825,6 +1825,9 @@ wav	401	effect\EF_NapalmBeat	960
 wav	403	effect\swordman_provoke	400
 wav	408	effect\EF_Blessing	0
 wav	409	effect\메테오 어썰트	0
+wav	413	effect\T_내려찍기	80
+wav	415	effect\EF_hit2	272
+wav	415	effect\EF_hit4	400
 wav	426	effect\복호격	0
 wav	435	effect\T_회오리차기	80
 wav	439	effect\G스포어익스플로젼	0	listener
@@ -4362,6 +4365,7 @@ struck	2332	caster	886
 struck	2336	target	458
 struck	2426	target	466
 struck	2429	target	425
+struck	2604	target	417
 used	6	target	67
 used	7	caster	17
 used	8202	caster	17
@@ -5127,6 +5131,10 @@ length	341	9999
 length	408	200
 length	411	300
 length	418	99999999
+length	413	50
+length	415	100
+length	417	100
+length	420	99999
 length	450	999
 length	455	1500
 length	675	200
