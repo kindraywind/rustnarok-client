@@ -11,7 +11,9 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, first, ground, huujin, monk, sage, shards, sight, star, stone, tanji, throw, walls, waterball};
+use crate::prims::{
+    balls, blitz, bolts, boomerang, burst, first, ground, huujin, monk, sage, shards, sight, songs, star, stone, tanji, throw, walls, waterball,
+};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1413,7 +1415,7 @@ pub struct Effects {
     /// Water Ball's three pictures' layers.
     water_frames: HashMap<u32, Vec<Placed>>,
     /// The claw slash's layers by action and frame.
-    claw_frames: HashMap<(usize, usize), Vec<Placed>>,
+    claw_frames: HashMap<(&'static str, usize, usize), Vec<Placed>>,
     /// Sight Rasher's sprites' frames, plain white, by sprite and frame.
     sight_frames: HashMap<(&'static str, usize), Vec<Placed>>,
     /// Dark Strike's red ghost sprite's layers.
@@ -1718,6 +1720,13 @@ const INVESTIGATE_SPARKS: u32 = 264;
 /// Steal Coin's coins (`prims::shards`), Back Stab's sparks and Raid's streaks (`prims::monk`), Chemical Protection's star (`prims::star`).
 const STEAL_COIN: u32 = 274;
 /// Magnus' and Sanctuary's boxes, Triple Attack's streaks, Slim Pitcher's potion and Full Protection's strobe (`prims::ground`).
+/// Twilight Alchemy's icons, Shrink's flashes, Close Confine's blinking, Pang Voice's and Wink of Charm's sprites and the performers'
+/// cones of bubbles (`prims::songs`, `prims::monk`).
+const SHRINK: u32 = 599;
+const CLOSE_CONFINE: u32 = 602;
+const PANG_VOICE: u32 = 606;
+const WINK_OF_CHARM: u32 = 607;
+const BUBBLE_CONE: u32 = 840;
 const MAGNUS: u32 = 318;
 const SANCTUARY: u32 = 319;
 const TRIPLE_ATTACK: u32 = 329;
@@ -1748,7 +1757,9 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 18] = [
+pub const AIMED: [u32; 20] = [
+    PANG_VOICE,
+    WINK_OF_CHARM,
     TRIPLE_ATTACK,
     BACK_STAB,
     INVESTIGATE_SPARKS,
@@ -1814,6 +1825,20 @@ impl Effects {
     /// its sound), any other effect plays as it is.
     #[allow(clippy::too_many_arguments)]
     pub fn play_cast_aura(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, unit: Option<u32>, at: Vector, cast_ms: u32, now: Instant) {
+        // Twilight Alchemy: 320 icons round the own player for the cast.
+        if matches!(id, 573..=575) {
+            let pictures: &[&str] = match id {
+                573 => &[songs::HERB],
+                574 => &[songs::WHITE_SLIM_POTION],
+                _ => &songs::MIXED,
+            };
+            for path in pictures {
+                self.textures.entry((*path).to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
+            }
+            self.play_sounds(table, id, at, now);
+            self.prims.songs.twilight(id, cast_ms / crate::prims::TICK.as_millis() as u32, now, |n| pick(0, n.saturating_sub(1)));
+            return;
+        }
         if id != BASH {
             return self.play(gpu, grf, table, id, Target::Unit(unit), at, now);
         }
@@ -1979,6 +2004,18 @@ impl Effects {
         if let (RIBBONS, Target::Unit(unit)) = (id, target) {
             self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
             self.prims.walls.ribbons(unit, now);
+        }
+        // Shrink's flashes, Close Confine's blinking and the performers' cones of bubbles, made in code.
+        match (id, target) {
+            (SHRINK, Target::Unit(unit)) => self.prims.songs.shrink(unit, now),
+            (CLOSE_CONFINE, Target::Unit(unit)) => self.prims.songs.confine(unit, now),
+            (BUBBLE_CONE, Target::Unit(unit)) => {
+                for path in songs::BUBBLES {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.songs.cone(unit, 120, now);
+            }
+            _ => {}
         }
         // Slim Pitcher's potion falls on the cell, Full Protection strobes its target's body.
         match (id, target) {
@@ -2223,6 +2260,7 @@ impl Effects {
     /// over the ground there (`ground_at(x, z)`: the ground's height in the world).
     pub fn settle_hits(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>, ground_at: impl Fn(f32, f32) -> f32) {
         self.prims.first.advance(now, &ground_at);
+        self.prims.songs.advance(now, position_of(None), &ground_at, |n| pick(0, n.saturating_sub(1)));
         for hit in self.hits.iter_mut().filter(|hit| hit.paths.is_none() && hit.start <= now) {
             let Some(at) = hit.anchor.place(&position_of) else { continue };
             hit.anchor = Anchor::At(at);
@@ -2456,6 +2494,13 @@ impl Effects {
                 self.textures.entry(first::THUNDER_CENTER.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, first::THUNDER_CENTER, true).ok());
                 self.prims.monk.investigate(caster, to, now, |n| pick(0, n.saturating_sub(1)));
             }
+            PANG_VOICE | WINK_OF_CHARM => {
+                let sprite = if id == PANG_VOICE { monk::FVOICE } else { monk::WINK };
+                self.sprites.entry(sprite.to_owned()).or_insert_with(|| SpriteSet::at(grf, sprite));
+                self.play_sounds(table, id, from, now);
+                let longitude = self.yaw.to_degrees().floor() as i32;
+                if id == PANG_VOICE { self.prims.monk.pang_voice(from, to, longitude, now) } else { self.prims.monk.wink(from, to, longitude, now) }
+            }
             CLAW_SLASH => {
                 self.sprites.entry(monk::CLAW.to_owned()).or_insert_with(|| SpriteSet::at(grf, monk::CLAW));
                 self.play_sounds(table, id, from, now);
@@ -2535,11 +2580,11 @@ impl Effects {
                 self.sight_frames.insert((drawn.sprite, drawn.frame), layers);
             }
         }
-        if let Some(Some(sprite)) = self.sprites.get_mut(monk::CLAW) {
-            for draw in self.prims.monk.claws(now) {
+        for draw in self.prims.monk.claws(now) {
+            if let Some(Some(sprite)) = self.sprites.get_mut(draw.sprite) {
                 let frames = sprite.frames(draw.action).max(1);
                 self.claw_frames
-                    .entry((draw.action, draw.frame))
+                    .entry((draw.sprite, draw.action, draw.frame))
                     .or_insert_with(|| sprite.frame_plain(gpu, draw.action, Timing::Span((draw.frame as f32 + 0.5) / frames as f32)));
             }
         }
@@ -2729,12 +2774,23 @@ impl Effects {
 
     /// The colour an effect gives `unit`'s body at `now` (Berserk Pitcher's red).
     pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
-        mix_tints(self.prims.walls.body_tint(unit, now), self.prims.ground.body_tint(unit, now))
+        let flashing = mix_tints(self.prims.walls.body_tint(unit, now), self.prims.ground.body_tint(unit, now));
+        mix_tints(flashing, self.prims.songs.body_tint(unit, now))
     }
 
     /// The body flags and colour an effect gives `unit` now (Full Protection's strobe).
     pub fn body_glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
-        self.prims.ground.glow(unit, now)
+        self.prims.ground.glow(unit, now).or_else(|| self.prims.songs.glow(unit, now))
+    }
+
+    /// A cast cut off: Twilight Alchemy's icons go.
+    pub fn cut_twilight(&mut self) {
+        self.prims.songs.cut_twilight();
+    }
+
+    /// Whether `unit`'s parts shake now (Close Confine's).
+    pub fn shakes(&self, unit: Option<u32>, now: Instant) -> bool {
+        self.prims.songs.shakes(unit, now)
     }
 
     /// Whether effect `effect`'s parts draw: all of them, or with /effect off the force-drawn ones.
@@ -2918,6 +2974,13 @@ impl Effects {
             .chain(sage)
             .chain(burst_rings)
             .chain(other_walls)
+            .chain(
+                self.prims
+                    .songs
+                    .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .chain(
                 self.prims.ground.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
@@ -3142,31 +3205,27 @@ impl Effects {
                 }
             }
             // The claw slash: white at alpha 200, 2.5 times as big, over everything. `STR_RISE` is taken off again.
-            if let Some(Some(sprite)) = self.sprites.get(monk::CLAW) {
-                for draw in self.prims.monk.claws(now) {
-                    for &(key, position, size, layer_angle) in self.claw_frames.get(&(draw.action, draw.frame)).into_iter().flatten() {
-                        let corners = QUAD_UV.map(|[u, v]| {
-                            let uv = if draw.mirrored { [1.0 - u, v] } else { [u, v] };
-                            let [x, y] = world::sprite_corner(position, size, layer_angle + draw.turn, uv).0;
-                            [x * monk::CLAW_SCALE, y * monk::CLAW_SCALE + STR_RISE]
-                        });
-                        quads.push((sprite.texture(key), draw.at, corners, [1.0, 1.0, 1.0, monk::CLAW_ALPHA / 255.0], false, true));
-                    }
+            for draw in self.prims.monk.claws(now) {
+                let Some(Some(sprite)) = self.sprites.get(draw.sprite) else { continue };
+                for &(key, position, size, layer_angle) in self.claw_frames.get(&(draw.sprite, draw.action, draw.frame)).into_iter().flatten() {
+                    let corners = QUAD_UV.map(|[u, v]| {
+                        let uv = if draw.mirrored { [1.0 - u, v] } else { [u, v] };
+                        let [x, y] = world::sprite_corner(position, size, layer_angle + draw.turn, uv).0;
+                        [x * draw.scale, y * draw.scale + STR_RISE]
+                    });
+                    quads.push((sprite.texture(key), draw.at, corners, [1.0, 1.0, 1.0, draw.alpha / 255.0], false, true));
                 }
+            }
+            // Twilight Alchemy's icons: additive squares facing the camera, the picture in the top left three quarters.
+            for icon in self.prims.songs.icons() {
+                let Some(Some(texture)) = self.textures.get(icon.picture) else { continue };
+                let corners = ground::padded_square(icon.spin, icon.half * PIXELS_PER_UNIT, false);
+                quads.push((texture, icon.at, corners, [1.0, 1.0, 1.0, icon.alpha.trunc().clamp(0.0, 255.0) / 255.0], true, false));
             }
             // Slim Pitcher's potion and its ghosts: a square facing the camera, the icon in its top left three quarters.
             for potion in self.prims.ground.potions(now) {
                 let Some(Some(texture)) = self.textures.get(potion.icon) else { continue };
-                // The padded texture is drawn whole, a third bigger and moved so that the icon's centre sits on the potion's.
-                let big = ground::POTION_HALF * PIXELS_PER_UNIT / 0.75;
-                let (sin, cos) = potion.spin.to_radians().sin_cos();
-                let shift = [0.25 * big * cos, 0.25 * big * sin];
-                let corner = |j: u32| {
-                    let (sin, cos) = (potion.spin + 90.0 * j as f32).to_radians().sin_cos();
-                    [shift[0] + big * cos, shift[1] + big * sin]
-                };
-                // Corner j gets the texture coordinate (1, 1), (0, 1), (0, 0), (1, 0): the quad's order is 1, 0, 3, 2.
-                let corners = [corner(1), corner(0), corner(3), corner(2)];
+                let corners = ground::padded_square(potion.spin, ground::POTION_HALF * PIXELS_PER_UNIT, true);
                 let tint = [1.0, 135.0 / 255.0, 135.0 / 255.0, potion.alpha.trunc().clamp(0.0, 255.0) / 255.0];
                 quads.push((texture, potion.at, corners, tint, false, false));
             }
@@ -4253,7 +4312,7 @@ mod tests {
         // Other sounds keep their place.
         let mut listeners: Vec<u32> = table.sounds.iter().filter(|(_, sounds)| sounds.iter().any(|sound| sound.listener)).map(|(&id, _)| id).collect();
         listeners.sort_unstable();
-        assert_eq!(listeners, [220, 227, 245, 266, 497]);
+        assert_eq!(listeners, [220, 227, 245, 266, 497, 606, 607]);
     }
 
     #[test]
@@ -4445,5 +4504,30 @@ mod tests {
         // Slim Pitcher's potion lands on the cell, with its sound at the listener.
         assert_eq!(table.ground(478), Some(&[(Who::Ground, 497)][..]));
         assert!(table.sounds[&497][0].listener && table.sounds[&497][0].file == "assulter_attack");
+    }
+
+    #[test]
+    fn twilight_shrink_confine_pang_voice_wink_and_the_cones_play_in_code() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Twilight Alchemy: the skills' effect rows no longer show 497 to 499; the cast auras are 573 to 575.
+        for skill in [496, 497, 498] {
+            assert!(table.skill(skill, "effectId").is_empty(), "{skill}");
+        }
+        assert_eq!([496, 497, 498].map(|skill| table.cast_aura(skill, 12)), [Some(573), Some(574), Some(575)]);
+        // Shrink's sound at tick 5, Close Confine's at tick 20; Pang Voice's and Wink of Charm's at the listener at once.
+        assert_eq!((sounds(599), sounds(602)), (vec![("effect\\EF_BeginSpell", 80, false)], vec![("effect\\ef_hit6", 320, false)]));
+        assert_eq!((sounds(606), sounds(607)), (vec![("amon_ra_die01", 0, true)], vec![("effect\\vallentine", 0, true)]));
+        assert!(!table.sprites.contains_key(&606) && !table.sprites.contains_key(&607));
+        // Both are aimed from the caster at the target, played by the skill's use packet.
+        assert!(AIMED.contains(&606) && AIMED.contains(&607));
+        assert_eq!((table.used(1010), table.used(1011)), (Some(&[(Who::Caster, 606)][..]), Some(&[(Who::Caster, 607)][..])));
+        assert_eq!((table.used(1002), table.used(1005)), (Some(&[(Who::Caster, 599)][..]), Some(&[(Who::Target, 602)][..])));
+        // The performers' cones: the song first at the listener, the begin-spell sound at the unit.
+        assert_eq!(sounds(840), [("effect\\EF_BeginSpell", 0, false)]);
+        for (skill, file) in [(320, "effect\\석양의 어쌔신"), (329, "effect\\행운의"), (330, "effect\\당신을 위한 서비스")] {
+            assert_eq!((table.skill_sounds[&skill][0].file.as_str(), table.skill_sounds[&skill][0].listener), (file, true), "{skill}");
+            assert_eq!(table.used(skill).unwrap().last(), Some(&(Who::Caster, 840)));
+        }
     }
 }

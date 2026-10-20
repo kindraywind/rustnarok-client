@@ -16,6 +16,7 @@ pub mod napalm;
 pub mod sage;
 pub mod shards;
 pub mod sight;
+pub mod songs;
 pub mod sparkle;
 pub mod star;
 pub mod stone;
@@ -113,6 +114,7 @@ pub struct Prims {
     pub monk: monk::Monk,
     pub stars: star::Stars,
     pub ground: ground::Ground,
+    pub songs: songs::Songs,
 }
 
 /// COLDHIT's shard and smoke textures.
