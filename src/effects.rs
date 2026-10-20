@@ -5046,4 +5046,15 @@ mod tests {
         assert_eq!(table.cast_aura(397, 12), Some(502));
         assert_eq!(sounds(502), [("effect\\EF_BeginSpell", 0)]);
     }
+
+    #[test]
+    fn parses_refine_wav_delays() {
+        let table = Table::load();
+        let s154 = table.sounds.get(&154).and_then(|s| s.first()).expect("154 wav");
+        assert_eq!(s154.file, "effect\\bs_refinesuccess");
+        assert_eq!(s154.delay_ms, 240);
+        let s155 = table.sounds.get(&155).and_then(|s| s.first()).expect("155 wav");
+        assert_eq!(s155.file, "effect\\bs_refinefailed");
+        assert_eq!(s155.delay_ms, 80);
+    }
 }

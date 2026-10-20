@@ -1219,6 +1219,15 @@ impl App {
                         game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
                     }
                 }
+                let (effect, line) = non_window_refine_result(game.refine.is_some(), result);
+                if let Some(effect) = effect
+                    && let Some(gpu) = gpu
+                {
+                    game.play_effect(gpu, grf, table, effect, game.account_id);
+                }
+                if let Some(line) = line {
+                    game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ITEM);
+                }
             }
             MapEvent::Spirits { id, count } => {
                 change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.spheres = count);
@@ -1750,11 +1759,9 @@ impl App {
             }
             MapEvent::RefineAnnounced { player, item, level, success } => {
                 let template = self.messages.get(if success { REFINE_SUCCEEDED } else { REFINE_FAILED }).map_or("", String::as_str);
-                game.chat_line_kind(
-                    messages::fill(template, &[&player, &level, &inventory::item_name(&self.items, item, true, 0)]),
-                    CHAT_BROADCAST,
-                    chat::Kind::Broadcast,
-                );
+                let text = messages::fill(template, &[&player, &level, &inventory::item_name(&self.items, item, true, 0)]);
+                game.chat_line_kind(text.clone(), CHAT_REFINE_ANNOUNCEMENT, chat::Kind::Broadcast);
+                game.announcements.push(text, CHAT_REFINE_ANNOUNCEMENT, announce::SIZE, control::now());
             }
             // The same yellow as a refine announcement. Refine 0 so the name has no +N.
             // ponytail: the grade's letter is a guess.

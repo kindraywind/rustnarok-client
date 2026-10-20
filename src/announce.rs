@@ -75,6 +75,12 @@ impl Bar {
         self.messages.iter().map(|message| message.text.clone()).collect()
     }
 
+    /// The announcements showing: text, color, and size, oldest first.
+    #[cfg(test)]
+    pub fn entries(&self) -> Vec<(&str, [u8; 3], u16)> {
+        self.messages.iter().map(|message| (message.text.as_str(), message.color, message.size)).collect()
+    }
+
     /// Renders the lines not drawn yet.
     pub fn prepare(&mut self, gpu: &Gpu, font: &Font) {
         self.background.get_or_insert_with(|| [gpu.solid(FILL), gpu.solid(EDGE)]);

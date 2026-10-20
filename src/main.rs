@@ -219,6 +219,7 @@ const CHAT_ITEM: [u8; 3] = [0x00, 0xFF, 0xFF];
 const CHAT_ERROR: [u8; 3] = [0xFF, 0x00, 0x00];
 // ponytail: the two announcement shades are guesses; calibrate them against the real client.
 const CHAT_BROADCAST: [u8; 3] = [0xFF, 0xFF, 0x00];
+const CHAT_REFINE_ANNOUNCEMENT: [u8; 3] = [0xFF, 0xB0, 0x62];
 /// Messages that come with a skill's name, "[Name] message" (rathena's notes give 0xCDCDFF).
 const CHAT_SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
 /// The battle messages (msgstringtable): "Someone", and the four damage lines: on you, a party member attacked by someone, a
@@ -256,6 +257,24 @@ const CARD_FAILED: usize = 494;
 /// The refine window's lines: nothing to refine with; the results (done, broken, lowered, failed).
 const CANT_REFINE: usize = 2970;
 const REFINE_RESULTS: [(usize, [u8; 3]); 4] = [(2971, CHAT_ITEM), (3246, CHAT_ERROR), (1537, CHAT_ERROR), (2972, CHAT_ERROR)];
+/// Results for refines done without the refine window (ZC_ACK_ITEMREFINING): success, failed, lowered.
+const UPGRADE_SUCCESS: usize = 498;
+const UPGRADE_FAILED: usize = 499;
+const REFINE_LOWERED: usize = 1537;
+
+/// The effect on the own player and the chat line (in #00FFFF) for a refine result (ZC_ACK_ITEMREFINING).
+/// When the refine window is open, no non-window effect or line is emitted.
+pub const fn non_window_refine_result(refine_open: bool, result: u16) -> (Option<u32>, Option<usize>) {
+    if refine_open {
+        return (None, None);
+    }
+    match result {
+        0 => (Some(154), Some(UPGRADE_SUCCESS)),
+        1 => (Some(155), Some(UPGRADE_FAILED)),
+        2 => (Some(155), Some(REFINE_LOWERED)),
+        _ => (None, None),
+    }
+}
 /// Making lists' titles (things to make, Arrow Crafting's), nothing to make, and the results: made, not made.
 // ponytail: the titles per list and the result lines (428/429 exist too) are estimates.
 const MAKING_TITLE: usize = 425;
@@ -6858,5 +6877,29 @@ mod tests {
         assert!(attack_sparks(0, 0, false).is_empty() && attack_sparks(12, 11, false).is_empty());
         assert_eq!([heal_effect(5000), heal_effect(2000), heal_effect(450), heal_effect(80)], [325, 313, 312, 7]);
         assert!(HEAL_SKILLS.contains(&2051) && !HEAL_SKILLS.contains(&2044), "Highness Heal, not Epiclesis");
+    }
+
+    #[test]
+    fn refine_results_without_refine_window() {
+        // Window closed: result -> (effect on player, chat line) in #00FFFF
+        assert_eq!(non_window_refine_result(false, 0), (Some(154), Some(UPGRADE_SUCCESS)));
+        assert_eq!(non_window_refine_result(false, 1), (Some(155), Some(UPGRADE_FAILED)));
+        assert_eq!(non_window_refine_result(false, 2), (Some(155), Some(REFINE_LOWERED)));
+        assert_eq!(non_window_refine_result(false, 3), (None, None));
+        assert_eq!(non_window_refine_result(false, 99), (None, None));
+
+        // Window open: no line or effect
+        for result in 0..=4 {
+            assert_eq!(non_window_refine_result(true, result), (None, None));
+        }
+    }
+
+    #[test]
+    fn refine_announcement_color_and_bar() {
+        assert_eq!(CHAT_REFINE_ANNOUNCEMENT, [0xFF, 0xB0, 0x62]);
+        let mut bar = announce::Bar::default();
+        let now = Instant::now();
+        bar.push("announcement".to_owned(), CHAT_REFINE_ANNOUNCEMENT, announce::SIZE, now);
+        assert_eq!(bar.entries(), [("announcement", [0xFF, 0xB0, 0x62], announce::SIZE)]);
     }
 }
