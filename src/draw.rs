@@ -981,11 +981,24 @@ impl App {
                     }
                     continue;
                 }
+                // The drop-in landing of High Jump and Lope: a player's parts fall from the sky turning, fading in.
+                if is_player && flags & actor::GLOW_DROP != 0 {
+                    let f = flags >> actor::PARAM_SHIFT;
+                    let lift = crate::prims::body::drop_lift(f, grow_unit);
+                    let spin = if f < 25 { crate::prims::body::drop_spin(f) } else { angle };
+                    let lifted = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|uv| {
+                        let [x, y] = world::sprite_corner(position, size, if f < 25 { spin } else { angle }, uv).0;
+                        [x, y - lift]
+                    });
+                    let white = [1.0, 1.0, 1.0, crate::prims::body::drop_alpha(f) / 255.0];
+                    glows.push((texture, *feet, lifted, std::array::from_fn(|channel| tint[channel] * white[channel]), false, 0.0));
+                    continue;
+                }
                 let (part, copies) = actor::glow_copies(flags, body_tint, group, breath, spread, grow_unit, is_player);
                 let corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|uv| world::sprite_corner(position, size, angle, uv).0);
                 let times = |color: [f32; 4]| std::array::from_fn(|channel| tint[channel] * color[channel]);
                 glows.extend(copies.iter().map(|copy| {
-                    let moved = corners.map(|corner| [corner[0] + copy.offset[0], corner[1] + copy.offset[1]]);
+                    let moved = corners.map(|corner| [corner[0] * copy.scale + copy.offset[0], corner[1] * copy.scale + copy.offset[1]]);
                     (texture, *feet, moved, times(copy.color), copy.additive, copy.grow)
                 }));
                 if flicker_copy && group == actor::PartGroup::Weapon {

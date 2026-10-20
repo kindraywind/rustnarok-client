@@ -2211,6 +2211,12 @@ pub const GLOW_SWING: u32 = 0x40;
 pub const GLOW_MANHOLE: u32 = 0x100000;
 /// Hovering's two blue copies of every part; their alpha (0 to 160) is in the top byte.
 pub const GLOW_BLUE: u32 = 0x4000;
+/// Soul Link's two blue copies of a player's parts, 1 and 2 % bigger; the glow's alpha (0 to 200) is in the top byte.
+pub const GLOW_SOUL: u32 = 0x80;
+/// Spirit Link's stack of ten white outlines round a monster's parts; the counter f (50 to 199) is in the top byte.
+pub const GLOW_STACK: u32 = 0x100;
+/// The drop-in landing of High Jump and Lope: the counter f (0 to 34) is in the top byte.
+pub const GLOW_DROP: u32 = 0x400;
 /// Swhoo's white copy of every part, added on; its alpha is in the top byte.
 pub const GLOW_WHITE: u32 = 0x200000;
 /// Sky Net Blow's two red copies of every part; their alpha is in the top byte.
@@ -2288,6 +2294,8 @@ pub struct GlowCopy {
     pub grow: f32,
     /// How many screen pixels it is moved right and down.
     pub offset: [f32; 2],
+    /// How much bigger it is about the feet (1 leaves it).
+    pub scale: f32,
 }
 
 /// How a part is drawn under the body flags `flags` and colour `tint`: its own copy (added on, or blended at its own
@@ -2297,22 +2305,22 @@ pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: 
     let color = tint.map_or([1.0; 4], |[red, green, blue]| [f32::from(red) / 255.0, f32::from(green) / 255.0, f32::from(blue) / 255.0, 1.0]);
     let body = group == PartGroup::Body;
     let additive = (body && flags & GLOW_ADDITIVE != 0) || (group == PartGroup::Weapon && flags & GLOW_WEAPON != 0);
-    let mut part = GlowCopy { additive, color, grow: 0.0, offset: [0.0; 2] };
+    let mut part = GlowCopy { additive, color, grow: 0.0, offset: [0.0; 2], scale: 1.0 };
     let mut copies = Vec::new();
     if body && flags & GLOW_OUTLINE != 0 {
         let sin = breath.to_radians().sin();
         if player {
-            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 100.0 / 255.0], grow: (3.0 + sin) * unit, offset: [0.0; 2] });
-            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 120.0 / 255.0], grow: (5.0 + 2.0 * sin) * unit, offset: [0.0; 2] });
+            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 100.0 / 255.0], grow: (3.0 + sin) * unit, offset: [0.0; 2], scale: 1.0 });
+            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 120.0 / 255.0], grow: (5.0 + 2.0 * sin) * unit, offset: [0.0; 2], scale: 1.0 });
         } else {
             // A monster or an NPC gets one copy in its own colour.
-            copies.push(GlowCopy { additive: true, color: [1.0; 4], grow: (1.5 * sin + 5.0) * unit, offset: [0.0; 2] });
+            copies.push(GlowCopy { additive: true, color: [1.0; 4], grow: (1.5 * sin + 5.0) * unit, offset: [0.0; 2], scale: 1.0 });
         }
     }
     if flags & GLOW_REFLECT != 0 && !part.additive {
         for k in [5.0, 10.0, 15.0, 20.0] {
             let s = (spread + k) % 20.0;
-            copies.push(GlowCopy { additive: false, color: [1.0, 1.0, 1.0, (100.0 - 5.0 * s) / 255.0], grow: s * unit, offset: [0.0; 2] });
+            copies.push(GlowCopy { additive: false, color: [1.0, 1.0, 1.0, (100.0 - 5.0 * s) / 255.0], grow: s * unit, offset: [0.0; 2], scale: 1.0 });
         }
         part.color = [1.0, 1.0, 1.0, 150.0 / 255.0];
     }
@@ -2321,13 +2329,34 @@ pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: 
         if flags & flag != 0 {
             let alpha = (flags >> PARAM_SHIFT) as f32 / 255.0;
             for _ in 0..2 {
-                copies.push(GlowCopy { additive: true, color: [color[0], color[1], color[2], alpha], grow: 0.0, offset: [0.0; 2] });
+                copies.push(GlowCopy { additive: true, color: [color[0], color[1], color[2], alpha], grow: 0.0, offset: [0.0; 2], scale: 1.0 });
             }
+        }
+    }
+    // Soul Link: two blue copies of a player's parts, a hair bigger, unless the drop-in is on it.
+    if flags & GLOW_SOUL != 0 && player && flags & GLOW_DROP == 0 {
+        let alpha = (flags >> PARAM_SHIFT) as f32 / 255.0;
+        for i in 1..=2 {
+            copies.push(GlowCopy {
+                additive: true,
+                color: [55.0 / 255.0, 55.0 / 255.0, 1.0, alpha],
+                grow: 0.0,
+                offset: [0.0; 2],
+                scale: 1.0 + 0.01 * i as f32,
+            });
+        }
+    }
+    // Spirit Link: ten white outlines round a monster's or NPC's layers, each 3 pixels further out.
+    if flags & GLOW_STACK != 0 && !player {
+        let f = (flags >> PARAM_SHIFT) as i32;
+        for i in 1..=10 {
+            let alpha = if f <= 130 { f - (5 * i + 50) } else { 245 - 10 * i - f }.clamp(0, 200);
+            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, alpha as f32 / 255.0], grow: 3.0 * i as f32 * unit, offset: [0.0; 2], scale: 1.0 });
         }
     }
     // Swhoo: one more copy of every part, added on in white.
     if flags & GLOW_WHITE != 0 {
-        copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, (flags >> PARAM_SHIFT) as f32 / 255.0], grow: 0.0, offset: [0.0; 2] });
+        copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, (flags >> PARAM_SHIFT) as f32 / 255.0], grow: 0.0, offset: [0.0; 2], scale: 1.0 });
     }
     // Four white copies of every part slide right, left, down and up, fainter as they go.
     if flags & GLOW_SPREAD != 0 {
@@ -2336,7 +2365,7 @@ pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: 
         let away = 4.0 * n * unit;
         if alpha > 0.0 {
             for offset in [[away, 0.0], [-away, 0.0], [0.0, away], [0.0, -away]] {
-                copies.push(GlowCopy { additive: false, color: [1.0, 1.0, 1.0, alpha / 255.0], grow: 0.0, offset });
+                copies.push(GlowCopy { additive: false, color: [1.0, 1.0, 1.0, alpha / 255.0], grow: 0.0, offset, scale: 1.0 });
             }
         }
     }
@@ -4617,5 +4646,25 @@ mod tests {
         assert!(copies[0].additive && copies[0].color == [1.0, 1.0, 1.0, 250.0 / 255.0] && copies[0].grow == 0.0);
         let (_, none) = glow_copies(0, None, PartGroup::Gear, 0.0, 0.0, 1.0, true);
         assert!(none.is_empty());
+    }
+
+    #[test]
+    fn soul_link_and_spirit_link_add_copies_to_players_and_monsters() {
+        // Soul Link: two blue copies of a player's part, scaled 1.01 and 1.02, alpha from the flags; none on a monster, none while landing.
+        let flags = GLOW_SOUL | 120 << PARAM_SHIFT;
+        let (_, copies) = glow_copies(flags, None, PartGroup::Body, 0.0, 0.0, 1.0, true);
+        assert_eq!(copies.len(), 2);
+        assert!(copies.iter().all(|copy| copy.additive && copy.color == [55.0 / 255.0, 55.0 / 255.0, 1.0, 120.0 / 255.0]));
+        assert_eq!((copies[0].scale, copies[1].scale), (1.01, 1.02));
+        assert!(glow_copies(flags, None, PartGroup::Body, 0.0, 0.0, 1.0, false).1.is_empty());
+        assert!(glow_copies(flags | GLOW_DROP, None, PartGroup::Body, 0.0, 0.0, 1.0, true).1.is_empty());
+        // Spirit Link: ten white copies grown 3i px; ring 1's alpha at e = 5, 80, 81, 149 is 0, 75, 104, 36; rings 1 to 5 at 149: 36, 26, 16, 6, 0.
+        let stack = |f: u32| glow_copies(GLOW_STACK | f << PARAM_SHIFT, None, PartGroup::Body, 0.0, 0.0, 2.0, false).1;
+        assert_eq!(stack(100).len(), 10);
+        assert_eq!(stack(100)[2].grow, 3.0 * 3.0 * 2.0);
+        let alpha = |copies: &[GlowCopy], ring: usize| (copies[ring].color[3] * 255.0).round();
+        assert_eq!([55, 130, 131, 199].map(|f| alpha(&stack(f), 0)), [0.0, 75.0, 104.0, 36.0]);
+        assert_eq!([0, 1, 2, 3, 4].map(|ring| alpha(&stack(199), ring)), [36.0, 26.0, 16.0, 6.0, 0.0]);
+        assert!(glow_copies(GLOW_STACK | 100 << PARAM_SHIFT, None, PartGroup::Body, 0.0, 0.0, 1.0, true).1.is_empty());
     }
 }
