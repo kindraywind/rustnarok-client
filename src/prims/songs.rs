@@ -110,6 +110,8 @@ struct Streak {
 
 /// Adaptation's (848) and Eternal Chaos' (864) violet flicker and streaks on a unit; `status` is the one it stands for.
 struct Dance {
+    /// The colour of its flicker (violet for Adaptation and Eternal Chaos, pink for Swing Dance and its sisters).
+    rgb: [u8; 3],
     /// Whether the unit flickers violet (Adaptation's and Eternal Chaos'); the debuffs' hairlines do not.
     glows: bool,
     unit: Option<u32>,
@@ -189,14 +191,14 @@ pub fn streak_travel(k: u32) -> f32 {
 }
 
 /// Adaptation's body at tick e: added on in #B659FF on the even ticks 4 to 90, drawn white on the odd ones.
-pub fn dance_glow(e: u32) -> Option<(u32, Option<[u8; 3]>)> {
-    (4..=90).contains(&e).then(|| if e.is_multiple_of(2) { (crate::actor::GLOW_ADDITIVE, Some(DANCE_VIOLET)) } else { (0, Some([255; 3])) })
+pub fn dance_glow(e: u32, rgb: [u8; 3]) -> Option<(u32, Option<[u8; 3]>)> {
+    (4..=90).contains(&e).then(|| if e.is_multiple_of(2) { (crate::actor::GLOW_ADDITIVE, Some(rgb)) } else { (0, Some([255; 3])) })
 }
 
 /// The violet the body is left in drifts back to white by 8 a channel a tick after tick 90.
-pub fn dance_tint(e: u32) -> Option<[u8; 3]> {
+pub fn dance_tint(e: u32, rgb: [u8; 3]) -> Option<[u8; 3]> {
     let drift = (e.checked_sub(90).filter(|&after| after > 0)? * 8) as u16;
-    let tint = DANCE_VIOLET.map(|channel| (u16::from(channel) + drift).min(255) as u8);
+    let tint = rgb.map(|channel| (u16::from(channel) + drift).min(255) as u8);
     (tint != [255; 3]).then_some(tint)
 }
 
@@ -354,7 +356,7 @@ impl Songs {
                 streaks.push(Streak { born, yaw, distance, half, rgb, falling: true });
             }
         }
-        self.dances.push(Dance { glows: true, unit, status, start: now, streaks });
+        self.dances.push(Dance { rgb: DANCE_VIOLET, glows: true, unit, status, start: now, streaks });
     }
 
     /// The Masquerade debuffs' falling hairlines round `unit`: Eternal Chaos' falling streaks alone, no flicker.
@@ -365,7 +367,18 @@ impl Songs {
             let rgb = [0, 1, 2].map(|_| if rand(3) == 0 { 1.0 } else { 140.0 / 255.0 });
             streaks.push(Streak { born, yaw, distance, half, rgb, falling: true });
         }
-        self.dances.push(Dance { glows: false, unit, status: None, start: now, streaks });
+        self.dances.push(Dance { rgb: DANCE_VIOLET, glows: false, unit, status: None, start: now, streaks });
+    }
+
+    /// Swing Dance, Symphony of Lovers or Moonlit Serenade (847) on `unit`: Adaptation's flicker in pink and its streaks white to red.
+    pub fn swing_dance(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let mut streaks = Vec::new();
+        for born in (0..DANCE_TICKS).step_by(2) {
+            let (yaw, distance, half) = (rand(360) as f32, 3.0 + rand(7) as f32, (rand(60) + 30) as f32 / 10.0);
+            let x = rand(256) as f32 / 255.0;
+            streaks.push(Streak { born, yaw, distance, half, rgb: [1.0, x, x], falling: false });
+        }
+        self.dances.push(Dance { rgb: [0xFF, 0x59, 0xB6], glows: true, unit, status: None, start: now, streaks });
     }
 
     /// A status that went off or came on again takes its dances with it.
@@ -415,7 +428,10 @@ impl Songs {
     pub fn glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
         let shrinking = self.shrinks.iter().filter(|body| body.unit == unit).find_map(|body| shrink_glow(passes(body.start, now).checked_sub(1)?));
         shrinking.or_else(|| {
-            self.dances.iter().filter(|dance| dance.unit == unit && dance.glows).find_map(|dance| dance_glow(passes(dance.start, now).checked_sub(1)?))
+            self.dances
+                .iter()
+                .filter(|dance| dance.unit == unit && dance.glows)
+                .find_map(|dance| dance_glow(passes(dance.start, now).checked_sub(1)?, dance.rgb))
         })
     }
 
@@ -423,7 +439,10 @@ impl Songs {
     pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
         let blinking = self.confines.iter().filter(|body| body.unit == unit).find_map(|body| confine_tint(passes(body.start, now).checked_sub(1)?));
         blinking.or_else(|| {
-            self.dances.iter().filter(|dance| dance.unit == unit && dance.glows).find_map(|dance| dance_tint(passes(dance.start, now).checked_sub(1)?))
+            self.dances
+                .iter()
+                .filter(|dance| dance.unit == unit && dance.glows)
+                .find_map(|dance| dance_tint(passes(dance.start, now).checked_sub(1)?, dance.rgb))
         })
     }
 
@@ -703,5 +722,25 @@ mod tests {
         assert!((streak_travel(0) - 0.015).abs() < 1e-6);
         // No violet flicker, unlike the dances.
         assert!(songs.glow(Some(1), start + TICK * 20).is_none() && songs.body_tint(Some(1), start + TICK * 95).is_none());
+    }
+
+    #[test]
+    fn swing_dance_flickers_the_target_pink_with_white_to_red_hairlines() {
+        let start = Instant::now();
+        let mut songs = Songs::default();
+        songs.swing_dance(Some(1), start, |_| 0);
+        // 26 streaks seen, colour (255, X, X) with X = 0.
+        let streaks = &songs.dances[0].streaks;
+        assert_eq!(streaks.iter().filter(|streak| streak.born <= STREAKS_SEEN).count(), 26);
+        assert!(streaks.iter().all(|streak| streak.rgb == [1.0, 0.0, 0.0] && !streak.falling));
+        // Additive #FF59B6 on e = 4, 6 … 90, white on 5, 7 … 89, nothing at 3 and 91; the colour fades back after.
+        let glow = |tick: u32| songs.glow(Some(1), start + TICK * tick);
+        assert!(glow(3).is_none() && glow(91).is_none());
+        assert_eq!(glow(4), Some((crate::actor::GLOW_ADDITIVE, Some([0xFF, 0x59, 0xB6]))));
+        assert_eq!(glow(5), Some((0, Some([255; 3]))));
+        assert!(glow(90).is_some());
+        assert_eq!(songs.body_tint(Some(1), start + TICK * 91), Some([0xFF, 0x61, 0xBE]));
+        // Adaptation's violet is as it was.
+        assert_eq!(dance_glow(4, DANCE_VIOLET), Some((crate::actor::GLOW_ADDITIVE, Some(DANCE_VIOLET))));
     }
 }

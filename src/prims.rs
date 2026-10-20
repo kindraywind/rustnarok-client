@@ -28,6 +28,7 @@ pub mod sight;
 pub mod sniper;
 pub mod songs;
 pub mod sparkle;
+pub mod spears;
 pub mod spray;
 pub mod star;
 pub mod stone;
@@ -179,6 +180,7 @@ pub struct Prims {
     pub painter: painter::Painter,
     pub holes: holes::Holes,
     pub waves: waves::Waves,
+    pub spears: spears::Spears,
 }
 
 /// COLDHIT's shard and smoke textures.
