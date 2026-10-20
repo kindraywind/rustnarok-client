@@ -37,6 +37,7 @@ pub mod songs;
 pub mod souls;
 pub mod sparkle;
 pub mod spears;
+pub mod sphere;
 pub mod spray;
 pub mod star;
 pub mod stone;
@@ -197,6 +198,7 @@ pub struct Prims {
     pub notes: notes::Notes,
     pub emblems: emblems::Emblems,
     pub portal: portal::Portal,
+    pub sphere: sphere::Sphere,
 }
 
 /// COLDHIT's shard and smoke textures.

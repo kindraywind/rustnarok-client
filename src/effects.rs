@@ -13,7 +13,8 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, knight, mechanic, monk,
-    notes, painter, portal, sage, shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
+    notes, painter, portal, sage, shafts, shards, sight, sniper, songs, souls, spears, sphere, spray, star, stone, tanji, throw, transcend, walls, waterball,
+    waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -2005,6 +2006,9 @@ const LULLABY: u32 = 969;
 /// Resurrection's rings and the Call Partner portal's warp (`prims::portal`).
 pub const REVIVE_FX: u32 = 140;
 const PORTAL_FX: u32 = 341;
+/// I'm All Yours' heart of flame flowers and Baby's tumbling ribbons (`prims::sphere`).
+const HEART_CAST: u32 = 343;
+const BABY_FX: u32 = 408;
 /// King's Grace's emblems, Offertorium's ring and Escape's tint and copies (`prims::emblems`, `actor`).
 const KINGS_GRACE: u32 = 1051;
 const OFFERTORIUM_RING: u32 = 1057;
@@ -2379,6 +2383,14 @@ impl Effects {
             self.prims.songs.twilight(id, cast_ms / crate::prims::TICK.as_millis() as u32, now, |n| pick(0, n.saturating_sub(1)));
             return;
         }
+        // I'm All Yours' cast: twenty flame flowers on a heart round the caster's feet for the cast.
+        if id == HEART_CAST {
+            self.textures.entry(sphere::RING_RED.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sphere::RING_RED, true).ok());
+            self.play_sounds(table, id, at, now);
+            let ticks = cast_ms / crate::prims::TICK.as_millis() as u32;
+            self.prims.sphere.heart(unit, at, ticks, now, |n| pick(0, n.saturating_sub(1)));
+            return;
+        }
         // Exceed Break's cast: 160 needles converge on the caster for the cast (500 ticks when there is no cast time).
         if id == PRIME_CHARGE {
             self.textures.entry(chi::NEEDLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, chi::NEEDLE, true).ok());
@@ -2692,6 +2704,10 @@ impl Effects {
                 let path = cells::sheet_texture(id);
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
                 self.prims.cells.sheet(id, at, now);
+            }
+            (BABY_FX, Target::Unit(unit)) => {
+                self.textures.entry(sphere::FIRE_IVY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sphere::FIRE_IVY, false).ok());
+                self.prims.sphere.ribbons(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
             (REVIVE_FX, Target::Unit(_)) => {
                 self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
@@ -3699,6 +3715,7 @@ impl Effects {
         self.prims.notes.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.emblems.advance(now);
         self.prims.portal.advance(now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.sphere.advance(now, |n| pick(0, n.saturating_sub(1)));
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -4025,6 +4042,7 @@ impl Effects {
     pub fn cut_twilight(&mut self) {
         self.prims.songs.cut_twilight();
         self.prims.guard.cut_pierce();
+        self.prims.sphere.cut_hearts();
     }
 
     /// How opaque an effect draws `unit` now (Camouflage's translucence), 0 to 1.
@@ -4285,6 +4303,13 @@ impl Effects {
             )
             .chain(
                 self.prims.spears.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
+                self.prims
+                    .sphere
+                    .meshes(now, self.yaw.to_degrees(), &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
             .chain(
                 self.prims.portal.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
@@ -6799,5 +6824,18 @@ mod tests {
         assert!(AIMED.contains(&AXE_THROW) && table.struck(337).unwrap().contains(&(Who::Caster, AXE_THROW)));
         assert_eq!(sounds(AXE_THROW), [("effect\\cru_shield boomerang", 0, false)]);
         assert_eq!(table.lengths.get(&AXE_THROW), None);
+    }
+
+    #[test]
+    fn im_all_yours_cast_and_babys_ribbons_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // The cast of skill 335 starts 343; one sound at the caster's place at once.
+        assert_eq!(table.cast_aura(335, 12), Some(HEART_CAST));
+        assert_eq!(sounds(HEART_CAST), [("effect\\EF_BeginSpell", 0, false)]);
+        // Baby and Cheer Up put 408 on their target for 200 ticks, with the Blessing sound.
+        assert!(table.used(408).unwrap().contains(&(Who::Target, BABY_FX)) && table.used(5065).unwrap().contains(&(Who::Target, BABY_FX)));
+        assert_eq!(sounds(BABY_FX), [("effect\\EF_Blessing", 0, false)]);
+        assert_eq!(table.lengths[&BABY_FX], 200);
     }
 }

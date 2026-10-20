@@ -1798,6 +1798,7 @@ wav	365	effect\프레셔	48
 wav	366	effect\세크리파이스	352
 wav	223	effect\EF_FireWall	0	listener
 wav	330	effect\mon_맹룡과강	0	listener
+wav	343	effect\EF_BeginSpell	0
 wav	367	effect\오라 블레이드	0
 wav	368	effect\버서크	0
 wav	369	effect\knight_twohandquicken	0
@@ -1822,6 +1823,7 @@ wav	401	effect\EF_NapalmBeat	640
 wav	401	effect\EF_NapalmBeat	800
 wav	401	effect\EF_NapalmBeat	960
 wav	403	effect\swordman_provoke	400
+wav	408	effect\EF_Blessing	0
 wav	409	effect\메테오 어썰트	0
 wav	426	effect\복호격	0
 wav	435	effect\T_회오리차기	80
@@ -5117,6 +5119,7 @@ length	176	100
 length	177	100
 length	178	100
 length	341	9999
+length	408	200
 length	850	100
 length	932	100
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
