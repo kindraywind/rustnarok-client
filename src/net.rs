@@ -2558,11 +2558,14 @@ fn encode_expanded_barter_buy(items: &[(u32, u32, u32)]) -> Vec<u8> {
     packet
 }
 
-/// CZ_REQMAKINGITEM: the item to make (0: none, which ends the list) and three extra ingredients (none here).
-fn encode_make(item: u32) -> [u8; 18] {
+/// CZ_REQMAKINGITEM: the item to make (0: none, which ends the list) and three extra ingredients (element stones, Star Crumbs).
+pub fn encode_make(item: u32, materials: [u32; 3]) -> [u8; 18] {
     let mut packet = [0u8; 18];
     packet[..2].copy_from_slice(&CZ_REQMAKINGITEM.to_le_bytes());
     packet[2..6].copy_from_slice(&item.to_le_bytes());
+    packet[6..10].copy_from_slice(&materials[0].to_le_bytes());
+    packet[10..14].copy_from_slice(&materials[1].to_le_bytes());
+    packet[14..18].copy_from_slice(&materials[2].to_le_bytes());
     packet
 }
 

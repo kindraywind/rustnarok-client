@@ -1269,6 +1269,16 @@ impl App {
                     game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
+            Scene::Game(game) if game.forge.as_ref().is_some_and(|forge| forge.covers(cursor)) => {
+                let forge = game.forge.as_mut().unwrap();
+                let hit = forge.hit(cursor).unwrap();
+                match forge.click(hit) {
+                    Some(forge::Action::Cancel) => game.cancel_forge(),
+                    Some(forge::Action::Ok(_)) => game.ok_forge(),
+                    Some(forge::Action::Take(slot)) => game.take_forge_slot(slot),
+                    None => {}
+                }
+            }
             Scene::Game(game) if game.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) => {
                 let shop = game.shop.as_mut().unwrap();
                 let hit = shop.hit(cursor).unwrap();
@@ -1908,6 +1918,9 @@ impl App {
             game.homunculus_window.frame.drag_to(self.cursor, homunculus::Window::height());
             game.homunculus_skill_list.drag_to(self.cursor, game.homunculus_skills.len());
             game.talks.drag_to(self.cursor);
+            if let Some(forge) = &mut game.forge {
+                forge.frame.drag_to(self.cursor, forge::HEIGHT);
+            }
             if let Some(setup) = &mut game.friend_setup {
                 setup.frame.drag_to(self.cursor, whisper::FriendSetup::height());
             }
@@ -2585,6 +2598,7 @@ impl App {
                 let on_grade = game.grade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_enchant = game.enchant.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_materials = game.materials.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
+                let on_forge = game.forge.as_ref().is_some_and(|window| window.covers(self.cursor));
                 let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 match (item, game.window_at(self.cursor)) {
@@ -2608,6 +2622,14 @@ impl App {
                     }
                     (Some((Dragged::Item(index), _, true)), _) if on_mail => game.move_item(Asked::Mail(index)),
                     (Some((Dragged::Item(index), _, true)), _) if on_materials => game.move_item(Asked::Material(index)),
+                    (Some((Dragged::Item(index), _, true)), _) if on_forge => {
+                        if let Some(forge) = &mut game.forge
+                            && let Some(item) = game.inventory.get(index).cloned()
+                            && forge.put_item(item)
+                        {
+                            game.inventory.remove(index, 1);
+                        }
+                    }
                     // Into the refine machine: the server lists what refines it.
                     (Some((Dragged::Item(index), _, true)), _) if on_refine => {
                         let _ = game.session.refine_select(index);
@@ -2693,6 +2715,7 @@ impl App {
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.memorial.frame.drop_drag()
+                    | game.forge.as_mut().is_some_and(|forge| forge.frame.drop_drag())
                     | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag);
                 // A slider let go keeps its volume for next time.
                 let slid = game.settings_window.as_mut().is_some_and(game_settings::GameSettings::drop_drag);
@@ -3120,6 +3143,14 @@ impl App {
         {
             if window.frame.local(cursor, monster_info::MonsterWindow::height()).and_then(|local| window.frame.title_hit(local)) == Some(TitleHit::Title) {
                 window.frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.forge.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == forge::Hit::Title(TitleHit::Title) {
+                game.forge.as_mut().unwrap().frame.start_drag(cursor);
             }
             return;
         }

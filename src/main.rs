@@ -78,6 +78,7 @@ mod enchant;
 mod equipment;
 mod escape;
 mod events;
+mod forge;
 mod game;
 mod game_settings;
 mod grade;
@@ -280,8 +281,6 @@ pub const fn non_window_refine_result(refine_open: bool, result: u16) -> (Option
 const MAKING_TITLE: usize = 425;
 const ARROW_TITLE: usize = 658;
 const NOTHING_TO_MAKE: usize = 424;
-const MADE: usize = 431;
-const NOT_MADE: usize = 430;
 /// Blacksmith services: the lists' titles, a repair done or not, and Upgrade Weapon's results (refined, failed,
 /// skill too low, ore missing) in rathena's colors for them.
 /// The spell lists' title.
@@ -1328,6 +1327,7 @@ struct Game {
     whisper_asked: VecDeque<String>,
     /// A list of carried items to pick from, and what the pick is for.
     pick: Option<(pick_list::PickList, Picking)>,
+    forge: Option<forge::Forge>,
     /// The card whose list was asked for (the list doesn't name it).
     card_asked: Option<u16>,
     /// A skill an item cast that needs aiming (the player may not know it).
@@ -2886,6 +2886,7 @@ struct Assets {
     skills: skills::Assets,
     shop: shop::Assets,
     pick_list: pick_list::Assets,
+    forge: forge::Assets,
     storage: storage::Assets,
     storage_log: storage_log::Assets,
     trade: trade::Assets,
@@ -3018,6 +3019,7 @@ impl Assets {
             skills: skills::Assets::load(gpu, grf),
             shop: shop::Assets::load(gpu, grf),
             pick_list: pick_list::Assets::load(gpu, grf),
+            forge: forge::Assets::load(gpu, grf),
             storage: storage::Assets::load(gpu, grf),
             storage_log: storage_log::Assets::load(gpu, grf),
             trade: trade::Assets::load(gpu, grf),
@@ -6938,5 +6940,17 @@ mod tests {
         assert!(Picking::Arrow.escapable());
         assert!(Picking::Identify.escapable());
         assert!(Picking::Spell.escapable());
+    }
+
+    #[test]
+    fn making_results_give_no_chat_lines() {
+        assert_eq!(forge::result_effect(0), Some(154));
+        assert_eq!(forge::result_effect(1), Some(155));
+        assert_eq!(forge::result_effect(2), Some(305));
+        assert_eq!(forge::result_effect(3), Some(306));
+        assert_eq!(forge::result_effect(4), Some(1015));
+        assert_eq!(forge::result_effect(5), Some(1016));
+        assert_eq!(forge::result_effect(6), Some(1017));
+        assert_eq!(forge::result_effect(7), Some(1018));
     }
 }

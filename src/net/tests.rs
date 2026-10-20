@@ -907,8 +907,14 @@ fn decodes_making_lists() {
     assert_eq!(items, [713]);
     let made = [&ZC_ACK_REQMAKINGITEM.to_le_bytes()[..], &2u16.to_le_bytes(), &501u32.to_le_bytes()].concat();
     let Some(MapEvent::Made { result: 2, item: 501 }) = decode_map_packet(&made) else { panic!() };
-    assert_eq!(encode_make(501)[..6], [0x8E, 0x01, 0xF5, 0x01, 0, 0]);
-    assert_eq!(encode_make(0), [0x8E, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(encode_make(501, [0, 0, 0])[..6], [0x8E, 0x01, 0xF5, 0x01, 0, 0]);
+    let with_materials = encode_make(1163, [1000, 994, 0]);
+    assert_eq!(&with_materials[..2], &0x018Eu16.to_le_bytes());
+    assert_eq!(&with_materials[2..6], &1163u32.to_le_bytes());
+    assert_eq!(&with_materials[6..10], &1000u32.to_le_bytes());
+    assert_eq!(&with_materials[10..14], &994u32.to_le_bytes());
+    assert_eq!(&with_materials[14..18], &[0, 0, 0, 0]);
+    assert_eq!(encode_make(0, [0, 0, 0]), [0x8E, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(encode_cook(1, 12046), [0x5B, 0x02, 1, 0, 0x0E, 0x2F, 0, 0]);
     assert_eq!(encode_make_arrow(713), [0xAE, 0x01, 0xC9, 0x02, 0, 0]);
     let ids = [ZC_MAKABLEITEMLIST, CZ_REQMAKINGITEM, ZC_ACK_REQMAKINGITEM, ZC_MAKINGITEM_LIST, CZ_REQ_MAKINGITEM, ZC_MAKINGARROW_LIST, CZ_REQ_MAKINGARROW];
