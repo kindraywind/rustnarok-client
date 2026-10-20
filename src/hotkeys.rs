@@ -258,6 +258,7 @@ impl Hotkeys {
         font: &Font,
         cursor: [f32; 2],
         cooling: &crate::skills::Cooling<'a>,
+        keys: &crate::shortcuts::Shortcuts,
     ) {
         if !self.frame.open {
             return;
@@ -277,8 +278,11 @@ impl Hotkeys {
         layer.sprites.push((&assets.plus, self.frame.at(plus), STEP_BUTTON));
         let toggle = if self.quick { &assets.minus } else { &assets.plus };
         layer.sprites.push((toggle, self.frame.at(self.quick_button()), STEP_BUTTON));
+        let bar = if self.tab() == 0 { 1 } else { 2 };
         for (index, local) in self.shown() {
             let key = self.keys.get(index).and_then(|key| *key);
+            // The key that uses the slot, after its name on hover.
+            let pressed = keys.hotbar_key(bar, index).map_or_else(String::new, |key| format!(" [{key}]"));
             let corner = self.frame.at(local);
             // The slot under the pointer: a box under its icon.
             let hover = self.frame.at(hover_corner(local));
@@ -296,7 +300,7 @@ impl Hotkeys {
                 count_text(layer, font, corner, &count.to_string());
                 cooling.draw(layer, *id as u16, corner, [24.0, 24.0]);
                 if contains(corner, SLOT, cursor) {
-                    window::tooltip(tooltip, chrome, font, &format!("{} Lv {count}", info.name), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
+                    window::tooltip(tooltip, chrome, font, &format!("{} Lv {count}{pressed}", info.name), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
                 }
                 continue;
             }
@@ -314,7 +318,7 @@ impl Hotkeys {
             let amount: u32 = inventory.iter().filter(|item| item.id == id && item.worn == 0).map(|item| u32::from(item.amount)).sum();
             count_text(layer, font, corner, &amount.to_string());
             if contains(corner, SLOT, cursor) {
-                window::tooltip(tooltip, chrome, font, info.name(true), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
+                window::tooltip(tooltip, chrome, font, &format!("{}{pressed}", info.name(true)), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
             }
         }
     }
