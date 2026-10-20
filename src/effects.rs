@@ -13,8 +13,8 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, knight, mechanic, monk,
-    notes, painter, portal, sage, shafts, shards, sight, sniper, songs, souls, spears, sphere, spray, star, stone, tanji, throw, transcend, walls, waterball,
-    waves,
+    notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, souls, spears, sphere, spray, star, stone, tanji, throw, transcend, walls,
+    waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -826,6 +826,8 @@ struct HitSpark {
     paths: Option<[Vec<Vector>; 4]>,
     /// The spark sprite's images, from `advance`.
     placed: Vec<Placed>,
+    /// EF_HITDARK's: the sparks are near black (#141414) and `/mineffect` does not cut them.
+    dark: bool,
 }
 
 /// One of a hit's sparks, its random choices made.
@@ -843,6 +845,16 @@ struct Spark {
     scale: f32,
     /// Ticks it lives.
     life: u32,
+}
+
+/// The sparks' colour: white, or near black (#141414) for EF_HITDARK's.
+fn spark_tint(dark: bool) -> [f32; 3] {
+    if dark { [20.0 / 255.0; 3] } else { [1.0; 3] }
+}
+
+/// Whether a hit's sparks are drawn: `/mineffect` keeps only the ring of EF_HIT1, but EF_HITDARK always has its sparks.
+fn sparks_shown(min: bool, dark: bool) -> bool {
+    dark || !min
 }
 
 const HIT_TICK_MS: f32 = 16.0;
@@ -1581,8 +1593,21 @@ const PIXELS_PER_UNIT: f32 = 7.0;
 fn glint_sets(effect: u32) -> u32 {
     match effect {
         GUMGANG => 1,
-        POWER_UP => 2,
+        POWER_UP | WARMTH_GLINTS => 2,
         _ => 4,
+    }
+}
+
+/// The first alphas of the warmth's glints.
+const WARMTH_ALPHAS: [i32; 4] = [40, 80, 120, 160];
+
+/// The squares a glint is drawn as: their half-diagonals and colours. Steel Body's is one; the warmth's is three, a red one and two
+/// dark red halos.
+fn glint_looks(effect: u32) -> Vec<(f32, [u8; 3])> {
+    if effect == WARMTH_GLINTS {
+        vec![(2.0, [0xFF, 0x64, 0x64]), (2.4, [0x78, 0x00, 0x00]), (4.0, [0x78, 0x00, 0x00])]
+    } else {
+        vec![(GLINT_RADIUS, glint_color(effect))]
     }
 }
 
@@ -2037,8 +2062,13 @@ const ELEMENTAL_ACTION: u32 = 934;
 /// The monsters' Grand Darkness, Power Up and Anti-Magic (`prims::walls`, `glint_sets`, `prims::guard`).
 const GRAND_DARKNESS: u32 = 450;
 const POWER_UP: u32 = 455;
+/// Star Gladiator's warmth: eight small red glints with dark halos (`PrimKind::Glints`).
+const WARMTH_GLINTS: u32 = 418;
 const POWER_UP_TICKS: u32 = 1500;
 const ANTI_MAGIC: u32 = 675;
+/// EF_HITDARK's near-black sparks and Lope's motes and petals (`HitSpark`, `prims::petals`).
+pub const HIT_DARK: u32 = 180;
+const LOPE: u32 = 411;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
 /// Resurrection's rings and the Call Partner portal's warp (`prims::portal`).
@@ -2762,6 +2792,13 @@ impl Effects {
                 self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
                 self.prims.portal.revive(at, now);
             }
+            (LOPE, Target::Unit(_)) => {
+                self.textures.entry(petals::MOTE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, petals::MOTE, true).ok());
+                for path in petals::PETALS {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
+                }
+                self.prims.petals.lope(at, now);
+            }
             (LULLABY, Target::Unit(unit)) => {
                 for (name, path) in notes::TEXTURES {
                     self.textures.entry(name.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
@@ -3162,7 +3199,7 @@ impl Effects {
         }
         // Blessing, made in code.
         // A song's puffs and Steel Body's glints, made in code.
-        let kind = song_variant(id).map(PrimKind::Puffs).or((id == 254 || id == GUMGANG || id == POWER_UP).then_some(PrimKind::Glints));
+        let kind = song_variant(id).map(PrimKind::Puffs).or((id == 254 || id == GUMGANG || id == POWER_UP || id == WARMTH_GLINTS).then_some(PrimKind::Glints));
         if let Some(kind) = kind {
             let paths: &[&str] = if kind == PrimKind::Glints { &GLINT_TEXTURES } else { &[PUFF_TEXTURE] };
             for path in paths {
@@ -3251,7 +3288,15 @@ impl Effects {
         self.textures.entry(RING_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, RING_TEXTURE, true).ok());
         self.sprites.entry(SPARK_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, SPARK_SPRITE));
         let way = drift(rot);
-        self.hits.push(HitSpark { start, anchor: Anchor::Unit(unit), way, sparks: sparks(way, random), paths: None, placed: Vec::new() });
+        self.hits.push(HitSpark { start, anchor: Anchor::Unit(unit), way, sparks: sparks(way, random), paths: None, placed: Vec::new(), dark: false });
+    }
+
+    /// EF_HITDARK (180): EF_HIT1 with near-black sparks that `/mineffect` keeps.
+    pub fn play_hit_dark(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, rot: f32, start: Instant) {
+        self.play_hit(gpu, grf, unit, rot, start);
+        if let Some(hit) = self.hits.last_mut() {
+            hit.dark = true;
+        }
     }
 
     /// The hit sparks (for the test driver): the way each ring flies (x east, z north), the milliseconds until it lands,
@@ -3777,6 +3822,7 @@ impl Effects {
         self.prims.emblems.advance(now);
         self.prims.portal.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.sphere.advance(now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.petals.advance(now, |n| pick(0, n.saturating_sub(1)));
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -4544,17 +4590,24 @@ impl Effects {
             // A rider's glints sit higher, a baby's or a Doram's lower.
             let lift = prim.anchor.unit().and_then(|unit| self.rises.get(&unit)).copied().unwrap_or(0.0);
             let age = str_frame(now.duration_since(prim.start));
-            let half = GLINT_RADIUS * std::f32::consts::FRAC_1_SQRT_2 * PIXELS_PER_UNIT;
+            let warmth = prim.effect == WARMTH_GLINTS;
+            let first_alphas = if warmth { &WARMTH_ALPHAS } else { &GLINT_ALPHAS };
+            let looks = glint_looks(prim.effect);
             for glint in 0..4 * glint_sets(prim.effect) {
-                let (alpha, round) = glint_at(GLINT_ALPHAS[(glint % 4) as usize], age);
+                let (alpha, round) = glint_at(first_alphas[(glint % 4) as usize], age);
+                // The warmth's glints fade in over their first ticks.
+                let alpha = if warmth { alpha.min(age as i32) } else { alpha };
                 let pick = |what: u32| noise(prim.seed, glint * 1_000 + round, what);
                 let Some(Some(texture)) = self.textures.get(GLINT_TEXTURES[(pick(0) % 5) as usize]) else { continue };
                 let (sin, cos) = ((pick(1) % 360) as f32).to_radians().sin_cos();
                 let height = if round == 0 { (pick(2) % 10) as f32 } else { 3.0 + (pick(2) % 8) as f32 };
                 let place = [at[0] + GLINT_CIRCLE * cos, at[1] + height + lift, at[2] + GLINT_CIRCLE * sin];
-                let [red, green, blue] = glint_color(prim.effect).map(|value| f32::from(value) / 255.0);
-                let corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
-                quads.push((texture, place, corners, [red, green, blue, alpha as f32 / 255.0], true, false));
+                for &(radius, color) in &looks {
+                    let half = radius * std::f32::consts::FRAC_1_SQRT_2 * PIXELS_PER_UNIT;
+                    let [red, green, blue] = color.map(|value| f32::from(value) / 255.0);
+                    let corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
+                    quads.push((texture, place, corners, [red, green, blue, alpha as f32 / 255.0], true, false));
+                }
             }
         }
         // Blessing's angels (25 units up, sized like a unit's sprite) and its sparkles.
@@ -4582,15 +4635,16 @@ impl Effects {
             }
         }
         // The hits' sparks, each with its trail, sized like a unit's sprite; /mineffect leaves the ring alone.
-        if let Some(Some(sprite)) = self.sprites.get(SPARK_SPRITE).filter(|_| self.shows(0) && !self.min) {
-            for hit in &self.hits {
+        if let Some(Some(sprite)) = self.sprites.get(SPARK_SPRITE).filter(|_| self.shows(0)) {
+            for hit in self.hits.iter().filter(|hit| sparks_shown(self.min, hit.dark)) {
                 let (Some(paths), Some(at)) = (&hit.paths, hit.anchor.place(&position_of)) else { continue };
+                let rgb = spark_tint(hit.dark);
                 for (spark, path) in hit.sparks.iter().zip(paths) {
                     for (place, alpha, scale) in spark.trail(hit.tick(now), path) {
                         let anchor = std::array::from_fn(|axis| at[axis] + place[axis]);
                         for &(key, position, size, layer_angle) in &hit.placed {
                             let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * scale));
-                            quads.push((sprite.texture(key), anchor, corners, [1.0, 1.0, 1.0, alpha], false, false));
+                            quads.push((sprite.texture(key), anchor, corners, [rgb[0], rgb[1], rgb[2], alpha], false, false));
                         }
                     }
                 }
@@ -4698,6 +4752,8 @@ impl Effects {
             if let Some(Some(texture)) = self.textures.get(emblems::EMBLEM) {
                 quads.extend(self.prims.emblems.draws(now).into_iter().map(|draw| (texture, draw.at, draw.corners, draw.tint, draw.additive, false)));
             }
+            // Lope's motes and petals, facing the camera.
+            quads.extend(self.prims.petals.quads(|path| self.textures.get(path).and_then(Option::as_ref)));
             // Lullaby Deep Sleep's notes, over everything (`STR_RISE` is taken off again).
             quads.extend(self.prims.notes.quads(|path| self.textures.get(path).and_then(Option::as_ref), STR_RISE));
             // Sight Rasher's sprites and their shadows, white with their alpha.
@@ -5410,8 +5466,15 @@ mod tests {
         assert!((0..10).all(|tick| (ring_travel(tick) - travel[tick as usize]).abs() < 1e-4));
         assert_eq!((0..10).map(|tick| (ring_alpha(tick) * 255.0).round() as u32).collect::<Vec<_>>(), [254, 254, 254, 254, 254, 203, 152, 101, 50, 0]);
         let time = Instant::now();
-        let hit =
-            HitSpark { start: time, anchor: Anchor::Unit(None), way: [0.0, 1.0], sparks: sparks([0.0, 1.0], |from, _| from), paths: None, placed: Vec::new() };
+        let hit = HitSpark {
+            start: time,
+            anchor: Anchor::Unit(None),
+            way: [0.0, 1.0],
+            sparks: sparks([0.0, 1.0], |from, _| from),
+            paths: None,
+            placed: Vec::new(),
+            dark: false,
+        };
         assert_eq!((hit.tick(time + Duration::from_millis(799)), hit.tick(time + Duration::from_millis(800))), (49, HIT_TICKS));
         // A funnel of 10 sides: the inner edge 5 from its middle, the outer 10 out and 3.5 further along its way (north).
         let ring = hit.ring(0, [0.0; 3]);
@@ -5522,7 +5585,15 @@ mod tests {
         let mut effects = Effects::default();
         let time = Instant::now();
         let way = drift(0.0);
-        effects.hits.push(HitSpark { start: time, anchor: Anchor::Unit(Some(7)), way, sparks: sparks(way, |from, _| from), paths: None, placed: Vec::new() });
+        effects.hits.push(HitSpark {
+            start: time,
+            anchor: Anchor::Unit(Some(7)),
+            way,
+            sparks: sparks(way, |from, _| from),
+            paths: None,
+            placed: Vec::new(),
+            dark: false,
+        });
         // Not landed yet: it still follows the unit.
         effects.settle_hits(time - Duration::from_millis(1), |_| Some([1.0, 0.0, 1.0]), |_, _| 0.0);
         assert!(effects.hits[0].paths.is_none());
@@ -7031,5 +7102,35 @@ mod tests {
         // Anti-Magic: the dome on the caster for 200 ticks, its sound as before.
         assert!(table.struck(676).unwrap().contains(&(Who::Caster, ANTI_MAGIC)));
         assert_eq!((sounds(ANTI_MAGIC), table.lengths[&ANTI_MAGIC]), (vec![("effect\\kyrie_guard", 0, false)], 200));
+    }
+
+    #[test]
+    fn the_dark_hit_lope_and_the_warmth_have_their_rows_and_looks() {
+        let table = Table::load();
+        // 180: Darkness Attack, Curse Explosion and Spa; near-black sparks that /mineffect keeps; the ring and the random draws as EF_HIT1.
+        for skill in [190, 2600, 2602] {
+            assert_eq!(table.hit(skill), Some([Some(HIT_DARK), None]), "{skill}");
+        }
+        assert_eq!((spark_tint(true), spark_tint(false)), ([20.0 / 255.0; 3], [1.0; 3]));
+        assert_eq!([(true, true), (true, false), (false, true), (false, false)].map(|(min, dark)| sparks_shown(min, dark)), [true, false, true, true]);
+        assert_eq!(table.lengths[&HIT_DARK], 50);
+        // 411: Lope's use (beside 446), 300 ticks, no sound.
+        let used = table.used(5023).unwrap();
+        assert!(used.contains(&(Who::Caster, LOPE)) && used.contains(&(Who::Caster, 446)));
+        assert_eq!(table.lengths[&LOPE], 300);
+        assert!(!table.sounds.contains_key(&LOPE));
+        // 418: the warmth's eight glints, three passes each, from the rows that start it.
+        assert_eq!((4 * glint_sets(WARMTH_GLINTS), 4 * glint_sets(254)), (8, 16));
+        assert_eq!(WARMTH_ALPHAS, [40, 80, 120, 160]);
+        assert_eq!(glint_looks(WARMTH_GLINTS), vec![(2.0, [0xFF, 0x64, 0x64]), (2.4, [0x78, 0, 0]), (4.0, [0x78, 0, 0])]);
+        assert_eq!(glint_looks(254), vec![(GLINT_RADIUS, GLINT_COLOR)]);
+        for skill in [428, 429, 430] {
+            assert!(table.used(skill).unwrap().contains(&(Who::Caster, WARMTH_GLINTS)), "{skill}");
+        }
+        assert!([165, 166, 167, 232].iter().all(|&status| table.status(status).contains(&WARMTH_GLINTS)));
+        assert_eq!(table.lengths[&WARMTH_GLINTS], 99_999_999);
+        // At age 1 a glint's alpha is the lesser of its cycle's (148) and the age: 1; at 40 the cycle's own.
+        assert_eq!((glint_at(WARMTH_ALPHAS[3], 1).0.min(1), glint_at(WARMTH_ALPHAS[3], 1).0), (1, 148));
+        assert!(glint_at(WARMTH_ALPHAS[3], 40).0.min(40) <= 40);
     }
 }

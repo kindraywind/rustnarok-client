@@ -26,6 +26,7 @@ pub mod monk;
 pub mod napalm;
 pub mod notes;
 pub mod painter;
+pub mod petals;
 pub mod portal;
 pub mod radar;
 pub mod sage;
@@ -192,6 +193,7 @@ pub struct Prims {
     pub spears: spears::Spears,
     pub crowds: crowds::Crowds,
     pub chi: chi::Chi,
+    pub petals: petals::Petals,
     pub cells: cells::Cells,
     pub souls: souls::Souls,
     pub radar: radar::Radar,
