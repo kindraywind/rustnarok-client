@@ -2204,6 +2204,31 @@ fn reads_a_status_value() {
 }
 
 #[test]
+fn decodes_hat_effects() {
+    // clif_hat_effects: length, the unit, a status byte, then each hat effect's number.
+    let mut packet = ZC_EQUIPMENT_EFFECT.to_le_bytes().to_vec();
+    packet.extend_from_slice(&[0, 0]);
+    packet.extend_from_slice(&150_001u32.to_le_bytes());
+    packet.push(1);
+    for number in [226u16, 230, 5] {
+        packet.extend_from_slice(&number.to_le_bytes());
+    }
+    let length = packet.len() as u16;
+    packet[2..4].copy_from_slice(&length.to_le_bytes());
+    assert_eq!(length, 15);
+    let Some(MapEvent::HatEffects { id: 150_001, on: true, effects }) = decode_map_packet(&packet) else { panic!() };
+    assert_eq!(effects, [226, 230, 5]);
+    assert_eq!(packet_length(ZC_EQUIPMENT_EFFECT), Some(-1));
+
+    // Off, with none left.
+    let off = [0x3b, 0x0a, 9, 0, 1, 0, 0, 0, 0];
+    let Some(MapEvent::HatEffects { id: 1, on: false, effects }) = decode_map_packet(&off) else { panic!() };
+    assert!(effects.is_empty());
+    // A packet too short for its fields decodes to nothing.
+    assert!(decode_map_packet(&[0x3b, 0x0a, 8, 0, 1, 0, 0, 0]).is_none());
+}
+
+#[test]
 fn identifies_with_a_magnifier() {
     let mut autorun = vec![0x47, 0x01, 40, 0, 4, 0, 0, 0, 1, 0, 10, 0, 1, 0];
     autorun.extend_from_slice(&[0; 24]);

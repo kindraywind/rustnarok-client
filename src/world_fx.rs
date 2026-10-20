@@ -6,6 +6,8 @@
 // The per-skill objects come after this base; until then only the tests launch objects.
 #![allow(dead_code)]
 
+pub mod footprints;
+
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -579,6 +581,8 @@ pub struct Fx {
     pub a7: i32,
     /// A launch for the same owner and id returns this one.
     pub single: bool,
+    /// What the launcher told this copy apart by (a hat effect's number), 0 for none.
+    pub tag: u32,
     pub life: u32,
     pub far: bool,
     pub events: Vec<(u32, Event)>,
@@ -644,11 +648,12 @@ pub struct Launch {
     pub a7: Option<i32>,
     pub unique: bool,
     pub life: u32,
+    pub tag: u32,
 }
 
 impl Launch {
     pub fn at(id: u32, owner: Option<Option<u32>>, point: Vector) -> Self {
-        Self { id, owner, point, target: None, aim: point, a7: None, unique: false, life: 0 }
+        Self { id, owner, point, target: None, aim: point, a7: None, unique: false, life: 0, tag: 0 }
     }
 }
 
@@ -659,11 +664,19 @@ pub struct Object {
 }
 
 /// The registry and the running objects.
-#[derive(Default)]
 pub struct WorldFx {
     classes: HashMap<u32, Make>,
     objects: Vec<Object>,
     serial: u32,
+}
+
+impl Default for WorldFx {
+    /// An empty registry with the classes registered so far.
+    fn default() -> Self {
+        let mut fx = Self { classes: HashMap::new(), objects: Vec::new(), serial: 0 };
+        footprints::register(&mut fx);
+        fx
+    }
 }
 
 impl WorldFx {
@@ -706,6 +719,7 @@ impl WorldFx {
             length: LENGTH,
             a7: launch.a7.unwrap_or(-1),
             single: false,
+            tag: launch.tag,
             life: launch.life,
             far: false,
             events: Vec::new(),
@@ -721,6 +735,11 @@ impl WorldFx {
     /// Removes the running copy of (owner, id).
     pub fn remove(&mut self, owner: Option<Option<u32>>, id: u32) {
         self.objects.retain(|object| !(object.fx.owner == owner && object.fx.id == id));
+    }
+
+    /// Removes the running copy of (owner, id) that was launched with this tag.
+    pub fn remove_tagged(&mut self, owner: Option<Option<u32>>, id: u32, tag: u32) {
+        self.objects.retain(|object| !(object.fx.owner == owner && object.fx.id == id && object.fx.tag == tag));
     }
 
     pub fn remove_all_of(&mut self, owner: Option<Option<u32>>) {
@@ -871,7 +890,7 @@ mod tests {
             Some(id) => units.get(&id).copied(),
         };
         let body = |_: Option<u32>| None;
-        let scene = Scene { player, feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0] };
+        let scene = Scene { player, feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], ground: &|_, _| 0.0 };
         (0..count).flat_map(|_| fx.tick(&scene, &mut Fake::default())).collect()
     }
 

@@ -2808,7 +2808,16 @@ impl App {
                 .copied()
                 .or_else(|| owner.filter(|id| feet_of.contains_key(id) && !game.units.contains_key(id)).map(|_| world_str::Body::skill_unit()))
         };
-        let scene = world_str::Scene { player: player_feet, feet: &feet_of_unit, body: &body_of, longitude: yaw.to_degrees(), right: view.right, up: view.up };
+        let ground_at = |x: f32, z: f32| -game.world.gat.height_at([x / world::CELL, z / world::CELL]);
+        let scene = world_str::Scene {
+            player: player_feet,
+            feet: &feet_of_unit,
+            body: &body_of,
+            longitude: yaw.to_degrees(),
+            right: view.right,
+            up: view.up,
+            ground: &ground_at,
+        };
         // The world objects draw unless far, /effect hides them, or their owner's body is hidden.
         let effects_shown = |id: u32| effects_on || effects::force_drawn(id);
         let hidden = |unit: Option<u32>| {

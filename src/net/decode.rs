@@ -1100,6 +1100,11 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             id: packet[18],
             color: [packet[21], packet[20], packet[19]],
         },
+        ZC_EQUIPMENT_EFFECT if packet.len() >= 9 => MapEvent::HatEffects {
+            id: u32_at(4),
+            on: packet[8] != 0,
+            effects: packet[9..].chunks_exact(2).map(|number| u16::from_le_bytes([number[0], number[1]])).collect(),
+        },
         ZC_NOTIFY_EFFECT2 => MapEvent::Effect { id: u32_at(2), effect: u32_at(6), num: None },
         ZC_NOTIFY_EFFECT3 => MapEvent::Effect { id: u32_at(2), effect: u32_at(6), num: Some(i32_at(10)) },
         ZC_SHORTCUT_KEY_LIST => MapEvent::Hotkeys {

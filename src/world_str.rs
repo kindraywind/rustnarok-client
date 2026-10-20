@@ -317,6 +317,8 @@ pub struct Scene<'a> {
     /// The camera's right and up axes in the world.
     pub right: Vector,
     pub up: Vector,
+    /// The ground's height (world y) under a world x and z.
+    pub ground: &'a dyn Fn(f32, f32) -> f32,
 }
 
 /// A sound or a shake a tick fired.
@@ -698,7 +700,7 @@ mod tests {
             Some(id) => units.get(&id).copied(),
         };
         let body = |_: Option<u32>| None;
-        let scene = Scene { player, feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0] };
+        let scene = Scene { player, feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], ground: &|_, _| 0.0 };
         (0..count).flat_map(|_| worlds.tick(&scene)).collect()
     }
 
@@ -899,7 +901,7 @@ mod tests {
         let feet = |_: Option<u32>| Some([0.0; 3]);
         let body = |_: Option<u32>| None;
         for longitude in [10.0, 30.0, 5.0] {
-            let scene = Scene { player: [0.0; 3], feet: &feet, body: &body, longitude, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0] };
+            let scene = Scene { player: [0.0; 3], feet: &feet, body: &body, longitude, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], ground: &|_, _| 0.0 };
             worlds.tick(&scene);
         }
         // 10 → 30 turns by -20, 30 → 5 by +25.
@@ -935,7 +937,8 @@ mod tests {
         let serial = worlds.launch(&head, &launch(1035, Some(Some(7))), |_| Some(small(10))).unwrap();
         let feet = |_: Option<u32>| Some([10.0, 0.0, 10.0]);
         let body = |_: Option<u32>| Some(Body { height: 27.2, scale: 1.0, rides: false, doram: false });
-        let scene = Scene { player: [10.0, 0.0, 10.0], feet: &feet, body: &body, longitude: 0.0, right: [0.0, 0.0, 1.0], up: [0.0, 1.0, 0.0] };
+        let scene =
+            Scene { player: [10.0, 0.0, 10.0], feet: &feet, body: &body, longitude: 0.0, right: [0.0, 0.0, 1.0], up: [0.0, 1.0, 0.0], ground: &|_, _| 0.0 };
         worlds.tick(&scene);
         let copy = worlds.get_mut(serial).unwrap();
         assert!((copy.point[2] - 15.0).abs() < 1e-4 && (copy.point[1] - 43.2).abs() < 1e-3 && copy.point[0] == 10.0);
