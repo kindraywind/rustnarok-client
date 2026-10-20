@@ -2837,6 +2837,7 @@ impl App {
             hidden: &hidden,
             size: &size,
             ground: &ground_at,
+            dim: game.map.trim_end_matches(".gat") == "ecl_fild01",
         };
         game.effects.advance_world(gpu, grf, now, &scene, &fx_seen);
         // The Sight option (bit 0x1) keeps a flame circling its unit.

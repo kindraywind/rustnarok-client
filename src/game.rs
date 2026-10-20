@@ -1371,6 +1371,19 @@ impl Game {
         self.effects.aimed(gpu, grf, table, effect, ((unit != self.account_id).then_some(unit), 0, self.account_id), from, to, 0, Instant::now());
     }
 
+    /// A heal object on `unit`, standing where the unit is.
+    pub(crate) fn heal_object(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32) {
+        let key = (unit != self.account_id).then_some(unit);
+        let cell = match key {
+            None => Some(self.player.cell),
+            Some(id) => self.units.get(&id).map(|actor| actor.cell),
+        };
+        if let Some(cell) = cell {
+            let at = self.world.cell_position(cell.map(|value| value as f32));
+            self.effects.heal_object(gpu, grf, table, key, effect, at, Instant::now());
+        }
+    }
+
     /// Plays an effect on a unit told the skill's hit count (a bolt drops an arrow a hit).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn play_effect_hits(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant, hits: u16) {

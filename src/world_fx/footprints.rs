@@ -348,7 +348,7 @@ mod tests {
     fn pictures(fx: &WorldFx) -> Vec<(String, f32)> {
         let shows = |_: u32| true;
         let hidden = |_: Option<u32>| false;
-        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 };
+        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false };
         fx.faces(&seen)
             .iter()
             .map(|face| {
@@ -455,7 +455,7 @@ mod tests {
         tick(&mut fx, Some([30.0, 0.0, 20.0]), &eye, 30.0, 0.5);
         let shows = |_: u32| true;
         let hidden = |_: Option<u32>| false;
-        let seen = Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 };
+        let seen = Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false };
         let faces = fx.faces(&seen);
         assert_eq!(faces.len(), 1);
         // Each corner is on the ground under it (x · slope) + 2, the square 5 from the unit's place at its middle.
@@ -478,7 +478,7 @@ mod tests {
                 tick(&mut fx, Some(at), &eye, longitude, 0.0);
                 let shows = |_: u32| true;
                 let hidden = |_: Option<u32>| false;
-                let seen = Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 };
+                let seen = Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false };
                 let faces = fx.faces(&seen);
                 let [v0, v1] = [faces[0].vertices[0].position, faces[0].vertices[1].position];
                 let top = [(v0[0] + v1[0]) / 2.0 - at[0], (v0[2] + v1[2]) / 2.0 - at[2]];
@@ -519,7 +519,7 @@ mod tests {
         walk(&mut fx, [10.0, 0.0, 0.0]);
         let shows = |_: u32| true;
         let hidden = |unit: Option<u32>| unit == Some(UNIT);
-        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 };
+        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false };
         assert!(fx.faces(&seen).is_empty());
     }
 
@@ -582,7 +582,7 @@ mod tests {
         fx.tick(&scene(&feet, &body, &eye, &|_, _| 0.0), assets);
         let shows = |_: u32| true;
         let hidden = |_: Option<u32>| false;
-        fx.faces(&Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 }).len()
+        fx.faces(&Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false }).len()
     }
 
     #[test]
