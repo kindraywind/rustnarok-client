@@ -4261,11 +4261,13 @@ impl Effects {
         self.animations.retain_mut(|animation| {
             let Some(Some(sprite)) = sprites.get_mut(&animation.sprite) else { return false };
             // A ground unit's sprite starts again when its effect does, with new choices.
-            if let (true, Anchor::Lasting(unit, _)) = (animation.restarts, animation.anchor) {
+            if let (true, Anchor::Lasting(unit, _), Some(length)) = (animation.restarts, animation.anchor, animation.length) {
                 let kind = unit_kinds.get(&unit).copied().unwrap_or(0);
-                let period = tick * restart_ticks(animation.effect, kind, animation.length.unwrap_or(1));
-                while now >= animation.start + period {
-                    animation.start += period;
+                let period = tick * restart_ticks(animation.effect, kind, length);
+                // After a stall it starts once, on the period it is in.
+                let missed = (now.saturating_duration_since(animation.start).as_nanos() / period.as_nanos().max(1)) as u32;
+                if missed > 0 {
+                    animation.start += period * missed;
                     animation.roll(|n| pick(0, n.saturating_sub(1)));
                 }
                 animation.end = Some(animation.start + period);

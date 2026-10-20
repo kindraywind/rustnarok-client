@@ -106,7 +106,7 @@ const HEAD_CRUSH_RAYS: RayLook = RayLook {
 const JOINT_BEAT_RAYS: RayLook =
     RayLook { prims: 6, core: [channel(50); 3], core_additive: true, edge: [channel(250); 3], edge_additive: false, glow: [0xFF; 3], glow_end: 50 };
 
-/// Dust's 24 rays are Joint Beat's, without the caster's outline.
+/// Dust's 24 rays are Joint Beat's, without the caster's outline (it lasts from tick 20 to the tick 0, which is never).
 const DUST_RAYS: RayLook = RayLook { glow_end: 0, ..JOINT_BEAT_RAYS };
 
 struct Martyr {
