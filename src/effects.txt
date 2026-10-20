@@ -731,18 +731,14 @@ skill	2319	effectId	909
 skill	2325	effectId	910
 skill	2328	effectId	888
 skill	2414	groundEffectId	856
-skill	2415	effectId	860
 skill	2417	effectId	863
 skill	2418	effectId	857
-skill	2419	groundEffectId	860
 skill	2420	groundEffectId	879
 skill	2422	effectId	858
 skill	2423	effectId	861
-skill	2424	effectId	862
 skill	2427	effectIdOnCaster	865
 skill	2427	groundEffectId	868
 skill	2428	effectIdOnCaster	867
-skill	2428	groundEffectId	866
 skill	2430	effectIdOnCaster	871
 skill	2430	groundEffectId	870
 skill	2431	effectIdOnCaster	871
@@ -1423,17 +1419,6 @@ part	767	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=t
 part	767	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터10.tga
 part	767	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터10.tga
 part	856	3D	file=effect/melody_b.bmp;red=1;green=0.6;blue=0.6;alphaMax=0.6;attachedEntity=true;duration=100;size=50;posz=0.5;repeat=true
-part	860	3D	file=effect/melody_a.bmp;red=0.6;green=0.6;blue=1;alphaMax=0.6;attachedEntity=true;duration=100;size=50;posz=0.5;repeat=true
-part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.55;blue=0.55;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=850;zIndex=10;file=effect/priest_spell.bmp
-part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.6;blue=0.6;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=800;zIndex=10;file=effect/priest_spell.bmp
-part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.65;blue=0.65;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=750;zIndex=10;file=effect/priest_spell.bmp
-part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.7;blue=0.7;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=700;zIndex=10;file=effect/priest_spell.bmp
-part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.75;blue=0.75;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=650;zIndex=10;file=effect/priest_spell.bmp
-part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.8;blue=0.8;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=600;zIndex=10;file=effect/priest_spell.bmp
-part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.85;blue=0.85;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=550;zIndex=10;file=effect/priest_spell.bmp
-part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.9;blue=0.9;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=500;zIndex=10;file=effect/priest_spell.bmp
-part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=0.95;blue=0.95;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=450;zIndex=10;file=effect/priest_spell.bmp
-part	862	3D	alphaMax=0.3;blendMode=2;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1500;fadeIn=true;fadeOut=true;posz=7;sizeEnd=100;sizeSmooth=true;sizeStart=400;zIndex=10;file=effect/priest_spell.bmp
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=30000;red=0.0001;green=1.0;blue=0.0001;size=400;posz=7;zIndex=1;wav=effect/ef_readyportal;file=effect/ef_epitree.tga
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=990;duplicate=15;timeBetweenDupli=2000;red=0.0001;green=1.0;blue=0.0001;sizeStart=380;sizeEnd=420;posz=7;zIndex=1;file=effect/ef_epitree.tga
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=990;duplicate=15;timeBetweenDupli=2000;delayOffset=1000;red=0.0001;green=1.0;blue=0.0001;sizeStart=420;sizeEnd=380;posz=7;zIndex=1;file=effect/ef_epitree.tga
@@ -2048,14 +2033,15 @@ wav	830	effect\EF_BeginSpell	16	listener
 wav	831	effect\EF_BeginSpell	0
 wav	832	effect\기공포	0	listener
 wav	833	effect\AB_duplelight	0	listener
+wav	853	effect\사망의골짜기에서	0	listener
 wav	856	effect\reverberation	0
 wav	857	effect\rainstorm	0
 wav	858	effect\안식의자장가	0
-wav	860	effect\나락의노래	0
+wav	860	effect\POEMOFNETHERWORLD	0
 wav	861	effect\순환하는자연의소리	0
-wav	862	effect\ab_ancilla	0
+wav	862	effect\AB_ancilla	0	listener
 wav	863	effect\LG_EARTHDRIVE	0	listener
-wav	866	effect\워그와함께춤을	0
+wav	866	effect\워그와함께춤을	0	listener
 wav	868	effect\마나의노래	0
 wav	870	effect\새터데이나이트피버	0
 wav	872	effect\레라드의이슬	0
@@ -4694,6 +4680,7 @@ used	2382	target	848
 used	2383	target	849
 used	2383	caster	849
 used	2421	target	861
+used	2421	target	853
 used	2422	target	969
 used	2423	target	861
 used	2424	target	862

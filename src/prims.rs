@@ -10,6 +10,7 @@ pub mod boomerang;
 pub mod brawl;
 pub mod burst;
 pub mod circle;
+pub mod crowds;
 pub mod dancer;
 pub mod first;
 pub mod ground;
@@ -181,6 +182,7 @@ pub struct Prims {
     pub holes: holes::Holes,
     pub waves: waves::Waves,
     pub spears: spears::Spears,
+    pub crowds: crowds::Crowds,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -608,6 +610,7 @@ impl Prims {
         self.mechanic.forget(unit);
         self.holes.forget(unit);
         self.waves.forget(unit);
+        self.crowds.forget(unit);
         self.shafts.forget(unit);
     }
 
