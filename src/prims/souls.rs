@@ -17,6 +17,8 @@ const SPEED: f32 = 0.07;
 
 /// Harmonize's three dots (#2828FF, #0A0AFF, #4646FF) and Arrullo's three pinks, one for all three dots of a band.
 const BLUES: [[f32; 3]; 3] = [rgb(0x28, 0x28, 0xFF), rgb(0x0A, 0x0A, 0xFF), rgb(0x46, 0x46, 0xFF)];
+/// Soul Link's sparkles (#5050FF).
+const SOUL_BLUE: [f32; 3] = rgb(0x50, 0x50, 0xFF);
 const PINKS: [[f32; 3]; 3] = [rgb(0xFF, 0xC8, 0xC8), rgb(0xFF, 0xA0, 0xA0), rgb(0xFF, 0x78, 0x78)];
 
 const fn rgb(red: u8, green: u8, blue: u8) -> [f32; 3] {
@@ -33,6 +35,8 @@ struct Band {
     alpha: f32,
     /// Which pink (0 to 2) a band of 932 has, none for 850.
     pink: Option<usize>,
+    /// Soul Link's sparkles (506): all three dots #5050FF.
+    soul: bool,
     dots: [Vector; 3],
 }
 
@@ -77,7 +81,7 @@ impl Band {
             turn[pair] = rand(360) as i32;
         }
         let pink = arrullo.then(|| rand(3) as usize);
-        Self { size, angle, turn, n: 0, alpha: 0.0, pink, dots: [at; 3] }
+        Self { size, angle, turn, n: 0, alpha: 0.0, pink, soul: false, dots: [at; 3] }
     }
 
     /// One tick: the angles wander, the alpha follows its curve and the dots drift.
@@ -129,6 +133,15 @@ impl Souls {
         self.lights.push(Lights { unit, start: now, done: 0, bands });
     }
 
+    /// Soul Link's sparkles (506) on `unit` from the offset `at`: Harmonize's bands with every dot #5050FF.
+    pub fn launch_soul(&mut self, unit: Option<u32>, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let mut bands = [(); 2].map(|()| Band::new(false, at, &mut rand));
+        for band in &mut bands {
+            band.soul = true;
+        }
+        self.lights.push(Lights { unit, start: now, done: 0, bands });
+    }
+
     pub fn forget(&mut self, unit: u32) {
         self.lights.retain(|lights| lights.unit != Some(unit));
     }
@@ -158,6 +171,7 @@ impl Souls {
                         continue;
                     }
                     let tint = match band.pink {
+                        _ if band.soul => SOUL_BLUE,
                         Some(pink) => PINKS[pink],
                         None => BLUES[index],
                     };
@@ -300,6 +314,36 @@ mod tests {
         souls.advance(start + TICK * 99, |_| 0);
         assert!(souls.dots(feet).is_empty() && !souls.lights.is_empty());
         souls.advance(start + TICK * 100, |_| 0);
+        assert!(souls.lights.is_empty());
+    }
+
+    #[test]
+    fn soul_links_sparkles_are_harmonizes_dots_all_in_blue() {
+        let start = Instant::now();
+        let at = [3.0, 40.0, 0.0];
+        let mut souls = Souls::default();
+        let mut draws = Vec::new();
+        souls.launch_soul(Some(1), at, start, |n| {
+            draws.push(n);
+            0
+        });
+        // Two bands, 13 draws each (R(11) then twelve R(360)), no colour draw; every dot starts at the launch offset.
+        assert_eq!(draws.len(), 26);
+        assert!(souls.lights[0].bands.iter().all(|band| band.dots == [at; 3] && band.soul && band.pink.is_none()));
+        souls.advance(start + TICK * 2, |_| 0);
+        let feet = |_: Option<u32>| Some([10.0, 1.0, 10.0]);
+        let dots = souls.dots(feet);
+        assert_eq!(dots.len(), 6);
+        assert!(dots.iter().all(|dot| dot.tint == SOUL_BLUE && dot.alpha == 40.0));
+        assert!((SOUL_BLUE[0] * 255.0).round() == 80.0 && (SOUL_BLUE[2] * 255.0).round() == 255.0);
+        // They follow the unit; Harmonize's own blues are unchanged.
+        assert!(souls.dots(|_| Some([100.0, 1.0, 100.0])).iter().all(|dot| dot.at[0] > 90.0));
+        let mut harmonize = Souls::default();
+        harmonize.launch(false, Some(1), at, start, |_| 0);
+        harmonize.advance(start + TICK * 2, |_| 0);
+        assert_eq!(harmonize.dots(feet)[0].tint, BLUES[0]);
+        // Gone after tick 100.
+        souls.advance(start + TICK * 101, |_| 0);
         assert!(souls.lights.is_empty());
     }
 }
