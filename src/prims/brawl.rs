@@ -17,6 +17,7 @@ pub const LENS: [&str; 2] = ["data\\texture\\effect\\lens1.tga", "data\\texture\
 pub const WHITE: &str = "data\\texture\\effect\\white02.bmp";
 pub const STORM: &str = "data\\texture\\effect\\storm2.tga";
 pub const STRIP: &str = "data\\texture\\effect\\line3.tga";
+pub const GOLD_STRIP: &str = "data\\texture\\effect\\line3y.tga";
 pub const RAY: &str = sniper::RAY;
 pub const CLOUD: &str = sniper::CLOUD;
 
@@ -41,6 +42,9 @@ const SPIN_TICKS: u32 = 48;
 /// Dark Illusion: 8 prims of 4 pale lines, drawn for ages 1 to 49.
 const STRIP_PRIMS: usize = 8;
 const STRIP_LAST: u32 = 49;
+/// Hundred Spear's lines: 120 ticks, in pale yellows.
+const GOLD_LAST: u32 = 119;
+const GOLD_TINTS: [[f32; 3]; 3] = [[1.0, 1.0, 225.0 / 255.0], [1.0, 1.0, 205.0 / 255.0], [1.0, 1.0, 185.0 / 255.0]];
 const STRIP_TINTS: [[f32; 3]; 3] = [[225.0 / 255.0, 225.0 / 255.0, 1.0], [205.0 / 255.0, 205.0 / 255.0, 1.0], [185.0 / 255.0, 185.0 / 255.0, 1.0]];
 
 /// A whole angle as the game's tables read it: a negative one a degree up, one past 360 as a − 181.
@@ -320,13 +324,26 @@ pub struct Strip {
     length: f32,
     colour: usize,
     speed: f32,
+    /// How much faster it gets each tick.
+    growth: f32,
 }
 
 struct Lines {
+    /// Hundred Spear's gold lines instead of Dark Illusion's pale ones.
+    gold: bool,
     start: Instant,
     from: Vector,
     heading: f32,
     strips: Vec<Strip>,
+}
+
+/// Hundred Spear's line alpha at its age a: 20 a tick to 200, held to 20, then 2 less a tick.
+pub fn gold_alpha(a: u32) -> f32 {
+    match a {
+        1..=10 => 20.0 * a as f32,
+        11..=20 => 200.0,
+        _ => (200.0 - 2.0 * (a - 20) as f32).max(0.0),
+    }
 }
 
 /// A line's alpha at its age a: 12 a tick to 120, held to 20, then 4 less a tick.
@@ -341,7 +358,7 @@ pub fn strip_alpha(a: u32) -> f32 {
 impl Strip {
     /// How far along its run it is at age a: 100 units back to 100 on, then round again.
     pub fn at(&self, a: u32) -> f32 {
-        (self.phase + self.speed * a as f32) % 200.0
+        (self.phase + self.speed * a as f32 + self.growth * (a * (a + 1)) as f32 / 2.0) % 200.0
     }
 }
 
@@ -553,21 +570,30 @@ impl Brawl {
     }
 
     /// Dark Illusion's 32 lines from the caster's feet `from` toward `to`, each streak's choices from `rand(n)`.
-    pub fn lines(&mut self, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    pub fn lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make_lines(false, from, to, now, rand);
+    }
+
+    /// Hundred Spear's 32 gold lines, quicker and longer, the same way.
+    pub fn spear_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make_lines(true, from, to, now, rand);
+    }
+
+    fn make_lines(&mut self, gold: bool, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
         let mut strips = Vec::new();
         for prim in 0..STRIP_PRIMS {
             for _ in 0..4 {
                 let side = (15 + rand(11)) as f32 * if prim % 2 == 0 { -1.0 } else { 1.0 };
                 let phase = rand(200) as f32;
-                let half = 0.3 + 0.1 * rand(4) as f32;
-                let length = (20 + rand(31)) as f32;
+                let half = if gold { 0.5 + 0.1 * rand(6) as f32 } else { 0.3 + 0.1 * rand(4) as f32 };
+                let length = if gold { (40 + rand(31)) as f32 } else { (20 + rand(31)) as f32 };
                 let colour = rand(3) as usize;
-                let speed = 1.5 + 0.1 * rand(21) as f32;
-                strips.push(Strip { side, phase, half, length, colour, speed });
+                let (speed, growth) = if gold { (1.0 + 0.1 * rand(11) as f32, 0.05) } else { (1.5 + 0.1 * rand(21) as f32, 0.0) };
+                strips.push(Strip { side, phase, half, length, colour, speed, growth });
             }
         }
         let heading = bearing(to[0] - from[0], to[2] - from[2]) as f32;
-        self.lines.push(Lines { start: now, from, heading, strips });
+        self.lines.push(Lines { gold, start: now, from, heading, strips });
     }
 
     /// A shake of `unit`'s parts on ticks `first` to `last` (Dark Illusion's 0 to 34, Sky Net Blow's 31 to 50).
@@ -625,7 +651,7 @@ impl Brawl {
         self.hops.retain(|hops| passes(hops.start, now) <= 100);
         self.rays.retain(|rays| passes(rays.start, now) <= RAY_LAST + 1);
         self.tornados.retain(|tornado| passes(tornado.start, now) <= TORNADO_LAST + 1);
-        self.lines.retain(|lines| passes(lines.start, now) <= STRIP_LAST + 1);
+        self.lines.retain(|lines| passes(lines.start, now) <= if lines.gold { GOLD_LAST } else { STRIP_LAST } + 1);
         self.spreads.retain(|spread| passes(spread.start, now) <= 100);
         self.spins.retain(|spin| passes(spin.start, now) <= SPIN_TICKS + 1);
         self.shakes.retain(|shake| passes(shake.start, now) <= shake.last + 1);
@@ -757,7 +783,7 @@ impl Brawl {
         for lines in &self.lines {
             let Some(t) = passes(lines.start, now).checked_sub(1) else { continue };
             let a = t + 1;
-            if a > STRIP_LAST {
+            if a > if lines.gold { GOLD_LAST } else { STRIP_LAST } {
                 continue;
             }
             let (sin, cos) = lines.heading.to_radians().sin_cos();
@@ -767,8 +793,9 @@ impl Brawl {
                 let middle = [lines.from[0] + strip.side * side_cos, lines.from[1] + 6.0, lines.from[2] + strip.side * side_sin];
                 let (head, tail) = (strip.at(a) + strip.length - 100.0, strip.at(a) - 100.0);
                 let place = |along: f32, across: f32| [middle[0] + cos * along - sin * across, middle[1], middle[2] + sin * along + cos * across];
-                let rgb = STRIP_TINTS[strip.colour];
-                let tint = [rgb[0], rgb[1], rgb[2], strip_alpha(a) / 255.0];
+                let rgb = if lines.gold { GOLD_TINTS[strip.colour] } else { STRIP_TINTS[strip.colour] };
+                let alpha = if lines.gold { gold_alpha(a) } else { strip_alpha(a) };
+                let tint = [rgb[0], rgb[1], rgb[2], alpha / 255.0];
                 let [p, q, r, s] = [
                     MeshVertex { position: place(head, -strip.half), uv: [0.0, 0.0], tint },
                     MeshVertex { position: place(head, strip.half), uv: [0.0, 1.0], tint },
@@ -777,7 +804,7 @@ impl Brawl {
                 ];
                 vertices.extend([p, q, r, p, r, s]);
             }
-            walls.push(Wall { texture: STRIP, vertices, additive: false, forced: false });
+            walls.push(Wall { texture: if lines.gold { GOLD_STRIP } else { STRIP }, vertices, additive: false, forced: false });
         }
         walls
     }
@@ -1117,5 +1144,34 @@ mod tests {
         brawl.manhole(None);
         brawl.forget(3);
         assert!(brawl.glow(None, start).is_some());
+    }
+
+    #[test]
+    fn hundred_spear_races_32_gold_lines_and_lights_the_caster() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.spear_lines([10.0, 1.0, 10.0], [50.0, 1.0, 10.0], start, |_| 0);
+        let strips = &brawl.lines[0].strips;
+        // 16 each side; every draw 0: s ∓ 15, phase 0, half-width 0.5, length 40, speed 1.0, colour #FFFFE1.
+        assert_eq!(strips.len(), 32);
+        assert_eq!(strips.iter().filter(|strip| strip.side == -15.0).count(), 16);
+        assert!(strips.iter().all(|strip| strip.phase == 0.0
+            && strip.half == 0.5
+            && strip.length == 40.0
+            && strip.speed == 1.0
+            && strip.colour == 0
+            && strip.growth == 0.05));
+        // Alpha at n = 1, 10, 20, 21, 120: 20, 200, 200, 198, 0; the speed 6.0 above its start after 120 ticks.
+        assert_eq!([1, 10, 20, 21, 120].map(gold_alpha), [20.0, 200.0, 200.0, 198.0, 0.0]);
+        assert!((strips[0].at(120) - (1.0 * 120.0 + 0.05 * 120.0 * 121.0 / 2.0) % 200.0).abs() < 1e-3);
+        assert_eq!(strips[0].growth * 120.0, 6.0);
+        // Drawn over everything in the gold picture, blended; the tints are #FFFFE1 …; gone after tick 118.
+        let walls = brawl.top_meshes(start);
+        assert_eq!(walls.len(), 1);
+        assert!(!walls[0].additive && walls[0].texture == GOLD_STRIP && walls[0].vertices[0].tint[..3] == [1.0, 1.0, 225.0 / 255.0]);
+        assert!(!brawl.top_meshes(start + TICK * 118).is_empty() && brawl.top_meshes(start + TICK * 119).is_empty());
+        // Dark Illusion's pale lines are unchanged.
+        brawl.lines([0.0; 3], [40.0, 0.0, 0.0], start, |_| 0);
+        assert!(brawl.lines[1].strips.iter().all(|strip| strip.growth == 0.0 && strip.speed == 1.5));
     }
 }

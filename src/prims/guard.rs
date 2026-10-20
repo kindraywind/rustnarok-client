@@ -108,6 +108,8 @@ enum Flicker {
     Outlined([u8; 3], u32),
     /// Detonator's lilac flush (ticks 10 to 33).
     Concentration,
+    /// Hundred Spear's pale yellow glow: outline copies and #FFFF96, ticks 20 to 100.
+    Spear,
     /// Sonic Wave's blue strobe: outline copies added on in #0505FF on even ticks 4 to 52, white on the odd ones.
     Sonic,
     /// Deadly Infect's black and white blink: white on the odd ticks, black on the even, ticks 6 to 60.
@@ -185,6 +187,7 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
             (10..=50).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) })
         }
         Flicker::Outlined(rgb, last) => (e <= last).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb)) } else { (GLOW_OUTLINE, Some([255; 3])) }),
+        Flicker::Spear => (20..=100).contains(&e).then_some((GLOW_OUTLINE, Some([0xFF, 0xFF, 0x96]))),
         Flicker::Sonic => (4..=52).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([5, 5, 0xFF])) } else { (0, Some([255; 3])) }),
         Flicker::Blink => (6..=60).contains(&e).then_some((0, Some(if even { [0; 3] } else { [255; 3] }))),
         Flicker::Concentration => (10..=33).contains(&e).then_some((if even { GLOW_ADDITIVE } else { 0 }, Some(LILAC))),
@@ -355,6 +358,11 @@ impl Guard {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0x9B, 0x9B, 0xFF], 60) });
     }
 
+    /// Hundred Spear's glow on `unit`.
+    pub fn spear(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Spear });
+    }
+
     /// Sonic Wave's blue strobe of `unit`.
     pub fn sonic(&mut self, unit: Option<u32>, now: Instant) {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Sonic });
@@ -501,6 +509,7 @@ impl Guard {
                 Flicker::Outlined(rgb, last) if e > last => fade_back(rgb, e - last),
                 Flicker::Concentration if e > 33 => fade_back(LILAC, e - 33),
                 Flicker::Blink if e > 60 => fade_back([0; 3], e - 60),
+                Flicker::Spear if e > 100 => fade_back([0xFF, 0xFF, 0x96], e - 100),
                 Flicker::Sonic if e > 52 => fade_back([5, 5, 0xFF], e - 52),
                 _ => None,
             }
@@ -807,5 +816,18 @@ mod tests {
         assert_eq!(glow(5), Some((0, Some([255; 3]))));
         assert!(glow(52).is_some() && glow(51).unwrap().0 == 0);
         assert_eq!(guard.body_tint(Some(1), start + TICK * 53), Some([13, 13, 255]));
+    }
+
+    #[test]
+    fn hundred_spear_glows_the_rune_knight_pale_yellow() {
+        use crate::actor::GLOW_OUTLINE;
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.spear(Some(1), start);
+        let glow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        // The outline copies and #FFFF96 on ticks 20 to 100, the body itself not added on; nothing on 19 and 101.
+        assert!(glow(19).is_none() && glow(101).is_none());
+        assert_eq!((glow(20), glow(100)), (Some((GLOW_OUTLINE, Some([0xFF, 0xFF, 0x96]))), Some((GLOW_OUTLINE, Some([0xFF, 0xFF, 0x96])))));
+        assert_eq!(guard.body_tint(Some(1), start + TICK * 101), Some([0xFF, 0xFF, 0x9E]));
     }
 }

@@ -739,7 +739,6 @@ skill	2420	groundEffectId	879
 skill	2422	effectId	858
 skill	2423	effectId	861
 skill	2424	effectId	862
-skill	2425	effectId	847
 skill	2427	effectIdOnCaster	865
 skill	2427	groundEffectId	868
 skill	2428	effectIdOnCaster	867
@@ -1604,6 +1603,7 @@ func	666	quake	1120	650
 func	668	quake	0	650
 func	732	quake	0	200
 func	756	quake	288	200
+func	835	quake	704	650
 func	863	quake	0	650
 unit	133	141
 rsm	143	외부소품\트랩03_3
@@ -2048,7 +2048,6 @@ wav	830	effect\EF_BeginSpell	16	listener
 wav	831	effect\EF_BeginSpell	0
 wav	832	effect\기공포	0	listener
 wav	833	effect\AB_duplelight	0	listener
-wav	847	effect\수줍은하루의우울	0
 wav	856	effect\reverberation	0
 wav	857	effect\rainstorm	0
 wav	858	effect\안식의자장가	0
@@ -4267,6 +4266,7 @@ struck	742	target	923
 struck	2448	target	923
 struck	2002	caster	832
 struck	2004	caster	723
+struck	2004	caster	835
 struck	2012	target	589
 struck	2022	caster	1568
 struck	2023	caster	457
@@ -5146,3 +5146,6 @@ skillwav	2014	effect\닌자_던지기	0	listener
 skillwav	2028	effect\t_낙법	0	listener
 skillwav	2021	effect\수둔	0	listener
 hitwav	2034	effect\mon_맹룡과강	0	listener
+skillwav	2350	effect\스윙댄스	0	listener
+skillwav	2351	effect\연인들을위한심포니	0	listener
+skillwav	2352	effect\AB_judex	0	listener

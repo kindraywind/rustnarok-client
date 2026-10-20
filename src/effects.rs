@@ -13,7 +13,7 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, bolts, boomerang, brawl, burst, circle, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter, sage, shafts, shards,
-    sight, sniper, songs, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
+    sight, sniper, songs, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1872,6 +1872,12 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Hundred Spear's gold lines, Swing Dance's pink flicker, Harmonize's emitter and Great Echo's "V" (`prims::brawl`,
+/// `prims::songs`, `prims::spears`).
+const SPEAR_RUSH: u32 = 835;
+const SWING_DANCE: u32 = 847;
+const HARMONIZE: u32 = 849;
+const GREAT_ECHO_V: u32 = 863;
 /// Sonic Wave's crescents and Duple Light's orbs (`prims::waves`).
 const SONIC_WAVE: u32 = 832;
 const DUPLE_LIGHT: u32 = 833;
@@ -2016,7 +2022,9 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 33] = [
+pub const AIMED: [u32; 35] = [
+    SPEAR_RUSH,
+    GREAT_ECHO_V,
     SONIC_WAVE,
     SHADOW_LINK,
     BOOST_KNUCKLE,
@@ -2393,6 +2401,11 @@ impl Effects {
                 }
                 self.prims.waves.duple_light(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
+            (SWING_DANCE, Target::Unit(unit)) => {
+                self.textures.entry(songs::STREAK_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, songs::STREAK_TEXTURE, true).ok());
+                self.prims.songs.swing_dance(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (HARMONIZE, Target::Unit(unit)) => self.prims.spears.emitter(unit, now),
             (STRIP_ACCESSORY, _) => {
                 for path in guard::ACCESSORIES {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
@@ -3190,6 +3203,18 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.waterballs.throw(from, to, now);
             }
+            SPEAR_RUSH => {
+                self.textures.entry(brawl::GOLD_STRIP.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::GOLD_STRIP, true).ok());
+                self.play_quakes(table, id, now);
+                self.prims.brawl.spear_lines(from, to, now, |n| pick(0, n.saturating_sub(1)));
+                self.prims.guard.spear(caster, now);
+            }
+            GREAT_ECHO_V => {
+                self.textures.entry(spears::LINE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, spears::LINE, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.play_quakes(table, id, now);
+                self.prims.spears.chevron(from, to, now);
+            }
             SONIC_WAVE => {
                 for path in songs::BUBBLES {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
@@ -3264,6 +3289,9 @@ impl Effects {
         self.prims.brawl.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.mechanic.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.waves.advance(now, |n| pick(0, n.saturating_sub(1)));
+        // Harmonize's lights (effect 850) have no look yet: what the emitters launch is let go.
+        self.prims.spears.advance(now);
+        let _ = self.prims.spears.take_launched();
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -3796,6 +3824,9 @@ impl Effects {
                     .meshes(now, |n| pick(0, n.saturating_sub(1)))
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
+                self.prims.spears.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
             .chain(
                 self.prims
@@ -5911,5 +5942,29 @@ mod tests {
         // Duple Light: on the status and on the skill's target; its sound at the listener.
         assert!(table.status(350).contains(&DUPLE_LIGHT) && table.used(2054).unwrap().contains(&(Who::Target, DUPLE_LIGHT)));
         assert_eq!(sounds(DUPLE_LIGHT), [("effect\\AB_duplelight", 0, true)]);
+    }
+
+    #[test]
+    fn hundred_spear_swing_dance_harmonize_and_great_echo_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Hundred Spear: both effects with the damage, the quake at tick 44 for 650 ms, no sound of its own.
+        let struck = table.struck(2004).unwrap();
+        assert!(struck.contains(&(Who::Caster, 723)) && struck.contains(&(Who::Caster, SPEAR_RUSH)));
+        assert!(AIMED.contains(&SPEAR_RUSH) && !table.sounds.contains_key(&SPEAR_RUSH));
+        assert_eq!(table.quakes[&SPEAR_RUSH], [(Duration::from_millis(704), QUAKE_LONG)]);
+        // Swing Dance and its sisters flicker the target, each with its own sound at the listener from its use, none by effect.
+        assert!([2350, 2351, 2352].iter().all(|&skill| table.used(skill).unwrap().contains(&(Who::Target, SWING_DANCE))));
+        assert!(!table.sounds.contains_key(&SWING_DANCE) && table.skill(2425, "effectId").is_empty());
+        let files = [2350, 2351, 2352].map(|skill| (table.skill_sounds[&skill][0].file.as_str(), table.skill_sounds[&skill][0].listener));
+        assert_eq!(files, [("effect\\스윙댄스", true), ("effect\\연인들을위한심포니", true), ("effect\\AB_judex", true)]);
+        // Harmonize: an emitter on both units; effect 850 has no line.
+        let used = table.used(2383).unwrap();
+        assert!(used.contains(&(Who::Target, HARMONIZE)) && used.contains(&(Who::Caster, HARMONIZE)));
+        assert!(!table.sounds.contains_key(&850) && !table.floaters.contains_key(&850) && !table.rings.contains_key(&850));
+        // Great Echo's "V": launched from the caster at the target, with the sound and the shake it had.
+        assert!(AIMED.contains(&GREAT_ECHO_V) && table.struck(2426).unwrap().contains(&(Who::Caster, GREAT_ECHO_V)));
+        assert_eq!(sounds(GREAT_ECHO_V), [("effect\\LG_EARTHDRIVE", 0, true)]);
+        assert_eq!(table.quakes[&GREAT_ECHO_V], [(Duration::ZERO, QUAKE_LONG)]);
     }
 }
