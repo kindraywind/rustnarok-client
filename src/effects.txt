@@ -1895,6 +1895,11 @@ wav	590	effect\priest_resurrection	0
 wav	460	ice_titan_attack	80
 wav	564	effect\ef_beginspell	0
 wav	1224	effect\mon_침투경	80
+wav	1206	effect\T_날라차기	80	listener
+wav	1206	effect\T_날라차기	320	listener
+wav	1206	effect\T_날라차기	560	listener
+wav	1206	effect\T_날라차기	800	listener
+wav	1206	effect\T_날라차기	1040	listener
 wav	604	effect\ef_hit6	0
 wav	599	effect\EF_BeginSpell	80
 wav	602	effect\ef_hit6	320
@@ -5215,6 +5220,10 @@ length	1003	99999999
 length	1004	99999999
 length	1224	50
 length	1420	99999999
+length	1206	200
+length	1207	200
+length	1208	200
+length	1210	200
 length	623	300
 length	624	200
 length	627	300

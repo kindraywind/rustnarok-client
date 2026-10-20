@@ -574,11 +574,27 @@ impl Prims {
 
     /// Indulge (EF_ENERGYDRAIN3) round the caster's feet `at`: three sparks on each of five ticks, each flying out against a
     /// heading of its own and back; their choices from `rand(n)` in the order the game draws them.
-    pub fn indulge(&mut self, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    pub fn indulge(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.spark_waves(at, now, None, rand);
+    }
+
+    /// Kaute's 15 grey sparks round `at`: near white for the target (1207), dark for the caster (1208).
+    pub fn kaute_sparks(&mut self, at: Vector, now: Instant, dark: bool, rand: impl FnMut(u32) -> u32) {
+        self.spark_waves(at, now, Some(if dark { (20, 100) } else { (200, 55) }), rand);
+    }
+
+    /// Five waves of three sparks: green (two draws of 81) or grey (one level, the base and the draw's range).
+    fn spark_waves(&mut self, at: Vector, now: Instant, grey: Option<(u32, u32)>, mut rand: impl FnMut(u32) -> u32) {
         for wave in 0..5 {
             for angle in [-90.0, 0.0, 90.0] {
                 let (first, second) = (rand(7) as f32, rand(7) as f32);
-                let (red, blue) = (rand(81) as f32, rand(81) as f32);
+                let tint = match grey {
+                    Some((base, spread)) => [(base + rand(spread)) as f32 / 255.0; 3],
+                    None => {
+                        let (red, blue) = (rand(81) as f32, rand(81) as f32);
+                        [(160.0 + red) / 255.0, 1.0, (160.0 + blue) / 255.0]
+                    }
+                };
                 let scale = 1.0 + 0.1 * rand(6) as f32;
                 self.ghosts.push(Ghost::from_spec(GhostSpec {
                     start: now + TICK * wave,
@@ -592,7 +608,7 @@ impl Prims {
                     turn: lookup(angle),
                     trail_len: 7,
                     scale,
-                    tint: [(160.0 + red) / 255.0, 1.0, (160.0 + blue) / 255.0],
+                    tint,
                     red: false,
                 }));
             }
@@ -940,6 +956,44 @@ mod tests {
         assert_eq!(prims.ghosts().len(), 21);
         prims.advance(start + TICK * 60);
         assert!(prims.ghosts.is_empty());
+    }
+
+    #[test]
+    fn kaute_loops_fifteen_grey_sparks_out_and_back() {
+        let start = Instant::now();
+        let at = [10.0, 1.0, 10.0];
+        let mut prims = Prims::default();
+        // Every draw 0: near white 200 for the target, dark 20 for the caster, all three channels equal.
+        prims.kaute_sparks(at, start, false, |_| 0);
+        prims.kaute_sparks(at, start, true, |_| 0);
+        let tints: Vec<[f32; 3]> = prims.ghosts.iter().map(|ghost| ghost.tint).collect();
+        assert_eq!(prims.ghosts.len(), 30);
+        assert!(tints[..15].iter().all(|tint| *tint == [200.0 / 255.0; 3]) && tints[15..].iter().all(|tint| *tint == [20.0 / 255.0; 3]));
+        // The largest draws: 254 and 119.
+        let mut pale = Prims::default();
+        pale.kaute_sparks(at, start, false, |n| n - 1);
+        let mut dark = Prims::default();
+        dark.kaute_sparks(at, start, true, |n| n - 1);
+        assert!(pale.ghosts.iter().all(|ghost| ghost.tint == [254.0 / 255.0; 3]) && dark.ghosts.iter().all(|ghost| ghost.tint == [119.0 / 255.0; 3]));
+        // Three on each of ticks 0 to 4 and none on 5; life 60; scale 1.0; the draws are R(7), R(7), the level, R(6).
+        for wave in 0..5 {
+            assert_eq!(prims.ghosts[..15].iter().filter(|ghost| ghost.start == start + TICK * wave).count(), 3);
+        }
+        assert!(prims.ghosts.iter().all(|ghost| ghost.life == 60 && ghost.scale == 1.0 && ghost.start < start + TICK * 5));
+        let mut draws = Vec::new();
+        Prims::default().kaute_sparks(at, start, false, |n| {
+            draws.push(n);
+            0
+        });
+        assert_eq!(draws[..4], [7, 7, 55, 6]);
+        assert_eq!(draws.len(), 15 * 4);
+        // Indulge keeps its green and its five draws a spark.
+        let mut indulge = Vec::new();
+        Prims::default().indulge(at, start, |n| {
+            indulge.push(n);
+            0
+        });
+        assert_eq!(indulge[..5], [7, 7, 81, 81, 6]);
     }
 
     #[test]
