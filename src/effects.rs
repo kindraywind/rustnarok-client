@@ -3929,7 +3929,14 @@ impl Effects {
 
     /// The units that have the Sight option now (None = the player): each starts its circling flame the moment it has it and every
     /// 270 ticks while it lasts.
-    pub fn watch_sight(&mut self, units: impl IntoIterator<Item = (Option<u32>, bool)>, now: Instant) {
+    pub fn watch_sight(&mut self, grf: &Grf, units: impl IntoIterator<Item = (Option<u32>, bool)>, now: Instant) {
+        let units: Vec<_> = units.into_iter().collect();
+        // The flame and its shadow are loaded when a unit first has the option, not only by a Wide Sight.
+        if units.iter().any(|&(_, on)| on) {
+            for path in [sight::SIGHT, sight::SHADOW] {
+                self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
+            }
+        }
         self.prims.cells.watch_sight(units, now);
     }
 
