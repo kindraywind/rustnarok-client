@@ -869,6 +869,9 @@ pub struct ItemInfo {
     pub unidentified_description: Vec<String>,
     /// A costume (iteminfo's `costume`): the storage lists it on its Costumes tab only.
     pub costume: bool,
+    /// The item's own effect number (iteminfo's `EffectID`), None when absent or negative: a dropped item stands under its
+    /// light pillar.
+    pub effect_id: Option<u32>,
 }
 
 impl ItemInfo {
@@ -929,6 +932,7 @@ fn items_in(lua: &Lua) -> io::Result<HashMap<u32, ItemInfo>> {
                     description: lines(&entry, "identifiedDescriptionName"),
                     unidentified_description: lines(&entry, "unidentifiedDescriptionName"),
                     costume: entry.get::<bool>("costume").unwrap_or(false),
+                    effect_id: entry.get::<i64>("EffectID").ok().and_then(|id| u32::try_from(id).ok()),
                 },
             );
         }
@@ -2494,6 +2498,14 @@ mod tests {
         let prontera = midgard.fields.iter().find(|field| field.map == "prontera").unwrap();
         assert_eq!(prontera.rect, [812.0, 587.0, 870.0, 643.0]);
         assert_eq!(colors, [[85, 85, 255, 102], [149, 15, 15, 70]]);
+    }
+
+    #[test]
+    fn reads_an_items_effect_number() {
+        let lua = super::new_lua().unwrap();
+        lua.load("tbl = { [4001] = { EffectID = 1186 }, [4002] = {}, [4003] = { EffectID = -1 } }").exec().unwrap();
+        let items = super::items_in(&lua).unwrap();
+        assert_eq!([4001, 4002, 4003].map(|id| items[&id].effect_id), [Some(1186), None, None]);
     }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.

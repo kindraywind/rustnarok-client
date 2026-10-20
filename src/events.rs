@@ -1562,8 +1562,15 @@ impl App {
                         dropped: item.falling.then(Instant::now),
                     },
                 );
+                // The item's light pillar, from the fall packet's drop effect and the item info's own effect number.
+                if let Some(gpu) = gpu {
+                    let at = game.world.ground_under(game.world.cell_position([f32::from(x) - 0.5 + sub_x, f32::from(y) - 0.5 + sub_y]));
+                    let info = self.items.get(&item.item).and_then(|info| info.effect_id);
+                    game.effects.item_dropped(gpu, grf, table, item.id, info, (item.show_effect, item.effect_mode), at, Instant::now());
+                }
             }
             MapEvent::ItemGone { id } => {
+                game.effects.item_gone(id);
                 game.ground.remove(&id);
                 game.pickups_asked.remove(&id);
                 if game.pending.is_some_and(|(pending, _)| pending == Pending::PickUp(id)) {
