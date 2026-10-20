@@ -499,6 +499,7 @@ pub struct Brawl {
     swings: Vec<Swing>,
     blues: Vec<Blue>,
     reds: Vec<Marked>,
+    blue_hits: Vec<Marked>,
     cloaks: Vec<Cloak>,
     tetras: Vec<Tetra>,
     discs: Vec<Disc>,
@@ -731,6 +732,11 @@ impl Brawl {
         self.reds.push(Marked { unit, start: now });
     }
 
+    /// Estin's and Estun's blue flash of `unit`.
+    pub fn blue_hit(&mut self, unit: Option<u32>, now: Instant) {
+        self.blue_hits.push(Marked { unit, start: now });
+    }
+
     /// Marsh of Abyss' and Great Echo's head swing on `unit`.
     pub fn swing(&mut self, unit: Option<u32>, now: Instant) {
         self.swings.push(Marked { unit, start: now });
@@ -779,6 +785,7 @@ impl Brawl {
         self.spins.retain(|spin| passes(spin.start, now) <= SPIN_TICKS + 1);
         self.shakes.retain(|shake| passes(shake.start, now) <= shake.last + 1);
         self.reds.retain(|red| passes(red.start, now) <= 17);
+        self.blue_hits.retain(|hit| passes(hit.start, now) <= 17);
         self.cloaks.retain(|cloak| cloak.ended.is_none_or(|ended| passes(ended, now) <= 26));
         self.swings.retain(|swing| passes(swing.start, now) <= 50);
         self.blues.retain(|blue| passes(blue.start, now) <= 200);
@@ -821,6 +828,11 @@ impl Brawl {
             let t = passes(red.start, now).checked_sub(1).filter(|&t| t <= 16)?;
             Some(crate::actor::GLOW_RED | (crate::actor::copies_alpha(3 * t) as u32) << crate::actor::PARAM_SHIFT)
         });
+        // Estin's blue copies the same way.
+        let blue_hit = self.blue_hits.iter().filter(|hit| hit.unit == unit).find_map(|hit| {
+            let t = passes(hit.start, now).checked_sub(1).filter(|&t| t <= 16)?;
+            Some(crate::actor::GLOW_BLUE | (crate::actor::copies_alpha(3 * t) as u32) << crate::actor::PARAM_SHIFT)
+        });
         // Tetra Vortex's cast: its colour each tick, added on when the tick's number mod 5 is 0 or 1.
         let tetra = self.tetras.iter().filter(|tetra| tetra.unit == unit).find_map(|tetra| {
             let e = passes(tetra.start, now).checked_sub(1).filter(|&e| e < tetra.length)?;
@@ -828,7 +840,7 @@ impl Brawl {
             Some((if e % 5 <= 1 { crate::actor::GLOW_ADDITIVE } else { 0 }, colour))
         });
         let manhole = self.manholes.contains(&unit);
-        match (added, spread.or(swing).or(blue).or(red), tetra) {
+        match (added, spread.or(swing).or(blue).or(red).or(blue_hit), tetra) {
             (false, None, None) if !manhole => None,
             (added, extra, tetra) => {
                 let flags = if added { crate::actor::GLOW_ADDITIVE } else { 0 }
@@ -1235,6 +1247,11 @@ mod tests {
         let (_, copies) = glow_copies(GLOW_RED | 160 << PARAM_SHIFT, None, PartGroup::Body, 0.0, 0.0, 1.0, true);
         assert_eq!(copies.len(), 2);
         assert!(copies.iter().all(|copy| copy.additive && copy.color == [1.0, 5.0 / 255.0, 5.0 / 255.0, 160.0 / 255.0]));
+        // Estin's blue flash is the same alpha in blue.
+        brawl.blue_hit(Some(4), start);
+        let hit = |tick: u32| brawl.glow(Some(4), start + TICK * tick).map(|(flags, _)| (flags & 0xFFFFFF, flags >> PARAM_SHIFT));
+        assert_eq!([0, 1, 2, 3, 4, 6, 7, 8, 16].map(hit), [0, 45, 90, 135, 160, 160, 150, 135, 15].map(|alpha| Some((crate::actor::GLOW_BLUE, alpha))));
+        assert_eq!(hit(17), None);
         // The jitter is on ticks 31 to 50 and not on 30 or 51.
         assert!(!brawl.shaking(Some(1), start + TICK * 30) && brawl.shaking(Some(1), start + TICK * 31));
         assert!(brawl.shaking(Some(1), start + TICK * 50) && !brawl.shaking(Some(1), start + TICK * 51));

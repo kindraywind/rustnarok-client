@@ -13,8 +13,8 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, kicks, knight,
-    mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, soul, souls, spears, sphere, spray, star, stone, tanji, throw,
-    transcend, walls, waterball, waves,
+    linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, soul, souls, spears, sphere, spray, star, stone, tanji,
+    throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -2128,6 +2128,11 @@ const RED_LIGHT_BODY: u32 = 544;
 const COMFORT: u32 = 488;
 const SOUL_LINK_FX: u32 = 503;
 const STIN: u32 = 547;
+/// Estin's and Estun's blue flash (`prims::brawl`), Esma's discs and frost and Estun's mover (`prims::linker`).
+const BLUE_HIT: u32 = 549;
+const ESMA_DISCS: u32 = 553;
+const ESMA_FROST: u32 = 554;
+const ESTUN_MOVER: u32 = 555;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
 /// Resurrection's rings and the Call Partner portal's warp (`prims::portal`).
@@ -2287,8 +2292,10 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 41] = [
+pub const AIMED: [u32; 43] = [
     STIN,
+    ESMA_DISCS,
+    ESTUN_MOVER,
     HIT_LINE_COUNTER,
     PINPOINT_FX,
     ELBOW_LINES,
@@ -3021,6 +3028,11 @@ impl Effects {
             (QUAKE_BODY, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 0, 34),
             (SKY_NET_SHAKE, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 31, 50),
             (RED_HIT, Target::Unit(unit)) => self.prims.brawl.red(unit, now),
+            (BLUE_HIT, Target::Unit(unit)) => self.prims.brawl.blue_hit(unit, now),
+            (ESMA_FROST, Target::Unit(unit)) => {
+                self.textures.entry(linker::FROST.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, linker::FROST, false).ok());
+                self.prims.linker.frost(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
             (SPINED_BODY, Target::Unit(unit)) => self.prims.brawl.swing(unit, now),
             (GREEN_BODY, Target::Unit(unit)) => self.prims.guard.green(unit, now),
             (HATED, Target::Unit(unit)) => {
@@ -3750,6 +3762,15 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.soul.stin(from, to, now, |n| pick(0, n.saturating_sub(1)));
             }
+            ESMA_DISCS => {
+                self.textures.entry(linker::BLADE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, linker::BLADE, false).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.linker.discs(from, (target != own).then_some(target), now);
+            }
+            ESTUN_MOVER => {
+                self.play_sounds(table, id, from, now);
+                self.prims.linker.mover(from, to, now, |n| pick(0, n.saturating_sub(1)));
+            }
             AXE_THROW => {
                 self.textures.entry(boomerang::AXE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, boomerang::AXE, true).ok());
                 self.play_sounds(table, id, from, now);
@@ -3952,6 +3973,9 @@ impl Effects {
         for (unit, offset) in self.prims.soul.take_launches() {
             self.prims.souls.launch_soul(unit, offset, now, |n| pick(0, n.saturating_sub(1)));
         }
+        self.prims.linker.advance(now, &position_of);
+        // Estun's mover launches 556, which has no look yet.
+        let _ = self.prims.linker.take_launches();
         self.prims.kicks.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
@@ -4632,6 +4656,7 @@ impl Effects {
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
+            .chain(self.prims.linker.meshes().into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
             .chain(
                 self.prims
                     .kicks
@@ -4928,7 +4953,7 @@ impl Effects {
                 quads.extend(self.prims.emblems.draws(now).into_iter().map(|draw| (texture, draw.at, draw.corners, draw.tint, draw.additive, false)));
             }
             // Soul Link's mote and the letters SOUL LINK, facing the camera.
-            for draw in self.prims.soul.squares(self.yaw.to_degrees(), &position_of) {
+            for draw in self.prims.soul.squares(self.yaw.to_degrees(), &position_of).into_iter().chain(self.prims.linker.squares(&position_of)) {
                 if let Some(Some(texture)) = self.textures.get(draw.texture) {
                     let [red, green, blue] = draw.rgb;
                     quads.push((texture, draw.at, soul::Soul::corners(draw.half), [red, green, blue, draw.alpha / 255.0], draw.additive, false));
@@ -7423,5 +7448,19 @@ mod tests {
         let table = Table::load();
         assert_eq!([447, 448, 506].map(|id| table.lengths[&id]), [340, 340, 100]);
         assert!([447, 448, 506].iter().all(|id| !table.sounds.contains_key(id)));
+    }
+
+    #[test]
+    fn estin_esma_and_estun_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        assert_eq!(table.hits[&467], [Some(BLUE_HIT), None]);
+        assert_eq!(table.hits[&468], [Some(BLUE_HIT), None]);
+        assert_eq!(table.hits[&2332], [Some(BLUE_HIT), Some(SKY_NET_SHAKE)]);
+        assert!(AIMED.contains(&ESMA_DISCS) && table.struck(469).unwrap().contains(&(Who::Caster, ESMA_DISCS)));
+        assert!(table.struck(469).unwrap().contains(&(Who::Target, ESMA_FROST)));
+        assert!(AIMED.contains(&ESTUN_MOVER) && table.struck(468).unwrap().contains(&(Who::Caster, ESTUN_MOVER)));
+        assert_eq!(sounds(ESMA_DISCS), [80, 320, 560, 800, 1040].map(|delay| ("effect\\T_날라차기", delay, true)));
+        assert_eq!([BLUE_HIT, ESMA_DISCS, ESMA_FROST, ESTUN_MOVER].map(|id| table.lengths[&id]), [60, 200, 200, 200]);
     }
 }

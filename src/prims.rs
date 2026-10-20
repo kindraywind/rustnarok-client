@@ -23,6 +23,7 @@ pub mod holes;
 pub mod huujin;
 pub mod kicks;
 pub mod knight;
+pub mod linker;
 pub mod mechanic;
 pub mod monk;
 pub mod napalm;
@@ -197,6 +198,7 @@ pub struct Prims {
     pub crowds: crowds::Crowds,
     pub chi: chi::Chi,
     pub soul: soul::Soul,
+    pub linker: linker::Linker,
     pub kicks: kicks::Kicks,
     pub petals: petals::Petals,
     pub bodies: body::Bodies,
