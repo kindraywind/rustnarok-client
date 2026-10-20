@@ -1985,9 +1985,10 @@ wav	781	effect\MAGNETICFIELD	80
 wav	782	effect\black_maximize_power_sword_bic	0
 wav	782	effect\mon_금강불괴	0	listener
 wav	786	effect\ANALYZE	0
+wav	791	ice_titan_attack	0	listener
 wav	794	effect\INFRAREDSCAN	0	listener
 wav	797	effect\wl_siennaexecrate	0	listener
-wav	799	effect\wl_stasis	0
+wav	799	effect\wl_stasis	96	listener
 wav	802	effect\wl_whiteimprison	0
 wav	803	effect\wl_recognizedspell	0
 wav	804	effect\wizard_meteo	0
@@ -5167,9 +5168,11 @@ length	704	100
 length	706	100
 length	709	70
 length	728	100
+length	791	200
 length	792	9999
 length	793	100
 length	797	300
+length	799	300
 length	801	150
 length	803	500
 length	804	600

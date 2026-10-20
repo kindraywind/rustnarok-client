@@ -37,6 +37,7 @@ pub mod shafts;
 pub mod shards;
 pub mod sight;
 pub mod sniper;
+pub mod snow;
 pub mod songs;
 pub mod soul;
 pub mod souls;
@@ -210,6 +211,7 @@ pub struct Prims {
     pub radar: radar::Radar,
     pub notes: notes::Notes,
     pub vortex: vortex::Vortex,
+    pub snow: snow::Snow,
     pub emblems: emblems::Emblems,
     pub portal: portal::Portal,
     pub sphere: sphere::Sphere,
@@ -751,6 +753,7 @@ impl Prims {
         self.holes.advance(now);
         self.blitzes.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
         self.vortex.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
+        self.snow.advance(now);
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
