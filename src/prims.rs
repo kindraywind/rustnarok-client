@@ -9,6 +9,7 @@ pub mod bolts;
 pub mod boomerang;
 pub mod brawl;
 pub mod burst;
+pub mod circle;
 pub mod dancer;
 pub mod first;
 pub mod ground;
@@ -169,6 +170,7 @@ pub struct Prims {
     pub spray: spray::Spray,
     pub brawl: brawl::Brawl,
     pub shafts: shafts::Shafts,
+    pub circles: circle::Circles,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -586,6 +588,7 @@ impl Prims {
         self.dancer.forget(unit);
         self.guard.forget(unit);
         self.brawl.forget(unit);
+        self.circles.forget(Some(unit));
     }
 
     /// The camera-facing squares for effect 793 at `now`.

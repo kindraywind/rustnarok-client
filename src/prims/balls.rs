@@ -19,6 +19,11 @@ const FIRE_BALL_LIFE: u32 = 20;
 const FIRE_BALL_RISE: f32 = 15.0;
 /// The lead ball as it is, the three after it gold and fainter: color and alpha (0–255).
 const FIRE_BALL_LOOKS: [[f32; 4]; 4] = [[255.0, 255.0, 255.0, 254.0], [246.0, 199.0, 76.0, 180.0], [246.0, 199.0, 76.0, 130.0], [246.0, 199.0, 76.0, 80.0]];
+/// Release's twelve spheres: three groups of four, made on ticks 0 to 3, 6 to 9 and 12 to 15, aimed 0, −5 and +5 degrees off, in
+/// lilac, green and pink.
+const RELEASE_STARTS: [u32; 3] = [0, 6, 12];
+const RELEASE_OFFSETS: [f32; 3] = [0.0, -5.0, 5.0];
+const RELEASE_TINTS: [[f32; 3]; 3] = [[155.0 / 255.0, 155.0 / 255.0, 1.0], [155.0 / 255.0, 1.0, 155.0 / 255.0], [1.0, 155.0 / 255.0, 155.0 / 255.0]];
 /// A fire ball goes before it's drawn once this near where it's aimed, across the ground (world units).
 const FIRE_BALL_NEAR: f32 = 3.0;
 
@@ -83,6 +88,16 @@ impl Flight {
         Self { born, ticks: 0, moves: 0, from: [from[0], from[1] + rise, from[2]], step, aim: [to[0], to[2]], bearing }
     }
 
+    /// Like `skewed`, but turned `offset` degrees off the heading to the aim (wrapped into 0 to 359) first.
+    fn offset(born: Instant, from: Vector, rise: f32, to: Vector, life: u32, offset: f32) -> Self {
+        let [dx, dz] = [to[0] - from[0], to[2] - from[2]];
+        let bearing = (crate::actor::step_rot(dx, dz) + offset).rem_euclid(360.0);
+        let heading = bearing.trunc();
+        let (sin, cos) = (if heading == 0.0 { 0.0 } else { heading - 1.0 }).to_radians().sin_cos();
+        let each = f32::hypot(dx, dz) / life as f32;
+        Self { step: [each * sin, -each * cos], bearing, ..Self::new(born, from, rise, to, life) }
+    }
+
     /// Like `new`, but along the whole degree before the heading's own (up to 2° off the line, as the game's fire balls
     /// and spears fly), the same distance: heading 0 toward −z, 90 toward +x.
     fn skewed(born: Instant, from: Vector, rise: f32, to: Vector, life: u32) -> Self {
@@ -127,6 +142,14 @@ struct Ball {
     gone: bool,
 }
 
+/// One of Release's spheres: its flight, its colour and alpha (0–255), and whether it got there.
+struct Orb {
+    flight: Flight,
+    tint: [f32; 3],
+    alpha: f32,
+    gone: bool,
+}
+
 /// Fire Balls, their balls in flight, and Jupitel Thunder's balls (the game's prim kind 15, a core and a ball
 /// moving together).
 #[derive(Default)]
@@ -136,6 +159,8 @@ pub struct Balls {
     thunder: Vec<Flight>,
     spear_boomerangs: Vec<FireBall>,
     spears: Vec<Ball>,
+    releases: Vec<FireBall>,
+    orbs: Vec<Orb>,
 }
 
 impl Balls {
@@ -143,6 +168,11 @@ impl Balls {
     /// over the target 20 ticks later.
     pub fn fire_ball(&mut self, from: Vector, to: Vector, now: Instant) {
         self.fire_balls.push(FireBall { start: now, ticks: 0, from, to });
+    }
+
+    /// Release from `from` at `to` from `now`: twelve spheres in three colours, four ticks' worth a group.
+    pub fn release(&mut self, from: Vector, to: Vector, now: Instant) {
+        self.releases.push(FireBall { start: now, ticks: 0, from, to });
     }
 
     /// Jupitel Thunder from `from` at `to` from `now`: one ball, over the target 20 ticks (320 ms) later.
@@ -172,6 +202,25 @@ impl Balls {
             launch.ticks = launch.ticks.max(due);
         }
         self.spear_boomerangs.retain(|launch| launch.ticks <= SPEAR_TICKS[3]);
+        for launch in &mut self.releases {
+            let due = passes(launch.start, now);
+            for age in launch.ticks..due {
+                let Some(group) = RELEASE_STARTS.iter().position(|&first| (first..first + 4).contains(&age)) else { continue };
+                let born = launch.start + TICK * age;
+                let flight = Flight::offset(born, launch.from, FIRE_BALL_RISE, launch.to, FIRE_BALL_LIFE, RELEASE_OFFSETS[group]);
+                let alpha = 40.0 * (5 + RELEASE_STARTS[group] - age) as f32;
+                self.orbs.push(Orb { flight, tint: RELEASE_TINTS[group], alpha, gone: false });
+            }
+            launch.ticks = launch.ticks.max(due);
+        }
+        self.releases.retain(|launch| launch.ticks <= RELEASE_STARTS[2] + 3);
+        for orb in &mut self.orbs {
+            while !orb.gone && orb.flight.ticks < passes(orb.flight.born, now).min(FIRE_BALL_LIFE) {
+                orb.flight.go();
+                orb.gone = orb.flight.near();
+            }
+        }
+        self.orbs.retain(|orb| !orb.gone && passes(orb.flight.born, now) <= FIRE_BALL_LIFE);
         for spear in &mut self.spears {
             while !spear.gone && spear.flight.ticks < passes(spear.flight.born, now).min(SPEAR_LIFE) {
                 spear.flight.go();
@@ -239,6 +288,16 @@ impl Balls {
                 for &(key, position, size, angle) in &frames[ball.flight.ticks as usize % frames.len()] {
                     let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, angle + turn, uv).0.map(|value| value * FIRE_BALL_SCALE));
                     quads.push((sprite.texture(key), ball.flight.at(), corners, [red, green, blue, alpha], false, false));
+                }
+            }
+        }
+        // Release's spheres: the same ball at its own size, in their colours.
+        if let Some(sprite) = sprite.filter(|_| !frames.is_empty()) {
+            for orb in self.orbs.iter().filter(|orb| orb.flight.ticks > 0) {
+                let turn = fire_ball_turn(orb.flight.bearing, yaw);
+                for &(key, position, size, angle) in &frames[orb.flight.ticks as usize % frames.len()] {
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, angle + turn, uv).0);
+                    quads.push((sprite.texture(key), orb.flight.at(), corners, [orb.tint[0], orb.tint[1], orb.tint[2], orb.alpha / 255.0], false, false));
                 }
             }
         }
@@ -378,5 +437,36 @@ mod tests {
         // A caster within 3 of the aim draws nothing.
         balls.thunder([0.0; 3], [0.0, 0.0, 2.5], start);
         assert_eq!(balls.thunder.len(), 1);
+    }
+
+    #[test]
+    fn release_throws_twelve_spheres_in_three_colours() {
+        let start = Instant::now();
+        let mut balls = Balls::default();
+        // 100 units due north (+z).
+        balls.release([0.0; 3], [0.0, 0.0, 100.0], start);
+        let made = |balls: &mut Balls, tick: u32| {
+            balls.advance(start + TICK * tick);
+            balls.orbs.len()
+        };
+        // Four on each of ticks 0 to 3, 6 to 9, 12 to 15, none on 4, 5, 10, 11, 16.
+        assert_eq!([0, 3, 5, 9, 11, 15, 16].map(|tick| made(&mut balls, tick)), [1, 4, 4, 8, 8, 12, 12]);
+        // The ages 0, 3, 6, 9, 12, 15 give alpha 200, 80, 200, 80, 200, 80; the tints lilac, green and pink.
+        let alphas: Vec<f32> = balls.orbs.iter().map(|orb| orb.alpha).collect();
+        assert_eq!([0, 3, 4, 7, 8, 11].map(|index| alphas[index]), [200.0, 80.0, 200.0, 80.0, 200.0, 80.0]);
+        assert_eq!(balls.orbs[0].tint, [155.0 / 255.0, 155.0 / 255.0, 1.0]);
+        assert_eq!(balls.orbs[4].tint, [155.0 / 255.0, 1.0, 155.0 / 255.0]);
+        assert_eq!(balls.orbs[8].tint, [1.0, 155.0 / 255.0, 155.0 / 255.0]);
+        // Headings: 180 − 1 for the aim due +z, then 5° off each way (wrapped into 0 to 359); a step of D / 20.
+        let bearings: Vec<f32> = [0, 4, 8].iter().map(|&index| balls.orbs[index].flight.bearing).collect();
+        assert!((bearings[0] - 180.0).abs() < 0.01 && (bearings[1] - 175.0).abs() < 0.01 && (bearings[2] - 185.0).abs() < 0.01);
+        assert!((f32::hypot(balls.orbs[0].flight.step[0], balls.orbs[0].flight.step[1]) - 5.0).abs() < 1e-3);
+        // At an aim 100 off, the lilac spheres end within 3 of it on their last tick; the green ones (5° off) are never stopped by the test.
+        let mut far = Balls::default();
+        far.release([0.0; 3], [0.0, 0.0, 100.0], start);
+        far.advance(start + TICK * 25);
+        assert!(far.orbs.iter().all(|orb| orb.tint[0] != 155.0 / 255.0 || orb.tint[2] != 1.0 || orb.tint[1] != 155.0 / 255.0));
+        let green = far.orbs.iter().find(|orb| orb.tint == [155.0 / 255.0, 1.0, 155.0 / 255.0]).unwrap();
+        assert!(!green.gone && green.flight.ticks == FIRE_BALL_LIFE);
     }
 }

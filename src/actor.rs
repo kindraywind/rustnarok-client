@@ -2343,6 +2343,7 @@ pub fn ghost_alpha(age: Duration) -> f32 {
 /// (Snap's) near white. Explosion Spirits' flickers (`step_blur`).
 pub fn blur_colour(status: u16) -> [u8; 3] {
     match status {
+        WARG_DASH => [225, 225, 255],
         2 | 161 | 68 => [200, 200, 0],
         25 | 188 => [250, 150, 150],
         31 => [180, 180, 250],
@@ -2352,6 +2353,8 @@ pub fn blur_colour(status: u16) -> [u8; 3] {
 
 /// Explosion Spirits' status: it flickers instead of leaving copies.
 const EXPLOSION_SPIRITS: u16 = 86;
+/// Warg Dash's status: a pale copy every 10 ticks, whatever the unit does.
+const WARG_DASH: u16 = 358;
 
 impl Actor {
     pub fn new(name: String, sprites: Option<SpriteSet>, cell: [i32; 2], direction: u8, speed: u16) -> Self {
@@ -2485,7 +2488,9 @@ impl Actor {
                 Some(status) => blur_colour(status),
                 None => blur_colour(0),
             };
-            if self.blur_age.is_multiple_of(GHOST_EVERY) && !explosion && !self.still(now) {
+            let dashing = status == Some(WARG_DASH);
+            let every = if dashing { 10 } else { GHOST_EVERY };
+            if self.blur_age.is_multiple_of(every) && !explosion && (dashing || !self.still(now)) {
                 self.blur_due = true;
             }
             self.blur_age += 1;
@@ -4320,5 +4325,29 @@ mod tests {
         let (_, copies) = glow_copies(GLOW_BLUE | 160 << 24, None, PartGroup::Gear, 0.0, 0.0, 1.0, true);
         assert_eq!(copies.len(), 2);
         assert!(copies.iter().all(|copy| copy.additive && copy.color == [5.0 / 255.0, 5.0 / 255.0, 1.0, 160.0 / 255.0] && copy.grow == 0.0));
+    }
+
+    #[test]
+    fn warg_dash_tints_and_leaves_a_copy_every_10_ticks_even_standing() {
+        let start = Instant::now();
+        let tick = |ticks: u64| start + Duration::from_millis(16 * ticks);
+        assert_eq!(blur_colour(358), [225, 225, 255]);
+        let mut actor = Actor::new("Ranger".into(), None, [0, 0], 0, 150);
+        let placed: Vec<Placed> = vec![((0, 0, 0, [255; 4], 0), [0.0; 2], [1.0; 2], 0.0)];
+        actor.step_blur(tick(0), || false);
+        actor.blur(358, true);
+        // Standing still: a copy on ages 0, 10 and 20 only, in #E1E1FF.
+        for age in 1..=22u64 {
+            actor.step_blur(tick(age), || false);
+            actor.leave_ghost(tick(age), [age as f32; 3], &placed);
+        }
+        let feet: Vec<f32> = actor.ghosts.iter().map(|ghost| ghost.feet[0]).collect();
+        assert_eq!(feet, [1.0, 11.0, 21.0]);
+        assert!(actor.ghosts.iter().all(|ghost| ghost.tint == [225, 225, 255]));
+        assert_eq!(actor.body_tint(), Some([225, 225, 255]));
+        // Off: the colour goes back to white by 8 a channel a tick.
+        actor.blur(358, false);
+        actor.step_blur(tick(23), || false);
+        assert_eq!(actor.body_tint(), Some([233, 233, 255]));
     }
 }
