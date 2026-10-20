@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter,
-    sage, shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
+    balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, notes,
+    painter, sage, shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1962,6 +1962,8 @@ const POISON_BUSTER_FX: u32 = 923;
 const WARMER: u32 = 929;
 const ARRULLO_FX: u32 = 931;
 const ELEMENTAL_ACTION: u32 = 934;
+/// Lullaby Deep Sleep's wandering notes (`prims::notes`).
+const LULLABY: u32 = 969;
 const GREAT_ECHO_V: u32 = 863;
 /// Sonic Wave's crescents and Duple Light's orbs (`prims::waves`).
 const SONIC_WAVE: u32 = 832;
@@ -2547,6 +2549,12 @@ impl Effects {
             (PRESTIGE_FX..=INSPIRATION_FX, Target::Unit(unit) | Target::Status(unit, _)) => {
                 self.textures.entry(chi::NEEDLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, chi::NEEDLE, true).ok());
                 self.prims.chi.buff(id, unit, 500, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (LULLABY, Target::Unit(unit)) => {
+                for (name, path) in notes::TEXTURES {
+                    self.textures.entry(name.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.notes.lullaby(unit, at, now);
             }
             (ARRULLO_FX, Target::Unit(unit)) => {
                 self.textures.entry(souls::DOT.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, souls::DOT, true).ok());
@@ -3526,6 +3534,7 @@ impl Effects {
             self.prims.souls.launch(arrullo, unit, offset, now, |n| pick(0, n.saturating_sub(1)));
         }
         self.prims.souls.advance(now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.notes.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -4355,6 +4364,8 @@ impl Effects {
         quads.extend(self.prims.boomerangs.quads(self.textures.get(boomerang::SHIELD).and_then(Option::as_ref)));
         if !self.only_forced {
             quads.extend(self.prims.spheres.quads(self.textures.get(tanji::SPHERE).and_then(Option::as_ref)));
+            // Lullaby Deep Sleep's notes, over everything (`STR_RISE` is taken off again).
+            quads.extend(self.prims.notes.quads(|path| self.textures.get(path).and_then(Option::as_ref), STR_RISE));
             // Sight Rasher's sprites and their shadows, white with their alpha.
             for drawn in self.prims.sights.sprites(now) {
                 let Some(Some(sprite)) = self.sprites.get(drawn.sprite) else { continue };
@@ -6517,5 +6528,15 @@ mod tests {
         // 1044: Lux Anima's sound with its STR.
         assert_eq!(sounds(1044), [("effect\\rk_luxanima", 0, false)]);
         assert!(table.parts.contains_key(&1044) && table.used(5005).unwrap().contains(&(Who::Caster, 1044)));
+    }
+
+    #[test]
+    fn lullaby_deep_sleep_has_its_sound_at_the_listener() {
+        let table = Table::load();
+        assert_eq!(
+            table.sounds[&LULLABY].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>(),
+            [("effect\\안식의자장가", 0, true)]
+        );
+        assert!(table.used(2422).unwrap().contains(&(Who::Target, LULLABY)) && !table.parts.contains_key(&LULLABY));
     }
 }
