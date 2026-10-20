@@ -374,7 +374,10 @@ pub struct Look {
     pub hair_color: u16,
     pub clothes_color: u16,
     pub weapon: u32,
+    /// The shield drawn: a shield's item id, or 0. A left-hand weapon is never drawn as a shield.
     pub shield: u32,
+    /// The left hand: a shield or a second weapon (item ids), or 0.
+    pub left: u32,
     pub head_top: u16,
     pub head_mid: u16,
     pub head_bottom: u16,
@@ -450,6 +453,34 @@ pub fn dual_wielder(job: u16) -> bool {
 /// A shield's item id.
 pub fn shield_id(item: u32) -> bool {
     matches!(item, 2101..=2199 | 28901..=28998 | 460000..=469999)
+}
+
+/// The shield part a left hand gives: itself when it's a shield id or 0, else None (a weapon: no shield). ponytail: a
+/// shield sent by a view id below the shield ranges is taken for a weapon.
+pub fn shield_part(left: u32) -> Option<u32> {
+    (left == 0 || shield_id(left)).then_some(left)
+}
+
+/// The left hand of a player's look holds a weapon: an item with a ClassNum that isn't a shield.
+pub fn left_weapon(look: &Look, tables: &LookTables) -> bool {
+    !shield_id(look.left) && tables.item_views.get(&look.left).is_some_and(|&view| view > 0)
+}
+
+/// A dual-wielding player's weapon name ending (`_단검_단검`) and whether it has a glow; None for a type without a
+/// name (no other name is tried).
+pub fn dual_weapon<'a>(look: &Look, job: u16, tables: &'a LookTables) -> Option<(&'a str, bool)> {
+    let kind = dual_type(job, look.weapon, look.left);
+    let name = tables.weapons.get(&kind).filter(|_| kind > 0)?;
+    Some((name, matches!(kind, 1..=7 | 16..=18 | 25..=30)))
+}
+
+/// The weapon type a dual-wielding player's sprite and motion use: the pair's combined type; on the Assassin line 0, 7
+/// and 8 become 2.
+pub fn dual_type(job: u16, right: u32, left: u32) -> u32 {
+    match dual_wield_type(right, left) {
+        0 | 7 | 8 if dual_wielder(job) => 2,
+        kind => kind,
+    }
 }
 
 /// The combined weapon type of a right- and left-hand weapon (item ids): 25 – 30 for the pairs, else the right
@@ -690,14 +721,23 @@ impl SpriteSet {
         let bottom = (!orcish).then(|| headgear(look.head_bottom, Part::HeadBottom)).flatten();
         let mid = (!orcish && look.head_mid != look.head_bottom).then(|| headgear(look.head_mid, Part::HeadMid)).flatten();
         let top = (!orcish && look.head_top != look.head_bottom && look.head_top != look.head_mid).then(|| headgear(look.head_top, Part::HeadTop)).flatten();
-        let weapon = (look.weapon > 0)
-            .then(|| {
-                let view = tables.view(look.weapon);
-                let name = tables.weapons.get(&view).cloned().unwrap_or_else(|| format!("_{view}"));
-                let path = names.weapon_path(race, sex, &name)?;
-                Some((load(path.clone(), None, Part::Weapon), load(format!("{path}_검광"), None, Part::WeaponGlow)))
+        // Two weapons: one sprite for both hands, named by the pair's type alone; its glow only for some types.
+        let weapon = if left_weapon(look, tables) {
+            dual_weapon(look, job, tables).and_then(|(name, glows)| {
+                let path = names.weapon_path(race, sex, name)?;
+                let glow = glows.then(|| load(format!("{path}_검광"), None, Part::WeaponGlow)).flatten();
+                Some((load(path, None, Part::Weapon), glow))
             })
-            .flatten();
+        } else {
+            (look.weapon > 0)
+                .then(|| {
+                    let view = tables.view(look.weapon);
+                    let name = tables.weapons.get(&view).cloned().unwrap_or_else(|| format!("_{view}"));
+                    let path = names.weapon_path(race, sex, &name)?;
+                    Some((load(path.clone(), None, Part::Weapon), load(format!("{path}_검광"), None, Part::WeaponGlow)))
+                })
+                .flatten()
+        };
         // The four classic shields have names; newer ones are named by their view ID.
         let shield = (look.shield > 0).then(|| {
             let name = match tables.view(look.shield) {
@@ -2623,9 +2663,7 @@ impl Actor {
     pub fn attack_motion(&self, tables: &LookTables) -> usize {
         self.look.as_ref().map_or(combat_actions(self.kind).0, |look| {
             let job = sprite_job(look.job, look.option);
-            // ponytail: the dual-wield pair's motion only; 0 → 2 on these jobs swings the same, so it's left out.
-            let left_weapon = !shield_id(look.shield) && tables.item_views.get(&look.shield).is_some_and(|&view| view > 0);
-            let kind = if dual_wielder(job) && left_weapon { dual_wield_type(look.weapon, look.shield) } else { tables.weapon_type(look.weapon) };
+            let kind = if dual_wielder(job) && left_weapon(look, tables) { dual_type(job, look.weapon, look.left) } else { tables.weapon_type(look.weapon) };
             attack_action(job, look.sex, kind)
         })
     }
@@ -3052,6 +3090,25 @@ mod tests {
         assert_eq!(dual_wield_type(0, 1201), 1);
         assert_eq!(dual_wield_type(1250, 0), 0);
         assert!([2101, 2199, 28901, 460000].into_iter().all(shield_id) && !shield_id(1201));
+        assert_eq!(dual_type(12, 1501, 1201), 2);
+        assert_eq!(shield_part(1201), None);
+        assert_eq!(shield_part(2101), Some(2101));
+        assert_eq!(shield_part(0), Some(0));
+        // An Assassin with two daggers draws one `_단검_단검` sprite with its glow.
+        let tables = LookTables {
+            headgears: HashMap::new(),
+            weapons: HashMap::from([(1, "_단검".to_owned()), (25, "_단검_단검".to_owned())]),
+            weapon_types: HashMap::new(),
+            robes: HashMap::new(),
+            item_views: HashMap::from([(1201, 1), (2101, 1)]),
+            layers: None,
+        };
+        let assassin = Look { job: 12, weapon: 1201, left: 1201, ..Look::default() };
+        assert!(left_weapon(&assassin, &tables));
+        assert_eq!(dual_weapon(&assassin, 12, &tables), Some(("_단검_단검", true)));
+        assert!(!left_weapon(&Look { left: 2101, ..assassin.clone() }, &tables));
+        // A pair whose type has no name draws nothing.
+        assert_eq!(dual_weapon(&Look { weapon: 1101, left: 1101, ..assassin }, 12, &tables), None);
         // Two daggers on an Assassin swing with action 11.
         assert_eq!(attack_action(12, 1, dual_wield_type(1201, 1201)), 11);
     }

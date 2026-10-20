@@ -2019,7 +2019,8 @@ fn character_look(character: &Character) -> Look {
         hair_color: character.hair_color,
         clothes_color: character.clothes_color,
         weapon: u32::from(character.weapon),
-        shield: u32::from(character.shield),
+        shield: actor::shield_part(u32::from(character.shield)).unwrap_or(0),
+        left: u32::from(character.shield),
         head_top: character.head_top,
         head_mid: character.head_mid,
         head_bottom: character.head_bottom,
@@ -2037,7 +2038,9 @@ fn unit_look(unit: &net::Unit) -> Look {
         hair_color: unit.hair_color,
         clothes_color: unit.clothes_color,
         weapon: unit.weapon,
-        shield: unit.shield,
+        // The shield field is the left hand.
+        shield: actor::shield_part(unit.shield).unwrap_or(0),
+        left: unit.shield,
         head_top: unit.head_top,
         head_mid: unit.head_mid,
         head_bottom: unit.head_bottom,
@@ -2099,13 +2102,18 @@ fn change_look(look: &mut Look, kind: u8, value: u32, extra: u32) -> bool {
     match kind {
         net::LOOK_JOB => look.job = short,
         net::LOOK_HAIR => look.hair = short,
-        net::LOOK_WEAPON => (look.weapon, look.shield) = (value, extra),
+        // The second value is the left hand on the Assassin line only; a left-hand weapon keeps the shield as it was.
+        net::LOOK_WEAPON => {
+            look.weapon = value;
+            look.left = if actor::dual_wielder(actor::sprite_job(look.job, look.option)) { extra } else { 0 };
+            look.shield = actor::shield_part(extra).unwrap_or(look.shield);
+        }
         net::LOOK_HEAD_BOTTOM => look.head_bottom = short,
         net::LOOK_HEAD_TOP => look.head_top = short,
         net::LOOK_HEAD_MID => look.head_mid = short,
         net::LOOK_HAIR_COLOR => look.hair_color = short,
         net::LOOK_CLOTHES_COLOR => look.clothes_color = short,
-        net::LOOK_SHIELD => look.shield = value,
+        net::LOOK_SHIELD => (look.shield, look.left) = (actor::shield_part(value).unwrap_or(0), value),
         net::LOOK_ROBE => look.robe = short,
         net::LOOK_BODY => look.body = short,
         _ => {}
@@ -5588,6 +5596,24 @@ fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_left_hand_is_never_drawn_as_a_shield() {
+        // A unit packet's shield field is the left hand: a dagger there is no shield.
+        let look = unit_look(&net::Unit { job: 12, weapon: 1201, shield: 1201, ..net::Unit::default() });
+        assert_eq!((look.shield, look.left), (0, 1201));
+        let look = unit_look(&net::Unit { job: 7, shield: 2101, ..net::Unit::default() });
+        assert_eq!((look.shield, look.left), (2101, 2101));
+        // A sprite change's second value is the left hand only on the Assassin line; a weapon there keeps the shield.
+        let mut knight = Look { job: 7, shield: 2102, ..Look::default() };
+        assert!(change_look(&mut knight, net::LOOK_WEAPON, 1101, 1201));
+        assert_eq!((knight.weapon, knight.left, knight.shield), (1101, 0, 2102));
+        change_look(&mut knight, net::LOOK_WEAPON, 1101, 2101);
+        assert_eq!(knight.shield, 2101);
+        let mut assassin = Look { job: 12, ..Look::default() };
+        change_look(&mut assassin, net::LOOK_WEAPON, 1201, 1201);
+        assert_eq!((assassin.left, assassin.shield), (1201, 0));
+    }
 
     #[test]
     fn a_window_covers_the_text_of_the_windows_before_it() {
