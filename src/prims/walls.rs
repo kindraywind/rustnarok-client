@@ -64,6 +64,9 @@ const CURTAIN_RGB: [f32; 3] = [100.0 / 255.0, 100.0 / 255.0, 1.0];
 /// from its 200, how fast the radius grows, the lean's start and floor, the turn a tick, and the ticks they are drawn.
 pub struct RibbonLook {
     texture: &'static str,
+    /// The colour its quads are multiplied by, and whether they add on.
+    rgb: [f32; 3],
+    additive: bool,
     peak: f32,
     height: f32,
     fall: f32,
@@ -78,6 +81,8 @@ pub struct RibbonLook {
 /// Steel Body's: yellow, 25 high, drawn on ticks 0 to 109 (alpha 0 at age 110), even with /effect off.
 pub const STEEL_BODY_RIBBONS: RibbonLook = RibbonLook {
     texture: RING_YELLOW,
+    rgb: [1.0; 3],
+    additive: false,
     peak: 200.0,
     height: 25.0,
     fall: 2.0,
@@ -89,11 +94,25 @@ pub const STEEL_BODY_RIBBONS: RibbonLook = RibbonLook {
     forced: true,
 };
 /// Ganbantein's: white, 15 high, quicker, drawn on ticks 0 to 33.
-pub const GANBANTEIN: RibbonLook =
-    RibbonLook { texture: RING_WHITE, peak: 200.0, height: 15.0, fall: 8.0, grow: 0.3, lean_from: 70.0, lean_floor: 40.0, turn: 5.0, ticks: 34, forced: false };
+pub const GANBANTEIN: RibbonLook = RibbonLook {
+    texture: RING_WHITE,
+    rgb: [1.0; 3],
+    additive: false,
+    peak: 200.0,
+    height: 15.0,
+    fall: 8.0,
+    grow: 0.3,
+    lean_from: 70.0,
+    lean_floor: 40.0,
+    turn: 5.0,
+    ticks: 34,
+    forced: false,
+};
 /// Storm Blast's: yellow, half as bright, 25 high, drawn on ages 1 to 59.
 pub const STORM_BLAST: RibbonLook = RibbonLook {
     texture: RING_YELLOW,
+    rgb: [1.0; 3],
+    additive: false,
     peak: 100.0,
     height: 25.0,
     fall: 2.0,
@@ -106,6 +125,21 @@ pub const STORM_BLAST: RibbonLook = RibbonLook {
 };
 /// Phantom Menace's: Storm Blast's ribbons in purple.
 pub const PHANTOM_MENACE: RibbonLook = RibbonLook { texture: RING_PURPLE, ..STORM_BLAST };
+/// The chi burst's crescents: blue, added on, 25 high, alpha 20 a tick to 200 then 5 less, drawn on ages 1 to 49.
+pub const CHI_CRESCENTS: RibbonLook = RibbonLook {
+    texture: RING_BLUE,
+    rgb: [0.0, 0.0, 1.0],
+    additive: true,
+    peak: 200.0,
+    height: 25.0,
+    fall: 5.0,
+    grow: 0.3,
+    lean_from: 80.0,
+    lean_floor: 40.0,
+    turn: 5.0,
+    ticks: 49,
+    forced: false,
+};
 /// Grand Cross's four arcs: where from the caster's spot and the turn they start at.
 const ARCS: [([f32; 2], f32); 4] = [([23.0, 23.0], 180.0), ([23.0, -23.0], 90.0), ([-23.0, -23.0], 0.0), ([-23.0, 23.0], 270.0)];
 /// The arcs are drawn on ages 1…98, the bars on 1…89.
@@ -347,7 +381,7 @@ pub fn ribbon_top(look: &RibbonLook, k: usize, s: u32, t: u32) -> f32 {
 fn ribbon(look: &RibbonLook, feet: Vector, k: usize, t: u32) -> Vec<MeshVertex> {
     let (radius, lean, turn) = ribbon_shape(look, k, t);
     let points: Vec<_> = (0..=20).map(|s| ring_point(feet, turn + 18.0 * s as f32, radius, ribbon_top(look, k, s, t), lean)).collect();
-    vertices(ring_quads(&points, ribbon_alpha(look, t) / 255.0), [1.0; 3])
+    vertices(ring_quads(&points, ribbon_alpha(look, t) / 255.0), look.rgb)
 }
 
 /// A Providence tube's profile at tick t: 120 sin(t + 1)° while t + 1 is up to 90.
@@ -509,6 +543,11 @@ impl Walls {
     /// A Poison Smoke cell at `at`, standing as skill unit `id`.
     pub fn keep_smoke(&mut self, id: u32, at: Vector, now: Instant) {
         self.smokes.push(Smoke { id, at, start: now, ticks: 0, glints: Vec::new() });
+    }
+
+    /// The Sura's chi burst: four blue crescents on `unit`.
+    pub fn chi_burst(&mut self, unit: Option<u32>, now: Instant) {
+        self.ribbons.push(Ribbons { look: &CHI_CRESCENTS, unit, at: None, start: now });
     }
 
     /// Phantom Menace's four purple crescents on `unit`.
@@ -716,7 +755,12 @@ impl Walls {
             let place = ribbons.at.or_else(|| position_of(ribbons.unit));
             let (Some(feet), Some(p)) = (place, passes(ribbons.start, now).checked_sub(1)) else { continue };
             if p < look.ticks {
-                walls.extend((0..4).map(|k| Wall { texture: look.texture, vertices: ribbon(look, feet, k, p + 1), additive: false, forced: look.forced }));
+                walls.extend((0..4).map(|k| Wall {
+                    texture: look.texture,
+                    vertices: ribbon(look, feet, k, p + 1),
+                    additive: look.additive,
+                    forced: look.forced,
+                }));
             }
         }
         for providence in &self.providences {
@@ -1155,5 +1199,23 @@ mod tests {
         assert!(meshes.iter().all(|wall| wall.texture == RING_PURPLE && !wall.additive && !wall.forced));
         assert_eq!(walls.meshes(start + TICK * 58, |_| Some([0.0; 3])).len(), 8);
         assert!(walls.meshes(start + TICK * 59, |_| Some([0.0; 3])).is_empty());
+    }
+
+    #[test]
+    fn the_chi_burst_opens_four_blue_crescents() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        walls.chi_burst(Some(3), start);
+        let look = &CHI_CRESCENTS;
+        // Alpha at n = 1, 10, 11, 49, 50: 20, 200, 195, 5, 0; band 2's radius at n = 1 and 10: 3.3 and 6.0; lean 79 at 1, 40 from 40.
+        assert_eq!([1, 10, 11, 49, 50].map(|n| ribbon_alpha(look, n)), [20.0, 200.0, 195.0, 5.0, 0.0]);
+        assert!(near(ribbon_shape(look, 2, 1).0, 3.3) && near(ribbon_shape(look, 2, 10).0, 6.0));
+        assert_eq!([1, 40, 60].map(|n| ribbon_shape(look, 0, n).1), [79.0, 40.0, 40.0]);
+        // Four additive blue bands in ring_blue on ages 1 to 49.
+        let meshes = walls.meshes(start, |_| Some([0.0; 3]));
+        assert_eq!(meshes.len(), 4);
+        assert!(meshes.iter().all(|wall| wall.texture == RING_BLUE && wall.additive && wall.vertices[0].tint[..3] == [0.0, 0.0, 1.0]));
+        assert_eq!(walls.meshes(start + TICK * 48, |_| Some([0.0; 3])).len(), 4);
+        assert!(walls.meshes(start + TICK * 49, |_| Some([0.0; 3])).is_empty());
     }
 }

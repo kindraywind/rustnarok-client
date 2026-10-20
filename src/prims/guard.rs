@@ -112,6 +112,8 @@ enum Flicker {
     Concentration,
     /// Hundred Spear's pale yellow glow: outline copies and #FFFF96, ticks 20 to 100.
     Spear,
+    /// The chi burst's flash: outline copies added on in #0000FF on ticks 0 to 30.
+    ChiBurst,
     /// Sonic Wave's blue strobe: outline copies added on in #0505FF on even ticks 4 to 52, white on the odd ones.
     Sonic,
     /// Deadly Infect's black and white blink: white on the odd ticks, black on the even, ticks 6 to 60.
@@ -190,6 +192,7 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
         }
         Flicker::Outlined(rgb, last) => (e <= last).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb)) } else { (GLOW_OUTLINE, Some([255; 3])) }),
         Flicker::Spear => (20..=100).contains(&e).then_some((GLOW_OUTLINE, Some([0xFF, 0xFF, 0x96]))),
+        Flicker::ChiBurst => (e <= 30).then_some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 0, 0xFF]))),
         Flicker::Sonic => (4..=52).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([5, 5, 0xFF])) } else { (0, Some([255; 3])) }),
         Flicker::Blink => (6..=60).contains(&e).then_some((0, Some(if even { [0; 3] } else { [255; 3] }))),
         Flicker::Concentration => (10..=33).contains(&e).then_some((if even { GLOW_ADDITIVE } else { 0 }, Some(LILAC))),
@@ -373,6 +376,11 @@ impl Guard {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0x9B, 0x9B, 0xFF], 60) });
     }
 
+    /// The chi burst's blue flash of `unit`.
+    pub fn chi_burst(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::ChiBurst });
+    }
+
     /// Hundred Spear's glow on `unit`.
     pub fn spear(&mut self, unit: Option<u32>, now: Instant) {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Spear });
@@ -525,6 +533,7 @@ impl Guard {
                 Flicker::Concentration if e > 33 => fade_back(LILAC, e - 33),
                 Flicker::Blink if e > 60 => fade_back([0; 3], e - 60),
                 Flicker::Spear if e > 100 => fade_back([0xFF, 0xFF, 0x96], e - 100),
+                Flicker::ChiBurst if e > 30 => fade_back([0, 0, 0xFF], e - 30),
                 Flicker::Sonic if e > 52 => fade_back([5, 5, 0xFF], e - 52),
                 _ => None,
             }
@@ -863,5 +872,17 @@ mod tests {
         assert_eq!(walls.len(), 2);
         assert!(walls.iter().all(|wall| wall.additive && wall.vertices.len() == 8 * 6));
         assert!(guard.upright_pieces(start + TICK * 77).len() == 2 && guard.upright_pieces(start + TICK * 78).is_empty());
+    }
+
+    #[test]
+    fn the_chi_burst_flashes_the_unit_blue_for_31_ticks() {
+        use crate::actor::{GLOW_ADDITIVE, GLOW_OUTLINE};
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.chi_burst(Some(1), start);
+        let glow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        assert_eq!((glow(0), glow(30)), (Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 0, 0xFF]))), Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 0, 0xFF])))));
+        assert!(glow(31).is_none());
+        assert_eq!(guard.body_tint(Some(1), start + TICK * 31), Some([8, 8, 255]));
     }
 }

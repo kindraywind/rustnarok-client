@@ -1475,8 +1475,6 @@ ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.2;
 ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.25;topSize=2.25;height=3.1;alphaMax=65;blendMode=2;rotateWithCamera=true;angleY=10;duration=20000;attachedEntity=true
 ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.3;topSize=2.3;height=3.0;alphaMax=15;blendMode=2;rotateWithCamera=true;duration=20000;attachedEntity=true
 ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.3;topSize=2.3;height=3.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=53.2;duration=20000;attachedEntity=true
-ring	885	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=200;duplicate=5;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;red=0.3;green=0.5;blue=1.0;attachedEntity=true
-ring	885	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=5;delayStart=200;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;red=0.3;green=0.5;blue=1.0;attachedEntity=true
 spr	53	poisonhit	0	-
 spr	165	크리스마스	1	duration=1000
 spr	212	darkbreath	1	head=true
@@ -2046,8 +2044,9 @@ wav	874	effect\멜로디오브싱크	0	listener
 wav	876	effect\비욘드오브워크라이	0	listener
 wav	878	effect\언리미티드허밍보이스	0	listener
 wav	879	effect\세이렌의목소리	0
+wav	882	effect\LG_EXEEDBREAK	160
 wav	883	effect\ef_readyportal	0
-wav	885	effect\bash3d	0
+wav	885	effect\mon_맹룡과강	80
 wav	888	effect\sr_earthshaker	0
 wav	889	effect\mon_아수라 패황권	0
 wav	893	effect\SR_KNUCKLEARROW	0	listener
@@ -4361,8 +4360,14 @@ struck	8437	caster	935
 struck	8442	target	944
 struck	2259	target	787
 struck	2259	target	49
+struck	2320	caster	885
+struck	2320	caster	886
+struck	2320	caster	890
 struck	2327	target	548
 struck	2327	target	550
+struck	2327	caster	886
+struck	2327	caster	890
+struck	2332	caster	886
 struck	2336	target	458
 struck	2426	target	466
 struck	2429	target	425
@@ -4660,6 +4665,7 @@ used	2333	caster	886
 used	2334	caster	886
 used	2335	caster	886
 used	2337	caster	435
+used	2337	caster	886
 used	2338	caster	886
 used	2341	caster	886
 used	2341	target	886
@@ -4774,7 +4780,13 @@ ground	769	ground	1255
 ground	770	ground	1399
 ground	774	ground	1062
 ground	2260	caster	791
+ground	2446	caster	886
 ground	2447	ground	1450
+ground	2449	ground	922
+ground	2449	caster	886
+ground	2450	caster	886
+ground	2518	caster	885
+ground	2518	caster	886
 ground	2571	ground	1062
 ground	5028	ground	1106
 ground	5042	ground	1112

@@ -213,6 +213,8 @@ struct Rays {
     unit: Option<u32>,
     start: Instant,
     rays: Vec<Ray>,
+    /// The Dragon Combo's: thinner and bluer wedges drawn over everything, and no body change.
+    dragon: bool,
 }
 
 /// A ray's alpha at its age a: 10 a tick to 100, held one more tick, then 3 less a tick.
@@ -232,13 +234,19 @@ pub fn ray_reach(a: u32) -> f32 {
 impl Ray {
     /// The angles of its two wedges' rim points: the near ones (L − 1, L + 1) and the far ones (L − 2, L + 2). L + δ wraps at
     /// 360; L − δ does not, so a ray past 360 reads its low side from the table's far end.
+    #[cfg(test)]
     pub fn rim(&self) -> [[f32; 2]; 2] {
+        self.rim_by([1, 2])
+    }
+
+    /// The same for wedges `deltas` degrees to either side.
+    pub fn rim_by(&self, deltas: [i32; 2]) -> [[f32; 2]; 2] {
         let high = |delta: i32| table(if self.angle + delta >= 360 { self.angle + delta - 360 } else { self.angle + delta });
-        [[table(self.angle - 1), high(1)], [table(self.angle - 2), high(2)]]
+        deltas.map(|delta| [table(self.angle - delta), high(delta)])
     }
 
     /// The two wedges at age a round `feet`: the near one blue, the far one yellow, both added on.
-    fn wedges(&self, feet: Vector, a: u32) -> Vec<MeshVertex> {
+    fn wedges(&self, feet: Vector, a: u32, dragon: bool) -> Vec<MeshVertex> {
         let alpha = ray_alpha(a) / 255.0;
         let reach = ray_reach(a);
         let (plane_sin, plane_cos) = self.plane.to_radians().sin_cos();
@@ -248,7 +256,12 @@ impl Ray {
         };
         let middle = [feet[0], feet[1] + 12.0, feet[2]];
         let mut vertices = Vec::new();
-        for (rim, rgb) in self.rim().into_iter().zip([[0.0, 0.0, 250.0 / 255.0], [250.0 / 255.0, 250.0 / 255.0, 0.0]]) {
+        let (deltas, colours) = if dragon {
+            ([2, 5], [[0.0, 0.0, 1.0], [50.0 / 255.0, 50.0 / 255.0, 1.0]])
+        } else {
+            ([1, 2], [[0.0, 0.0, 250.0 / 255.0], [250.0 / 255.0, 250.0 / 255.0, 0.0]])
+        };
+        for (rim, rgb) in self.rim_by(deltas).into_iter().zip(colours) {
             let tint = [rgb[0], rgb[1], rgb[2], alpha];
             vertices.extend([
                 MeshVertex { position: at(rim[0]), uv: [0.0, 1.0], tint },
@@ -365,6 +378,9 @@ impl Strip {
 struct Spread {
     unit: Option<u32>,
     start: Instant,
+    /// The ticks its flag is set on: Sound of Destruction's 30 to 99, the chi burst's 0 to 29.
+    first: u32,
+    last: u32,
 }
 
 /// Camouflage's translucent unit (744): alpha 50 while the status lasts, then 8 more a tick back to 255.
@@ -405,6 +421,22 @@ struct Spin {
     unit: Option<u32>,
     start: Instant,
     done: u32,
+    /// Moon Slasher's: a step a tick from a table instead of 30.
+    table: bool,
+}
+
+/// Moon Slasher's turn on tick e: 12, 18, 24, 48, 24, 18, 12 over 46 ticks (954° in all).
+pub fn spin_step(e: u32) -> f32 {
+    match e {
+        0..=7 => 12.0,
+        8..=15 => 18.0,
+        16..=20 => 24.0,
+        21..=25 => 48.0,
+        26..=32 => 24.0,
+        33..=37 => 18.0,
+        38..=45 => 12.0,
+        _ => 0.0,
+    }
 }
 
 #[derive(Default)]
@@ -461,20 +493,34 @@ impl Brawl {
     }
 
     /// Rage Burst's 32 rays on `unit`, each plane's turn from `rand(n)`.
-    pub fn rays(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    pub fn rays(&mut self, unit: Option<u32>, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make_rays(unit, now, false, rand);
+    }
+
+    /// The Dragon Combo's 32 blue rays over everything, the same way.
+    pub fn dragon_rays(&mut self, unit: Option<u32>, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make_rays(unit, now, true, rand);
+    }
+
+    fn make_rays(&mut self, unit: Option<u32>, now: Instant, dragon: bool, mut rand: impl FnMut(u32) -> u32) {
         let mut rays = Vec::new();
         for i in 0..8 {
             for k in 0..4 {
                 rays.push(Ray { plane: rand(360) as f32, angle: 90 * k + 22 * i });
             }
         }
-        self.rays.push(Rays { unit, start: now, rays });
+        self.rays.push(Rays { unit, start: now, rays, dragon });
     }
 
     /// Windmill's tornado and wisps where the caster stands (`at`), and its spin, on `unit`.
     pub fn windmill(&mut self, unit: Option<u32>, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.tornado(at, now, None, rand);
-        self.spins.push(Spin { unit, start: now, done: 0 });
+        self.spins.push(Spin { unit, start: now, done: 0, table: false });
+    }
+
+    /// Moon Slasher's and Sky Net Blow's spin of `unit`.
+    pub fn moon_spin(&mut self, unit: Option<u32>, now: Instant) {
+        self.spins.push(Spin { unit, start: now, done: 0, table: true });
     }
 
     /// Reverberation's red tornado and wisps at a trap's cell `at`, gone with the trap `id`.
@@ -626,7 +672,12 @@ impl Brawl {
 
     /// Sound of Destruction's sliding copies on `unit`.
     pub fn spread(&mut self, unit: Option<u32>, now: Instant) {
-        self.spreads.push(Spread { unit, start: now });
+        self.spreads.push(Spread { unit, start: now, first: 30, last: 99 });
+    }
+
+    /// The chi burst's four sliding copies of `unit`, from its first tick.
+    pub fn chi_spread(&mut self, unit: Option<u32>, now: Instant) {
+        self.spreads.push(Spread { unit, start: now, first: 0, last: 29 });
     }
 
     /// Runs the tornados' turns up to `now`, a tick at a time (3 to 5 degrees each from `rand(n)`), and drops what ended.
@@ -665,8 +716,8 @@ impl Brawl {
     pub fn turned(&mut self, unit: Option<u32>, now: Instant) -> f32 {
         let mut degrees = 0.0;
         for spin in self.spins.iter_mut().filter(|spin| spin.unit == unit) {
-            let due = passes(spin.start, now).min(SPIN_TICKS);
-            degrees += 30.0 * due.saturating_sub(spin.done) as f32;
+            let due = passes(spin.start, now).min(if spin.table { 46 } else { SPIN_TICKS });
+            degrees += if spin.table { (spin.done..due).map(spin_step).sum() } else { 30.0 * due.saturating_sub(spin.done) as f32 };
             spin.done = spin.done.max(due);
         }
         degrees
@@ -675,10 +726,14 @@ impl Brawl {
     /// The body flags and colour an effect gives `unit` now: Rage Burst adds the body on ticks 5 to 35, Sound of Destruction's copies
     /// come with ticks 30 to 99 (the age n = t − 30 in the flags' upper half).
     pub fn glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
-        let added = self.rays.iter().filter(|rays| rays.unit == unit).any(|rays| passes(rays.start, now).checked_sub(1).is_some_and(|t| (5..=35).contains(&t)));
+        let added = self
+            .rays
+            .iter()
+            .filter(|rays| rays.unit == unit && !rays.dragon)
+            .any(|rays| passes(rays.start, now).checked_sub(1).is_some_and(|t| (5..=35).contains(&t)));
         let spread = self.spreads.iter().filter(|spread| spread.unit == unit).find_map(|spread| {
-            let t = passes(spread.start, now).checked_sub(1).filter(|t| (30..100).contains(t))?;
-            Some(crate::actor::GLOW_SPREAD | (t - 30) << crate::actor::PARAM_SHIFT)
+            let t = passes(spread.start, now).checked_sub(1).filter(|t| (spread.first..=spread.last).contains(t))?;
+            Some(crate::actor::GLOW_SPREAD | (t - spread.first) << crate::actor::PARAM_SHIFT)
         });
         // Marsh of Abyss' swing on ticks 14 to 49 (the age in the upper half) and Hovering's blue copies on ticks 0 to 199 (the alpha).
         let swing = self.swings.iter().filter(|swing| swing.unit == unit).find_map(|swing| {
@@ -741,11 +796,11 @@ impl Brawl {
                 walls.push(Wall { texture: WHITE, vertices, additive: true, forced: false });
             }
         }
-        for rays in &self.rays {
+        for rays in self.rays.iter().filter(|rays| !rays.dragon) {
             let (Some(feet), Some(t)) = (position_of(rays.unit), passes(rays.start, now).checked_sub(1)) else { continue };
             let a = t + 1;
             if a <= RAY_LAST {
-                let vertices = rays.rays.iter().flat_map(|ray| ray.wedges(feet, a)).collect();
+                let vertices = rays.rays.iter().flat_map(|ray| ray.wedges(feet, a, false)).collect();
                 walls.push(Wall { texture: RAY, vertices, additive: true, forced: false });
             }
         }
@@ -777,9 +832,17 @@ impl Brawl {
         walls
     }
 
-    /// Dark Illusion's lines, drawn over everything with no depth test.
-    pub fn top_meshes(&self, now: Instant) -> Vec<Wall> {
+    /// Dark Illusion's lines and the Dragon Combo's rays, drawn over everything with no depth test.
+    pub fn top_meshes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<Wall> {
         let mut walls = Vec::new();
+        for rays in self.rays.iter().filter(|rays| rays.dragon) {
+            let (Some(feet), Some(t)) = (position_of(rays.unit), passes(rays.start, now).checked_sub(1)) else { continue };
+            let a = t + 1;
+            if a <= RAY_LAST {
+                let vertices = rays.rays.iter().flat_map(|ray| ray.wedges(feet, a, true)).collect();
+                walls.push(Wall { texture: RAY, vertices, additive: true, forced: false });
+            }
+        }
         for lines in &self.lines {
             let Some(t) = passes(lines.start, now).checked_sub(1) else { continue };
             let a = t + 1;
@@ -997,7 +1060,7 @@ mod tests {
         // It wraps by 200: 199.5 at a = 133 and 1.0 at 134.
         assert!(near(strips[0].at(133), 199.5) && near(strips[0].at(134), 1.0));
         // Due east (bearing 0 along +x): a strip lies flat 6 up, 100 units back at first.
-        let walls = brawl.top_meshes(start);
+        let walls = brawl.top_meshes(start, |_| Some([0.0; 3]));
         assert_eq!(walls.len(), 1);
         assert!(!walls[0].additive && walls[0].texture == STRIP && walls[0].vertices.len() == 192);
         let first = &walls[0].vertices;
@@ -1005,7 +1068,7 @@ mod tests {
         assert!(first.iter().all(|vertex| near(vertex.tint[3] * 255.0, 12.0)));
         // The first strip (side −15, heading 0) lies 15 to the +z side, its head 78.5 back along x, a half-width off its middle.
         assert!(near(first[0].position[0], 10.0 - 78.5) && near(first[0].position[2], 25.0 - 0.3));
-        assert!(brawl.top_meshes(start + TICK * 48).len() == 1 && brawl.top_meshes(start + TICK * 49).is_empty());
+        assert!(brawl.top_meshes(start + TICK * 48, |_| Some([0.0; 3])).len() == 1 && brawl.top_meshes(start + TICK * 49, |_| Some([0.0; 3])).is_empty());
     }
 
     #[test]
@@ -1166,12 +1229,53 @@ mod tests {
         assert!((strips[0].at(120) - (1.0 * 120.0 + 0.05 * 120.0 * 121.0 / 2.0) % 200.0).abs() < 1e-3);
         assert_eq!(strips[0].growth * 120.0, 6.0);
         // Drawn over everything in the gold picture, blended; the tints are #FFFFE1 …; gone after tick 118.
-        let walls = brawl.top_meshes(start);
+        let walls = brawl.top_meshes(start, |_| Some([0.0; 3]));
         assert_eq!(walls.len(), 1);
         assert!(!walls[0].additive && walls[0].texture == GOLD_STRIP && walls[0].vertices[0].tint[..3] == [1.0, 1.0, 225.0 / 255.0]);
-        assert!(!brawl.top_meshes(start + TICK * 118).is_empty() && brawl.top_meshes(start + TICK * 119).is_empty());
+        assert!(!brawl.top_meshes(start + TICK * 118, |_| Some([0.0; 3])).is_empty() && brawl.top_meshes(start + TICK * 119, |_| Some([0.0; 3])).is_empty());
         // Dark Illusion's pale lines are unchanged.
         brawl.lines([0.0; 3], [40.0, 0.0, 0.0], start, |_| 0);
         assert!(brawl.lines[1].strips.iter().all(|strip| strip.growth == 0.0 && strip.speed == 1.5));
+    }
+
+    #[test]
+    fn the_dragon_combo_shoots_blue_rays_over_everything_and_moon_slasher_spins() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.dragon_rays(Some(1), start, |_| 0);
+        // 32 rays, no body change; the sliver ray L = 380 reads 197 and 194 low, 22 and 25 wrapped high.
+        assert_eq!(brawl.rays[0].rays.len(), 32);
+        assert!(brawl.glow(Some(1), start + TICK * 10).is_none());
+        let sliver = Ray { plane: 0.0, angle: 380 };
+        assert_eq!(sliver.rim_by([2, 5]), [[197.0, 22.0], [194.0, 25.0]]);
+        // Two wedges a ray in #0000FF and #3232FF, added on, over everything, none in the world's depth-tested pass.
+        let feet = [0.0; 3];
+        assert!(brawl.meshes(start, |_| Some(feet)).iter().all(|wall| wall.texture != RAY));
+        let walls = brawl.top_meshes(start, |_| Some(feet));
+        let rays = walls.iter().find(|wall| wall.texture == RAY).unwrap();
+        assert!(rays.additive && rays.vertices.len() == 32 * 2 * 3);
+        assert_eq!(rays.vertices[0].tint[..3], [0.0, 0.0, 1.0]);
+        assert_eq!(rays.vertices[3].tint[..3], [50.0 / 255.0, 50.0 / 255.0, 1.0]);
+        assert!(brawl.top_meshes(start + TICK * 44, |_| Some(feet)).iter().all(|wall| wall.texture != RAY));
+        // Moon Slasher: the facing after e = 7, 15, 20, 25, 32, 37, 45: 96, 240, 360, 600, 768, 858, 954; nothing from 46.
+        let mut spin = Brawl::default();
+        spin.moon_spin(Some(1), start);
+        let total = |spin: &mut Brawl, tick: u32| spin.turned(Some(1), start + TICK * tick);
+        let mut turned = 0.0;
+        let mut at = Vec::new();
+        for tick in 0..60 {
+            turned += total(&mut spin, tick);
+            if [7, 15, 20, 25, 32, 37, 45, 59].contains(&tick) {
+                at.push(turned);
+            }
+        }
+        assert_eq!(at, [96.0, 240.0, 360.0, 600.0, 768.0, 858.0, 954.0, 954.0]);
+        // The chi burst's copies: flagged on ticks 0 to 29 with the age in the flags, none from 30.
+        let mut chi = Brawl::default();
+        chi.chi_spread(Some(2), start);
+        let glow = |tick: u32| chi.glow(Some(2), start + TICK * tick);
+        assert_eq!(glow(0), Some((crate::actor::GLOW_SPREAD, None)));
+        assert_eq!(glow(29), Some((crate::actor::GLOW_SPREAD | 29 << crate::actor::PARAM_SHIFT, None)));
+        assert!(glow(30).is_none());
     }
 }
