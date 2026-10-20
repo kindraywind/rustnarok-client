@@ -492,6 +492,17 @@ mod tests {
     }
 
     #[test]
+    fn a_walked_step_east_reads_89_on_the_arrow() {
+        // The game works a step's facing out with 3.141592 (east 90.0000229) and then truncates the arrow to whole degrees,
+        // so a walk east reads 89°, not 90°; north (180.0000458) still reads 0°. Only a facing set to exactly 90 reads 90.
+        let east = crate::actor::step_rot(1.0, 0.0);
+        assert!(east > 90.0);
+        assert_eq!((arrow_angle(east), arrow_turn(east)), (89, 89));
+        assert_eq!(arrow_angle(crate::actor::step_rot(0.0, 1.0)), 0);
+        assert_eq!(arrow_angle(90.0), 90);
+    }
+
+    #[test]
     fn turns_the_player_arrow_by_facing_in_whole_degrees_over_its_shadow() {
         // Facing north (180) -> 0°, east (90) -> 90°, south (0) -> 180°, west (270) -> -90° (turn 270).
         assert_eq!((arrow_angle(180.0), arrow_turn(180.0)), (0, 0));
