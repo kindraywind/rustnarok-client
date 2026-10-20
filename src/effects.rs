@@ -529,7 +529,7 @@ fn plain_layers(gpu: &Gpu, sprite: &mut SpriteSet, action: usize, frame: usize, 
 }
 
 /// How often a ground unit's effect starts again, in ticks: 8 before its length ends (Quagmire's 20), by the skill unit's type 1
-/// before it for Wall of Thorns, the Insignias and their like, 7 for Fire Walk.
+/// before it for Wall of Thorns, the Insignias, Kaensin, Ground Drift and their like, 7 for Fire Walk.
 fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
     // Shockwave's waves start again every 75 ticks.
     if effect == 145 {
@@ -549,7 +549,7 @@ fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
 /// How many ticks before its length a ground unit's effect starts again.
 fn restart_early(effect: u32, kind: u32) -> u32 {
     match kind {
-        228 | 230..=233 | 235 | 240..=244 | 258 => 1,
+        189..=194 | 228 | 230..=233 | 235 | 240..=244 | 258 => 1,
         220 | 221 => 7,
         _ if effect == 95 => 20,
         _ => 8,
@@ -591,6 +591,14 @@ struct Animation {
     first: f32,
     /// Drawn over everything with no depth test.
     over: bool,
+    /// The ticks a frame as the first and how many it picks from (`frameTicks`, `frameTicksRan`), drawn again at each start.
+    frame_ticks: Option<[u32; 2]>,
+    /// Action 0, or this one when a draw of two comes up 0 (`sideAction`): the slash turned to one of two sides.
+    side_action: Option<usize>,
+    /// On a ground unit it starts again each time the unit's effect does (`restart`).
+    restarts: bool,
+    /// The table's length of its effect, for that restart.
+    length: Option<u32>,
     /// Its images now, from `advance`.
     placed: Vec<Placed>,
     effect: u32,
@@ -614,7 +622,11 @@ impl Animation {
         let number = |name: &str| part.parameters.get(name).and_then(|value| value.parse::<f32>().ok());
         let flag = |name: &str| part.parameters.get(name).is_some_and(|value| value == "true");
         let rise = if flag("head") { -100.0 } else { 0.0 };
-        let repeat = flag("repeat") || (lasting && !flag("hold"));
+        let repeat = match part.parameters.get("repeat").map(String::as_str) {
+            Some("true") => true,
+            Some("false") => false,
+            _ => lasting && !flag("hold"),
+        };
         Self {
             sprite: format!("data\\sprite\\이팩트\\{}", part.file),
             start,
@@ -629,8 +641,22 @@ impl Animation {
             alpha: number("alpha").map_or(1.0, |alpha| alpha / 255.0),
             first: number("firstFrame").unwrap_or(0.0),
             over: flag("onTop"),
+            frame_ticks: number("frameTicks").map(|base| [base as u32, number("frameTicksRan").map_or(1, |spread| spread.max(1.0) as u32)]),
+            side_action: number("sideAction").map(|action| action as usize),
+            restarts: flag("restart"),
+            length: None,
             placed: Vec::new(),
             effect,
+        }
+    }
+
+    /// The random choices of a start: the ticks a frame and the side of the slash.
+    fn roll(&mut self, mut rand: impl FnMut(u32) -> u32) {
+        if let Some([base, spread]) = self.frame_ticks {
+            self.frame_ms = Some(STR_TICK_MS * (base + rand(spread)) as f32);
+        }
+        if let Some(side) = self.side_action {
+            self.action = Some(if rand(2) == 0 { side } else { 0 });
         }
     }
 }
@@ -2259,6 +2285,7 @@ const MOONLIT: u32 = 394;
 const MARIONETTE_LINK: u32 = 395;
 const HEAD_CRUSH: u32 = 399;
 const JOINT_BEAT: u32 = 400;
+const DUST: u32 = 628;
 const MIND_BREAKER: u32 = 403;
 const SPIDER_WEB: u32 = 404;
 const SOUL_CHANGE_GLOW: u32 = 385;
@@ -3154,10 +3181,14 @@ impl Effects {
                 self.textures.entry(dancer::FIRE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, dancer::FIRE, true).ok());
                 self.prims.dancer.mill(unit, None, now, |n| pick(0, n.saturating_sub(1)));
             }
-            (HEAD_CRUSH | JOINT_BEAT, Target::Unit(unit)) => {
+            (HEAD_CRUSH | JOINT_BEAT | DUST, Target::Unit(unit)) => {
                 self.textures.entry(knight::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, knight::RAY, true).ok());
                 let rand = |n: u32| pick(0, n.saturating_sub(1));
-                if id == HEAD_CRUSH { self.prims.knight.head_crush(unit, now, rand) } else { self.prims.knight.joint_beat(unit, now, rand) }
+                match id {
+                    HEAD_CRUSH => self.prims.knight.head_crush(unit, now, rand),
+                    JOINT_BEAT => self.prims.knight.joint_beat(unit, now, rand),
+                    _ => self.prims.knight.dust(unit, now, rand),
+                }
             }
             (MIND_BREAKER, Target::Unit(unit)) => self.prims.transcend.breaker(unit, now, |n| pick(0, n.saturating_sub(1))),
             (SPIDER_WEB, Target::Status(unit, _)) => {
@@ -3367,7 +3398,9 @@ impl Effects {
             }
         }
         for part in table.sprites.get(&id).into_iter().flatten() {
-            let animation = Animation::new(part, id, now, anchor(part.attached), lasting);
+            let mut animation = Animation::new(part, id, now, anchor(part.attached), lasting);
+            animation.length = table.lengths.get(&id).copied();
+            animation.roll(|n| pick(0, n.saturating_sub(1)));
             self.sprites.entry(animation.sprite.clone()).or_insert_with(|| SpriteSet::at(grf, &animation.sprite));
             self.animations.push(animation);
         }
@@ -4223,8 +4256,20 @@ impl Effects {
         // ponytail: sprites face south as seen; the few effect sprites drawn in 8 directions would face their unit.
         let facing = usize::from(crate::seen_direction(0.0, yaw, true));
         let sprites = &mut self.sprites;
+        let unit_kinds = &self.unit_kinds;
+        let tick = Duration::from_secs_f32(STR_TICK_MS / 1000.0);
         self.animations.retain_mut(|animation| {
             let Some(Some(sprite)) = sprites.get_mut(&animation.sprite) else { return false };
+            // A ground unit's sprite starts again when its effect does, with new choices.
+            if let (true, Anchor::Lasting(unit, _)) = (animation.restarts, animation.anchor) {
+                let kind = unit_kinds.get(&unit).copied().unwrap_or(0);
+                let period = tick * restart_ticks(animation.effect, kind, animation.length.unwrap_or(1));
+                while now >= animation.start + period {
+                    animation.start += period;
+                    animation.roll(|n| pick(0, n.saturating_sub(1)));
+                }
+                animation.end = Some(animation.start + period);
+            }
             let index = animation.action.unwrap_or(facing) % sprite.actions().max(1);
             let frames = sprite.frames(index).max(1) as f32;
             let frame_ms = animation.frame_ms.unwrap_or_else(|| sprite.index_ms(index).unwrap_or(100.0) / frames);
@@ -7612,5 +7657,56 @@ mod tests {
         assert_eq!(sounds(KAMAITACHI), [("effect\\t_바람방출", 16)]);
         assert_eq!(sounds(DISARM), [("effect\\디스암", 336)]);
         assert_eq!([PIERCING_LINES, KAMAITACHI, DISARM].map(|id| table.lengths[&id]), [300, 200, 300]);
+    }
+
+    #[test]
+    fn dust_the_ninja_slashes_kaensin_and_the_dragon_and_ice_pictures_have_their_rows() {
+        let table = Table::load();
+        // Dust: Joint Beat's rays in code, no stand-in rings, its own sound.
+        assert!(
+            !table.rings.contains_key(&DUST) && table.sounds[&DUST][0].file == "effect\\더스트샷" && table.struck(518).unwrap().contains(&(Who::Target, DUST))
+        );
+        // The sprites: (effect, frames, ticks a frame, last shown age + 1, over everything, rise).
+        let animation = |effect: u32| Animation::new(&table.sprites[&effect][0], effect, Instant::now(), Anchor::Unit(Some(1)), false);
+        for (effect, frames, t, ends, over, rise) in
+            [(630, 9.0, 4, 32, true, 0.0), (631, 13.0, 6, 72, false, -6.0), (632, 11.0, 4, 40, true, 0.0), (633, 30.0, 2, 58, true, -6.0)]
+        {
+            let animation = animation(effect);
+            assert!(!animation.repeat && animation.over == over && animation.first == 1.0 && animation.offset[1] == rise, "{effect}");
+            let frame_ms = animation.frame_ms.unwrap();
+            assert_eq!(frame_ms, 16.0 * t as f32, "{effect}");
+            let frame = |age: u32| (animation_progress(16.0 * age as f32, frame_ms, frames, 1.0, false) * frames) as usize;
+            assert_eq!((frame(0), frame(t - 1), frame(t), frame(ends - 1)), (1, 1, 2, frames as usize - 1), "{effect}");
+            assert_eq!((frames - 1.0) * frame_ms / 16.0, ends as f32, "{effect}");
+        }
+        assert_eq!(table.sprites[&631][0].file, "다다미");
+        // 630 and 632 turn to one of two sides on a draw of two.
+        for (effect, side) in [(630, 4), (632, 2)] {
+            let mut slash = animation(effect);
+            slash.roll(|_| 0);
+            assert_eq!(slash.action, Some(side));
+            slash.roll(|_| 1);
+            assert_eq!(slash.action, Some(0));
+        }
+        assert!(animation(631).side_action.is_none() && animation(633).side_action.is_none());
+        // Kaensin's flame: looped from frame 1, 3 + a draw of five ticks a frame, 22 draws a copy, starts again with its unit.
+        let mut flame = Animation::new(&table.sprites[&634][0], 634, Instant::now(), Anchor::Lasting(1, [0.0; 3]), true);
+        assert!(flame.repeat && flame.restarts && !flame.over && flame.offset[1] == -1.0 && table.lengths[&634] == 23);
+        for draw in 0..5 {
+            flame.roll(|n| {
+                assert_eq!(n, 5);
+                draw
+            });
+            assert_eq!(flame.frame_ms, Some(16.0 * (3 + draw) as f32));
+        }
+        flame.roll(|_| 0);
+        let frame = |age: u32| (animation_progress(16.0 * age as f32, 48.0, 5.0, 1.0, true) * 5.0) as usize;
+        assert_eq!([0, 2, 3, 12, 14, 15, 21].map(frame), [1, 1, 2, 0, 0, 1, 3]);
+        assert_eq!(table.units[&189], 634);
+        assert_eq!([189, 190, 191, 192, 193, 194].map(|kind| restart_ticks(634, kind, 23)), [22; 6]);
+        assert_eq!((restart_ticks(634, 188, 23), restart_ticks(0, 195, 100)), (15, 92));
+        // Bakuenryu's and Hyousyouraku's pictures follow their unit.
+        assert!([635, 636].iter().all(|id| table.parts[id].iter().all(|part| part.attached)));
+        assert_eq!([635, 636].map(|id| table.sounds[&id][0].delay_ms), [0, 0]);
     }
 }

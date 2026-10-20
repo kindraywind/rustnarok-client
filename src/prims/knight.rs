@@ -106,6 +106,9 @@ const HEAD_CRUSH_RAYS: RayLook = RayLook {
 const JOINT_BEAT_RAYS: RayLook =
     RayLook { prims: 6, core: [channel(50); 3], core_additive: true, edge: [channel(250); 3], edge_additive: false, glow: [0xFF; 3], glow_end: 50 };
 
+/// Dust's 24 rays are Joint Beat's, without the caster's outline.
+const DUST_RAYS: RayLook = RayLook { glow_end: 0, ..JOINT_BEAT_RAYS };
+
 struct Martyr {
     look: &'static RayLook,
     unit: Option<u32>,
@@ -261,6 +264,11 @@ impl Knight {
     /// Joint Beat's 24 rays on `unit`.
     pub fn joint_beat(&mut self, unit: Option<u32>, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.rays(&JOINT_BEAT_RAYS, unit, now, rand);
+    }
+
+    /// Dust's 24 rays on `unit`.
+    pub fn dust(&mut self, unit: Option<u32>, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.rays(&DUST_RAYS, unit, now, rand);
     }
 
     fn rays(&mut self, look: &'static RayLook, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
@@ -549,6 +557,23 @@ mod tests {
         let glow = |tick: u32| knight.glow(Some(1), start + TICK * tick);
         assert_eq!(glow(20), Some((crate::actor::GLOW_OUTLINE, Some([0xFF, 0xC8, 0xC8]))));
         assert!(glow(19).is_none() && glow(40).is_some() && glow(41).is_none());
+    }
+
+    #[test]
+    fn dust_shoots_joint_beats_24_rays_without_the_outline() {
+        let start = Instant::now();
+        let mut knight = Knight::default();
+        knight.dust(Some(1), start, |_| 0);
+        assert_eq!(knight.martyrs[0].rays.len(), 24);
+        let angle = |i: usize, k: usize| knight.martyrs[0].rays[i * 4 + k].angle;
+        assert_eq!((angle(0, 0), angle(1, 0), angle(5, 3)), (0.0, 22.0, 380.0));
+        // #323232 added on and #FAFAFA blended, the caster's outline never.
+        let walls = knight.meshes(start + TICK * 24, |_| Some([0.0; 3]));
+        assert_eq!(walls.len(), 2);
+        assert!(!walls[0].additive && walls[1].additive);
+        assert_eq!(walls[0].vertices[0].tint[..3], [250.0 / 255.0; 3]);
+        assert_eq!(walls[1].vertices[0].tint[..3], [50.0 / 255.0; 3]);
+        assert!((0..=60).all(|tick| knight.glow(Some(1), start + TICK * tick).is_none()));
     }
 
     #[test]
