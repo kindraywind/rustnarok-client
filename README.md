@@ -36,6 +36,10 @@ player's own game data at runtime. As good as the original, and better where it 
 
 https://github.com/user-attachments/assets/328d93f5-bb99-4413-8a20-e34fdd70840d
 
+The window resizes freely and the whole interface follows:
+
+https://github.com/user-attachments/assets/e4d4f87c-c3b9-4b53-a68e-5e61c5cab667
+
 <table>
 <tr>
 <td width="50%" valign="top">
