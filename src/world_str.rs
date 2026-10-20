@@ -484,6 +484,11 @@ impl Worlds {
         self.copies.iter().find(|copy| copy.owner == owner && copy.id == id).map(|copy| copy.serial)
     }
 
+    /// Whether an owner's id is still playing (running and not over).
+    pub fn playing(&self, owner: Option<Option<u32>>, id: u32) -> bool {
+        self.copies.iter().any(|copy| copy.owner == owner && copy.id == id && !copy.over)
+    }
+
     /// The file a launch plays: the row's `min` file under /mineffect, a `%d` one with its number, else the row's.
     pub fn file_of(row: &Row, min: bool, roll: u32) -> Option<String> {
         match (&row.min, &row.file) {

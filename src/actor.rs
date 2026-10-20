@@ -1180,6 +1180,11 @@ impl SpriteSet {
     /// The frame delay the unit's frames play at in `action`: taken when the action starts from its direction 0 (4
     /// when the ACT has none there; under 1 is 1), or the one it had when that's 0 or less, and kept in every direction
     /// until the next action.
+    /// The frame delay taken when the action it is in started (4 before any).
+    pub fn current_delay(&self) -> f32 {
+        self.delay.get().map_or(4.0, |(_, delay)| delay)
+    }
+
     fn action_delay(&self, action: usize) -> f32 {
         let (was, had) = self.delay.get().unwrap_or((usize::MAX, 4.0));
         if was == action {

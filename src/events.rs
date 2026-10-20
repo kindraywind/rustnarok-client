@@ -3444,6 +3444,9 @@ impl App {
                             game.effects.bloom_aura(gpu, grf, (act.source != me).then_some(act.source), effect, Instant::now());
                         }
                     }
+                    if skill == effects::CANNON_SPEAR {
+                        game.cannon_spear(gpu, grf, table, act.source);
+                    }
                     // Moonlight shows one, two or three slashes by the packet's hit count.
                     if skill == effects::MOONLIGHT_SKILL {
                         game.play_effect_hits(gpu, grf, table, effects::moonlight_effect(act.hits), act.target, Instant::now(), act.hits);

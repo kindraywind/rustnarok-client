@@ -30,6 +30,8 @@ const STR_TICK_MS: f32 = 16.0;
 const WORLD_TINT_REACH: f32 = 4000.0;
 /// The most ticks the STR world copies run in one frame.
 const WORLD_TICKS_MAX: u32 = 10;
+/// The STR world copies' tick, exact: a float 16 ms comes out a hair long and drops every other tick at 16 ms frames.
+const WORLD_TICK: Duration = Duration::from_millis(16);
 /// An STR's (320, 240) sits this many screen pixels above its owner's feet, at any zoom.
 pub const STR_RISE: f32 = 80.0;
 
@@ -107,6 +109,8 @@ pub struct Table {
     traps: HashMap<u32, u32>,
     /// What a status (by EFST id) plays again and again on its unit while it's on.
     statuses: HashMap<u16, Vec<u32>>,
+    /// The effect started instead under /mineffect.
+    min_ids: HashMap<u32, u32>,
     /// The STR world effects (world_str.txt), but for the ids a `str` row here plays.
     worlds: world_str::Table,
 }
@@ -167,6 +171,7 @@ impl Table {
             grounds: HashMap::new(),
             traps: HashMap::new(),
             statuses: HashMap::new(),
+            min_ids: HashMap::new(),
             worlds: world_str::Table::load(),
         };
         let parameters = |text: &str| -> HashMap<String, String> {
@@ -216,6 +221,11 @@ impl Table {
                         if fields.get(3) == Some(&"once") {
                             table.units_once.insert(kind);
                         }
+                    }
+                }
+                ["minid", ..] => {
+                    if let (Some(id), Some(min)) = (number(1), number(2)) {
+                        table.min_ids.insert(id, min);
                     }
                 }
                 ["length", ..] => {
@@ -363,6 +373,11 @@ impl Table {
             None if NO_CASTER_EFFECT.iter().any(|range| range.contains(&skill)) => None,
             None => Some(CASTER_EFFECT),
         }
+    }
+
+    /// The effect that starts for `id`: its `minid` one under /mineffect.
+    pub fn min_id(&self, id: u32, min: bool) -> u32 {
+        if min { self.min_ids.get(&id).copied().unwrap_or(id) } else { id }
     }
 
     /// What else a damaging skill shows as the packet comes, when the table has the skill.
@@ -562,6 +577,49 @@ fn restart_early(effect: u32, kind: u32) -> u32 {
 /// The STR frame `elapsed` into an effect: whole 16 ms ticks.
 fn str_frame(elapsed: Duration) -> u32 {
     (elapsed.as_secs_f32() * 1000.0 / STR_TICK_MS) as u32
+}
+
+/// The screen direction φ (degrees, counter-clockwise on the screen from facing the camera) a unit facing `rot` shows to a
+/// camera turned `yaw` degrees, both in whole degrees.
+// ponytail: the camera angle is taken 0 … 359 first, so φ is never negative here.
+pub fn cannon_phi(yaw: f32, rot: f32) -> i32 {
+    let phi = yaw.rem_euclid(360.0) as i32 + rot as i32;
+    if phi >= 360 { phi - 360 } else { phi }
+}
+
+/// Cannon Spear's blade for a screen direction φ: one of eight, by the way it points; none for a negative φ.
+pub fn cannon_sector(phi: i32) -> Option<u32> {
+    Some(match phi {
+        ..0 => return None,
+        0..=22 | 337.. => 1404,
+        23..=66 => 1403,
+        67..=111 => 1402,
+        112..=156 => 1401,
+        157..=201 => 1400,
+        202..=246 => 1407,
+        247..=291 => 1406,
+        _ => 1405,
+    })
+}
+
+/// The blade's start delay in ms: the caster's swing, from the frame delay of the action it is in.
+pub fn cannon_delay_ms(frame_delay: f32) -> i32 {
+    (frame_delay * 100.0 + 100.0) as i32
+}
+
+/// What a Cannon Spear packet starts, with each one's start delay in ms: nothing while the caster's vortex still plays,
+/// else the vortex at once and the blade after `delay_ms`; their lighter ids under /mineffect.
+pub fn cannon_launches(table: &Table, min: bool, phi: i32, delay_ms: i32, playing: impl Fn(u32) -> bool) -> Vec<(u32, i32)> {
+    let vortex = table.min_id(CANNON_VORTEX, min);
+    if playing(vortex) {
+        return Vec::new();
+    }
+    std::iter::once((vortex, 0)).chain(cannon_sector(phi).map(|blade| (table.min_id(blade, min), delay_ms))).collect()
+}
+
+/// How many whole world ticks fit in `elapsed`.
+fn world_ticks(elapsed: Duration) -> u32 {
+    (elapsed.as_micros() / WORLD_TICK.as_micros()) as u32
 }
 
 /// A key's corner in sprite pixels from the anchor: STR space is centred on (320, 240).
@@ -2293,6 +2351,9 @@ const CHI_BURST: u32 = 886;
 const MOON_SPIN: u32 = 890;
 /// Severe Rainstorm's cast ribbons (`prims::songs`).
 const RAINSTORM_CAST: u32 = 1286;
+/// Cannon Spear (2307): its gold vortex, and its blades by the screen direction the caster faces (`cannon_sector`).
+pub const CANNON_SPEAR: u16 = 2307;
+const CANNON_VORTEX: u32 = 1408;
 /// Cart Tornado's spin of its caster (`prims::brawl`).
 const CART_TORNADO: u32 = 1365;
 /// Cannon Spear's pale blue lines (`prims::brawl`).
@@ -2703,9 +2764,9 @@ impl Effects {
     /// and shakes they fire; then the drawn objects' frame step.
     pub fn advance_world(&mut self, gpu: &Gpu, grf: &Grf, now: Instant, scene: &world_str::Scene, seen: &world_fx::Seen) {
         let clock = self.world_clock.get_or_insert(now);
-        let due = str_frame(now.saturating_duration_since(*clock));
+        let due = world_ticks(now.saturating_duration_since(*clock));
         // A long stall (a loading screen) skips ahead rather than running every tick.
-        *clock = if due > WORLD_TICKS_MAX { now } else { *clock + Duration::from_secs_f32(STR_TICK_MS / 1000.0) * due };
+        *clock = if due > WORLD_TICKS_MAX { now } else { *clock + WORLD_TICK * due };
         if self.worlds.is_empty() && self.fx.is_empty() {
             return;
         }
@@ -2748,6 +2809,18 @@ impl Effects {
         })
     }
 
+    /// Cannon Spear's packet on `caster` (None = the player) standing at `at`: the vortex at once and the blade after the
+    /// caster's swing (`cannon_launches`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn cannon_spear(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, caster: Option<u32>, at: Vector, phi: i32, delay_ms: i32) {
+        let owner = Some(caster);
+        for (id, delay) in cannon_launches(table, self.min, phi, delay_ms, |id| self.worlds.playing(owner, id)) {
+            if let Some(copy) = self.launch_world(gpu, grf, table, id, owner, at, false, 0).and_then(|serial| self.worlds.get_mut(serial)) {
+                copy.timeline.delay = delay;
+            }
+        }
+    }
+
     /// Sounds effect `id` makes, with none of its looks (Manhole's on a monster).
     pub fn sound_of(&mut self, table: &Table, id: u32, at: Vector, now: Instant) {
         self.play_sounds(table, id, at, now);
@@ -2755,6 +2828,7 @@ impl Effects {
 
     /// Plays effect `id` from `now` on `target` at `at`; parts that don't follow units stay there.
     pub fn play(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        let id = table.min_id(id, self.min);
         // An STR world effect that names its file (the hat rows and the launcher-given ones play from their launchers): its own
         // sounds and shakes come with it.
         if table.world(id).is_some_and(|row| matches!(row.file, world_str::Source::Named(_))) {
@@ -5920,6 +5994,151 @@ pub fn blind_offsets(piece: &BlindPiece) -> [[f32; 2]; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cannon_spear_picks_its_blade_by_the_screen_direction() {
+        let phis = [0, 22, 23, 66, 67, 111, 112, 156, 157, 201, 202, 246, 247, 291, 292, 336, 337, 359];
+        let ids = [1404, 1404, 1403, 1403, 1402, 1402, 1401, 1401, 1400, 1400, 1407, 1407, 1406, 1406, 1405, 1405, 1404, 1404];
+        for (phi, id) in phis.into_iter().zip(ids) {
+            assert_eq!(cannon_sector(phi), Some(id), "{phi}");
+        }
+        assert_eq!(cannon_sector(-1), None);
+        // By the sprite direction the caster shows: 0 faces the camera, 4 away, 6 to the screen's right, 2 to its left.
+        for yaw in [0.0f32, 45.0, -30.0, 200.0] {
+            for (direction, id) in [(0, 1404), (4, 1400), (6, 1402), (2, 1406)] {
+                let rot = (-yaw - 45.0 * direction as f32).rem_euclid(360.0);
+                assert_eq!(crate::actor::view_direction(rot, yaw, true), direction);
+                assert_eq!(cannon_sector(cannon_phi(yaw, rot)), Some(id), "yaw {yaw}, direction {direction}");
+            }
+        }
+    }
+
+    #[test]
+    fn world_ticks_keep_pace_with_16_ms_frames() {
+        let start = Instant::now();
+        let mut clock = start;
+        let mut ticks = 0;
+        for frame in 1..=100 {
+            let now = start + Duration::from_millis(16 * frame);
+            let due = world_ticks(now - clock);
+            clock += WORLD_TICK * due;
+            ticks += due;
+        }
+        assert_eq!(ticks, 100);
+        assert_eq!(world_ticks(Duration::from_micros(15_999)), 0);
+    }
+
+    #[test]
+    fn cannon_spears_blade_waits_for_the_swing() {
+        assert_eq!([4.0, 1.0, 2.5].map(cannon_delay_ms), [500, 200, 350]);
+        let mut timeline = world_str::Timeline::default();
+        timeline.delay = 500;
+        let first = (0..100).position(|_| matches!(timeline.step(40), world_str::Step::Show(_)));
+        assert_eq!(first, Some(32));
+    }
+
+    /// An in-memory STR whose last frame is `last`.
+    fn frames(last: i32) -> Rc<Loaded> {
+        let key = |frame| rustnarok_client::effect::Key {
+            frame,
+            kind: 0,
+            position: [320.0, 240.0],
+            corners: [0.0; 8],
+            texture: 0.0,
+            texture_motion: 0,
+            delay: 0.0,
+            angle: 0.0,
+            color: [1.0; 4],
+            source_blend: 5,
+            destination_blend: 2,
+        };
+        let layer = rustnarok_client::effect::Layer { textures: vec!["a.bmp".into()], keys: vec![key(0), key(last)] };
+        Rc::new(Loaded { animation: Str { fps: 60, frames: last as u32, layers: vec![layer] }, textures: vec![Vec::new()] })
+    }
+
+    /// The last frame of each Cannon Spear file: the blades 40 (20 lighter), the vortices 30.
+    fn cannon_last(id: u32) -> i32 {
+        match id {
+            1400..=1407 => 40,
+            1511..=1518 => 20,
+            _ => 30,
+        }
+    }
+
+    /// Plays one Cannon Spear packet from `caster` into `worlds`, as `Effects::cannon_spear` does.
+    fn cannon_packet(worlds: &mut Worlds, table: &Table, min: bool, caster: u32, phi: i32) -> Vec<(u32, i32)> {
+        let owner = Some(Some(caster));
+        let launches = cannon_launches(table, min, phi, 500, |id| worlds.playing(owner, id));
+        for &(id, delay) in &launches {
+            let launch = world_str::Launch { id, owner, point: [0.0; 3], unique: false, life: 0, min, roll: 0 };
+            let serial = worlds.launch(table.world(id).unwrap(), &launch, |_| Some(frames(cannon_last(id)))).unwrap();
+            worlds.get_mut(serial).unwrap().timeline.delay = delay;
+        }
+        launches
+    }
+
+    fn cannon_ticks(worlds: &mut Worlds, count: usize, units: &HashMap<u32, Vector>) {
+        let feet = |unit: Option<u32>| unit.map_or(Some([0.0; 3]), |id| units.get(&id).copied());
+        let body = |_: Option<u32>| None;
+        let scene = world_str::Scene { player: [0.0; 3], feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0] };
+        for _ in 0..count {
+            worlds.tick(&scene);
+        }
+    }
+
+    #[test]
+    fn cannon_spear_starts_its_vortex_and_blade_once_a_vortex() {
+        let table = Table::load();
+        let mut worlds = Worlds::default();
+        let units = HashMap::from([(7, [10.0, 0.0, 10.0]), (8, [20.0, 0.0, 20.0])]);
+        assert_eq!(cannon_packet(&mut worlds, &table, false, 7, 0), [(1408, 0), (1404, 500)]);
+        // While the vortex plays (its 31 ticks), another packet starts nothing.
+        cannon_ticks(&mut worlds, 31, &units);
+        assert_eq!(cannon_packet(&mut worlds, &table, false, 7, 180), []);
+        // Another caster is independent.
+        assert_eq!(cannon_packet(&mut worlds, &table, false, 8, 90), [(1408, 0), (1402, 500)]);
+        // Both follow their caster.
+        assert!(worlds.iter().filter(|copy| copy.owner == Some(Some(8))).all(|copy| copy.position == [0.0; 3]));
+        cannon_ticks(&mut worlds, 1, &units);
+        assert!(worlds.iter().filter(|copy| copy.owner == Some(Some(8))).all(|copy| copy.position == [20.0, 0.0, 20.0]));
+        // After them, a packet starts both again.
+        assert_eq!(cannon_packet(&mut worlds, &table, false, 7, 270), [(1408, 0), (1406, 500)]);
+        // No blade for a negative direction.
+        let mut fresh = Worlds::default();
+        assert_eq!(cannon_packet(&mut fresh, &table, false, 7, -5), [(1408, 0)]);
+    }
+
+    #[test]
+    fn cannon_spear_under_mineffect() {
+        let table = Table::load();
+        assert_eq!(table.min_id(1408, true), 1519);
+        assert_eq!(table.min_id(1408, false), 1408);
+        for id in 1400..=1407 {
+            assert_eq!(table.min_id(id, true), id + 111);
+        }
+        let mut worlds = Worlds::default();
+        assert_eq!(cannon_packet(&mut worlds, &table, true, 7, 0), [(1519, 0), (1515, 500)]);
+        // The running 1519 holds the next packet back.
+        assert_eq!(cannon_packet(&mut worlds, &table, true, 7, 0), []);
+        assert!(!worlds.playing(Some(Some(7)), 1408));
+    }
+
+    #[test]
+    fn cannon_spears_pictures_end_and_sound() {
+        let ends = |last: i32, delay: i32| {
+            let mut timeline = world_str::Timeline::default();
+            timeline.delay = delay;
+            (0..200).position(|_| timeline.step(last) == world_str::Step::Over).unwrap()
+        };
+        assert_eq!([cannon_last(1400), cannon_last(1408), cannon_last(1511), cannon_last(1519)].map(|last| ends(last, 0)), [41, 31, 21, 31]);
+        // A blade with the swing's delay ends that much later.
+        assert_eq!(ends(cannon_last(1404), 500), 41 + 32);
+        let table = Table::load();
+        for id in [1408, 1519] {
+            let sounds = &table.world(id).unwrap().events;
+            assert_eq!(sounds, &[world_str::Event::Sound(10, "effect\\EF_hit2.wav".into()), world_str::Event::Sound(20, "effect\\EF_hit4.wav".into())]);
+        }
+    }
 
     #[test]
     fn stands_the_four_trap_models() {
