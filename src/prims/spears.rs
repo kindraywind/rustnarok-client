@@ -1,4 +1,4 @@
-//! Great Echo's white "V" on the ground (863) and Harmonize's emitter of lights (849), a 16 ms tick at a time.
+//! Great Echo's white "V" on the ground (863) and the emitters of lights of Harmonize (849) and Arrullo (931), a 16 ms tick at a time.
 //!
 //! A shape's own age n counts from 1 at its first tick.
 
@@ -25,21 +25,24 @@ struct Chevron {
     heading: f32,
 }
 
-/// Harmonize's emitter on a unit: its strength, spiral radius and age.
+/// An emitter of lights on a unit: its strength, spiral radius and age. Arrullo's strength falls from age 91 and one of its pair
+/// turns the other way.
 struct Emitter {
     unit: Option<u32>,
     start: Instant,
     age: u32,
     strength: i32,
     radius: f32,
+    arrullo: bool,
+    mirrored: bool,
 }
 
 #[derive(Default)]
 pub struct Spears {
     chevrons: Vec<Chevron>,
     emitters: Vec<Emitter>,
-    /// The lights the emitters launched since last asked: the unit and the offset from its feet.
-    launched: Vec<(Option<u32>, Vector)>,
+    /// The lights the emitters launched since last asked: whether Arrullo's, the unit and the offset from its feet.
+    launched: Vec<(bool, Option<u32>, Vector)>,
 }
 
 /// A chevron's alpha at its age n: 13 a tick to 195, held to 20, then 3 less a tick.
@@ -68,8 +71,17 @@ pub fn strength_at(age: u32) -> i32 {
 
 /// The orbit point at an emitter's age: the spiral radius (5 widening by 0.05 a tick, whole units) at 6° a tick of the age mod 60.
 pub fn orbit(age: u32) -> Vector {
+    orbit_at(age, age % 60)
+}
+
+/// The same point turning the other way (Arrullo's second emitter): 60 less the age mod 60.
+pub fn orbit_back(age: u32) -> Vector {
+    orbit_at(age, 60 - age % 60)
+}
+
+fn orbit_at(age: u32, turn: u32) -> Vector {
     let radius = (5.0 + 0.05 * age as f32).trunc();
-    let (sin, cos) = ((6 * (age % 60)) as f32).to_radians().sin_cos();
+    let (sin, cos) = ((6 * turn) as f32).to_radians().sin_cos();
     [radius * sin, 25.0, radius * cos]
 }
 
@@ -82,11 +94,18 @@ impl Spears {
 
     /// Harmonize's emitter on `unit`.
     pub fn emitter(&mut self, unit: Option<u32>, now: Instant) {
-        self.emitters.push(Emitter { unit, start: now, age: 0, strength: 0, radius: 5.0 });
+        self.emitters.push(Emitter { unit, start: now, age: 0, strength: 0, radius: 5.0, arrullo: false, mirrored: false });
+    }
+
+    /// Arrullo's pair of emitters on `unit`, the second turning the other way.
+    pub fn arrullo(&mut self, unit: Option<u32>, now: Instant) {
+        for mirrored in [false, true] {
+            self.emitters.push(Emitter { unit, start: now, age: 0, strength: 0, radius: 5.0, arrullo: true, mirrored });
+        }
     }
 
     /// What the emitters launched since this was last asked.
-    pub fn take_launched(&mut self) -> Vec<(Option<u32>, Vector)> {
+    pub fn take_launched(&mut self) -> Vec<(bool, Option<u32>, Vector)> {
         std::mem::take(&mut self.launched)
     }
 
@@ -97,13 +116,14 @@ impl Spears {
                 emitter.age += 1;
                 if emitter.age <= 10 {
                     emitter.strength += 20;
-                } else if emitter.age > 270 {
+                } else if emitter.age > if emitter.arrullo { 90 } else { 270 } {
                     emitter.strength = (emitter.strength - 5).max(0);
                 }
                 emitter.radius += 0.05;
                 // ponytail: once a tick, not once a drawn frame.
                 if emitter.age <= LAUNCH_LAST && emitter.strength > 0 {
-                    self.launched.push((emitter.unit, orbit(emitter.age)));
+                    let point = if emitter.mirrored { orbit_back(emitter.age) } else { orbit(emitter.age) };
+                    self.launched.push((emitter.arrullo, emitter.unit, point));
                 }
             }
         }
@@ -192,9 +212,48 @@ mod tests {
         spears.advance(start + TICK * 400);
         let launched = spears.take_launched();
         assert_eq!(launched.len(), 2 * 299);
-        assert_eq!(launched.iter().filter(|(unit, _)| *unit == Some(2)).count(), 299);
+        assert_eq!(launched.iter().filter(|(_, unit, _)| *unit == Some(2)).count(), 299);
         assert!(spears.take_launched().is_empty());
         spears.advance(start + TICK * 600);
         assert!(spears.emitters.is_empty());
+    }
+
+    #[test]
+    fn arrullo_launches_two_counter_turning_spirals_of_pink_lights() {
+        let start = Instant::now();
+        let mut spears = Spears::default();
+        spears.arrullo(Some(1), start);
+        assert_eq!(spears.emitters.len(), 2);
+        // Strength at ages 1, 10, 11, 90, 91, 129, 130: 20, 200, 200, 200, 195, 5, 0.
+        let mut strengths = Vec::new();
+        for age in 1..=130 {
+            spears.advance(start + TICK * (age - 1));
+            if [1, 10, 11, 90, 91, 129, 130].contains(&age) {
+                strengths.push(spears.emitters[0].strength);
+            }
+        }
+        assert_eq!(strengths, [20, 200, 200, 200, 195, 5, 0]);
+        // Launches only on ages 1 to 129, two a tick, all Arrullo's.
+        let launched = spears.take_launched();
+        assert_eq!(launched.len(), 2 * 129);
+        assert!(launched.iter().all(|&(arrullo, unit, point)| arrullo && unit == Some(1) && point[1] == 25.0));
+        // The radius at ages 1, 25, 95, 129: 5, 6, 9, 11; the first emitter at age 15 is (5, 25 up, 0), the second (−5, 25 up, 0).
+        assert_eq!(
+            [1, 25, 95, 129].map(|age| launched[2 * (age - 1) as usize].2[0].hypot(launched[2 * (age - 1) as usize].2[2]).round()),
+            [5.0, 6.0, 9.0, 11.0]
+        );
+        let (first, second) = (launched[2 * 14].2, launched[2 * 14 + 1].2);
+        assert!(near(first[0], 5.0) && near(first[2], 0.0) && near(second[0], -5.0) && near(second[2], 0.0));
+        assert!(near(orbit_back(60)[0], 0.0) && near(orbit_back(60)[2], 5.0 + 3.0));
+        // None at 130 and after, and the pair ends with the effect at 500.
+        spears.advance(start + TICK * 300);
+        assert!(spears.take_launched().is_empty());
+        spears.advance(start + TICK * 501);
+        assert!(spears.emitters.is_empty());
+        // Harmonize's keep their own: strength still 200 at age 271, launches flagged as not Arrullo's.
+        let mut harmonize = Spears::default();
+        harmonize.emitter(None, start);
+        harmonize.advance(start + TICK * 5);
+        assert!(harmonize.take_launched().iter().all(|&(arrullo, ..)| !arrullo));
     }
 }

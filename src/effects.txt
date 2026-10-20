@@ -734,10 +734,8 @@ skill	2427	effectIdOnCaster	865
 skill	2428	effectIdOnCaster	867
 skill	2432	effectIdOnCaster	873
 skill	2433	effectIdOnCaster	875
-skill	2444	groundEffectId	926
 skill	2447	effectId	928
 skill	2449	effectId	922
-skill	2452	effectId	929
 skill	2454	beforeHitEffectId	930
 skill	2483	effectId	915
 skill	2490	effectId	919
@@ -2049,7 +2047,7 @@ wav	910	effect\LG_INSPIRATION	160
 wav	911	effect\EF_BeginSpell	0
 wav	922	effect\s사이킥웨이브	0
 wav	928	effect\wl_jackfrost	0
-wav	929	effect\s워머	0
+wav	929	effect\s워머	0	listener
 wav	930	effect\프레셔	0
 wav	1042	effect\all_full_throttle	0
 wav	1043	effect\sr_flashcombo	0
@@ -2077,6 +2075,8 @@ wav	917	effect\EF_FireWall	0	listener
 wav	918	effect\EF_FireWall	0	listener
 wav	921	effect\S스펠피스트	0	listener
 wav	923	effect\S포이즌버스터	0	listener
+wav	931	effect\S포이즌버스터	0	listener
+wav	1044	effect\rk_luxanima	0
 wav	1132	effect\mon_금강불괴	0
 wav	1195	effect\EF_BeginSpell	0
 hit	1	0	-1
@@ -4123,6 +4123,8 @@ cast	2223	-1
 cast	2224	-1
 cast	2229	-1
 cast	2464	216
+cast	5478	12
+cast	5478	934
 struck	13	caster	15
 struck	340	caster	451
 struck	14	target	26
@@ -4698,6 +4700,8 @@ used	2433	target	876
 used	2434	target	878
 used	2451	caster	886
 used	2455	target	886
+used	2455	target	441
+used	2455	target	931
 used	2461	caster	934
 used	2476	caster	1365
 used	2480	target	216
@@ -4867,7 +4871,7 @@ unit	208	829
 unit	218	856
 unit	219	1276
 unit	220	920
-unit	221	926	once
+unit	221	926
 unit	222	860
 unit	224	1080
 unit	225	772	once

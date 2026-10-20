@@ -1,5 +1,5 @@
 //! The sprites standing on skill units' cells (Wall of Thorns 912, Vacuum Extreme 921, the Ifrits of Demonic Fire and the
-//! Insignias 916 to 918) and Poison Buster's eight blue blasts (923), a 16 ms tick at a time.
+//! Insignias 916 to 918, Warmer's Imps 929) and Poison Buster's eight blue blasts (923), a 16 ms tick at a time.
 //!
 //! A shape's own age a counts from 0 on the tick it is made; n from 1 on its first tick after.
 
@@ -12,10 +12,10 @@ use crate::world::Vector;
 pub const ANCIENT_TREE: &str = "data\\sprite\\몬스터\\Ancient_tree";
 pub const BREEZE: &str = "data\\sprite\\몬스터\\breeze";
 pub const IFRIT: &str = "data\\sprite\\몬스터\\ifrit";
+pub const IMP: &str = "data\\sprite\\몬스터\\imp";
 pub const BLAST: &str = "data\\sprite\\이팩트\\m_ef03";
-/// A copy of the tree or the whirlwinds lasts 999 ticks, one of the Ifrits 1 999.
+/// A copy of the tree or the whirlwinds lasts 999 ticks.
 const STAND_PERIOD: u32 = 999;
-const IFRIT_PERIOD: u32 = 1999;
 const IFRITS: u32 = 20;
 /// Poison Buster's sprite has 24 frames, 4 ticks each; a blast flies 0.3 a tick from 5 out and 5 up.
 const BLAST_FRAMES: u32 = 24;
@@ -49,7 +49,27 @@ struct Ifrit {
     action: usize,
 }
 
-/// The double ring of Ifrits on a skill unit's cell.
+/// What tells the Ifrits' double ring from the Imps': the sprite, the two distances, the scales they start at and how much a draw
+/// adds, the first action and the life; a copy lasts one tick less.
+struct RingLook {
+    sprite: &'static str,
+    near: f32,
+    far: f32,
+    near_scale: f32,
+    far_scale: f32,
+    step: f32,
+    action: usize,
+    life: u32,
+}
+
+const IFRIT_RING: RingLook = RingLook { sprite: IFRIT, near: 6.0, far: 12.0, near_scale: 0.4, far_scale: 0.5, step: 0.03, action: 32, life: 2000 };
+const IMP_RING: RingLook = RingLook { sprite: IMP, near: 4.0, far: 10.0, near_scale: 1.5, far_scale: 2.0, step: 0.05, action: 0, life: 9999 };
+
+fn ring_look(effect: u32) -> &'static RingLook {
+    if effect == 929 { &IMP_RING } else { &IFRIT_RING }
+}
+
+/// The double ring of Ifrits or Imps on a skill unit's cell.
 struct Ring {
     id: u32,
     effect: u32,
@@ -134,7 +154,7 @@ impl Cells {
         self.stands.push(Stand { id, effect, at: [at[0], at[1] + 1.0, at[2]], start: now, looks });
     }
 
-    /// The Ifrits (916 to 918) of skill unit `id` on the cell `at`, tinted `tint`.
+    /// The Ifrits (916 to 918) or Imps (929) of skill unit `id` on the cell `at`, tinted `tint`.
     pub fn ring(&mut self, effect: u32, id: u32, tint: Option<[f32; 3]>, at: Vector, now: Instant) {
         self.rings.push(Ring { id, effect, tint, at, start: now, made: 0, ifrits: Vec::new() });
     }
@@ -165,17 +185,18 @@ impl Cells {
             }
         }
         for ring in &mut self.rings {
-            while passes(ring.start, now) > IFRIT_PERIOD {
-                ring.start += super::TICK * IFRIT_PERIOD;
+            let look = ring_look(ring.effect);
+            while passes(ring.start, now) > look.life - 1 {
+                ring.start += super::TICK * (look.life - 1);
                 (ring.made, ring.ifrits) = (0, Vec::new());
                 self.restarts.push(ring.effect);
             }
             while ring.made < IFRITS && passes(ring.start, now) > ring.made {
                 let e = ring.made;
-                let scale = if e % 2 == 0 { 0.4 + 0.03 * rand(11) as f32 } else { 0.5 + 0.03 * rand(11) as f32 };
+                let scale = if e % 2 == 0 { look.near_scale } else { look.far_scale } + look.step * rand(11) as f32;
                 let _ = rand(3);
-                let action = 32 + rand(8) as usize;
-                let distance = if e % 2 == 0 { 6.0 } else { 12.0 };
+                let action = look.action + rand(8) as usize;
+                let distance = if e % 2 == 0 { look.near } else { look.far };
                 let (sin, cos) = (18.0 * e as f32).to_radians().sin_cos();
                 let (x, z) = (ring.at[0] + distance * sin, ring.at[2] + distance * cos);
                 ring.ifrits.push(Ifrit { born: e, at: [x, ground_at(x, z), z], scale, action });
@@ -202,13 +223,14 @@ impl Cells {
     pub fn ifrits(&self, now: Instant) -> Vec<CrowdDraw> {
         let mut draws = Vec::new();
         for ring in &self.rings {
-            let Some(e) = passes(ring.start, now).checked_sub(1).filter(|&e| e < IFRIT_PERIOD) else { continue };
+            let look = ring_look(ring.effect);
+            let Some(e) = passes(ring.start, now).checked_sub(1).filter(|&e| e < look.life - 1) else { continue };
             for ifrit in ring.ifrits.iter().filter(|ifrit| ifrit.born <= e) {
                 let n = e + 1 - ifrit.born;
-                let alpha = planted_alpha(n, IFRIT_PERIOD + 1 - ifrit.born);
+                let alpha = planted_alpha(n, look.life - ifrit.born);
                 if alpha > 0.0 {
                     let tint = ring.tint.unwrap_or([1.0; 3]);
-                    draws.push(CrowdDraw { sprite: IFRIT, at: ifrit.at, scale: ifrit.scale, action: ifrit.action, steps: (n - 1) / 4, alpha, tint });
+                    draws.push(CrowdDraw { sprite: look.sprite, at: ifrit.at, scale: ifrit.scale, action: ifrit.action, steps: (n - 1) / 4, alpha, tint });
                 }
             }
         }
@@ -395,5 +417,46 @@ mod tests {
         assert_eq!(blast_alphas(255.0), (216.0, 127.0));
         cells.advance(start + TICK * 100, |_, _| 0.0, |_| 0);
         assert!(cells.blasts.is_empty());
+    }
+
+    #[test]
+    fn warmer_rings_a_cell_with_twenty_large_imps() {
+        let start = Instant::now();
+        let at = [10.0, 0.0, 10.0];
+        let mut cells = Cells::default();
+        cells.ring(929, 3, None, at, start);
+        let mut draws = Vec::new();
+        cells.advance(
+            start,
+            |_, _| 2.0,
+            |n| {
+                draws.push(n);
+                0
+            },
+        );
+        assert_eq!(draws, [11, 3, 8]);
+        for tick in 1..=21 {
+            cells.advance(start + TICK * tick, |_, _| 2.0, |_| 0);
+        }
+        assert_eq!(cells.rings[0].ifrits.len(), 20);
+        // Every draw 0: angle 18e, distance 4 on even ticks and 10 on odd, scale 1.5 and 2.0, action 0.
+        let (first, second) = (&cells.rings[0].ifrits[0], &cells.rings[0].ifrits[1]);
+        assert!(near(first.at[2], 14.0) && near(first.scale, 1.5) && first.action == 0);
+        assert!(near((second.at[0] - 10.0).hypot(second.at[2] - 10.0), 10.0) && near(second.scale, 2.0));
+        // The largest draws: 2.0, 2.5 and action 7.
+        let mut high = Cells::default();
+        high.ring(929, 4, None, at, start);
+        high.advance(start + TICK, |_, _| 0.0, |n| n - 1);
+        assert!(near(high.rings[0].ifrits[0].scale, 2.0) && near(high.rings[0].ifrits[1].scale, 2.5) && high.rings[0].ifrits[0].action == 7);
+        // The Imp sprite, ticks a frame 4, no tint; fading together near tick 9950 to 9980, a new copy at the 9998th tick.
+        let draws = cells.ifrits(start + TICK * 19);
+        assert_eq!(draws.len(), 20);
+        assert!(draws.iter().all(|draw| draw.sprite == IMP && draw.tint == [1.0; 3]));
+        assert_eq!(cells.ifrits(start + TICK * 100)[0].steps, 25);
+        assert!(cells.ifrits(start + TICK * 9948).iter().all(|draw| draw.alpha == 150.0) && cells.ifrits(start + TICK * 9951)[0].alpha < 150.0);
+        assert!(cells.ifrits(start + TICK * 9981).is_empty());
+        cells.advance(start + TICK * 9998, |_, _| 0.0, |_| 0);
+        assert_eq!(cells.take_restarts(), [929]);
+        assert_eq!(cells.rings[0].ifrits.len(), 1);
     }
 }

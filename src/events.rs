@@ -3268,6 +3268,10 @@ impl App {
                     if effects::is_cast_aura(effect) {
                         game.effects.play_aura(gpu, grf, (source != game.account_id).then_some(source), effect, cast_ms, Instant::now());
                     }
+                    // What the cast starts beside its aura (Elemental Action's crescents and flicker).
+                    for extra in table.cast_extras(skill) {
+                        game.play_effect(gpu, grf, table, extra, source);
+                    }
                 }
                 let me = game.account_id;
                 let goal = if target == me { Some(game.player.cell) } else { game.units.get(&target).map(|actor| actor.cell) };
@@ -3496,7 +3500,12 @@ impl App {
                                 game.aimed(gpu, grf, table, effect, source, target, 1);
                                 continue;
                             }
-                            game.play_effect(gpu, grf, table, effect, if who == effects::Who::Caster { source } else { target });
+                            let unit = if who == effects::Who::Caster { source } else { target };
+                            game.play_effect(gpu, grf, table, effect, unit);
+                            // A cast aura blooms again with the use (Arrullo's blue one, Change Material's green).
+                            if effects::is_cast_aura(effect) {
+                                game.effects.bloom_aura(gpu, grf, (unit != game.account_id).then_some(unit), effect, Instant::now());
+                            }
                         }
                     }
                     (false, None, _) => {
