@@ -52,7 +52,6 @@ pub enum WindowId {
     NpcInput,
     /// An NPC shop: Esc presses its Cancel, which tells the server.
     Shop,
-    Refine,
     GradeEnchant,
     LaphineSynthesis,
     LaphineUpgrade,
@@ -169,7 +168,6 @@ impl WindowId {
             Self::HomunculusSkills => "HomunculusSkills",
             Self::NpcInput => "NpcInput",
             Self::Shop => "Shop",
-            Self::Refine => "Refine",
             Self::GradeEnchant => "GradeEnchant",
             Self::LaphineSynthesis => "LaphineSynthesis",
             Self::LaphineUpgrade => "LaphineUpgrade",

@@ -2666,7 +2666,6 @@ impl Game {
         // An NPC's window and the warp list aren't Esc's to close: they end with their own buttons.
         // An NPC shop isn't Esc's to close.
         push(Shop, self.shop.as_ref().is_some_and(|shop| !shop.plain()));
-        push(Refine, self.refine.is_some());
         push(GradeEnchant, self.grade.is_some());
         push(LaphineSynthesis, self.synthesis.is_some());
         push(LaphineUpgrade, self.upgrade.is_some());
@@ -3008,10 +3007,6 @@ impl Game {
             // Esc never gets here for the input box, nor for the storage (its search box keeps Esc too).
             NpcInput | Storage => {}
             Shop => self.close_shop(),
-            Refine => {
-                let _ = self.session.close_refine();
-                self.refine = None;
-            }
             GradeEnchant => {
                 let _ = self.session.close_grade();
                 self.grade = None;
@@ -3242,6 +3237,10 @@ impl Game {
     /// An inventory item let go over the world: dropped, unless something open or a fresh wear holds it back.
     pub(crate) fn drop_on_ground(&mut self, index: u16, messages: &[String]) {
         let since_wear = self.last_wear.map(|at| control::now().saturating_duration_since(at));
+        // Nothing is dropped on the ground while the refine window is open.
+        if self.refine.is_some() {
+            return;
+        }
         let busy = self.trade.is_some() || self.talk_blocks() || self.shop.is_some();
         let mail = self.mail.list.frame.open || self.mail.compose.is_some() || self.mail.letter.is_some();
         let ammo = self.inventory.get(index).is_some_and(|item| item.kind == net::ITEM_AMMO && item.worn != 0);
@@ -3262,6 +3261,17 @@ impl Game {
             return;
         }
         let Some(item) = self.inventory.get(index) else { return };
+        // While the refine window is open, a double click on equipment that is not worn puts it in (an unidentified one is
+        // refused with a timed notice) instead of wearing it.
+        if self.refine.is_some() && matches!(item.kind, net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR) && item.location != 0 && item.worn == 0 {
+            let identified = item.identified;
+            if let Some(window) = &mut self.refine
+                && window.put(identified, control::now())
+            {
+                let _ = self.session.refine_select(index);
+            }
+            return;
+        }
         // ponytail: a voucher asks to grow the inventory; how the real client lets the player ask isn't known.
         if VOUCHERS.contains(&item.id) {
             let _ = self.session.ask_expansion();
