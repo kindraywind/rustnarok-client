@@ -1421,6 +1421,7 @@ mod tests {
         assert_eq!(lines.strips.iter().filter(|strip| strip.side > 0.0).count(), 16);
         assert!(lines.strips.iter().all(|strip| strip.half == 0.5 && strip.length == 40.0 && strip.speed == 1.0 && strip.colour == 0 && strip.growth == 0.05));
         // Alpha at n = 1, 10, 20, 21, 120: 20, 200, 200, 198, 0; blended over everything in #FFFFE1; gone after tick 118.
+        assert_eq!([1, 10, 20, 21, 120].map(gold_alpha), [20.0, 200.0, 200.0, 198.0, 0.0]);
         let walls = brawl.top_meshes(start, |_| Some([0.0; 3]));
         assert_eq!(walls.len(), 4);
         assert_eq!(walls.iter().map(|wall| wall.texture).collect::<Vec<_>>(), [CROSS_RED, CROSS_PITCH, CROSS_RED_MIN, CROSS_PITCH_MIN]);
