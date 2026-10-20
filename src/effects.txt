@@ -2086,6 +2086,9 @@ wav	1449	effect\ef_beginspell	0
 wav	1556	effect\ef_beginspell	0
 wav	1560	effect\ef_beginspell	0
 wav	1565	effect\ef_beginspell	0
+wav	1656	effect\EF_BeginSpell	0
+wav	1664	effect\ef_beginspell	0
+wav	1677	effect\ef_beginspell	0
 wav	1569	effect\REVERBERATION	0	listener
 wav	914	effect\G스포어익스플로젼	0
 wav	916	effect\EF_FireWall	0	listener
@@ -4146,6 +4149,12 @@ cast	2229	-1
 cast	2464	216
 cast	5478	12
 cast	5478	934
+cast	5493	1656
+cast	5493	812
+cast	5494	1656
+cast	5494	812
+cast	5495	1656
+cast	5495	812
 struck	13	caster	15
 struck	340	caster	451
 struck	14	target	26

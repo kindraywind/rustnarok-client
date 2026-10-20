@@ -57,6 +57,7 @@ const STREAK_LIFE: u32 = 50;
 const STREAKS_SEEN: u32 = 50;
 const STREAK_WIDTH: f32 = 0.18;
 const DANCE_VIOLET: [u8; 3] = [0xB6, 0x59, 0xFF];
+const SOUL_VIOLET: [u8; 3] = [0x55, 0x1E, 0xB9];
 pub const STREAK_TEXTURE: &str = "data\\texture\\effect\\ac_center2.tga";
 
 struct Icon {
@@ -95,6 +96,8 @@ struct Cone {
     length: u32,
     rgb: [f32; 3],
     strength: f32,
+    /// Whether the cone's whole length is its own (Soul Ascetic's cast) and not the 120 ticks of the performers' cones.
+    by_length: bool,
 }
 
 /// A streak of Adaptation or Eternal Chaos, made on tick `born`: its yaw, how far from the unit, half-length, colour, and whether
@@ -231,12 +234,13 @@ impl Streak {
 
 /// A cone's alpha at tick a: 3 a tick to 87, held, then from tick 74 2 less a tick.
 pub fn cone_alpha(a: u32) -> f32 {
-    let age = a + 1;
-    match age {
-        0..=29 => 3.0 * age as f32,
-        30..=74 => 87.0,
-        _ => (87.0 - 2.0 * (age - 74) as f32).max(0.0),
-    }
+    cone_alpha_in(CONE_TICKS + 1, a)
+}
+
+/// A cone's alpha at tick a of a cone `length` ticks long: 3 a tick to 87, held, then 2 less a tick over the last 46 ticks.
+pub fn cone_alpha_in(length: u32, a: u32) -> f32 {
+    let (age, hold) = (a + 1, length.saturating_sub(46));
+    if age < 30 { 3.0 * age as f32 } else { (87.0 - 2.0 * age.saturating_sub(hold) as f32).max(0.0) }
 }
 
 /// Band k's turn at tick a, in degrees, and its radius.
@@ -264,7 +268,7 @@ const LEANS: [f32; 4] = [75.0, 63.0, 52.0, 40.0];
 
 impl Cone {
     fn walls(&self, feet: Vector, a: u32) -> [Wall; 2] {
-        let alpha = cone_alpha(a);
+        let alpha = if self.by_length { cone_alpha_in(self.length, a) } else { cone_alpha(a) };
         let vertices = |rgb: [f32; 3], alpha: f32| -> Vec<MeshVertex> {
             (0..4)
                 .flat_map(|k| {
@@ -340,7 +344,14 @@ impl Songs {
             831 => ([0.0, 0.0, 1.0], 3.0),
             _ => ([1.0, 0.0, 0.0], 3.0),
         };
-        self.cones.push(Cone { unit, start: now, length: length.max(120), rgb, strength });
+        self.cones.push(Cone { unit, start: now, length: length.max(120), rgb, strength, by_length: false });
+    }
+
+    /// Soul Ascetic's and Reverberation's cast: the cone of bubbles on `unit` for `length` ticks (at least 120), the second layer violet
+    /// at twice the alpha, or at the alpha itself with /mineffect (`min`).
+    pub fn soul_cone(&mut self, unit: Option<u32>, length: u32, min: bool, now: Instant) {
+        let rgb = SOUL_VIOLET.map(|value| f32::from(value) / 255.0);
+        self.cones.push(Cone { unit, start: now, length: length.max(120), rgb, strength: if min { 1.0 } else { 2.0 }, by_length: true });
     }
 
     /// Adaptation (`falling` false) or Eternal Chaos (`falling` true) on `unit`, for the status `status` if it is one: a streak
@@ -459,7 +470,7 @@ impl Songs {
         let mut walls = Vec::new();
         for cone in &self.cones {
             let (Some(feet), Some(a)) = (position_of(cone.unit), passes(cone.start, now).checked_sub(1)) else { continue };
-            if a < CONE_TICKS.min(cone.length - 1) {
+            if a < if cone.by_length { cone.length - 1 } else { CONE_TICKS.min(cone.length - 1) } {
                 walls.extend(cone.walls(feet, a));
             }
         }
@@ -602,6 +613,44 @@ mod tests {
         assert!(songs.meshes(start, |_| None).is_empty());
         songs.advance(start + TICK * 122, None, |_, _| 0.0, |_| 0);
         assert!(songs.cones.is_empty());
+    }
+
+    #[test]
+    fn soul_ascetics_cast_turns_four_violet_bubble_cones_for_the_whole_cast() {
+        let start = Instant::now();
+        let feet = [0.0; 3];
+        let cone = |length: u32, min: bool| {
+            let mut songs = Songs::default();
+            songs.soul_cone(None, length, min, start);
+            songs
+        };
+        // At least 120 ticks (a 1 s cast); a 3.2 s cast is 200.
+        assert_eq!([cone(62, false).cones[0].length, cone(200, false).cones[0].length], [120, 200]);
+        // α (A = a + 1) gains 3 a tick to 87 at A = 29, holds, and loses 2 a tick from A = length − 45: 87 at A = 154, 85 at A = 155 (a = 153, 154).
+        assert_eq!([0, 27, 28, 100, 153, 154, 198].map(|a| cone_alpha_in(200, a)), [3.0, 84.0, 87.0, 87.0, 87.0, 85.0, 0.0]);
+        assert_eq!([0, 27, 73, 74].map(|a| cone_alpha_in(120, a)), [3.0, 84.0, 87.0, 85.0]);
+        assert_eq!([0, 27, 73, 74, 116, 117].map(cone_alpha), [3.0, 84.0, 87.0, 85.0, 1.0, 0.0]);
+        // The pictures at A = 1 and 27: W_bubble02 and W_bubble01.
+        assert_eq!((cone_picture(0), cone_picture(26)), (BUBBLES[1], BUBBLES[0]));
+        // Pass 1 white and blended; pass 2 #551EB9 added on at min(2α, 255), α itself with /mineffect.
+        let pass_two = |songs: &Songs, a: u32| {
+            let walls = songs.meshes(start + TICK * a, |_| Some(feet));
+            assert_eq!(walls.len(), 2);
+            assert!(!walls[0].additive && walls[1].additive);
+            assert_eq!(walls[0].vertices[0].tint[..3], [1.0; 3]);
+            assert_eq!(walls[1].vertices[0].tint[..3], [85.0 / 255.0, 30.0 / 255.0, 185.0 / 255.0]);
+            (walls[1].vertices[0].tint[3] * 255.0).round()
+        };
+        let (normal, plain) = (cone(200, false), cone(200, true));
+        assert_eq!([0, 27, 100, 154].map(|a| pass_two(&normal, a)), [6.0, 168.0, 174.0, 170.0]);
+        assert_eq!([0, 27, 100, 154].map(|a| pass_two(&plain, a)), [3.0, 84.0, 87.0, 85.0]);
+        // The cone is drawn for the whole cast (ticks 0 … 198), not the first 119.
+        assert_eq!(normal.meshes(start + TICK * 150, |_| Some(feet)).len(), 2);
+        assert!(normal.meshes(start + TICK * 199, |_| Some(feet)).is_empty());
+        // The performers' cones keep their 120 ticks whatever the length.
+        let mut sura = Songs::default();
+        sura.cone(831, None, 200, start);
+        assert!(sura.meshes(start + TICK * 150, |_| Some(feet)).is_empty());
     }
 
     #[test]
