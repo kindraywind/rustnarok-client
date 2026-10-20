@@ -1991,6 +1991,8 @@ const DEADLY_INFECT: u32 = 812;
 /// Magnetic Field's arcs, Neutral Barrier's dome and cells, Stealth Field's cells, Repair's spanners, Analyze's mark and Venom
 /// Impress' icon (`prims::mechanic`, `prims::guard`, `prims::sparkle`, `prims::circle`).
 const MAGNETIC_FIELD: u32 = 781;
+/// Infrared Scan's two radar rays (`prims::radar`).
+const INFRARED_SCAN: u32 = 794;
 const NEUTRAL_BARRIER: u32 = 782;
 const BARRIER_CELL: u32 = 783;
 const STEALTH_CELL: u32 = 784;
@@ -2596,6 +2598,11 @@ impl Effects {
             (MAGNETIC_FIELD, Target::Unit(unit)) => {
                 self.textures.entry(mechanic::ELEC.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, mechanic::ELEC, true).ok());
                 self.prims.mechanic.magnetic_field(unit, now);
+            }
+            (INFRARED_SCAN, Target::Unit(unit)) => {
+                self.textures.entry(mechanic::ELEC.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, mechanic::ELEC, true).ok());
+                let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
+                self.prims.radar.scan(unit, facing, now, |n| pick(0, n.saturating_sub(1)));
             }
             (NEUTRAL_BARRIER, Target::Unit(unit)) => {
                 for path in [guard::TILE, guard::HOLY_TILE] {
@@ -3512,6 +3519,7 @@ impl Effects {
         self.prims.mechanic.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.waves.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.chi.advance(now);
+        self.prims.radar.advance(now);
         // Harmonize's emitters launch a pair of bands of soft lights (850) on their units each tick.
         self.prims.spears.advance(now);
         for (arrullo, unit, offset) in self.prims.spears.take_launched() {
@@ -4081,6 +4089,13 @@ impl Effects {
                 self.prims
                     .mechanic
                     .meshes(now, |n| pick(0, n.saturating_sub(1)))
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
+                self.prims
+                    .radar
+                    .meshes(now, &position_of, |n| pick(0, n.saturating_sub(1)))
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
@@ -6141,6 +6156,15 @@ mod tests {
         assert_eq!((sounds(ACCELERATION), sounds(SHAPE_SHIFT)), (vec![("effect\\EF_IncAgility", 0, false)], vec![("effect\\소울 체인지", 0, false)]));
         assert!(table.used(2262).unwrap().contains(&(Who::Caster, ACCELERATION)) && table.used(2268).unwrap().contains(&(Who::Caster, SHAPE_SHIFT)));
         assert!([2263, 2264, 2265].iter().all(|&skill| table.used(skill).unwrap().contains(&(Who::Caster, first::SIDE_SLIDE))));
+    }
+
+    #[test]
+    fn infrared_scan_has_its_sound_at_the_listener_and_starts_with_its_damage_packet() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        assert_eq!(sounds(INFRARED_SCAN), [("effect\\INFRAREDSCAN", 0, true)]);
+        assert!(table.struck(2270).unwrap().contains(&(Who::Caster, INFRARED_SCAN)));
+        assert!(!force_drawn(INFRARED_SCAN));
     }
 
     #[test]

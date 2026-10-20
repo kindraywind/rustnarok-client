@@ -1980,6 +1980,7 @@ wav	781	effect\MAGNETICFIELD	80
 wav	782	effect\black_maximize_power_sword_bic	0
 wav	782	effect\mon_금강불괴	0	listener
 wav	786	effect\ANALYZE	0
+wav	794	effect\INFRAREDSCAN	0	listener
 wav	799	effect\wl_stasis	0
 wav	802	effect\wl_whiteimprison	0
 wav	803	effect\wl_recognizedspell	0
