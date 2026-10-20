@@ -17,12 +17,17 @@ use crate::prims::{
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
+use crate::world_str::{self, Worlds};
 
 /// A quad's corners as texture coordinates: top left, top right, bottom right, bottom left.
 pub(crate) const QUAD_UV: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
 /// An STR moves on one frame each 16 ms tick, whatever its file says.
 const STR_TICK_MS: f32 = 16.0;
+/// How far the black fill of an enchant screen reaches from its point, in px: past any screen.
+const WORLD_TINT_REACH: f32 = 4000.0;
+/// The most ticks the STR world copies run in one frame.
+const WORLD_TICKS_MAX: u32 = 10;
 /// An STR's (320, 240) sits this many screen pixels above its owner's feet, at any zoom.
 pub const STR_RISE: f32 = 80.0;
 
@@ -97,6 +102,8 @@ pub struct Table {
     traps: HashMap<u32, u32>,
     /// What a status (by EFST id) plays again and again on its unit while it's on.
     statuses: HashMap<u16, Vec<u32>>,
+    /// The STR world effects (world_str.txt), but for the ids a `str` row here plays.
+    worlds: world_str::Table,
 }
 
 /// How long a standard camera shake and a short one last.
@@ -154,6 +161,7 @@ impl Table {
             grounds: HashMap::new(),
             traps: HashMap::new(),
             statuses: HashMap::new(),
+            worlds: world_str::Table::load(),
         };
         let parameters = |text: &str| -> HashMap<String, String> {
             text.split(';').filter_map(|pair| pair.split_once('=')).map(|(name, value)| (name.to_owned(), value.to_owned())).collect()
@@ -295,7 +303,22 @@ impl Table {
                 _ => {}
             }
         }
+        // An id with a `str` row here keeps playing as it does.
+        for id in table.parts.keys() {
+            table.worlds.remove(*id);
+        }
         table
+    }
+
+    /// Whether an STR row of this table plays effect `id`.
+    #[cfg(test)]
+    pub fn has_str(&self, id: u32) -> bool {
+        self.parts.contains_key(&id)
+    }
+
+    /// The row of the STR world effect `id`.
+    pub fn world(&self, id: u32) -> Option<&world_str::Row> {
+        self.worlds.get(id)
     }
 
     /// A damaging skill's two effects on its target at each hit, when the table has the skill.
@@ -372,9 +395,9 @@ impl Table {
 }
 
 /// An STR file with its textures, by layer.
-struct Loaded {
-    animation: Str,
-    textures: Vec<Vec<Option<Texture>>>,
+pub(crate) struct Loaded {
+    pub(crate) animation: Str,
+    pub(crate) textures: Vec<Vec<Option<Texture>>>,
 }
 
 /// Where an effect plays: on a unit (None = the player), at a place, or at a skill's ground unit until it goes.
@@ -517,7 +540,7 @@ fn str_frame(elapsed: Duration) -> u32 {
 }
 
 /// A key's corner in sprite pixels from the anchor: STR space is centred on (320, 240).
-fn str_corner(position: [f32; 2], corner: [f32; 2], angle: f32) -> [f32; 2] {
+pub(crate) fn str_corner(position: [f32; 2], corner: [f32; 2], angle: f32) -> [f32; 2] {
     let (sin, cos) = angle.to_radians().sin_cos();
     let [x, y] = corner;
     [x * cos - y * sin + position[0] - 320.0, x * sin + y * cos + position[1] - 240.0]
@@ -1622,6 +1645,10 @@ pub struct Effects {
     arrow: Vec<Vec<Placed>>,
     blessings: Vec<Blessing>,
     status_prims: Vec<StatusPrim>,
+    /// The STR world effects running, the time up to which their ticks have run, and the black fill's texture.
+    worlds: Worlds,
+    world_clock: Option<Instant>,
+    black: Option<Texture>,
 }
 
 /// The effects drawn even with /effect off (the data's ForceRenderEffect list): warp portals, Safety Wall, the
@@ -2196,6 +2223,77 @@ fn between(ends: [f32; 2], steps: f32, smooth: bool) -> f32 {
 }
 
 impl Effects {
+    /// Starts the STR world effect `id` on `owner` (`Some(None)` = the player; None = the cell `point`), the launchers' entry.
+    /// A `single` row or a `unique` launch returns the copy already running for the owner; `life` > 0 (ticks) makes a timed,
+    /// looping copy. Returns its handle, for `world_copy`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn launch_world(
+        &mut self,
+        gpu: &Gpu,
+        grf: &Grf,
+        table: &Table,
+        id: u32,
+        owner: Option<Option<u32>>,
+        point: Vector,
+        unique: bool,
+        life: u32,
+    ) -> Option<u32> {
+        let row = table.worlds.get(id)?;
+        if row.tint > 0 && self.black.is_none() {
+            self.black = Some(gpu.solid([0, 0, 0, 255]));
+        }
+        let launch = world_str::Launch { id, owner, point, unique, life, min: self.min, roll: pick(0, 2) };
+        let loaded = &mut self.loaded;
+        self.worlds.launch(row, &launch, |file| {
+            // The textures sit in the file's folder.
+            let folder = file.rsplit_once('/').map_or(String::new(), |(directory, _)| format!("{directory}/"));
+            loaded.entry(format!("{folder}|{file}")).or_insert_with(|| load(gpu, grf, file, &folder)).clone()
+        })
+    }
+
+    /// The launchers' controls on a copy `launch_world` returned: start delay, screen turn, cut, repeats, scale, alpha,
+    /// offset, mirror, hold, fast-forward and the far distance.
+    #[allow(dead_code)]
+    pub fn world_copy(&mut self, serial: u32) -> Option<&mut world_str::World> {
+        self.worlds.get_mut(serial)
+    }
+
+    /// Removes the STR world copy of an owner's id.
+    #[allow(dead_code)]
+    pub fn remove_world(&mut self, owner: Option<Option<u32>>, id: u32) {
+        self.worlds.remove(owner, id);
+    }
+
+    /// Removes all of an owner's STR world copies.
+    #[allow(dead_code)]
+    pub fn remove_worlds_of(&mut self, owner: Option<u32>) {
+        self.worlds.remove_owner(owner);
+    }
+
+    /// The owners (None = the player) whose body the head rule of a running copy needs.
+    pub fn world_head_owners(&self) -> Vec<Option<u32>> {
+        self.worlds.head_owners()
+    }
+
+    /// Runs the STR world copies' 16 ms ticks that came due, before the units, and queues the sounds and shakes they fire.
+    pub fn advance_world(&mut self, now: Instant, scene: &world_str::Scene) {
+        let clock = self.world_clock.get_or_insert(now);
+        let due = str_frame(now.saturating_duration_since(*clock));
+        // A long stall (a loading screen) skips ahead rather than running every tick.
+        *clock = if due > WORLD_TICKS_MAX { now } else { *clock + Duration::from_secs_f32(STR_TICK_MS / 1000.0) * due };
+        if self.worlds.is_empty() {
+            return;
+        }
+        for _ in 0..due.min(WORLD_TICKS_MAX) {
+            for fired in self.worlds.tick(scene) {
+                match fired {
+                    world_str::Fired::Sound(file, at) => self.sounds.push((now, file, at)),
+                    world_str::Fired::Quake => self.quakes.push((now, QUAKE_LONG)),
+                }
+            }
+        }
+    }
+
     /// Sounds effect `id` makes, with none of its looks (Manhole's on a monster).
     pub fn sound_of(&mut self, table: &Table, id: u32, at: Vector, now: Instant) {
         self.play_sounds(table, id, at, now);
@@ -2203,6 +2301,21 @@ impl Effects {
 
     /// Plays effect `id` from `now` on `target` at `at`; parts that don't follow units stay there.
     pub fn play(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        // An STR world effect that names its file (the hat rows and the launcher-given ones play from their launchers): its own
+        // sounds and shakes come with it.
+        if table.world(id).is_some_and(|row| matches!(row.file, world_str::Source::Named(_))) {
+            let (owner, status) = match target {
+                Target::Unit(unit) => (Some(unit), None),
+                Target::Status(unit, status) => (Some(unit), Some(status)),
+                _ => (None, None),
+            };
+            // A status's copy is one per unit (a status sent again keeps it) and goes when the status goes off.
+            let serial = self.launch_world(gpu, grf, table, id, owner, at, status.is_some(), 0);
+            if let Some(copy) = serial.zip(status).and_then(|(serial, _)| self.worlds.get_mut(serial)) {
+                copy.status = copy.status.or(status);
+            }
+            return;
+        }
         if id == BASH && self.min {
             return;
         }
@@ -3839,6 +3952,7 @@ impl Effects {
 
     /// Stops what a status plays on its unit (None = the player).
     pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
+        self.worlds.remove_status(unit, Some(status));
         self.prims.songs.forget_status(unit, status);
         self.prims.transcend.forget_status(unit, status);
         self.prims.brawl.forget_status(unit, status);
@@ -3864,6 +3978,7 @@ impl Effects {
     }
 
     pub fn forget(&mut self, unit: u32) {
+        self.worlds.remove_status(Some(unit), None);
         self.prims.sage.forget(unit);
         self.prims.stone.forget(unit);
         self.prims.forget(unit);
@@ -4382,6 +4497,25 @@ impl Effects {
                 quads.push((texture, at, [corner(0), corner(1), corner(2), corner(3)], state.color, state.additive, true));
             }
         }
+        // The STR world copies: each its black fill (the enchant and rune screens) under its layers.
+        for copy in self.worlds.iter().filter(|copy| self.shows(copy.id)) {
+            if let (Some(alpha), Some(black)) = (copy.tint(), &self.black) {
+                let reach = WORLD_TINT_REACH;
+                quads.push((
+                    black,
+                    copy.position,
+                    [[-reach, -reach], [reach, -reach], [reach, reach], [-reach, reach]],
+                    [1.0, 1.0, 1.0, alpha as f32 / 255.0],
+                    false,
+                    true,
+                ));
+            }
+            let Some(loaded) = &copy.loaded else { continue };
+            for drawn in copy.drawn() {
+                let Some(Some(texture)) = loaded.textures.get(drawn.layer).and_then(|layer| layer.get(drawn.texture)) else { continue };
+                quads.push((texture, drawn.at, drawn.corners, drawn.color, drawn.additive, true));
+            }
+        }
         // Body Painting's strokes, over everything.
         quads.extend(self.prims.painter.quads(now, STR_RISE, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         // Venom Impress' icon is force-drawn, over everything.
@@ -4657,7 +4791,17 @@ fn load(gpu: &Gpu, grf: &Grf, file: &str, folder: &str) -> Option<Rc<Loaded>> {
     let textures = animation
         .layers
         .iter()
-        .map(|layer| layer.textures.iter().map(|name| gpu.try_load_texture(grf, &format!("data\\texture\\effect\\{folder}{name}"), true).ok()).collect())
+        .map(|layer| {
+            layer
+                .textures
+                .iter()
+                .map(|name| {
+                    // A name without an extension is a .bmp.
+                    let extension = if name.contains('.') { "" } else { ".bmp" };
+                    gpu.try_load_texture(grf, &format!("data\\texture\\effect\\{folder}{name}{extension}"), true).ok()
+                })
+                .collect()
+        })
         .collect();
     Some(Rc::new(Loaded { animation, textures }))
 }

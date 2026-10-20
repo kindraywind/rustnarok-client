@@ -15,7 +15,7 @@ pub struct Key {
     /// Which texture (a fraction while it animates).
     pub texture: f32,
     /// How `texture` moves in an added key: 1 by `texture`, 2 by `delay` stopping at the last, 3 and 4 repeating
-    /// forward and backward.
+    /// forward and backward, 5 forward and back again.
     pub texture_motion: u32,
     pub delay: f32,
     /// Degrees.
@@ -126,6 +126,17 @@ impl Str {
     }
 }
 
+/// The texture a ping-pong animation shows at step `c` of `count` textures: up to the last, back down, up again.
+pub fn ping_pong(c: i32, count: i32) -> i32 {
+    if count < 2 {
+        return 0;
+    }
+    let sweep = count - 1;
+    let c = c.max(0);
+    let q = c / sweep;
+    if q % 2 == 1 { (q + 1) * sweep - c } else { c - q * sweep }
+}
+
 impl Layer {
     /// The quad at `frame` (fractional), or None while the layer shows nothing: the last setting key before it,
     /// moved by the adding key right after it.
@@ -175,6 +186,8 @@ impl Layer {
             2 => (start.texture + step.delay * delta).min(count - 1.0),
             3 => (start.texture + step.delay * delta).rem_euclid(count),
             4 => (start.texture - step.delay * delta).rem_euclid(count),
+            // ponytail: the setting key's texture is the animation's first frame.
+            5 => ping_pong((start.texture + step.delay * delta) as i32, count as i32) as f32,
             // No texture motion: the setting key's texture stays.
             _ => start.texture,
         };
@@ -208,6 +221,31 @@ mod tests {
                 assert!(grf.read(&format!("data\\texture\\effect\\{texture}")).is_ok(), "{texture}");
             }
         }
+    }
+
+    #[test]
+    fn ping_pongs_through_the_textures() {
+        let shown: Vec<i32> = (0..9).map(|step| ping_pong(step, 4)).collect();
+        assert_eq!(shown, [0, 1, 2, 3, 2, 1, 0, 1, 2]);
+        assert_eq!(ping_pong(5, 1), 0);
+        // Through a layer: n = 4, delay 1, first frame 0.
+        let set = Key {
+            frame: 0,
+            kind: 0,
+            position: [320.0, 320.0],
+            corners: [0.0; 8],
+            texture: 0.0,
+            texture_motion: 0,
+            delay: 0.0,
+            angle: 0.0,
+            color: [1.0; 4],
+            source_blend: 5,
+            destination_blend: 2,
+        };
+        let add = Key { kind: 1, texture_motion: 5, delay: 1.0, ..set };
+        let layer = Layer { textures: vec!["a".into(), "b".into(), "c".into(), "d".into()], keys: vec![set, add] };
+        let shown: Vec<usize> = (0..9).map(|frame| layer.state(frame as f32).unwrap().texture).collect();
+        assert_eq!(shown, [0, 1, 2, 3, 2, 1, 0, 1, 2]);
     }
 
     #[test]

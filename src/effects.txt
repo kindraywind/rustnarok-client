@@ -247,7 +247,6 @@ str	1049	gn_illusiondoping	-	1
 str	1050	nc_magma_eruption	-	1
 str	1055	chill	-	1
 str	1057	ab_offertorium_ring	-	1
-str	1062	stormgust	-	1
 str	1094	ach_complete/ppring3	ach_complete/	1
 str	1186	new_dropitem/dropitem_pink/dropitem_pink/dropitem_pink	new_dropitem/dropitem_pink/dropitem_pink/	0
 str	1186	new_dropitem/dropitem_pink/dropitem_pink_bottom/dropitem_pink_bottom	new_dropitem/dropitem_pink/dropitem_pink_bottom/	0
@@ -262,17 +261,7 @@ str	1870	new_dropitem/dropitem_green/dropitem_green_bottom/dropitem_green_bottom
 str	1871	new_dropitem/dropitem_red/dropitem_red/dropitem_red	new_dropitem/dropitem_red/dropitem_red/	0
 str	1871	new_dropitem/dropitem_red/dropitem_red_bottom/dropitem_red_bottom	new_dropitem/dropitem_red/dropitem_red_bottom/	0
 str	1872	grade_enchant/new_success/new_success	grade_enchant/new_success/	0
-str	1873	grade_enchant/new_failed/new_failed	grade_enchant/new_failed/	0
-str	1874	grade_enchant/new_intro/new_intro	grade_enchant/new_intro/	0
-str	1875	ui_enchant/ui_intro_yellow/ui_intro_yellow	ui_enchant/ui_intro_yellow/	0
 str	1876	ui_enchant/ui_enchant_success/ui_enchant_success	ui_enchant/ui_enchant_success/	0
-str	1877	ui_enchant/ui_fail/ui_enchant_fail	ui_enchant/ui_fail/	0
-str	1878	ui_enchant/ui_intro_blue/ui_intro_blue	ui_enchant/ui_intro_blue/	0
-str	1879	ui_enchant/ui_levelup_success/ui_levelup_success	ui_enchant/ui_levelup_success/	0
-str	1880	ui_enchant/ui_fail/ui_levelup_fail	ui_enchant/ui_fail/	0
-str	1881	ui_enchant/ui_intro_green/ui_intro_green	ui_enchant/ui_intro_green/	0
-str	1882	ui_enchant/ui_reset_success/ui_reset_success	ui_enchant/ui_reset_success/	0
-str	1883	ui_enchant/ui_fail/ui_reset_fail	ui_enchant/ui_fail/	0
 misc	0	371
 misc	1	158
 misc	2	155

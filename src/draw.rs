@@ -23,6 +23,12 @@ fn lit_tint(tint: [f32; 4], light: [f32; 3]) -> [f32; 4] {
     [tint[0] * light[0], tint[1] * light[1], tint[2] * light[2], tint[3]]
 }
 
+/// What the STR world effects' head rule needs of a unit: where its body sprite's first layer sits at action 0, frame 0.
+fn world_body(gpu: &Gpu, actor: &mut actor::Actor, scale: f32) -> world_str::Body {
+    let offset = actor.sprites.as_mut().and_then(|sprites| sprites.frame_at(gpu, 0, 0, Timing::Loop(0.0)).first().map(|(_, position, ..)| position[1]));
+    world_str::Body::from_sprite(offset, scale, actor::rides(actor.option), actor::is_doram(actor.job))
+}
+
 impl App {
     /// The loading screen: the picture over everything and an empty progress bar.
     pub(crate) fn draw_loading(&mut self, event_loop: &ActiveEventLoop) {
@@ -489,6 +495,12 @@ impl App {
         let player_tint = effects::mix_tints(game.player.body_tint(), game.effects.body_tint(None, now));
         let player_tint = game.player.strike_colour(game.effects.body_tint(None, now)).or(player_tint);
         let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
+        // The units the STR world effects' head rule is for.
+        let head_owners = game.effects.world_head_owners();
+        let mut bodies = HashMap::new();
+        if head_owners.contains(&None) {
+            bodies.insert(None, world_body(gpu, &mut game.player, player_scale));
+        }
         // Our own character in Hiding shows its shadow alone (a frame with no sprite); cloaked, chase-walking or
         // GM-hidden, nothing. We are never drawn as a silhouette.
         match actor::seen(game.player.hide_option, true, clairvoyance) {
@@ -595,6 +607,9 @@ impl App {
             let tint = if silhouette { Some([0, 0, 0]) } else { effects::mix_tints(actor.body_tint(), game.effects.body_tint(Some(id), now)) };
             let tint = if silhouette { tint } else { actor.strike_colour(game.effects.body_tint(Some(id), now)).or(tint) };
             let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
+            if head_owners.contains(&Some(id)) {
+                bodies.insert(Some(id), world_body(gpu, actor, scale));
+            }
             if let Some(sprites) = &mut actor.sprites {
                 sprites.set_tint(tint);
                 let mut placed = sprites.frame(gpu, action, seen, head_direction, timing);
@@ -2738,6 +2753,15 @@ impl App {
             None => Some(player_feet),
             Some(id) => feet_of.get(&id).copied(),
         };
+        // The STR world effects tick before the units; a skill unit's body for the head rule is a fixed one.
+        let body_of = |owner: Option<u32>| {
+            bodies
+                .get(&owner)
+                .copied()
+                .or_else(|| owner.filter(|id| feet_of.contains_key(id) && !game.units.contains_key(id)).map(|_| world_str::Body::skill_unit()))
+        };
+        let scene = world_str::Scene { player: player_feet, feet: &feet_of_unit, body: &body_of, longitude: yaw.to_degrees(), right: view.right, up: view.up };
+        game.effects.advance_world(now, &scene);
         // The Sight option (bit 0x1) keeps a flame circling its unit.
         let sights: Vec<_> =
             std::iter::once((None, game.player.option & 1 != 0)).chain(game.units.iter().map(|(&id, actor)| (Some(id), actor.option & 1 != 0))).collect();
