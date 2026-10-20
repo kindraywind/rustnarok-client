@@ -2070,6 +2070,9 @@ const ANTI_MAGIC: u32 = 675;
 pub const HIT_DARK: u32 = 180;
 const LOPE: u32 = 411;
 /// The kicks' and Swoo's body changes (`prims::body`).
+const SOUL_BODY: u32 = 424;
+const SOUL_BODY_MONSTER: u32 = 427;
+const LAND_BODY: u32 = 446;
 const PRESSED_BODY: u32 = 413;
 const KICKED_BODY: u32 = 415;
 const HIT_BODY: u32 = 417;
@@ -2804,6 +2807,9 @@ impl Effects {
                 }
                 self.prims.petals.lope(at, now);
             }
+            (SOUL_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Soul, unit, now),
+            (SOUL_BODY_MONSTER, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Stack, unit, now),
+            (LAND_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Drop, unit, now),
             (PRESSED_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Squash, unit, now),
             (KICKED_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Hop, unit, now),
             (HIT_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Flash, unit, now),
@@ -7179,5 +7185,19 @@ mod tests {
         assert!(effects.body_glow(Some(3), start + crate::prims::TICK * 5).is_some());
         effects.prims.bodies.start(body::Change::Shrink, Some(3), start);
         assert!(effects.body_scale(Some(3), start + crate::prims::TICK * 50) == 0.5);
+    }
+
+    #[test]
+    fn soul_link_spirit_link_and_the_landing_have_their_rows() {
+        let table = Table::load();
+        for skill in [445, 447, 448, 449, 450, 451, 2596, 2597, 2598, 2599] {
+            assert!(table.used(skill).unwrap().contains(&(Who::Target, SOUL_BODY)), "{skill}");
+        }
+        assert!(table.used(471).unwrap().contains(&(Who::Target, SOUL_BODY_MONSTER)));
+        for skill in [426, 2564, 2581, 5023] {
+            assert!(table.used(skill).unwrap().contains(&(Who::Caster, LAND_BODY)), "{skill}");
+        }
+        assert_eq!([SOUL_BODY, SOUL_BODY_MONSTER, LAND_BODY].map(|id| table.lengths[&id]), [99_999_999, 99_999_999, 35]);
+        assert!([SOUL_BODY, SOUL_BODY_MONSTER, LAND_BODY].iter().all(|id| !table.sounds.contains_key(id)));
     }
 }

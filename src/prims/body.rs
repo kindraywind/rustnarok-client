@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use super::passes;
-use crate::actor::{GLOW_WHITE, PARAM_SHIFT, Placed};
+use crate::actor::{GLOW_DROP, GLOW_SOUL, GLOW_STACK, GLOW_WHITE, PARAM_SHIFT, Placed};
 
 /// What changes a unit's body, and how long it lasts in ticks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +19,12 @@ pub enum Change {
     Flash,
     /// Swoo: half size.
     Shrink,
+    /// Soul Link: a blue double outline on a player, fading in over 3.2 s.
+    Soul,
+    /// Spirit Link's ka on a monster: a stack of white outlines that settles to a halo.
+    Stack,
+    /// High Jump and Lope: the character drops in from the sky, spinning.
+    Drop,
 }
 
 impl Change {
@@ -27,6 +33,8 @@ impl Change {
             Change::Squash => 50,
             Change::Hop | Change::Flash => 100,
             Change::Shrink => 99_999,
+            Change::Soul | Change::Stack => 99_999_999,
+            Change::Drop => 35,
         }
     }
 }
@@ -73,9 +81,39 @@ pub fn shrink_factor(n: u32) -> f32 {
     if angle < 270 { 0.25 * (1.0 + (angle as f32).to_radians().sin()) + 0.5 } else { 0.5 }
 }
 
+/// Soul Link's glow alpha at the tick e: 1 a tick to 200.
+pub fn soul_alpha(e: u32) -> u32 {
+    e.min(200)
+}
+
+/// Spirit Link's counter at the tick e: 50 more than the tick up to 149, then 199.
+pub fn stack_counter(e: u32) -> u32 {
+    if e < 150 { e + 50 } else { 199 }
+}
+
+/// The landing's lift in screen pixels at its counter f for a camera `unit` pixels to a world unit: 500 units up, falling 20 a tick.
+pub fn drop_lift(f: u32, unit: f32) -> f32 {
+    (20.0 * (25.0 - f as f32)).max(0.0) * unit
+}
+
+/// The landing's alpha (0 to 255) at its counter f: invisible to 10, 17 at 11, opaque from 25.
+pub fn drop_alpha(f: u32) -> f32 {
+    (17.0 * (f as f32 - 10.0)).clamp(0.0, 255.0)
+}
+
+/// The landing's spin of every layer at its counter f: 180 − 180 cos(5g°) with g = f + 11 while f < 25, else upright.
+pub fn drop_spin(f: u32) -> f32 {
+    let g = f + 11;
+    if f < 25 && g <= 36 { 180.0 - 180.0 * (5.0 * g as f32).to_radians().cos() } else { 0.0 }
+}
+
 impl Bodies {
     /// `change` starts on `unit` (None = the player).
     pub fn start(&mut self, change: Change, unit: Option<u32>, now: Instant) {
+        // A new Soul Link or landing replaces the old one on the unit.
+        if matches!(change, Change::Soul | Change::Drop) {
+            self.active.retain(|each| !(each.unit == unit && each.change == change));
+        }
         self.active.push(Active { unit, change, start: now });
     }
 
@@ -98,11 +136,21 @@ impl Bodies {
         self.tick(unit, Change::Shrink, now).map_or(1.0, shrink_factor)
     }
 
-    /// The body flags of a white flash on `unit` now: the copy's alpha is in the top byte.
+    /// The body flags of what changes `unit` now, one number in the top byte: the landing first, then a white flash, a Soul Link's
+    /// glow and a monster's stack.
+    // ponytail: only one counter fits the flags, so a flash during a Soul Link hides its glow for those ticks.
     pub fn glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
-        let e = self.tick(unit, Change::Flash, now)?;
-        let alpha = flash_alpha(e.min(14))?;
-        Some((GLOW_WHITE | (alpha as u32) << PARAM_SHIFT, None))
+        if let Some(e) = self.tick(unit, Change::Drop, now) {
+            return Some((GLOW_DROP | e << PARAM_SHIFT, None));
+        }
+        if let Some(alpha) = self.tick(unit, Change::Flash, now).and_then(|e| flash_alpha(e.min(14))) {
+            return Some((GLOW_WHITE | (alpha as u32) << PARAM_SHIFT, None));
+        }
+        if let Some(e) = self.tick(unit, Change::Soul, now) {
+            return Some((GLOW_SOUL | soul_alpha(e) << PARAM_SHIFT, None));
+        }
+        let e = self.tick(unit, Change::Stack, now)?;
+        Some((GLOW_STACK | stack_counter(e) << PARAM_SHIFT, None))
     }
 
     /// Squashes or lifts the layers `placed` of `unit` (their `[x, y]` offsets and sizes in sprite pixels, y down): a squash moves each
@@ -217,5 +265,40 @@ mod tests {
         bodies.start(Change::Shrink, None, start + TICK * 20);
         bodies.start(Change::Shrink, None, start);
         assert!(near(bodies.scale(None, start + TICK * 10), shrink_factor(10)));
+    }
+
+    #[test]
+    fn soul_link_spirit_link_and_the_landing_have_their_counters() {
+        let start = Instant::now();
+        let mut bodies = Bodies::default();
+        bodies.start(Change::Soul, Some(1), start);
+        // f at e = 0, 1, 199, 200, 201: 0, 1, 199, 200, 200.
+        assert_eq!([0, 1, 199, 200, 201].map(soul_alpha), [0, 1, 199, 200, 200]);
+        let flags = |bodies: &Bodies, tick: u32| bodies.glow(Some(1), start + TICK * tick);
+        assert_eq!(flags(&bodies, 100), Some((GLOW_SOUL | 100 << PARAM_SHIFT, None)));
+        // A second Soul Link replaces the first.
+        bodies.start(Change::Soul, Some(1), start + TICK * 50);
+        assert_eq!(bodies.active.len(), 1);
+        // Spirit Link's counter: 50 more than e up to 149, then 199.
+        assert_eq!([0, 149, 150, 400].map(stack_counter), [50, 199, 199, 199]);
+        let mut monster = Bodies::default();
+        monster.start(Change::Stack, Some(2), start);
+        assert_eq!(monster.glow(Some(2), start + TICK * 5), Some((GLOW_STACK | 55 << PARAM_SHIFT, None)));
+        // The landing: lift L at f = 0, 24, 25 (20·25·400/D px, 20·400/D, 0) for a camera 400 away; alpha at f = 10, 11, 25.
+        assert_eq!([0, 24, 25].map(|f| drop_lift(f, 1.0)), [500.0, 20.0, 0.0]);
+        assert_eq!(drop_lift(0, 2.0), 1000.0);
+        assert_eq!([10, 11, 25].map(drop_alpha), [0.0, 17.0, 255.0]);
+        // The spin at g = 11, 18, 24, 35 (f = 0, 7, 13, 24) and none from e = 25: 76.8, 180, 270, 359.3, 0.
+        let spins = [0, 7, 13, 24, 25].map(drop_spin);
+        let want = [76.8, 180.0, 270.0, 359.3, 0.0];
+        assert!(spins.iter().zip(want).all(|(got, want)| (got - want).abs() < 0.1), "{spins:?}");
+        // A second launch replaces the first; the effect ends at tick 35.
+        let mut landing = Bodies::default();
+        landing.start(Change::Drop, None, start);
+        landing.start(Change::Drop, None, start + TICK * 10);
+        assert_eq!(landing.active.len(), 1);
+        assert_eq!(landing.glow(None, start + TICK * 12), Some((GLOW_DROP | 2 << PARAM_SHIFT, None)));
+        landing.advance(start + TICK * 46);
+        assert!(landing.active.is_empty() && landing.glow(None, start + TICK * 46).is_none());
     }
 }
