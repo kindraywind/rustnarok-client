@@ -36,9 +36,25 @@ player's own game data at runtime. As good as the original, and better where it 
 
 https://github.com/user-attachments/assets/328d93f5-bb99-4413-8a20-e34fdd70840d
 
-The window resizes freely and the whole interface follows:
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**📐 Any window size.** The window resizes freely and the whole interface follows.
 
 https://github.com/user-attachments/assets/e4d4f87c-c3b9-4b53-a68e-5e61c5cab667
+
+</td>
+<td width="50%" valign="top">
+
+**🧪 A mod experiment.** A Diablo IV style interface, on the
+[`experiment-d4-ui`](https://github.com/kindraywind/rustnarok-client/tree/experiment-d4-ui) branch.
+
+https://github.com/user-attachments/assets/0348641a-e5eb-4a96-9f70-b3ce1692e833
+
+</td>
+</tr>
+</table>
 
 <table>
 <tr>
@@ -331,5 +347,6 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the code in `src/grf/mi
 
 <div align="center">
 <sub>Ragnarok Online is a trademark of Gravity Co., Ltd. This project is not affiliated with or endorsed by Gravity,
-and it ships no game data: the client reads the player's own files.</sub>
+and it ships no game data: the client reads the player's own files. Diablo is a trademark of Blizzard Entertainment,
+Inc., named here only to describe the mod experiment's look.</sub>
 </div>
