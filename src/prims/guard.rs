@@ -26,6 +26,8 @@ pub const WEAPONS: [&str; 8] = [
     "data\\texture\\유저인터페이스\\item\\드래곤슬레이어.bmp",
     "data\\texture\\유저인터페이스\\item\\배틀액스.bmp",
 ];
+/// Sound of Destruction's two note glyphs.
+pub const NOTES: [&str; 2] = ["data\\texture\\effect\\melody_a.bmp", "data\\texture\\effect\\melody_b.bmp"];
 /// Strip Accessory's eight icons, one a prim.
 pub const ACCESSORIES: [&str; 8] = [
     "data\\texture\\유저인터페이스\\item\\갈색반지.bmp",
@@ -289,22 +291,35 @@ impl Guard {
     /// Full Strip's pieces flying out from the target's feet `at`: 8 prims of 4, alternating shield and sword; each piece's
     /// choices from `rand(n)` in the order the game draws them (its wait, azimuth, elevation, spin, and one that is not used).
     pub fn strip(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.burst(at, now, false, |prim| if prim % 2 == 0 { (SHIELD, 5.0) } else { (SWORD, 9.0) }, rand);
+        self.burst(at, now, false, 8, |prim| if prim % 2 == 0 { (SHIELD, 5.0) } else { (SWORD, 9.0) }, rand);
     }
 
     /// Strip Accessory's 32 red icons in upright planes, eight prims of four, their fifth draw each the plane's turn.
     pub fn accessory(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.burst(at, now, true, |prim| (ACCESSORIES[prim], if prim == 6 { 4.0 } else { 5.0 }), rand);
+        self.burst(at, now, true, 8, |prim| (ACCESSORIES[prim], if prim == 6 { 4.0 } else { 5.0 }), rand);
     }
 
     /// Weapon Crush's 32 weapon icons, four of each of eight, the same way, all with a half-diagonal of 5.
     pub fn weapon_crush(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.burst(at, now, false, |prim| (WEAPONS[prim], 5.0), rand);
+        self.burst(at, now, false, 8, |prim| (WEAPONS[prim], 5.0), rand);
     }
 
-    fn burst(&mut self, at: Vector, now: Instant, upright: bool, icon_of: impl Fn(usize) -> (&'static str, f32), mut rand: impl FnMut(u32) -> u32) {
+    /// Sound of Destruction's 16 red music notes in upright planes: four prims of four, melody_a, melody_b, melody_a, melody_b.
+    pub fn notes(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.burst(at, now, true, 4, |prim| (NOTES[prim % 2], 6.0), rand);
+    }
+
+    fn burst(
+        &mut self,
+        at: Vector,
+        now: Instant,
+        upright: bool,
+        prims: usize,
+        icon_of: impl Fn(usize) -> (&'static str, f32),
+        mut rand: impl FnMut(u32) -> u32,
+    ) {
         let mut pieces = Vec::with_capacity(STRIP_ELEMENTS);
-        for prim in 0..8 {
+        for prim in 0..prims {
             for _ in 0..4 {
                 let wait = -18 - rand(30) as i32;
                 let (azimuth, elevation, spin) = (rand(360) as f32, rand(360) as f32, rand(360) as f32);
@@ -829,5 +844,24 @@ mod tests {
         assert!(glow(19).is_none() && glow(101).is_none());
         assert_eq!((glow(20), glow(100)), (Some((GLOW_OUTLINE, Some([0xFF, 0xFF, 0x96]))), Some((GLOW_OUTLINE, Some([0xFF, 0xFF, 0x96])))));
         assert_eq!(guard.body_tint(Some(1), start + TICK * 101), Some([0xFF, 0xFF, 0x9E]));
+    }
+
+    #[test]
+    fn sound_of_destruction_bursts_16_red_notes() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.notes([5.0, 1.0, 5.0], start, |_| 0);
+        let pieces = &guard.strips[0].pieces;
+        // 4 prims of 4: melody_a, melody_b, melody_a, melody_b, half-diagonal 6.0, upright planes.
+        assert_eq!(pieces.len(), 16);
+        assert!((0..16).all(|index| pieces[index].icon == NOTES[(index / 4) % 2] && pieces[index].half == 6.0));
+        assert!(guard.strips[0].upright);
+        // Alpha at n = 1, 10, 25, 26, 60, 61: 25, 250, 250, 243, 5, 0; r = 12 + n: 13 and 72; first shown on tick 18.
+        assert_eq!([1, 10, 25, 26, 60, 61].map(coin_alpha), [25.0, 250.0, 250.0, 243.0, 5.0, 0.0]);
+        assert!(guard.upright_pieces(start + TICK * 17).is_empty());
+        let walls = guard.upright_pieces(start + TICK * 18);
+        assert_eq!(walls.len(), 2);
+        assert!(walls.iter().all(|wall| wall.additive && wall.vertices.len() == 8 * 6));
+        assert!(guard.upright_pieces(start + TICK * 77).len() == 2 && guard.upright_pieces(start + TICK * 78).is_empty());
     }
 }
