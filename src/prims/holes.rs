@@ -1,5 +1,5 @@
 //! Manhole's and Dimension Door's ground (822, 825), a 16 ms tick at a time: a blue swirl square turning on the cell and, every 100
-//! ticks, three breathing flat ring bands growing out from its centre.
+//! ticks, three breathing flat ring bands growing out from its centre; and Reverberation's (1569) violet ones.
 //!
 //! A shape's own age n counts from 1 at its first tick; e is the ticks since the effect started.
 
@@ -16,8 +16,10 @@ pub const SURA_CIRCLE: &str = "data\\texture\\effect\\cir0002.bmp";
 /// The swirl lies 2 over the ground; a hole lives 29 999 ticks.
 const RISE: f32 = 2.0;
 const LIFE: u32 = 29_999;
-/// A ring triple is seen for prim ages 0 to 135.
+/// A ring triple is seen for prim ages 0 to 135 (Reverberation's, 0 to 141), Reverberation's effect for 150 ticks.
 const RING_AGES: u32 = 136;
+const REVERB_AGES: u32 = 142;
+const REVERB_LIFE: u32 = 150;
 const LEANS: [f32; 3] = [2.0, 3.0, 4.0];
 const TURNS: [f32; 3] = [0.0, 25.0, 50.0];
 
@@ -97,7 +99,20 @@ struct Triple {
     start: Instant,
     at: Vector,
     rgb: [f32; 3],
+    /// Reverberation's: the moment its effect started, which cuts the triple after 150 ticks.
+    reverb: Option<Instant>,
 }
+
+/// How a ring band's alpha moves: the gain a tick (to `cap`) while its age is under 10, and the loss a tick once its radius is over 7.
+#[derive(Clone, Copy)]
+struct Pace {
+    gain: i32,
+    cap: i32,
+    loss: i32,
+}
+
+const BREATH: Pace = Pace { gain: 4, cap: 40, loss: 5 };
+const REVERB: Pace = Pace { gain: 24, cap: 240, loss: 15 };
 
 /// Aura 831's two flat squares on a Sura's feet.
 struct Squares {
@@ -131,6 +146,15 @@ pub fn swirl_half(spin: f32, base: f32) -> f32 {
 /// The three bands after the prim's tick `a` (a + 1 ticks run): each starts at its own age (0, −10, −20), grows 0.5 a tick, fades
 /// from radius 7, and starts again until band 0 has run 120 ticks.
 pub fn bands(a: u32) -> [Band; 3] {
+    paced_bands(a, BREATH)
+}
+
+/// Reverberation's bands: the same, but the alpha gains 24 a tick to 240 and loses 15.
+pub fn reverb_bands(a: u32) -> [Band; 3] {
+    paced_bands(a, REVERB)
+}
+
+fn paced_bands(a: u32, pace: Pace) -> [Band; 3] {
     let mut bands = [0, -10, -20].map(|age| Band { active: true, age, radius: 0.0, alpha: 0, height: 0.0 });
     let mut counter = 0;
     for _ in 0..=a {
@@ -147,7 +171,7 @@ pub fn bands(a: u32) -> [Band; 3] {
             }
             band.radius += 0.5;
             if band.radius > 7.0 {
-                band.alpha -= 5;
+                band.alpha -= pace.loss;
                 if band.alpha < 0 {
                     band.alpha = 0;
                     if counter > 120 {
@@ -159,7 +183,7 @@ pub fn bands(a: u32) -> [Band; 3] {
                 }
             }
             if band.age < 10 {
-                band.alpha = (band.alpha + 4).min(40);
+                band.alpha = (band.alpha + pace.gain).min(pace.cap);
             }
             band.height = 6.001 * if band.age <= 10 { (9.0 * band.age as f32).to_radians().sin() } else { 1.0 };
         }
@@ -260,6 +284,13 @@ impl Holes {
         self.squares.push(Squares { unit, start: now, length: length.max(120) });
     }
 
+    /// Reverberation's two violet ring triples at `at`, on its ticks 0 and 100.
+    pub fn reverb(&mut self, at: Vector, now: Instant) {
+        for tick in [0, 100] {
+            self.triples.push(Triple { start: now + TICK * tick, at, rgb: [108.0 / 255.0, 26.0 / 255.0, 1.0], reverb: Some(now) });
+        }
+    }
+
     pub fn forget(&mut self, id: u32) {
         self.holes.retain(|hole| hole.id != id);
     }
@@ -269,13 +300,16 @@ impl Holes {
         for hole in &mut self.holes {
             while hole.ticks < passes(hole.start, now) {
                 if let (0, Some(rgb)) = (hole.ticks % 100, hole.rings) {
-                    self.triples.push(Triple { start: hole.start + TICK * hole.ticks, at: hole.at, rgb });
+                    self.triples.push(Triple { start: hole.start + TICK * hole.ticks, at: hole.at, rgb, reverb: None });
                 }
                 hole.ticks += 1;
             }
         }
         self.holes.retain(|hole| passes(hole.start, now) <= LIFE);
-        self.triples.retain(|triple| passes(triple.start, now) <= RING_AGES);
+        self.triples.retain(|triple| match triple.reverb {
+            Some(launched) => passes(launched, now) <= REVERB_LIFE,
+            None => passes(triple.start, now) <= RING_AGES,
+        });
         self.squares.retain(|squares| passes(squares.start, now) <= squares.length);
     }
 
@@ -301,10 +335,14 @@ impl Holes {
             }
         }
         for triple in &self.triples {
-            let Some(a) = passes(triple.start, now).checked_sub(1).filter(|&a| a < RING_AGES) else { continue };
+            let ages = if triple.reverb.is_some() { REVERB_AGES } else { RING_AGES };
+            let Some(a) = passes(triple.start, now).checked_sub(1).filter(|&a| a < ages) else { continue };
+            if triple.reverb.is_some_and(|launched| passes(launched, now) > REVERB_LIFE) {
+                continue;
+            }
             let base = [triple.at[0], triple.at[1] + RISE, triple.at[2]];
             let mut vertices = Vec::new();
-            for (k, band) in bands(a).iter().enumerate() {
+            for (k, band) in if triple.reverb.is_some() { reverb_bands(a) } else { bands(a) }.iter().enumerate() {
                 if !band.active || band.age <= 0 || band.radius <= 0.0 {
                     continue;
                 }
@@ -378,6 +416,44 @@ mod tests {
         assert!(bands(135)[0].active && !bands(136)[0].active);
         assert!(bands(122)[1].active && !bands(123)[1].active);
         assert!(bands(132)[2].active && !bands(133)[2].active);
+    }
+
+    #[test]
+    fn reverberations_violet_rings_gain_24_a_tick_and_end_by_prim_age_141() {
+        // Band 0 at n = 1, 9, 10, 14, 15, 29: alpha 24, 216, 216, 216, 201, 24 (it restarts, at 0 and then gaining 24).
+        let first = |n: u32| reverb_bands(n - 1)[0];
+        assert_eq!([1, 9, 10, 14, 15, 29].map(|n| first(n).alpha), [24, 216, 216, 216, 201, 24]);
+        assert_eq!([14, 15, 29].map(|n| first(n).radius), [7.0, 7.5, 0.0]);
+        // The second cycle reaches 240 at its age 9 and restarts at its age 31.
+        let second = |n: u32| reverb_bands(28 + n)[0];
+        assert_eq!((second(9).alpha, second(9).age), (240, 9));
+        assert_eq!((second(30).age, second(31).age), (30, 0));
+        // Band 0 ends at prim age 121, band 1 at 131, band 2 at 141; the breathing triple's own numbers are unchanged.
+        assert!(reverb_bands(120)[0].active && !reverb_bands(121)[0].active);
+        assert!(reverb_bands(130)[1].active && !reverb_bands(131)[1].active);
+        assert!(reverb_bands(140)[2].active && !reverb_bands(141)[2].active);
+        assert_eq!(bands(8)[0].alpha, 36);
+    }
+
+    #[test]
+    fn reverberation_throws_a_triple_at_ticks_0_and_100_and_the_end_cuts_the_last() {
+        let start = Instant::now();
+        let mut holes = Holes::default();
+        holes.reverb([10.0, 1.0, 10.0], start);
+        let drawn = |holes: &Holes, tick: u32| holes.meshes(start + TICK * tick, |_| None).len();
+        // Violet #6C1AFF, added on, white rings 2 up; none before the first tick, one prim to age 141, the second from tick 100.
+        let walls = holes.meshes(start + TICK * 12, |_| None);
+        assert_eq!(walls.len(), 1);
+        assert!(walls[0].additive && walls[0].texture == RING_WHITE);
+        assert_eq!(walls[0].vertices[0].tint[..3], [108.0 / 255.0, 26.0 / 255.0, 1.0]);
+        assert_eq!((drawn(&holes, 99), drawn(&holes, 100)), (1, 2));
+        // The first prim draws until its band 2 ends at age 141 (tick 140); the second is cut by the effect's end at tick 149.
+        holes.advance(start + TICK * 120);
+        assert_eq!(holes.triples.len(), 2);
+        assert_eq!((drawn(&holes, 140), drawn(&holes, 141)), (2, 1));
+        assert_eq!((drawn(&holes, 149), drawn(&holes, 150)), (1, 0));
+        holes.advance(start + TICK * 151);
+        assert!(holes.triples.is_empty());
     }
 
     #[test]

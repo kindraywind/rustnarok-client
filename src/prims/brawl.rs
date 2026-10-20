@@ -30,6 +30,11 @@ pub struct DiscLook {
 pub const BLUE_DISC: DiscLook = DiscLook { tint: [5.0 / 255.0, 5.0 / 255.0, 1.0], rise: 6.0, last: 69 };
 pub const RED_DISC: DiscLook = DiscLook { tint: [155.0 / 255.0, 5.0 / 255.0, 5.0 / 255.0], rise: 2.0, last: 29 };
 pub const GOLD_STRIP: &str = "data\\texture\\effect\\line3y.tga";
+/// Cross Impact's orange and red-orange lines, and the ones /mineffect shows instead.
+pub const CROSS_PITCH: &str = "data\\texture\\effect\\new_crossimpact\\new_crossimpact_line\\line_pitch.tga";
+pub const CROSS_RED: &str = "data\\texture\\effect\\new_crossimpact\\new_crossimpact_line\\line_red.tga";
+pub const CROSS_PITCH_MIN: &str = "data\\texture\\effect\\mineffect\\new_crossimpact\\new_crossimpact_line\\line_pitch.tga";
+pub const CROSS_RED_MIN: &str = "data\\texture\\effect\\mineffect\\new_crossimpact\\new_crossimpact_line\\line_red.tga";
 pub const RAY: &str = sniper::RAY;
 pub const CLOUD: &str = sniper::CLOUD;
 
@@ -378,7 +383,7 @@ pub struct Strip {
     growth: f32,
 }
 
-/// Which lines: Dark Illusion's pale ones, Hundred Spear's gold ones or Knuckle Arrow's blue ones.
+/// Which lines: Dark Illusion's pale ones, Hundred Spear's gold ones, Knuckle Arrow's blue ones or Cross Impact's orange ones.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LineKind {
     Pale,
@@ -386,6 +391,8 @@ pub enum LineKind {
     Knuckle,
     /// Piercing Shot's pale green ones, the gold lines' numbers with other sizes.
     Shot,
+    /// Cross Impact's orange and red ones: the gold lines exactly, in two pictures.
+    Cross,
 }
 
 impl LineKind {
@@ -397,6 +404,8 @@ impl LineKind {
 
 struct Lines {
     kind: LineKind,
+    /// /mineffect's pictures (Cross Impact's).
+    min: bool,
     start: Instant,
     from: Vector,
     heading: f32,
@@ -730,43 +739,48 @@ impl Brawl {
 
     /// Dark Illusion's 32 lines from the caster's feet `from` toward `to`, each streak's choices from `rand(n)`.
     pub fn lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.make_lines(LineKind::Pale, from, to, now, rand);
+        self.make_lines(LineKind::Pale, false, from, to, now, rand);
     }
 
     /// Hundred Spear's 32 gold lines, quicker and longer, the same way.
     pub fn spear_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.make_lines(LineKind::Gold, from, to, now, rand);
+        self.make_lines(LineKind::Gold, false, from, to, now, rand);
+    }
+
+    /// Cross Impact's 32 orange and red lines, the same way as Hundred Spear's; `min` is /mineffect.
+    pub fn cross_lines(&mut self, from: Vector, to: Vector, min: bool, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make_lines(LineKind::Cross, min, from, to, now, rand);
     }
 
     /// Piercing Shot's 32 pale green lines, the same way.
     pub fn shot_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.make_lines(LineKind::Shot, from, to, now, rand);
+        self.make_lines(LineKind::Shot, false, from, to, now, rand);
     }
 
     /// Knuckle Arrow's 32 blue lines over everything, the same way.
     pub fn knuckle_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.make_lines(LineKind::Knuckle, from, to, now, rand);
+        self.make_lines(LineKind::Knuckle, false, from, to, now, rand);
     }
 
-    fn make_lines(&mut self, kind: LineKind, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    fn make_lines(&mut self, kind: LineKind, min: bool, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
         let mut strips = Vec::new();
         for prim in 0..STRIP_PRIMS {
             for _ in 0..4 {
                 let side = (15 + rand(11)) as f32 * if prim % 2 == 0 { -1.0 } else { 1.0 };
                 let phase = rand(200) as f32;
                 let half = match kind {
-                    LineKind::Gold => 0.5 + 0.1 * rand(6) as f32,
+                    LineKind::Gold | LineKind::Cross => 0.5 + 0.1 * rand(6) as f32,
                     LineKind::Shot => 0.4 + 0.1 * rand(4) as f32,
                     _ => 0.3 + 0.1 * rand(4) as f32,
                 };
                 let length = match kind {
-                    LineKind::Gold => (40 + rand(31)) as f32,
+                    LineKind::Gold | LineKind::Cross => (40 + rand(31)) as f32,
                     LineKind::Shot => (30 + rand(31)) as f32,
                     _ => (20 + rand(31)) as f32,
                 };
                 let colour = rand(3) as usize;
                 let (speed, growth) = match kind {
-                    LineKind::Gold => (1.0 + 0.1 * rand(11) as f32, 0.05),
+                    LineKind::Gold | LineKind::Cross => (1.0 + 0.1 * rand(11) as f32, 0.05),
                     LineKind::Knuckle | LineKind::Shot => (1.5 + 0.1 * rand(21) as f32, 0.05),
                     LineKind::Pale => (1.5 + 0.1 * rand(21) as f32, 0.0),
                 };
@@ -774,7 +788,7 @@ impl Brawl {
             }
         }
         let heading = bearing(to[0] - from[0], to[2] - from[2]) as f32;
-        self.lines.push(Lines { kind, start: now, from, heading, strips });
+        self.lines.push(Lines { kind, min, start: now, from, heading, strips });
     }
 
     /// A shake of `unit`'s parts on ticks `first` to `last` (Dark Illusion's 0 to 34, Sky Net Blow's 31 to 50).
@@ -1025,12 +1039,14 @@ impl Brawl {
             let (sin, cos) = lines.heading.to_radians().sin_cos();
             let (side_sin, side_cos) = (lines.heading - 90.0).to_radians().sin_cos();
             let mut vertices = Vec::new();
-            for strip in &lines.strips {
+            // Cross Impact's prims 2, 3, 6 and 7 (four strips each) are the red picture.
+            let mut red = Vec::new();
+            for (index, strip) in lines.strips.iter().enumerate() {
                 let middle = [lines.from[0] + strip.side * side_cos, lines.from[1] + 6.0, lines.from[2] + strip.side * side_sin];
                 let (head, tail) = (strip.at(a) + strip.length - 100.0, strip.at(a) - 100.0);
                 let place = |along: f32, across: f32| [middle[0] + cos * along - sin * across, middle[1], middle[2] + sin * along + cos * across];
                 let rgb = match lines.kind {
-                    LineKind::Gold => GOLD_TINTS[strip.colour],
+                    LineKind::Gold | LineKind::Cross => GOLD_TINTS[strip.colour],
                     LineKind::Knuckle => KNUCKLE_TINTS[strip.colour],
                     LineKind::Shot => SHOT_TINTS[strip.colour],
                     LineKind::Pale => STRIP_TINTS[strip.colour],
@@ -1043,10 +1059,22 @@ impl Brawl {
                     MeshVertex { position: place(tail, strip.half), uv: [1.0, 1.0], tint },
                     MeshVertex { position: place(tail, -strip.half), uv: [1.0, 0.0], tint },
                 ];
-                vertices.extend([p, q, r, p, r, s]);
+                if lines.kind == LineKind::Cross && index / 4 % 4 >= 2 {
+                    red.extend([p, q, r, p, r, s]);
+                } else {
+                    vertices.extend([p, q, r, p, r, s]);
+                }
+            }
+            if !red.is_empty() {
+                walls.push(Wall { texture: if lines.min { CROSS_RED_MIN } else { CROSS_RED }, vertices: red, additive: false, forced: false });
             }
             walls.push(Wall {
-                texture: if matches!(lines.kind, LineKind::Gold | LineKind::Shot) { GOLD_STRIP } else { STRIP },
+                texture: match lines.kind {
+                    LineKind::Gold | LineKind::Shot => GOLD_STRIP,
+                    LineKind::Cross if lines.min => CROSS_PITCH_MIN,
+                    LineKind::Cross => CROSS_PITCH,
+                    _ => STRIP,
+                },
                 vertices,
                 additive: lines.kind == LineKind::Knuckle,
                 forced: false,
@@ -1424,6 +1452,31 @@ mod tests {
         // Dark Illusion's pale lines are unchanged.
         brawl.lines([0.0; 3], [40.0, 0.0, 0.0], start, |_| 0);
         assert!(brawl.lines[1].strips.iter().all(|strip| strip.growth == 0.0 && strip.speed == 1.5));
+    }
+
+    #[test]
+    fn cross_impact_races_32_orange_and_red_lines_in_two_pictures() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.cross_lines([10.0, 1.0, 10.0], [50.0, 1.0, 10.0], false, start, |_| 0);
+        brawl.cross_lines([10.0, 1.0, 10.0], [50.0, 1.0, 10.0], true, start, |_| 0);
+        let lines = &brawl.lines[0];
+        // The gold lines' numbers: 8 prims × 4 streaks, 16 each side; every draw 0: s ∓ 15, t 0, w 0.5, ℓ 40, c 0, speed 1.0.
+        assert_eq!((lines.kind, lines.strips.len(), lines.heading), (LineKind::Cross, 32, 0.0));
+        assert_eq!(lines.strips.iter().filter(|strip| strip.side < 0.0).count(), 16);
+        assert_eq!(lines.strips.iter().filter(|strip| strip.side > 0.0).count(), 16);
+        assert!(lines.strips.iter().all(|strip| strip.half == 0.5 && strip.length == 40.0 && strip.speed == 1.0 && strip.colour == 0 && strip.growth == 0.05));
+        // Alpha at n = 1, 10, 20, 21, 120: 20, 200, 200, 198, 0; blended over everything in #FFFFE1; gone after tick 118.
+        assert_eq!([1, 10, 20, 21, 120].map(gold_alpha), [20.0, 200.0, 200.0, 198.0, 0.0]);
+        let walls = brawl.top_meshes(start, |_| Some([0.0; 3]));
+        assert_eq!(walls.len(), 4);
+        assert_eq!(walls.iter().map(|wall| wall.texture).collect::<Vec<_>>(), [CROSS_RED, CROSS_PITCH, CROSS_RED_MIN, CROSS_PITCH_MIN]);
+        assert!(walls.iter().all(|wall| !wall.additive && wall.vertices.len() == 16 * 6));
+        assert_eq!(walls[1].vertices[0].tint, [1.0, 1.0, 225.0 / 255.0, 20.0 / 255.0]);
+        assert!(!brawl.top_meshes(start + TICK * 118, |_| Some([0.0; 3])).is_empty() && brawl.top_meshes(start + TICK * 119, |_| Some([0.0; 3])).is_empty());
+        // Prims 0, 1, 4, 5 take line_pitch and 2, 3, 6, 7 line_red: the red ones are strips 8 to 15 and 24 to 31.
+        let reds: Vec<_> = (0..32).filter(|index| index / 4 % 4 >= 2).collect();
+        assert_eq!((reds.len(), reds[0], reds[8], reds[15]), (16, 8, 24, 31));
     }
 
     #[test]

@@ -2069,6 +2069,12 @@ wav	1902	effect\ef_beginspell	0
 wav	1910	effect\ef_beginspell	0
 wav	1918	effect\ef_beginspell	0
 wav	1923	effect\ef_beginspell	0
+wav	1418	effect\ef_beginspell	0
+wav	1449	effect\ef_beginspell	0
+wav	1556	effect\ef_beginspell	0
+wav	1560	effect\ef_beginspell	0
+wav	1565	effect\ef_beginspell	0
+wav	1569	effect\REVERBERATION	0	listener
 wav	914	effect\G스포어익스플로젼	0
 wav	916	effect\EF_FireWall	0	listener
 wav	917	effect\EF_FireWall	0	listener
@@ -4255,6 +4261,7 @@ struck	2004	caster	723
 struck	2004	caster	835
 struck	2012	target	589
 struck	2022	caster	1568
+struck	6506	caster	1568
 struck	2023	caster	457
 struck	2023	caster	439
 struck	2023	target	458
@@ -5231,6 +5238,9 @@ length	675	200
 length	850	100
 length	634	23
 length	932	100
+length	1545	300
+length	1568	300
+length	1569	150
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
 skillwav	10	effect\ef_sight	0
 skillwav	8005	effect\h_castling	0

@@ -3437,6 +3437,7 @@ impl App {
                     if let Some(struck) = table.struck(skill) {
                         // Told the hit count, as the game tells them: a bolt drops an arrow a hit.
                         for &(who, effect) in struck {
+                            let effect = effects::rampage_effect(skill, effect, game.effects.min);
                             // What flies or runs from the caster to the target (Soul Strike's ghosts, Frost Diver's ice…).
                             if effects::AIMED.contains(&effect) {
                                 // Duple Light's sphere always has 3 hits; the other counts follow the game's rule.

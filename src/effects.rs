@@ -1139,6 +1139,11 @@ pub fn is_cast_aura(effect: u32) -> bool {
                 | COUPLE_CASTING
                 | BLUE_CASTING
                 | GREEN_CASTING
+                | COMET_CAST
+                | JACK_CAST
+                | MAELSTROM_CAST
+                | CLEARANCE_CAST
+                | VARETYR_CAST
                 | 1872
                 | 1876
                 | 1902
@@ -1170,6 +1175,11 @@ pub fn is_banded(effect: u32) -> bool {
                 | SHADOW_CAST
                 | DARK_CASTING
                 | BUBBLE_CAST
+                | COMET_CAST
+                | JACK_CAST
+                | MAELSTROM_CAST
+                | CLEARANCE_CAST
+                | VARETYR_CAST
                 | 1872
                 | 1876
                 | 1902
@@ -1221,13 +1231,29 @@ const TELEPORT_BANDS: [[f32; 5]; 4] =
 /// The arrival's (344): two upright walls and two near-flat rings, as radius, height and lean.
 const ARRIVAL_BANDS: [[f32; 3]; 4] = [[3.7, 30.0, 90.0], [3.4, 30.0, 90.0], [3.6, 4.0, 10.0], [3.7, 4.0, 5.0]];
 
-/// How long a cast's aura lasts: the cast time in 16 ms ticks, at least 56 for 12 and 58 and 70 for the rest.
+/// How long a cast's aura lasts: the cast time in 16 ms ticks, at least 56 for the blooming ones and 70 for the rest.
 fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
     (cast_ms / 16).max(if effect == BUBBLE_CAST {
         100
     } else if matches!(
         effect,
-        12 | 58 | TETRA_CASTING | SHADOW_CAST | DARK_CASTING | COUPLE_CASTING | BLUE_CASTING | GREEN_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923
+        12 | 58
+            | TETRA_CASTING
+            | SHADOW_CAST
+            | DARK_CASTING
+            | COUPLE_CASTING
+            | BLUE_CASTING
+            | GREEN_CASTING
+            | COMET_CAST
+            | MAELSTROM_CAST
+            | CLEARANCE_CAST
+            | VARETYR_CAST
+            | 1872
+            | 1876
+            | 1902
+            | 1910
+            | 1918
+            | 1923
     ) {
         56
     } else if effect == HOMUN_CASTING {
@@ -1237,9 +1263,13 @@ fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
     })
 }
 
-/// A band effect's colour at its age: its own, but for Tetra Vortex's cast, which cycles blue, red, green and pale yellow, 25 ticks
+/// A band effect's colour at its age (for bloom set `set`): its own, but for Tetra Vortex's cast, which cycles blue, red, green and pale yellow, 25 ticks
 /// each, by the aura's age (the first band's tick + 1).
-fn aura_colour(effect: u32, age: u32) -> [u8; 3] {
+fn aura_colour(effect: u32, set: usize, age: u32) -> [u8; 3] {
+    // Maelstrom's second set of cones is a lighter blue.
+    if effect == MAELSTROM_CAST && set == 1 {
+        return [0x23, 0x92, 0xB9];
+    }
     if effect != TETRA_CASTING {
         return aura_look(effect).1;
     }
@@ -1263,6 +1293,11 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         COUPLE_CASTING => ("ring_red", [0xFF, 0x59, 0xB6], true),
         BLUE_CASTING => ("ring_blue", [0x64, 0x64, 0xFF], true),
         GREEN_CASTING => ("ring_white", [0x64, 0xFF, 0x64], true),
+        COMET_CAST => ("new_comet\\new_comet_cast_ring\\ring_rainbow", [0x0A, 0x42, 0x72], true),
+        MAELSTROM_CAST => ("ring_blue", [0x0A, 0x42, 0x72], true),
+        CLEARANCE_CAST => ("ring_white", [0xA4, 0xCD, 0xFE], true),
+        VARETYR_CAST => ("ring_yellow", [0x54, 0xA9, 0xCD], true),
+        JACK_CAST => ("ring_ice", [0xC3, 0xC3, 0xFF], false),
         54 => ("ring_blue", [0xC3, 0xC3, 0xFF], false),
         55 => ("ring_yellow", [0xFF, 0xAF, 0xAF], true),
         57 => ("ring_yellow", [0xFF, 0xFF, 0xFF], false),
@@ -1289,33 +1324,42 @@ fn aura_set_texture(effect: u32, set: usize) -> String {
 
 /// How many sets of bands an aura draws with their own textures.
 fn aura_sets(effect: u32) -> usize {
-    if matches!(effect, 367 | BUBBLE_CAST) { 2 } else { 1 }
+    if matches!(effect, 367 | BUBBLE_CAST | MAELSTROM_CAST) { 2 } else { 1 }
 }
 
 /// The blooming bands' first alphas (two sets of four), their heights and turns.
 const BLOOM_ALPHAS: [[i32; 4]; 2] = [[180, 135, 90, 45], [160, 115, 70, 25]];
 const BLOOM_HEIGHTS: [f32; 4] = [20.0, 19.0, 18.0, 17.0];
+/// Clearance's cones stand 5 lower.
+const CLEARANCE_HEIGHTS: [f32; 4] = [15.0, 14.0, 13.0, 12.0];
 const BLOOM_TURNS: [f32; 4] = [180.0, 270.0, 0.0, 90.0];
+
+/// How many sets of cones a blooming aura makes: Comet's only the first, the others both.
+fn bloom_sets(effect: u32) -> usize {
+    if effect == COMET_CAST { 1 } else { 2 }
+}
 
 /// Blooming band `band` of set `set` (12 and 58) `age` ticks into an aura of `ticks`: each tick it widens 0.07 and leans
 /// 1° less (at 10° it's gone), gaining 10 alpha while under radius 4 and losing 3 from there; gone, it starts again at
 /// 3.37 leaning 74° while the aura has more than 30 ticks to go. An aura of 60 ticks or less starts every band at alpha
-/// 0, band k 5k ticks late. None before it starts or while gone.
-fn bloom(set: usize, band: usize, ticks: u32, age: u32) -> Option<Band> {
+/// 0, band k 5k ticks late. Clearance's gain 5 alpha a tick (not 10) and start again leaning 64°. None before it starts or
+/// while gone.
+fn bloom(effect: u32, set: usize, band: usize, ticks: u32, age: u32) -> Option<Band> {
+    let (gain, restart) = if effect == CLEARANCE_CAST { (5, 64) } else { (10, 74) };
     let short = ticks <= 60;
     let late = if short { 5 * band as u32 } else { 0 };
     let since = age.checked_sub(late)?;
     // Hundredths of a unit, so the 0.07 steps meet 4.0 exactly.
     let (mut radius, mut lean, mut alpha) = (410, 80, if short { 0 } else { BLOOM_ALPHAS[set][band] });
     for tick in 0..=since {
-        alpha = if radius < 400 { alpha + 10 } else { (alpha - 3).max(0) };
+        alpha = if radius < 400 { alpha + gain } else { (alpha - 3).max(0) };
         radius += 7;
         lean -= 1;
         if lean <= 10 {
             alpha = 0;
         }
         if alpha == 0 && late + tick + 30 < ticks {
-            (radius, lean) = (337, 74);
+            (radius, lean) = (337, restart);
         }
     }
     (alpha > 0).then(|| Band {
@@ -1323,7 +1367,7 @@ fn bloom(set: usize, band: usize, ticks: u32, age: u32) -> Option<Band> {
         turn: BLOOM_TURNS[band],
         radius: radius as f32 / 100.0,
         lean: lean as f32,
-        height: BLOOM_HEIGHTS[band],
+        height: if effect == CLEARANCE_CAST { CLEARANCE_HEIGHTS[band] } else { BLOOM_HEIGHTS[band] },
         alpha: alpha as f32,
     })
 }
@@ -1415,6 +1459,10 @@ fn is_bloom(effect: u32) -> bool {
             | COUPLE_CASTING
             | BLUE_CASTING
             | GREEN_CASTING
+            | COMET_CAST
+            | MAELSTROM_CAST
+            | CLEARANCE_CAST
+            | VARETYR_CAST
             | 1872
             | 1876
             | 1902
@@ -1427,8 +1475,8 @@ fn is_bloom(effect: u32) -> bool {
 impl Banded {
     /// A blooming aura's bands at a tick, with their set and the height along each.
     fn bloom_bands(&self, age: u32) -> Vec<(usize, Band, Vec<f32>)> {
-        (0..2)
-            .flat_map(|set| (0..4).filter_map(move |band| bloom(set, band, self.ticks, age).map(|shape| (set, band, shape))))
+        (0..bloom_sets(self.effect))
+            .flat_map(|set| (0..4).filter_map(move |band| bloom(self.effect, set, band, self.ticks, age).map(|shape| (set, band, shape))))
             .map(|(set, band, shape)| {
                 // The bubble cast's cones stand 10 higher.
                 let shape = if self.effect == BUBBLE_CAST { Band { height: shape.height + 10.0, ..shape } } else { shape };
@@ -2070,6 +2118,11 @@ pub fn storm_gust_effect(skill: u16, effect: u32, min: bool) -> u32 {
     if effect == STORM_GUST && min && matches!(skill, 89 | 723) { 708 } else { effect }
 }
 
+/// Rampage Blaster (2332) under /mineffect flashes only the body, 1545, where the chi burst (886) would also open its crescents.
+pub fn rampage_effect(skill: u16, effect: u32, min: bool) -> u32 {
+    if effect == CHI_BURST && min && skill == 2332 { RAMPAGE_BODY } else { effect }
+}
+
 /// The hit count of an effect the packet gave one (`prims::tanji::hit_count`): the game's rule for Finger Offensive's
 /// sphere, Dark Strike's balls and Huujin's blades.
 pub fn hit_count(effect: u32, count: u16, kind: u8) -> u16 {
@@ -2150,6 +2203,13 @@ const PINPOINT_FX: u32 = 907;
 const PRESTIGE_FX: u32 = 908;
 const INSPIRATION_FX: u32 = 910;
 const GREEN_CASTING: u32 = 911;
+/// The casts of Comet, Jack Frost, Maelstrom, Clearance and Varetyr Spear: blooming cones in other colours, and Jack Frost's
+/// turning crescents.
+const COMET_CAST: u32 = 1418;
+const JACK_CAST: u32 = 1449;
+const MAELSTROM_CAST: u32 = 1556;
+const CLEARANCE_CAST: u32 = 1560;
+const VARETYR_CAST: u32 = 1565;
 /// Exceed Break's needles, the Dragon Combo's rays, the Sura's chi burst and Moon Slasher's spin (`prims::chi`, `prims::brawl`).
 const PRIME_CHARGE: u32 = 882;
 const DRAGON_RAYS: u32 = 885;
@@ -2165,6 +2225,11 @@ const WARG_DANCE: u32 = 866;
 /// Hundred Spear's gold lines, Swing Dance's pink flicker, Harmonize's emitter and Great Echo's "V" (`prims::brawl`,
 /// `prims::songs`, `prims::spears`).
 const SPEAR_RUSH: u32 = 835;
+/// Rampage Blaster's blue body flash under /mineffect, Cross Impact's orange lines and Reverberation's note and rings (`prims::brawl`,
+/// `prims::crowds`, `prims::holes`).
+const RAMPAGE_BODY: u32 = 1545;
+const CROSS_LINES: u32 = 1568;
+const REVERB_FX: u32 = 1569;
 const SWING_DANCE: u32 = 847;
 const HARMONIZE: u32 = 849;
 /// Arrullo's drifting lights (`prims::souls`); Harmonize's (850) are launched by its emitter.
@@ -2407,8 +2472,9 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 47] = [
+pub const AIMED: [u32; 48] = [
     STIN,
+    CROSS_LINES,
     PIERCING_LINES,
     KAMAITACHI,
     ESMA_DISCS,
@@ -2966,6 +3032,17 @@ impl Effects {
                 self.prims.walls.chi_burst(unit, now);
                 self.prims.guard.chi_burst(unit, now);
                 self.prims.brawl.chi_spread(unit, now);
+            }
+            (RAMPAGE_BODY, Target::Unit(unit)) => {
+                self.prims.guard.chi_burst(unit, now);
+                self.prims.brawl.chi_spread(unit, now);
+            }
+            (REVERB_FX, Target::Unit(unit)) => {
+                let note = if self.min { crowds::REVERB_MELODY_MIN } else { crowds::REVERB_MELODY };
+                self.textures.entry(note.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, note, false).ok());
+                self.textures.entry(walls::RING_WHITE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_WHITE, true).ok());
+                self.prims.crowds.reverb_note(unit, self.min, now, |n| pick(0, n.saturating_sub(1)));
+                self.prims.holes.reverb(at, now);
             }
             (MOON_SPIN, Target::Unit(unit)) => self.prims.brawl.moon_spin(unit, now),
             (TIGER_CANNON_FX, _) => {
@@ -4104,6 +4181,12 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.brawl.knuckle_lines(from, to, now, |n| pick(0, n.saturating_sub(1)));
             }
+            CROSS_LINES => {
+                for path in if self.min { [brawl::CROSS_PITCH_MIN, brawl::CROSS_RED_MIN] } else { [brawl::CROSS_PITCH, brawl::CROSS_RED] } {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.brawl.cross_lines(from, to, self.min, now, |n| pick(0, n.saturating_sub(1)));
+            }
             SPEAR_RUSH => {
                 self.textures.entry(brawl::GOLD_STRIP.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::GOLD_STRIP, true).ok());
                 self.play_quakes(table, id, now);
@@ -4733,12 +4816,12 @@ impl Effects {
         let auras = self.auras.iter().filter(|aura| aura.start <= now && self.shows(aura.effect)).flat_map(|aura| {
             let age = (now.duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) as u32;
             let (_, _, additive) = aura_look(aura.effect);
-            let color = aura_colour(aura.effect, age).map(|value| f32::from(value) / 255.0);
             let at = aura.anchor.place(&position_of);
             (0..aura_sets(aura.effect)).filter_map(move |set| {
                 let at = at?;
                 // The bubble cast: the picture moves every tick, set 1 blue and added on, set 2 white and blended.
                 let path = if aura.effect == BUBBLE_CAST { songs::BUBBLES[((age + 1) % 27) as usize].to_owned() } else { aura_set_texture(aura.effect, set) };
+                let color = aura_colour(aura.effect, set, age).map(|value| f32::from(value) / 255.0);
                 let (color, additive) = if aura.effect == BUBBLE_CAST {
                     (if set == 0 { [100.0 / 255.0, 100.0 / 255.0, 1.0] } else { [1.0; 3] }, set == 0)
                 } else {
@@ -5927,7 +6010,7 @@ mod tests {
         // At least 56 ticks for 12 and 58, 70 for the elements; else the cast time in ticks.
         assert_eq!([aura_ticks(12, 0), aura_ticks(58, 2000), aura_ticks(55, 500), aura_ticks(55, 1500)], [56, 125, 70, 93]);
         // The faintest band fades out by tick 8 and starts again at 3.37 leaning 74°: 9 ticks up to 90, 30 down, 39 in all.
-        let shape = |age: u32| bloom(1, 3, 1000, age);
+        let shape = |age: u32| bloom(12, 1, 3, 1000, age);
         assert_eq!(shape(8), None);
         let first = shape(9).unwrap();
         assert_eq!((first.radius, first.lean, first.alpha), (3.44, 73.0, 10.0));
@@ -5937,10 +6020,10 @@ mod tests {
         assert_eq!(shape(47), None);
         assert_eq!(shape(48), Some(first));
         // Within 30 ticks of the aura's end a band that fades out stays gone: the start at 47 plays out to 86.
-        assert!(bloom(1, 3, 100, 85).is_some() && (86..100).all(|age| bloom(1, 3, 100, age).is_none()));
+        assert!(bloom(12, 1, 3, 100, 85).is_some() && (86..100).all(|age| bloom(12, 1, 3, 100, age).is_none()));
         // A short aura: every band from nothing, band k 5k ticks late.
-        assert_eq!((bloom(0, 2, 56, 9), bloom(0, 2, 56, 10)), (None, None));
-        assert_eq!(bloom(0, 2, 56, 11).unwrap().alpha, 10.0);
+        assert_eq!((bloom(12, 0, 2, 56, 9), bloom(12, 0, 2, 56, 10)), (None, None));
+        assert_eq!(bloom(12, 0, 2, 56, 11).unwrap().alpha, 10.0);
         // The elements' arcs turn 3, 4, 5° a tick and rise over 90 ticks; everything fades in the last 40.
         assert_eq!([turning(0, 200, 10).turn, turning(2, 200, 10).turn], [30.0, 230.0]);
         assert!((turning_height(0, 25.0, 30, 10) - 12.5).abs() < 1e-4 && (turning_height(0, 25.0, 200, 10) - 25.0).abs() < 1e-4);
@@ -7111,10 +7194,10 @@ mod tests {
         let table = Table::load();
         let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
         // The cast's colour by the aura's age α = 1, 24, 25, 49, 50, 74, 75, 99, 100 (the age + 1).
-        let colour = |alpha: u32| aura_colour(TETRA_CASTING, alpha - 1);
+        let colour = |alpha: u32| aura_colour(TETRA_CASTING, 0, alpha - 1);
         let (blue, red, green, yellow) = ([0x64, 0x64, 0xFF], [0xFF, 0x64, 0x64], [0x64, 0xFF, 0x64], [0xFF, 0xFF, 0xAA]);
         assert_eq!([1, 24, 25, 49, 50, 74, 75, 99, 100].map(colour), [blue, blue, red, red, green, green, yellow, yellow, blue]);
-        assert_eq!(aura_colour(58, 40), [255; 3]);
+        assert_eq!(aura_colour(58, 0, 40), [255; 3]);
         // A cast of 1 000 ms lasts 62 ticks and one of 400 ms 56; one at a time, like the others.
         assert_eq!((aura_ticks(TETRA_CASTING, 1000), aura_ticks(TETRA_CASTING, 400)), (62, 56));
         assert!(is_cast_aura(TETRA_CASTING) && is_banded(TETRA_CASTING) && table.cast_aura(2217, 12) == Some(TETRA_CASTING));
@@ -7365,7 +7448,7 @@ mod tests {
         assert!(is_cast_aura(GREEN_CASTING) && is_banded(GREEN_CASTING) && is_bloom(GREEN_CASTING));
         assert_eq!(aura_look(GREEN_CASTING), ("ring_white", [0x64, 0xFF, 0x64], true));
         assert_eq!((aura_ticks(GREEN_CASTING, 400), aura_ticks(GREEN_CASTING, 2000), aura_ticks(GREEN_CASTING, 0)), (56, 125, 56));
-        let first = |ticks: u32| (0..4).map(|band| bloom(0, band, ticks, 0).map(|shape| shape.alpha)).collect::<Vec<_>>();
+        let first = |ticks: u32| (0..4).map(|band| bloom(12, 0, band, ticks, 0).map(|shape| shape.alpha)).collect::<Vec<_>>();
         assert_eq!(first(60), [None, None, None, None], "the short aura starts every band at 0");
         assert_eq!(first(62)[0], Some(177.0), "the long cycle starts from 180, 3 down on the first tick");
         let table = Table::load();
@@ -7374,6 +7457,87 @@ mod tests {
         assert_eq!(
             table.sounds[&GREEN_CASTING].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>(),
             [("effect\\EF_BeginSpell", 0, false)]
+        );
+    }
+
+    #[test]
+    fn comet_jack_frost_maelstrom_clearance_and_varetyr_spear_cast_their_auras() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        for id in [COMET_CAST, JACK_CAST, MAELSTROM_CAST, CLEARANCE_CAST, VARETYR_CAST] {
+            assert!(is_cast_aura(id) && is_banded(id), "{id}");
+            assert_eq!(sounds(id), [("effect\\ef_beginspell", 0)], "{id}");
+        }
+        for (skill, id) in [(2213, COMET_CAST), (2204, JACK_CAST), (2302, MAELSTROM_CAST), (2052, CLEARANCE_CAST), (2454, VARETYR_CAST)] {
+            assert_eq!(table.cast_aura(skill, 12), Some(id), "{skill}");
+        }
+        // At least 56 ticks for the four blooming ones, 70 for Jack Frost's.
+        assert_eq!([COMET_CAST, MAELSTROM_CAST, CLEARANCE_CAST, VARETYR_CAST].map(|id| (aura_ticks(id, 100), aura_ticks(id, 2000))), [(56, 125); 4]);
+        assert_eq!((aura_ticks(JACK_CAST, 100), aura_ticks(JACK_CAST, 2000)), (70, 125));
+        assert!([COMET_CAST, MAELSTROM_CAST, CLEARANCE_CAST, VARETYR_CAST].iter().all(|&id| is_bloom(id)) && !is_bloom(JACK_CAST));
+        // The looks: Comet's rainbow ring, Jack Frost's ice ring blended, the others added on.
+        assert_eq!(aura_look(COMET_CAST), ("new_comet\\new_comet_cast_ring\\ring_rainbow", [0x0A, 0x42, 0x72], true));
+        assert_eq!(aura_look(MAELSTROM_CAST), ("ring_blue", [0x0A, 0x42, 0x72], true));
+        assert_eq!(aura_look(CLEARANCE_CAST), ("ring_white", [0xA4, 0xCD, 0xFE], true));
+        assert_eq!(aura_look(VARETYR_CAST), ("ring_yellow", [0x54, 0xA9, 0xCD], true));
+        assert_eq!(aura_look(JACK_CAST), ("ring_ice", [0xC3, 0xC3, 0xFF], false));
+        assert_eq!((aura_colour(MAELSTROM_CAST, 0, 5), aura_colour(MAELSTROM_CAST, 1, 5)), ([0x0A, 0x42, 0x72], [0x23, 0x92, 0xB9]));
+        assert_eq!((aura_sets(MAELSTROM_CAST), aura_sets(COMET_CAST), aura_sets(JACK_CAST)), (2, 1, 1));
+        // Bands: Comet makes the first set only, the others both; Clearance's stand 15 to 12.
+        let aura = |effect: u32| Banded {
+            effect,
+            anchor: Anchor::Unit(None),
+            start: Instant::now(),
+            ticks: 100,
+            turns: [0.0; 3],
+            extra: [0.0; 2],
+            sparkles: Vec::new(),
+        };
+        assert_eq!(
+            aura(COMET_CAST).bloom_bands(0).iter().map(|(set, band, _)| (*set, band.height)).collect::<Vec<_>>(),
+            [(0, 20.0), (0, 19.0), (0, 18.0), (0, 17.0)]
+        );
+        assert_eq!(aura(MAELSTROM_CAST).bloom_bands(0).len(), 8);
+        assert_eq!(aura(VARETYR_CAST).bloom_bands(0).len(), 8);
+        let clearance = aura(CLEARANCE_CAST).bloom_bands(0);
+        assert_eq!(clearance.len(), 8);
+        assert_eq!(clearance.iter().take(4).map(|(_, band, _)| band.height).collect::<Vec<_>>(), [15.0, 14.0, 13.0, 12.0]);
+        // Clearance gains 5 alpha a tick under radius 4 (12 and 58 gain 10) and starts again leaning 64° (not 74°).
+        let rise = |effect: u32| {
+            let alpha = |age: u32| bloom(effect, 0, 3, 1000, age).map_or(0.0, |band| band.alpha);
+            (2..300).find(|&age| alpha(age) > alpha(age - 1) && alpha(age - 1) > 0.0).map(|age| alpha(age) - alpha(age - 1))
+        };
+        assert_eq!((rise(CLEARANCE_CAST), rise(58)), (Some(5.0), Some(10.0)));
+        let lean = |effect: u32| {
+            let at = |age: u32| bloom(effect, 0, 3, 1000, age);
+            (2..300).find(|&age| at(age).is_some() && at(age - 1).is_none()).and_then(at).map(|band| band.lean)
+        };
+        assert_eq!((lean(CLEARANCE_CAST), lean(58)), (Some(63.0), Some(73.0)));
+        // Jack Frost turns like 54: crescents fading over the last 40 ticks, 5 a tick.
+        let ice = aura(JACK_CAST);
+        assert_eq!(ice.bands(0).len(), 4);
+        assert_eq!([turning(0, 100, 60).alpha, turning(0, 100, 61).alpha, turning(0, 100, 99).alpha], [180.0, 175.0, 0.0]);
+    }
+
+    #[test]
+    fn rampage_blaster_cross_impact_and_reverberation_have_their_rows() {
+        let table = Table::load();
+        assert_eq!([RAMPAGE_BODY, CROSS_LINES, REVERB_FX].map(|id| table.lengths[&id]), [300, 300, 150]);
+        // Rampage Blaster's chi burst is the body flash alone under /mineffect.
+        assert_eq!((rampage_effect(2332, CHI_BURST, true), rampage_effect(2332, CHI_BURST, false)), (RAMPAGE_BODY, CHI_BURST));
+        assert_eq!((rampage_effect(2324, CHI_BURST, true), rampage_effect(2332, 549, true)), (CHI_BURST, 549));
+        assert!(table.struck(2332).unwrap().contains(&(Who::Caster, CHI_BURST)));
+        // Cross Impact and Rush Strike race the lines from the caster at the target.
+        assert!(AIMED.contains(&CROSS_LINES) && !aimed_at_centre(CROSS_LINES));
+        for skill in [2022, 6506] {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Caster, CROSS_LINES)), "{skill}");
+        }
+        assert!(!table.sounds.contains_key(&CROSS_LINES) && !table.sounds.contains_key(&RAMPAGE_BODY));
+        // Reverberation's note and rings sound at the listener at once.
+        assert!(table.struck(2414).unwrap().contains(&(Who::Target, REVERB_FX)));
+        assert_eq!(
+            table.sounds[&REVERB_FX].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>(),
+            [("effect\\REVERBERATION", 0, true)]
         );
     }
 
@@ -7998,8 +8162,8 @@ mod tests {
         assert_eq!(sounds(HOMUN_CASTING), [("effect\\ef_beginspell", 0)]);
         // Band k begins 5k ticks late with nothing drawn at first; its first tick is alpha 10.
         for band in 0..4 {
-            assert!(bloom(0, band, 60, 5 * band as u32).is_none() && bloom(1, band, 60, 5 * band as u32).is_none());
-            let first = bloom(0, band, 60, 5 * band as u32 + 1).unwrap();
+            assert!(bloom(HOMUN_CASTING, 0, band, 60, 5 * band as u32).is_none() && bloom(HOMUN_CASTING, 1, band, 60, 5 * band as u32).is_none());
+            let first = bloom(HOMUN_CASTING, 0, band, 60, 5 * band as u32 + 1).unwrap();
             assert_eq!(first.alpha, 10.0);
         }
         // Moonlight's slashes by the hit count 1, 2, 3, 4, 10.
