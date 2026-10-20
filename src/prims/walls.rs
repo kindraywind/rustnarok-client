@@ -41,8 +41,26 @@ const CURTAIN_TICKS: u32 = 99;
 const CURTAINS: [(f32, f32, f32, f32); 4] = [(4.6, 60.0, 90.0, 0.0), (5.0, 60.0, 90.0, 180.0), (5.0, 18.0, 50.0, 0.0), (5.2, 18.0, 48.0, 0.0)];
 /// The curtains' tint (#6464FF).
 const CURTAIN_RGB: [f32; 3] = [100.0 / 255.0, 100.0 / 255.0, 1.0];
-/// Steel Body's ribbons: four slowly turning crescents, drawn on ticks 0 to 109 (alpha 0 at age 110).
-const RIBBON_TICKS: u32 = 110;
+/// What tells Steel Body's ribbons from Ganbantein's: four slowly turning crescents; the wave's height, how fast the alpha falls
+/// from its 200, how fast the radius grows, the lean's start and floor, the turn a tick, and the ticks they are drawn.
+pub struct RibbonLook {
+    texture: &'static str,
+    height: f32,
+    fall: f32,
+    grow: f32,
+    lean_from: f32,
+    lean_floor: f32,
+    turn: f32,
+    ticks: u32,
+    forced: bool,
+}
+
+/// Steel Body's: yellow, 25 high, drawn on ticks 0 to 109 (alpha 0 at age 110), even with /effect off.
+pub const STEEL_BODY_RIBBONS: RibbonLook =
+    RibbonLook { texture: RING_YELLOW, height: 25.0, fall: 2.0, grow: 0.1, lean_from: 80.0, lean_floor: 30.0, turn: 3.0, ticks: 110, forced: true };
+/// Ganbantein's: white, 15 high, quicker, drawn on ticks 0 to 33.
+pub const GANBANTEIN: RibbonLook =
+    RibbonLook { texture: RING_WHITE, height: 15.0, fall: 8.0, grow: 0.3, lean_from: 70.0, lean_floor: 40.0, turn: 5.0, ticks: 34, forced: false };
 /// Grand Cross's four arcs: where from the caster's spot and the turn they start at.
 const ARCS: [([f32; 2], f32); 4] = [([23.0, 23.0], 180.0), ([23.0, -23.0], 90.0), ([-23.0, -23.0], 0.0), ([-23.0, 23.0], 270.0)];
 /// The arcs are drawn on ages 1…98, the bars on 1…89.
@@ -90,9 +108,11 @@ struct Berserk {
     streaks: Vec<Streak>,
 }
 
-/// Steel Body's, Explosion Spirits' and the Durian's four crescent ribbons round a unit.
+/// Four crescent ribbons round a unit (Steel Body's, Explosion Spirits', the Durian's) or over a cell (Ganbantein's).
 struct Ribbons {
+    look: &'static RibbonLook,
     unit: Option<u32>,
+    at: Option<Vector>,
     start: Instant,
 }
 
@@ -227,26 +247,26 @@ impl Streak {
     }
 }
 
-/// A ribbon's alpha at age t: 20 a tick to 200, then 2 less a tick.
-pub fn ribbon_alpha(t: u32) -> f32 {
-    if t <= 10 { 20.0 * t as f32 } else { (200.0 - 2.0 * (t - 10) as f32).max(0.0) }
+/// A ribbon's alpha at age t: 20 a tick to 200, then `fall` less a tick.
+pub fn ribbon_alpha(look: &RibbonLook, t: u32) -> f32 {
+    if t <= 10 { 20.0 * t as f32 } else { (200.0 - look.fall * (t - 10) as f32).max(0.0) }
 }
 
 /// Band k's radius, lean and turn at age t.
-pub fn ribbon_shape(k: usize, t: u32) -> (f32, f32, f32) {
-    ((k + 1) as f32 + 0.1 * t as f32, (80.0 - t as f32).max(30.0), (90.0 * k as f32 + 3.0 * t as f32) % 360.0)
+pub fn ribbon_shape(look: &RibbonLook, k: usize, t: u32) -> (f32, f32, f32) {
+    ((k + 1) as f32 + look.grow * t as f32, (look.lean_from - t as f32).max(look.lean_floor), (90.0 * k as f32 + look.turn * t as f32) % 360.0)
 }
 
 /// The height of a ribbon's top along its band at point s: a crescent, zero at both ends.
-pub fn ribbon_top(k: usize, s: u32, t: u32) -> f32 {
-    let wave = 25.0 * (9.0 * s as f32).to_radians().sin();
+pub fn ribbon_top(look: &RibbonLook, k: usize, s: u32, t: u32) -> f32 {
+    let wave = look.height * (9.0 * s as f32).to_radians().sin();
     wave + wave * 0.15 * (((t + 90 * k as u32) % 360) as f32).to_radians().sin()
 }
 
-fn ribbon(feet: Vector, k: usize, t: u32) -> Vec<MeshVertex> {
-    let (radius, lean, turn) = ribbon_shape(k, t);
-    let points: Vec<_> = (0..=20).map(|s| ring_point(feet, turn + 18.0 * s as f32, radius, ribbon_top(k, s, t), lean)).collect();
-    vertices(ring_quads(&points, ribbon_alpha(t) / 255.0), [1.0; 3])
+fn ribbon(look: &RibbonLook, feet: Vector, k: usize, t: u32) -> Vec<MeshVertex> {
+    let (radius, lean, turn) = ribbon_shape(look, k, t);
+    let points: Vec<_> = (0..=20).map(|s| ring_point(feet, turn + 18.0 * s as f32, radius, ribbon_top(look, k, s, t), lean)).collect();
+    vertices(ring_quads(&points, ribbon_alpha(look, t) / 255.0), [1.0; 3])
 }
 
 /// A Providence tube's profile at tick t: 120 sin(t + 1)° while t + 1 is up to 90.
@@ -427,7 +447,12 @@ impl Walls {
 
     /// Four spinning crescent ribbons on `unit` (Steel Body, Explosion Spirits, the SL_SKA skill, a Durian).
     pub fn ribbons(&mut self, unit: Option<u32>, now: Instant) {
-        self.ribbons.push(Ribbons { unit, start: now });
+        self.ribbons.push(Ribbons { look: &STEEL_BODY_RIBBONS, unit, at: None, start: now });
+    }
+
+    /// Ganbantein's four white crescents over the cell `at`.
+    pub fn ganbantein(&mut self, at: Vector, now: Instant) {
+        self.ribbons.push(Ribbons { look: &GANBANTEIN, unit: None, at: Some(at), start: now });
     }
 
     /// Providence's four tubes on `unit`.
@@ -466,7 +491,7 @@ impl Walls {
         let ended = |start: Instant, ticks: u32| passes(start, now) > ticks;
         self.berserks.retain(|berserk| !ended(berserk.start, BERSERK_HELD + 20));
         self.defenders.retain(|defender| !ended(defender.start, DEFENDER_TICKS));
-        self.ribbons.retain(|ribbons| !ended(ribbons.start, RIBBON_TICKS));
+        self.ribbons.retain(|ribbons| !ended(ribbons.start, ribbons.look.ticks));
         self.providences.retain(|providence| !ended(providence.start, TUBE_TICKS));
         self.curtains.retain(|curtains| !ended(curtains.start, CURTAIN_TICKS));
         self.crosses.retain(|cross| !ended(cross.start, ARC_AGES));
@@ -531,9 +556,11 @@ impl Walls {
             }
         }
         for ribbons in &self.ribbons {
-            let (Some(feet), Some(p)) = (position_of(ribbons.unit), passes(ribbons.start, now).checked_sub(1)) else { continue };
-            if p < RIBBON_TICKS {
-                walls.extend((0..4).map(|k| Wall { texture: RING_YELLOW, vertices: ribbon(feet, k, p + 1), additive: false, forced: true }));
+            let look = ribbons.look;
+            let place = ribbons.at.or_else(|| position_of(ribbons.unit));
+            let (Some(feet), Some(p)) = (place, passes(ribbons.start, now).checked_sub(1)) else { continue };
+            if p < look.ticks {
+                walls.extend((0..4).map(|k| Wall { texture: look.texture, vertices: ribbon(look, feet, k, p + 1), additive: false, forced: look.forced }));
             }
         }
         for providence in &self.providences {
@@ -824,15 +851,20 @@ mod tests {
         let mut walls = Walls::default();
         walls.ribbons(None, start);
         // Alpha at t = 1, 10, 50, 110 is 20, 200, 120, 0.
-        assert_eq!([1, 10, 50, 110].map(ribbon_alpha), [20.0, 200.0, 120.0, 0.0]);
+        assert_eq!([1, 10, 50, 110].map(|t| ribbon_alpha(&STEEL_BODY_RIBBONS, t)), [20.0, 200.0, 120.0, 0.0]);
         // Radius (k + 1) + 0.1 t: 5.0 for k = 3 at t = 10; lean 30° at t = 50; turn 150° for k = 0 at t = 50.
         assert!(
-            near(ribbon_shape(3, 10).0, 5.0) && near(ribbon_shape(0, 1).1, 79.0) && near(ribbon_shape(0, 50).1, 30.0) && near(ribbon_shape(0, 50).2, 150.0)
+            near(ribbon_shape(&STEEL_BODY_RIBBONS, 3, 10).0, 5.0)
+                && near(ribbon_shape(&STEEL_BODY_RIBBONS, 0, 1).1, 79.0)
+                && near(ribbon_shape(&STEEL_BODY_RIBBONS, 0, 50).1, 30.0)
+                && near(ribbon_shape(&STEEL_BODY_RIBBONS, 0, 50).2, 150.0)
         );
-        assert!(near(ribbon_shape(1, 10).2, 120.0) && near(ribbon_shape(0, 110).0, 12.0));
+        assert!(near(ribbon_shape(&STEEL_BODY_RIBBONS, 1, 10).2, 120.0) && near(ribbon_shape(&STEEL_BODY_RIBBONS, 0, 110).0, 12.0));
         // The crescent: zero at both ends, 25.07 at s = 10 for k = 0, t = 1, the most halfway round.
         assert!(
-            near(ribbon_top(0, 0, 1), 0.0) && near(ribbon_top(0, 20, 1), 0.0) && near(ribbon_top(0, 10, 1), 25.0 * (1.0 + 0.15 * 1.0_f32.to_radians().sin()))
+            near(ribbon_top(&STEEL_BODY_RIBBONS, 0, 0, 1), 0.0)
+                && near(ribbon_top(&STEEL_BODY_RIBBONS, 0, 20, 1), 0.0)
+                && near(ribbon_top(&STEEL_BODY_RIBBONS, 0, 10, 1), 25.0 * (1.0 + 0.15 * 1.0_f32.to_radians().sin()))
         );
         let feet = [2.0, 1.0, 3.0];
         let at = |tick: u32| walls.meshes(start + TICK * tick, |_| Some(feet));
@@ -843,6 +875,30 @@ mod tests {
         assert_eq!(at(109).len(), 4, "age 110 is alpha 0 and still drawn");
         assert!(at(110).is_empty());
         walls.advance(start + TICK * 111, |_| 0);
+        assert!(walls.ribbons.is_empty());
+    }
+
+    #[test]
+    fn ganbantein_spins_four_white_crescents_over_the_cell() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        walls.ganbantein([10.0, 2.0, 20.0], start);
+        // Alpha at t = 1, 10, 20, 30, 34, 35: 20, 200, 120, 40, 8, 0.
+        assert_eq!([1, 10, 20, 30, 34, 35].map(|t| ribbon_alpha(&GANBANTEIN, t)), [20.0, 200.0, 120.0, 40.0, 8.0, 0.0]);
+        // Radius for k = 3 at t = 10 is 7.0; lean 69 at t = 1 and 40 from t = 30; turn for k = 1 at t = 2 is 100°.
+        assert!(
+            near(ribbon_shape(&GANBANTEIN, 3, 10).0, 7.0) && near(ribbon_shape(&GANBANTEIN, 0, 1).1, 69.0) && near(ribbon_shape(&GANBANTEIN, 0, 30).1, 40.0)
+        );
+        assert!(near(ribbon_shape(&GANBANTEIN, 1, 2).2, 100.0));
+        // 15 high: s = 10 reaches 15 (1 + 0.15 sin).
+        assert!(near(ribbon_top(&GANBANTEIN, 0, 10, 0), 15.0));
+        // Four white bands at the cell, not following anyone, normal blend; drawn on ticks 0…33, not 34.
+        let at = |tick: u32| walls.meshes(start + TICK * tick, |_| None);
+        assert_eq!(at(0).len(), 4);
+        assert!(at(0).iter().all(|wall| wall.texture == RING_WHITE && !wall.additive && !wall.forced && wall.vertices.len() == 120));
+        assert_eq!(at(33).len(), 4);
+        assert!(at(34).is_empty());
+        walls.advance(start + TICK * 36, |_| 0);
         assert!(walls.ribbons.is_empty());
     }
 }

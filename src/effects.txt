@@ -1312,9 +1312,6 @@ part	328	3D	file=effect/asura6.tga;alphaMax=1;attachedEntity=true;duration=1200;
 part	328	3D	file=effect/asura6.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=120;sizeEnd=200;posx=6.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1700
 part	331	3D	duplicate=12;file=effect/pok1.tga;delay=500;timeBetweenDupli=10;alphaMax=0.8;fadeOut=true;fadeIn=true;zIndex=1;size=30;sizeRand=20;red=0.9;green=1;blue=0.9;blendMode=2;poszStartRand=1.5;poszStartRandMiddle=2;poszEndRandMiddle=5;poszEndRand=1;sparkling=true;sparkNumberRand=3,6;posxRand=0.6;posyRand=0.6;attachedEntity=true
 part	332	3D	duplicate=12;file=effect/pok1.tga;delay=500;timeBetweenDupli=10;alphaMax=0.8;fadeOut=true;fadeIn=true;zIndex=1;size=30;sizeRand=20;red=0.9;green=0.9;blue=1;blendMode=2;poszStartRand=1.5;poszStartRandMiddle=2;poszEndRandMiddle=5;poszEndRand=1;sparkling=true;sparkNumberRand=3,6;posxRand=0.6;posyRand=0.6;attachedEntity=true
-part	361	3D	file=effect/purpleslash.tga;alphaMax=0.4;duration=500;fadeIn=true;fadeOut=true;zIndex=10;toSrc=true;rotateWithCamera=true;rotateToTarget=true;angle=90;posz=2;sizeStart=100;sizeEnd=200;wav=effect/기공포;attachedEntity=true
-part	365	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;rotate=true;angle=0;toAngle=-611;poszStart=20;poszEnd=5;size=100;zIndex=1;file=effect/cross_old.bmp;wav=effect/프레셔
-part	365	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;delayOffset=501;fadeOut=true;angle=-611;posz=5;size=100;zIndex=1;file=effect/cross_old.bmp
 part	378	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;fromSrc=true;toSrc=true;rotateToTarget=true;red=0.8;green=0.8;blue=1.0;sizeStart=160.0;sizeEnd=190.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
 part	383	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;fromSrc=true;toSrc=true;rotateToTarget=true;red=0.7;green=1.0;blue=0.7;sizeStart=140.0;sizeEnd=170.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
 part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=-1;posxEnd=-5;posyStart=0;posyEnd=0;rotateWithCamera=true;angle=0
@@ -1492,8 +1489,6 @@ ring	328	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendM
 ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1.5;topSize=1;height=0.7;posZ=2.14;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
 ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1.5;topSize=1.5;height=1.14;posZ=1;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
 ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1;topSize=1.5;height=0.7;posZ=0.3;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
-ring	366	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=200;duplicate=5;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
-ring	366	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=5;delayStart=200;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.45;topSize=2.45;height=2.0;alphaMax=32;blendMode=2;rotateWithCamera=true;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.52;topSize=2.52;height=2.1;alphaMax=32;blendMode=2;rotateWithCamera=true;angleY=10;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=26.6;duration=20000;attachedEntity=true
@@ -1599,7 +1594,7 @@ func	183	quake	0	200
 func	220	quake	288	200
 func	266	quake	0	200
 func	303	quake	132	650
-func	365	quake	500	650
+func	365	quake	528	650
 func	380	quake	300	650
 func	387	quake	300	650
 func	512	quake	132	650
@@ -1867,14 +1862,15 @@ wav	497	assulter_attack	0	listener
 wav	331	_heal_effect	0
 wav	332	effect\흡기	0
 wav	336	effect\kyrie_guard	0
-wav	339	permeter_attack	0
-wav	339	effect\ef_magnumbreak	300
+wav	339	permeter_attack	320
+wav	339	effect\ef_magnumbreak	480
 wav	344	effect\ef_portal	0
 wav	347	effect\wedding	0
-wav	361	effect\기공포	0
+wav	361	effect\기공포	320
 wav	363	effect\vallentine	0
-wav	365	effect\프레셔	0
-wav	366	effect\bash3d	0
+wav	365	effect\프레셔	48
+wav	366	effect\세크리파이스	352
+wav	223	effect\EF_FireWall	0	listener
 wav	367	effect\오라 블레이드	0
 wav	368	effect\버서크	0
 wav	369	effect\knight_twohandquicken	0

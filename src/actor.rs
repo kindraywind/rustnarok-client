@@ -2174,6 +2174,8 @@ pub const GLOW_REFLECT: u32 = 0x200;
 pub fn status_body(effect: u32) -> Option<(u32, Option<[u8; 3]>)> {
     match effect {
         368 => Some((GLOW_ADDITIVE, Some([0xFF, 0x64, 0x64]))),
+        // Lord Knight's Concentration tints the body, drawn as it is.
+        369 => Some((0, Some([0xFF, 0xFF, 0xA0]))),
         396 => Some((GLOW_ADDITIVE | GLOW_OUTLINE, Some([0xFF, 0x59, 0xB6]))),
         375 => Some((GLOW_OUTLINE, None)),
         419 => Some((GLOW_REFLECT, None)),

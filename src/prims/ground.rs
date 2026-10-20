@@ -192,6 +192,17 @@ pub fn padded_square(spin: f32, half: f32, mirrored: bool) -> [[f32; 2]; 4] {
     if mirrored { [corner(1), corner(0), corner(3), corner(2)] } else { [corner(0), corner(1), corner(2), corner(3)] }
 }
 
+/// The corners (sprite pixels from the middle, y down) of a square of half-diagonal `half` pixels spun `spin` degrees, in the
+/// quad's order of texture coordinates (0, 1), (1, 1), (1, 0), (0, 0), or, `mirrored`, the order with the corner at `spin` getting
+/// (1, 1), (0, 1), (0, 0), (1, 0).
+pub fn plain_square(spin: f32, half: f32, mirrored: bool) -> [[f32; 2]; 4] {
+    let corner = |j: u32| {
+        let (sin, cos) = (spin + 90.0 * j as f32).to_radians().sin_cos();
+        [half * cos, half * sin]
+    };
+    if mirrored { [corner(1), corner(0), corner(3), corner(2)] } else { [corner(0), corner(1), corner(2), corner(3)] }
+}
+
 /// The potion's height over its cell at tick n (from 1): 80 − 3n to n = 24, then 8.
 pub fn potion_height(n: u32) -> f32 {
     80.0 - 3.0 * n.min(24) as f32
@@ -214,7 +225,11 @@ pub fn potion_spin(spin: f32, n: u32) -> f32 {
 
 /// The flash's half-diagonal 0.9 r and alpha at tick t: its count n is t − 15; r is 15, then 7 % more each tick from n = 1.
 pub fn flash_size(t: u32) -> (f32, f32) {
-    let n = t.saturating_sub(15);
+    flash_at(t.saturating_sub(15))
+}
+
+/// The flash at its count n: 0.9 r with r 15 grown 7 % a tick, and its alpha up 2 a tick to 20 at n = 10, then 1 less a tick.
+pub fn flash_at(n: u32) -> (f32, f32) {
     let alpha = match n {
         1..=10 => 2.0 * n as f32,
         11..=29 => 20.0 - (n - 10) as f32,
