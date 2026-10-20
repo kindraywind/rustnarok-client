@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, circle, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter, sage, shafts, shards,
-    sight, sniper, songs, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
+    balls, blitz, bolts, boomerang, brawl, burst, circle, crowds, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter, sage, shafts,
+    shards, sight, sniper, songs, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1545,6 +1545,8 @@ pub struct Effects {
     claw_frames: HashMap<(&'static str, usize, usize), Vec<Placed>>,
     /// Boost Knuckle's fist by action, frame and whether it is a plain white ghost.
     fist_frames: HashMap<(usize, usize, bool), Vec<Placed>>,
+    /// The crowds' monsters by sprite, action and frame.
+    crowd_frames: HashMap<(&'static str, usize, usize), Vec<Placed>>,
     /// Sight Rasher's sprites' frames, plain white, by sprite and frame.
     sight_frames: HashMap<(&'static str, usize), Vec<Placed>>,
     /// Dark Strike's red ghost sprite's layers.
@@ -1872,6 +1874,11 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Dead Hill Here's Geographers, Poem of Netherworld's note, Randomize Spell's frames and Dance with Warg's Wargs (`prims::crowds`).
+const DEAD_HILL: u32 = 853;
+const MELODY_NOTE: u32 = 860;
+const RANDOMIZE: u32 = 862;
+const WARG_DANCE: u32 = 866;
 /// Hundred Spear's gold lines, Swing Dance's pink flicker, Harmonize's emitter and Great Echo's "V" (`prims::brawl`,
 /// `prims::songs`, `prims::spears`).
 const SPEAR_RUSH: u32 = 835;
@@ -2406,6 +2413,15 @@ impl Effects {
                 self.prims.songs.swing_dance(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
             (HARMONIZE, Target::Unit(unit)) => self.prims.spears.emitter(unit, now),
+            (DEAD_HILL | WARG_DANCE, Target::Unit(unit)) => {
+                let kind = if id == DEAD_HILL { crowds::Kind::Geographers } else { crowds::Kind::Wargs };
+                self.sprites.entry(kind.sprite().to_owned()).or_insert_with(|| SpriteSet::at(grf, kind.sprite()));
+                self.prims.crowds.plant(kind, unit, now);
+            }
+            (RANDOMIZE, Target::Unit(unit)) => {
+                self.textures.entry(crowds::RUNES.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crowds::RUNES, true).ok());
+                self.prims.crowds.runes(unit, now);
+            }
             (STRIP_ACCESSORY, _) => {
                 for path in guard::ACCESSORIES {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
@@ -2862,6 +2878,7 @@ impl Effects {
     /// over the ground there (`ground_at(x, z)`: the ground's height in the world).
     pub fn settle_hits(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>, ground_at: impl Fn(f32, f32) -> f32) {
         self.prims.first.advance(now, &ground_at);
+        self.prims.crowds.advance(now, &position_of, &ground_at, |n| pick(0, n.saturating_sub(1)));
         self.prims.songs.advance(now, position_of(None), &ground_at, |n| pick(0, n.saturating_sub(1)));
         for hit in self.hits.iter_mut().filter(|hit| hit.paths.is_none() && hit.start <= now) {
             let Some(at) = hit.anchor.place(&position_of) else { continue };
@@ -2942,6 +2959,11 @@ impl Effects {
                 let look = if effect == MAGNUS { ground::RING_RED } else { ground::ALPHA_DOWN };
                 self.textures.entry(look.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, look, true).ok());
                 self.prims.ground.keep_box(effect, id, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+            } else if effect == MELODY_NOTE {
+                // Poem of Netherworld's cell floats a melody note, with its sound at the unit's place.
+                self.textures.entry(crowds::MELODY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crowds::MELODY, false).ok());
+                self.play_sounds(table, effect, at, now);
+                self.prims.crowds.note(id, at, now, |n| pick(0, n.saturating_sub(1)));
             } else if matches!(effect, CHAOS_CELL | MAELSTROM_CELL | BLOODY_CELL) {
                 // Chaos Panic's, Maelstrom's and Bloody Lust's cells turn their squares for as long as their unit stands.
                 let look = match effect {
@@ -3331,6 +3353,15 @@ impl Effects {
                 let frames = sprite.frames(0).max(1);
                 let layers = sprite.frame_plain(gpu, 0, Timing::Span((drawn.frame as f32 + 0.5) / frames as f32));
                 self.sight_frames.insert((drawn.sprite, drawn.frame), layers);
+            }
+        }
+        for draw in self.prims.crowds.draws(now) {
+            if let Some(Some(sprite)) = self.sprites.get_mut(draw.sprite) {
+                let frames = sprite.frames(draw.action).max(1);
+                let frame = draw.steps as usize % frames;
+                self.crowd_frames
+                    .entry((draw.sprite, draw.action, frame))
+                    .or_insert_with(|| sprite.frame_at(gpu, draw.action, 0, Timing::Span((frame as f32 + 0.5) / frames as f32)));
             }
         }
         for draw in self.prims.balls.fist_draws() {
@@ -4082,6 +4113,23 @@ impl Effects {
                     quads.push((sprite.texture(key), drawn.at, corners, [1.0, 1.0, 1.0, drawn.alpha.trunc().clamp(0.0, 255.0) / 255.0], false, false));
                 }
             }
+            // Dead Hill Here's and Dance with Warg's monsters stand like units, each with a glowing outline a pixel bigger on every side.
+            for draw in self.prims.crowds.draws(now) {
+                let Some(Some(sprite)) = self.sprites.get(draw.sprite) else { continue };
+                let frames = sprite.frames(draw.action).max(1);
+                let frame = draw.steps as usize % frames;
+                for &(key, position, size, layer_angle) in self.crowd_frames.get(&(draw.sprite, draw.action, frame)).into_iter().flatten() {
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * draw.scale));
+                    let tint = [1.0, 1.0, 1.0, draw.alpha / 255.0];
+                    quads.push((sprite.texture(key), draw.at, corners, tint, false, false));
+                    let (low, high) = corners.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(low, high), corner| {
+                        ([low[0].min(corner[0]), low[1].min(corner[1])], [high[0].max(corner[0]), high[1].max(corner[1])])
+                    });
+                    let middle = [(low[0] + high[0]) / 2.0, (low[1] + high[1]) / 2.0];
+                    let grown = corners.map(|[x, y]| [x + if x <= middle[0] { -1.0 } else { 1.0 }, y + if y <= middle[1] { -1.0 } else { 1.0 }]);
+                    quads.push((sprite.texture(key), draw.at, grown, tint, true, false));
+                }
+            }
             // Boost Knuckle's fists: the first as the sprite colours it, the three after it white ghosts.
             if let Some(Some(sprite)) = self.sprites.get(balls::FIST_SPRITE) {
                 for draw in self.prims.balls.fist_draws() {
@@ -4232,6 +4280,7 @@ impl Effects {
             }
         }
         quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, spear, &self.textures, self.yaw));
+        quads.extend(self.prims.crowds.quads(now, |path| self.textures.get(path).and_then(Option::as_ref), &position_of, |n| pick(0, n.saturating_sub(1))));
         quads.extend(self.prims.waves.quads(now, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads.extend(self.prims.circles.mark_quads(now, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads.extend(self.prims.circles.quads(now, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
@@ -5966,5 +6015,26 @@ mod tests {
         assert!(AIMED.contains(&GREAT_ECHO_V) && table.struck(2426).unwrap().contains(&(Who::Caster, GREAT_ECHO_V)));
         assert_eq!(sounds(GREAT_ECHO_V), [("effect\\LG_EARTHDRIVE", 0, true)]);
         assert_eq!(table.quakes[&GREAT_ECHO_V], [(Duration::ZERO, QUAKE_LONG)]);
+    }
+
+    #[test]
+    fn dead_hill_dance_with_warg_the_poem_note_and_randomize_spell_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Dead Hill Here: the song circle and the Geographers; both sounds at the listener; one Warg copy a use.
+        let used = table.used(2421).unwrap();
+        assert!(used.contains(&(Who::Target, 861)) && used.contains(&(Who::Target, DEAD_HILL)));
+        assert_eq!(sounds(DEAD_HILL), [("effect\\사망의골짜기에서", 0, true)]);
+        assert_eq!(sounds(WARG_DANCE), [("effect\\워그와함께춤을", 0, true)]);
+        assert!(table.skill(2428, "groundEffectId").is_empty() && table.used(2428).unwrap().contains(&(Who::Target, WARG_DANCE)));
+        // Poem of Netherworld: the unit keeps the note and sounds at its place; the generic parts and the skills' starts are gone.
+        assert_eq!(table.units[&222], MELODY_NOTE);
+        assert!(!table.units_once.contains(&222) && !table.floaters.contains_key(&MELODY_NOTE));
+        assert_eq!(sounds(MELODY_NOTE), [("effect\\POEMOFNETHERWORLD", 0, false)]);
+        assert!(table.skill(2415, "effectId").is_empty() && table.skill(2419, "groundEffectId").is_empty());
+        // Randomize Spell: one copy on the target, the ten parts gone, the sound at the listener.
+        assert!(table.used(2424).unwrap().contains(&(Who::Target, RANDOMIZE)) && table.skill(2424, "effectId").is_empty());
+        assert!(!table.floaters.contains_key(&RANDOMIZE));
+        assert_eq!(sounds(RANDOMIZE), [("effect\\AB_ancilla", 0, true)]);
     }
 }
