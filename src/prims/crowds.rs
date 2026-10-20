@@ -1,5 +1,5 @@
-//! Dead Hill Here's Geographers (853), Dance with Warg's Wargs (866), Poem of Netherworld's floating note (860) and Randomize Spell's
-//! ten nested rune frames (862), a 16 ms tick at a time.
+//! Dead Hill Here's Geographers (853), Dance with Warg's Wargs (866), Poem of Netherworld's floating note (860), Reverberation's white
+//! note (1569) and Randomize Spell's ten nested rune frames (862), a 16 ms tick at a time.
 //!
 //! A shape's own age n counts from 1 at its first tick; e is the ticks since the effect started.
 
@@ -12,12 +12,16 @@ use crate::world::{EffectQuad, Vector};
 pub const GEOGRAPHER: &str = "data\\sprite\\몬스터\\geographer";
 pub const WARG: &str = "data\\sprite\\몬스터\\워그";
 pub const MELODY: &str = "data\\texture\\effect\\melody_a.bmp";
+/// Reverberation's note, and the one /mineffect shows instead.
+pub const REVERB_MELODY: &str = "data\\texture\\effect\\new_reverberation\\melody_a.bmp";
+pub const REVERB_MELODY_MIN: &str = "data\\texture\\effect\\mineffect\\new_reverberation\\melody_a.bmp";
 pub const RUNES: &str = "data\\texture\\effect\\priest_spell.bmp";
 const PIXELS_PER_UNIT: f32 = 7.0;
 /// A crowd lasts 400 ticks; it plants one sprite a tick while e is under its count.
 const CROWD_LIFE: u32 = 400;
-/// The note lives 29 999 ticks, the frames 300.
+/// The note lives 29 999 ticks, Reverberation's 150, the frames 300.
 const NOTE_LIFE: u32 = 29_999;
+const REVERB_LIFE: u32 = 150;
 const RUNE_LIFE: u32 = 300;
 
 /// Which crowd: Dead Hill Here's Geographers, Dance with Warg's Wargs, or the ring of ten of a Wanderer's or Minstrel's song.
@@ -68,6 +72,8 @@ struct Note {
     at: Vector,
     start: Instant,
     bob: f32,
+    /// Reverberation's note: white, added on, and following this unit (its picture by /mineffect).
+    reverb: Option<(Option<u32>, bool)>,
 }
 
 struct Runes {
@@ -161,6 +167,14 @@ pub fn note_height(tau: f32) -> f32 {
     6.0 - 3.0 * tau.to_radians().sin()
 }
 
+/// A note's five quads: the note, then four copies 0.2 along the world x and z, as place, tint and whether added on. Poem of
+/// Netherworld's is white and blended with blue copies; Reverberation's is all white and added on.
+fn note_layers(white: bool, centre: Vector) -> [(Vector, [f32; 4], bool); 5] {
+    let copy = if white { [1.0, 1.0, 1.0, 60.0 / 255.0] } else { [5.0 / 255.0, 5.0 / 255.0, 1.0, 60.0 / 255.0] };
+    let shifted = |x: f32, z: f32| ([centre[0] + x, centre[1], centre[2] + z], copy, true);
+    [(centre, [1.0, 1.0, 1.0, 120.0 / 255.0], white), shifted(0.2, 0.0), shifted(-0.2, 0.0), shifted(0.0, 0.2), shifted(0.0, -0.2)]
+}
+
 /// Randomize Spell's frame levels V1 to V10 and radius after tick `n`.
 pub fn rune_levels(n: u32) -> ([i32; 10], f32) {
     let mut levels = [0; 10];
@@ -198,7 +212,12 @@ impl Crowds {
 
     /// A note over the cell `at` of the skill unit `id`; its bob phase from `rand(n)`.
     pub fn note(&mut self, id: u32, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
-        self.notes.push(Note { id, at, start: now, bob: rand(360) as f32 });
+        self.notes.push(Note { id, at, start: now, bob: rand(360) as f32, reverb: None });
+    }
+
+    /// Reverberation's white note over `unit`, for 150 ticks; its bob phase from `rand(n)`, `min` is /mineffect.
+    pub fn reverb_note(&mut self, unit: Option<u32>, min: bool, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        self.notes.push(Note { id: 0, at: [0.0; 3], start: now, bob: rand(360) as f32, reverb: Some((unit, min)) });
     }
 
     pub fn forget(&mut self, id: u32) {
@@ -233,7 +252,7 @@ impl Crowds {
             }
         }
         self.crowds.retain(|crowd| passes(crowd.start, now) <= CROWD_LIFE);
-        self.notes.retain(|note| passes(note.start, now) <= NOTE_LIFE);
+        self.notes.retain(|note| passes(note.start, now) <= if note.reverb.is_some() { REVERB_LIFE } else { NOTE_LIFE });
         self.runes.retain(|runes| passes(runes.start, now) <= RUNE_LIFE);
     }
 
@@ -270,28 +289,36 @@ impl Crowds {
         rand: impl Fn(u32) -> u32,
     ) -> Vec<EffectQuad<'a>> {
         let mut quads = Vec::new();
-        if let Some(texture) = texture_of(MELODY) {
-            for note in &self.notes {
-                let n = passes(note.start, now);
-                if n == 0 {
-                    continue;
-                }
-                let (sigma, tau) = ((5 * n % 360) as f32, (note.bob + n as f32) % 360.0);
-                let half = note_half(sigma) * PIXELS_PER_UNIT;
-                let c0 = tau;
-                let c1 = (c0 + 85.0 + rand(16) as f32) % 360.0;
-                let c2 = (c1 + 85.0 + rand(16) as f32) % 360.0;
-                let c3 = (c2 + 85.0 + rand(16) as f32) % 360.0;
-                let corners = [c0, c1, c2, c3].map(|angle| {
-                    let (sin, cos) = angle.to_radians().sin_cos();
-                    [half * cos, half * sin]
-                });
-                let centre = [note.at[0], note.at[1] + note_height(tau), note.at[2]];
-                quads.push((texture, centre, corners, [1.0, 1.0, 1.0, 120.0 / 255.0], false, false));
-                for offset in [[0.2, 0.0], [-0.2, 0.0], [0.0, 0.2], [0.0, -0.2]] {
-                    let place = [centre[0] + offset[0], centre[1], centre[2] + offset[1]];
-                    quads.push((texture, place, corners, [5.0 / 255.0, 5.0 / 255.0, 1.0, 60.0 / 255.0], true, false));
-                }
+        for note in &self.notes {
+            let (path, unit) = match note.reverb {
+                Some((unit, min)) => (if min { REVERB_MELODY_MIN } else { REVERB_MELODY }, Some(unit)),
+                None => (MELODY, None),
+            };
+            let Some(texture) = texture_of(path) else { continue };
+            let n = passes(note.start, now);
+            if n == 0 || (unit.is_some() && n > REVERB_LIFE) {
+                continue;
+            }
+            let at = match unit {
+                Some(unit) => match position_of(unit) {
+                    Some(feet) => feet,
+                    None => continue,
+                },
+                None => note.at,
+            };
+            let (sigma, tau) = ((5 * n % 360) as f32, (note.bob + n as f32) % 360.0);
+            let half = note_half(sigma) * PIXELS_PER_UNIT;
+            let c0 = tau;
+            let c1 = (c0 + 85.0 + rand(16) as f32) % 360.0;
+            let c2 = (c1 + 85.0 + rand(16) as f32) % 360.0;
+            let c3 = (c2 + 85.0 + rand(16) as f32) % 360.0;
+            let corners = [c0, c1, c2, c3].map(|angle| {
+                let (sin, cos) = angle.to_radians().sin_cos();
+                [half * cos, half * sin]
+            });
+            let centre = [at[0], at[1] + note_height(tau), at[2]];
+            for (place, tint, additive) in note_layers(note.reverb.is_some(), centre) {
+                quads.push((texture, place, corners, tint, additive, false));
             }
         }
         if let Some(texture) = texture_of(RUNES) {
@@ -406,6 +433,35 @@ mod tests {
         crowds.note(7, [10.0, 1.0, 10.0], start, |_| 0);
         crowds.advance(start + TICK * 30_005, |_| None, |_, _| 0.0, |_| 0);
         assert!(crowds.notes.is_empty());
+    }
+
+    #[test]
+    fn reverberation_floats_a_white_added_note_over_its_target_for_150_ticks() {
+        let centre = [10.0, 4.0, 20.0];
+        // Poem of Netherworld's: a blended white note with four blue copies added on.
+        let poem = note_layers(false, centre);
+        assert_eq!((poem[0].0, poem[0].1, poem[0].2), (centre, [1.0, 1.0, 1.0, 120.0 / 255.0], false));
+        assert!(poem[1..].iter().all(|layer| layer.1 == [5.0 / 255.0, 5.0 / 255.0, 1.0, 60.0 / 255.0] && layer.2));
+        // Reverberation's: #FFFFFF added on at alpha 120, then the four copies #FFFFFF at 60 shifted ±0.2 along x and z.
+        let white = note_layers(true, centre);
+        assert_eq!((white[0].0, white[0].1, white[0].2), (centre, [1.0, 1.0, 1.0, 120.0 / 255.0], true));
+        assert!(white[1..].iter().all(|layer| layer.1 == [1.0, 1.0, 1.0, 60.0 / 255.0] && layer.2));
+        assert_eq!(white[1..].iter().map(|layer| layer.0).collect::<Vec<_>>(), [[10.2, 4.0, 20.0], [9.8, 4.0, 20.0], [10.0, 4.0, 20.2], [10.0, 4.0, 19.8]]);
+        // It follows its unit and lasts 150 ticks.
+        let start = Instant::now();
+        let mut crowds = Crowds::default();
+        crowds.reverb_note(Some(5), false, start, |_| 0);
+        crowds.reverb_note(None, true, start, |_| 0);
+        assert_eq!(crowds.notes.len(), 2);
+        assert_eq!(crowds.notes.iter().map(|note| note.reverb).collect::<Vec<_>>(), [Some((Some(5), false)), Some((None, true))]);
+        crowds.advance(start + TICK * 149, |_| None, |_, _| 0.0, |_| 0);
+        assert_eq!(crowds.notes.len(), 2);
+        crowds.advance(start + TICK * 151, |_| None, |_, _| 0.0, |_| 0);
+        assert!(crowds.notes.is_empty());
+        // A Poem note is not cut at 150.
+        crowds.note(7, [0.0; 3], start, |_| 0);
+        crowds.advance(start + TICK * 151, |_| None, |_, _| 0.0, |_| 0);
+        assert_eq!(crowds.notes.len(), 1);
     }
 
     #[test]
