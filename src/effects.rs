@@ -2363,6 +2363,10 @@ pub const AIMED: [u32; 44] = [
 /// EF_EARTHSPIKE and EF_HEAVENSDRIVE: stone spikes where they play (`prims`).
 const EARTH_SPIKE: u32 = 79;
 const HEAVENS_DRIVE: u32 = 142;
+/// Spear of Ice's spikes (`prims::stone`), and the blinks of Madness Canceller (blue) and Adjustment and Gatling Fever (red).
+const HYOUSENSOU: u32 = 619;
+const MADNESS_BLUE: u32 = 625;
+const MADNESS_RED: u32 = 626;
 /// EF_ICEWALL: the ice spikes of a wall's cell, standing with their unit (`prims::stone`).
 const ICE_WALL: u32 = 74;
 
@@ -2808,6 +2812,8 @@ impl Effects {
                 }
                 self.prims.brawl.seven_wind(unit, at, now, |n| pick(0, n.saturating_sub(1)));
             }
+            (MADNESS_BLUE, Target::Unit(unit)) => self.prims.bodies.start(body::Change::BlueBlink, unit, now),
+            (MADNESS_RED, Target::Unit(unit)) => self.prims.bodies.start(body::Change::RedBlink, unit, now),
             (BLUE_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::BlueGlow, unit, now),
             (RED_LIGHT_BODY, Target::Unit(unit) | Target::Status(unit, _)) => self.prims.bodies.start(body::Change::RedGlow, unit, now),
             (SHADOW_CAST, Target::Unit(unit)) => {
@@ -3354,9 +3360,14 @@ impl Effects {
             self.animations.push(animation);
         }
         self.play_quakes(table, id, now);
-        if matches!(id, EARTH_SPIKE | HEAVENS_DRIVE) {
-            self.textures.entry(stone::STONE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, stone::STONE, true).ok());
-            if id == EARTH_SPIKE { self.prims.stone.earth_spike(at, now) } else { self.prims.stone.heavens_drive(at, now) }
+        if matches!(id, EARTH_SPIKE | HEAVENS_DRIVE | HYOUSENSOU) {
+            let path = if id == HYOUSENSOU { crate::prims::ICE_TEXTURE } else { stone::STONE };
+            self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            match id {
+                EARTH_SPIKE => self.prims.stone.earth_spike(at, now),
+                HYOUSENSOU => self.prims.stone.ice_spike(at, now),
+                _ => self.prims.stone.heavens_drive(at, now),
+            }
         }
         // Ice Wall's cell: a skill unit's, the spikes standing until it goes.
         if let (ICE_WALL, Target::Lasting(unit) | Target::Kept(unit)) = (id, target) {
@@ -4608,9 +4619,9 @@ impl Effects {
             Some((ring?, vec![a, b, c, d, c, b], false))
         });
         // The Sage's ground looks and loops (Land Protector's square adds on).
-        let sage = self.prims.sage.shapes(now).into_iter().filter_map(|(path, additive, corners)| {
+        let sage = self.prims.sage.shapes(now).into_iter().filter_map(|(path, additive, [red, green, blue], corners)| {
             let texture = self.textures.get(path)?.as_ref()?;
-            Some((texture, corners.into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [1.0, 1.0, 1.0, alpha] }).collect(), additive))
+            Some((texture, corners.into_iter().map(|(position, uv, alpha)| MeshVertex { position, uv, tint: [red, green, blue, alpha] }).collect(), additive))
         });
         // The effects made in code are none of them force-drawn.
         let prims = spikes
@@ -7540,5 +7551,29 @@ mod tests {
         assert!(table.struck(534).unwrap().contains(&(Who::Target, KOUENKA)) && !table.parts.contains_key(&KOUENKA));
         assert_eq!(sounds(KOUENKA), [192, 208, 224, 240].map(|delay| ("effect\\EF_FireArrow%d", delay, Some((1, 3)))));
         assert_eq!([WARM_SPARKLES, FULL_BUSTER, KAIZEL_FINS, KOUENKA].map(|id| table.lengths[&id]), [300, 100, 200, 300]);
+    }
+
+    #[test]
+    fn spear_of_ice_hidden_water_the_thunderstorm_and_the_blinks_have_their_rows() {
+        let table = Table::load();
+        // Spear of Ice: Earth Spike's quake and length, a sound of three, no stand-in picture.
+        assert!(table.struck(537).unwrap().contains(&(Who::Target, HYOUSENSOU)) && !table.parts.contains_key(&HYOUSENSOU));
+        assert_eq!(table.quakes[&HYOUSENSOU], [(Duration::ZERO, Duration::from_millis(200))]);
+        assert_eq!(table.sounds[&HYOUSENSOU][0].random, Some((1, 3)));
+        // Hidden Water's cells: once on each skill unit of type 187.
+        assert!(table.units_once.contains(&187) && table.units[&187] == 620);
+        assert!(sage::LOOPS.iter().any(|&(kept, _)| kept == sage::HIDDEN_WATER));
+        // The thunderstorm: 2 ticks a frame from frame 1, looped, 99 ticks, 2.5 times as big, 31.5 pixels up, over everything.
+        assert!(!table.parts.contains_key(&622) && table.used(541).unwrap().contains(&(Who::Caster, 622)));
+        let animation = Animation::new(&table.sprites[&622][0], 622, Instant::now(), Anchor::Unit(Some(1)), false);
+        assert!(animation.over && animation.repeat && animation.frame_ms == Some(32.0) && animation.first == 1.0);
+        assert!(animation.scale == 2.5 && animation.offset == [0.0, -31.5]);
+        assert_eq!(((animation.end.unwrap() - animation.start).as_secs_f32() * 1000.0).round(), 1584.0);
+        let frame = |age: u32| (animation_progress(16.0 * age as f32, 32.0, 16.0, 1.0, true) * 16.0) as usize;
+        assert_eq!([0, 1, 2, 29, 30, 31, 32, 98].map(frame), [1, 1, 2, 15, 0, 0, 1, 2]);
+        // The blinks.
+        assert!(table.used(504).unwrap().contains(&(Who::Caster, MADNESS_BLUE)));
+        assert!(table.used(505).unwrap().contains(&(Who::Caster, MADNESS_RED)) && table.used(517).unwrap().contains(&(Who::Caster, MADNESS_RED)));
+        assert_eq!([HYOUSENSOU, 620, 622, MADNESS_BLUE, MADNESS_RED].map(|id| table.lengths[&id]), [250, 29_999, 100, 60, 60]);
     }
 }
