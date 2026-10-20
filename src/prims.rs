@@ -9,6 +9,7 @@ pub mod bolts;
 pub mod boomerang;
 pub mod brawl;
 pub mod burst;
+pub mod cells;
 pub mod chi;
 pub mod circle;
 pub mod crowds;
@@ -186,6 +187,7 @@ pub struct Prims {
     pub spears: spears::Spears,
     pub crowds: crowds::Crowds,
     pub chi: chi::Chi,
+    pub cells: cells::Cells,
     pub souls: souls::Souls,
 }
 
@@ -607,6 +609,7 @@ impl Prims {
         self.ground.forget(unit);
         self.transcend.forget(unit);
         self.dancer.forget(unit);
+        self.cells.forget(unit);
         self.souls.forget(unit);
         self.guard.forget(unit);
         self.brawl.forget(unit);

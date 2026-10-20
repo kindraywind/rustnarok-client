@@ -215,8 +215,6 @@ str	815	ignorance	-	1
 str	816	laziness	-	1
 str	817	unlucky	-	1
 str	818	weakness	-	1
-str	912	mineffect/new_wallofthorn/new_wallofthorn_cast/new_wallofthorn_cast	mineffect/new_wallofthorn/new_wallofthorn_cast/	0
-str	912	new_wallofthorn/new_wallofthorn_cast_bottom/new_wallofthorn_cast_bottom	new_wallofthorn/new_wallofthorn_cast_bottom/	0
 str	920	firewall_per	-	1
 str	926	hunter_shockwave_blue	-	1
 str	959	poison_mist	-	1
@@ -736,17 +734,12 @@ skill	2427	effectIdOnCaster	865
 skill	2428	effectIdOnCaster	867
 skill	2432	effectIdOnCaster	873
 skill	2433	effectIdOnCaster	875
-skill	2443	groundEffectId	920
 skill	2444	groundEffectId	926
 skill	2447	effectId	928
 skill	2449	effectId	922
 skill	2452	effectId	929
-skill	2453	effectId	921
 skill	2454	beforeHitEffectId	930
 skill	2483	effectId	915
-skill	2485	effectId	916
-skill	2486	effectId	917
-skill	2487	effectId	918
 skill	2490	effectId	919
 skill	5001	effectId	1040
 skill	5003	effectId	1049
@@ -2079,6 +2072,11 @@ wav	1910	effect\ef_beginspell	0
 wav	1918	effect\ef_beginspell	0
 wav	1923	effect\ef_beginspell	0
 wav	914	effect\G스포어익스플로젼	0
+wav	916	effect\EF_FireWall	0	listener
+wav	917	effect\EF_FireWall	0	listener
+wav	918	effect\EF_FireWall	0	listener
+wav	921	effect\S스펠피스트	0	listener
+wav	923	effect\S포이즌버스터	0	listener
 wav	1132	effect\mon_금강불괴	0
 wav	1195	effect\EF_BeginSpell	0
 hit	1	0	-1

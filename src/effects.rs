@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, chi, circle, crowds, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter, sage,
-    shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
+    balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter,
+    sage, shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -463,13 +463,34 @@ fn playing_ticks(effect: u32, str: &Str, length: Option<u32>) -> u32 {
     if effect == REJECT_SWORD { REJECT_SWORD_TICKS } else { str_ticks(str, length) }
 }
 
-/// How often a ground unit's effect starts again, in ticks: 8 before its length ends (Quagmire's 20).
-fn restart_ticks(effect: u32, length: u32) -> u32 {
+/// A frame's layers, each with its ACT alpha.
+type Layers = Vec<(Placed, f32)>;
+
+/// A sprite frame's layers plain white, each with the alpha the ACT gives it.
+fn plain_layers(gpu: &Gpu, sprite: &mut SpriteSet, action: usize, frame: usize, frames: usize) -> Layers {
+    let timing = Timing::Span((frame as f32 + 0.5) / frames as f32);
+    let alphas: Vec<f32> = sprite.frame_at(gpu, action, 0, timing).iter().map(|(key, ..)| f32::from(key.3[3])).collect();
+    sprite.frame_plain(gpu, action, timing).into_iter().enumerate().map(|(index, placed)| (placed, alphas.get(index).copied().unwrap_or(255.0))).collect()
+}
+
+/// How often a ground unit's effect starts again, in ticks: 8 before its length ends (Quagmire's 20), by the skill unit's type 1
+/// before it for Wall of Thorns, the Insignias and their like, 7 for Fire Walk.
+fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
     // Shockwave's waves start again every 75 ticks.
     if effect == 145 {
         return 75;
     }
-    length.saturating_sub(if effect == 95 { 20 } else { 8 }).max(1)
+    length.saturating_sub(restart_early(effect, kind)).max(1)
+}
+
+/// How many ticks before its length a ground unit's effect starts again.
+fn restart_early(effect: u32, kind: u32) -> u32 {
+    match kind {
+        228 | 230..=233 | 235 | 241..=244 | 258 => 1,
+        220 | 221 => 7,
+        _ if effect == 95 => 20,
+        _ => 8,
+    }
 }
 
 /// The STR frame `elapsed` into an effect: whole 16 ms ticks.
@@ -1556,6 +1577,10 @@ pub struct Effects {
     fist_frames: HashMap<(usize, usize, bool), Vec<Placed>>,
     /// The crowds' monsters by sprite, action and frame.
     crowd_frames: HashMap<(&'static str, usize, usize), Vec<Placed>>,
+    /// The cells' sprites' frames, plain white, each layer with its ACT alpha, by sprite, action and frame.
+    cell_frames: HashMap<(&'static str, usize, usize), Layers>,
+    /// The sound files a cell effect plays again with each copy.
+    cell_sounds: HashMap<u32, Vec<String>>,
     /// Sight Rasher's sprites' frames, plain white, by sprite and frame.
     sight_frames: HashMap<(&'static str, usize), Vec<Placed>>,
     /// Dark Strike's red ghost sprite's layers.
@@ -1917,6 +1942,13 @@ const SWING_DANCE: u32 = 847;
 const HARMONIZE: u32 = 849;
 /// Arrullo's drifting lights (`prims::souls`); Harmonize's (850) are launched by its emitter.
 const SOUL_LIGHT_PINK: u32 = 932;
+/// Wall of Thorns' tree, the Ifrits of Demonic Fire and the Insignias, Vacuum Extreme's whirlwinds and Poison Buster's blasts
+/// (`prims::cells`).
+const WALL_OF_THORNS: u32 = 912;
+const DEMONIC_FIRE: u32 = 916;
+const DEMONIC_FIRE_3: u32 = 918;
+const VACUUM_EXTREME: u32 = 921;
+const POISON_BUSTER_FX: u32 = 923;
 const GREAT_ECHO_V: u32 = 863;
 /// Sonic Wave's crescents and Duple Light's orbs (`prims::waves`).
 const SONIC_WAVE: u32 = 832;
@@ -2501,6 +2533,10 @@ impl Effects {
                 self.textures.entry(chi::NEEDLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, chi::NEEDLE, true).ok());
                 self.prims.chi.buff(id, unit, 500, now, |n| pick(0, n.saturating_sub(1)));
             }
+            (POISON_BUSTER_FX, Target::Unit(unit)) => {
+                self.sprites.entry(cells::BLAST.to_owned()).or_insert_with(|| SpriteSet::at(grf, cells::BLAST));
+                self.prims.cells.poison_buster(unit, now);
+            }
             (GROUND_SHAKE, Target::Unit(unit)) => {
                 self.textures.entry(brawl::BLAST.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::BLAST, true).ok());
                 self.prims.brawl.disc(false, unit, now);
@@ -2981,6 +3017,12 @@ impl Effects {
     pub fn settle_hits(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>, ground_at: impl Fn(f32, f32) -> f32) {
         self.prims.first.advance(now, &ground_at);
         self.prims.crowds.advance(now, &position_of, &ground_at, |n| pick(0, n.saturating_sub(1)));
+        self.prims.cells.advance(now, &ground_at, |n| pick(0, n.saturating_sub(1)));
+        for effect in self.prims.cells.take_restarts() {
+            for file in self.cell_sounds.get(&effect).into_iter().flatten() {
+                self.sounds.push((now, file.clone(), LISTENER));
+            }
+        }
         self.prims.songs.advance(now, position_of(None), &ground_at, |n| pick(0, n.saturating_sub(1)));
         for hit in self.hits.iter_mut().filter(|hit| hit.paths.is_none() && hit.start <= now) {
             let Some(at) = hit.anchor.place(&position_of) else { continue };
@@ -3097,6 +3139,22 @@ impl Effects {
                 // Poison Smoke's cells throw violet sparkles over everything while their unit stands.
                 self.sprites.entry(first::POISON_STAR.to_owned()).or_insert_with(|| SpriteSet::at(grf, first::POISON_STAR));
                 self.prims.walls.keep_smoke(id, at, now);
+            } else if matches!(effect, WALL_OF_THORNS | VACUUM_EXTREME | DEMONIC_FIRE..=DEMONIC_FIRE_3) {
+                // Wall of Thorns' tree, Vacuum Extreme's whirlwinds and the Ifrits of Demonic Fire and the Insignias stand with their
+                // unit, a new copy at the end of each length.
+                let path = match effect {
+                    WALL_OF_THORNS => cells::ANCIENT_TREE,
+                    VACUUM_EXTREME => cells::BREEZE,
+                    _ => cells::IFRIT,
+                };
+                self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
+                self.cell_sounds.insert(effect, table.sounds.get(&effect).into_iter().flatten().map(|sound| format!("{}.wav", sound.file)).collect());
+                self.play_sounds(table, effect, at, now);
+                if effect == WALL_OF_THORNS || effect == VACUUM_EXTREME {
+                    self.prims.cells.stand(effect, id, at, now, |n| pick(0, n.saturating_sub(1)));
+                } else {
+                    self.prims.cells.ring(effect, id, cells::insignia_tint(kind), at, now);
+                }
             } else if matches!(effect, FIRE_PILLAR | VENOM_DUST) {
                 // The Fire Pillar's funnels and Venom Dust's puffs stand with their unit, drawn in code.
                 self.textures.entry(walls::MAGIC_RED.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::MAGIC_RED, true).ok());
@@ -3478,13 +3536,23 @@ impl Effects {
                 self.sight_frames.insert((drawn.sprite, drawn.frame), layers);
             }
         }
-        for draw in self.prims.crowds.draws(now) {
+        for draw in self.prims.crowds.draws(now).into_iter().chain(self.prims.cells.ifrits(now)) {
             if let Some(Some(sprite)) = self.sprites.get_mut(draw.sprite) {
                 let frames = sprite.frames(draw.action).max(1);
                 let frame = draw.steps as usize % frames;
                 self.crowd_frames
                     .entry((draw.sprite, draw.action, frame))
                     .or_insert_with(|| sprite.frame_at(gpu, draw.action, 0, Timing::Span((frame as f32 + 0.5) / frames as f32)));
+            }
+        }
+        // The tree, the whirlwinds and the blasts: plain frames, each layer with the alpha its ACT gives it.
+        let standing = self.prims.cells.stands(now).into_iter().map(|draw| (draw.sprite, draw.action, draw.steps as usize));
+        let blasts = self.prims.cells.blast_frames(now).into_iter().map(|frame| (cells::BLAST, 0, frame));
+        for (path, action, steps) in standing.chain(blasts) {
+            if let Some(Some(sprite)) = self.sprites.get_mut(path) {
+                let frames = sprite.frames(action).max(1);
+                let frame = steps % frames;
+                self.cell_frames.entry((path, action, frame)).or_insert_with(|| plain_layers(gpu, sprite, action, frame, frames));
             }
         }
         for draw in self.prims.balls.fist_draws() {
@@ -3556,10 +3624,15 @@ impl Effects {
         // An STR ends at its last key or its effect's length; a ground unit's starts again 8 ticks before its length
         // (Quagmire's 20), picking its file again, while the copy before plays out.
         let mut tails = Vec::new();
+        let unit_kinds = &self.unit_kinds;
         let tick = Duration::from_secs_f32(STR_TICK_MS / 1000.0);
         self.playing.retain_mut(|playing| {
             let length = tick * str_ticks(&playing.loaded.animation, playing.length);
-            let period = tick * restart_ticks(playing.effect, playing.length.unwrap_or(str_ticks(&playing.loaded.animation, None)));
+            let kind = match playing.anchor {
+                Anchor::Lasting(id, _) => unit_kinds.get(&id).copied().unwrap_or(0),
+                _ => 0,
+            };
+            let period = tick * restart_ticks(playing.effect, kind, playing.length.unwrap_or(str_ticks(&playing.loaded.animation, None)));
             while playing.again && now >= playing.start + period {
                 let previous = Playing { variants: Vec::new(), again: false, ..playing.clone_now() };
                 playing.start += period;
@@ -4253,13 +4326,13 @@ impl Effects {
                 }
             }
             // Dead Hill Here's and Dance with Warg's monsters stand like units, each with a glowing outline a pixel bigger on every side.
-            for draw in self.prims.crowds.draws(now) {
+            for draw in self.prims.crowds.draws(now).into_iter().chain(self.prims.cells.ifrits(now)) {
                 let Some(Some(sprite)) = self.sprites.get(draw.sprite) else { continue };
                 let frames = sprite.frames(draw.action).max(1);
                 let frame = draw.steps as usize % frames;
                 for &(key, position, size, layer_angle) in self.crowd_frames.get(&(draw.sprite, draw.action, frame)).into_iter().flatten() {
                     let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * draw.scale));
-                    let tint = [1.0, 1.0, 1.0, draw.alpha / 255.0];
+                    let tint = [draw.tint[0], draw.tint[1], draw.tint[2], draw.alpha / 255.0];
                     quads.push((sprite.texture(key), draw.at, corners, tint, false, false));
                     let (low, high) = corners.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(low, high), corner| {
                         ([low[0].min(corner[0]), low[1].min(corner[1])], [high[0].max(corner[0]), high[1].max(corner[1])])
@@ -4267,6 +4340,32 @@ impl Effects {
                     let middle = [(low[0] + high[0]) / 2.0, (low[1] + high[1]) / 2.0];
                     let grown = corners.map(|[x, y]| [x + if x <= middle[0] { -1.0 } else { 1.0 }, y + if y <= middle[1] { -1.0 } else { 1.0 }]);
                     quads.push((sprite.texture(key), draw.at, grown, tint, true, false));
+                }
+            }
+            // Wall of Thorns' tree and Vacuum Extreme's whirlwinds: the sprite in the prim's colour and alpha on every layer, added on.
+            for draw in self.prims.cells.stands(now) {
+                let Some(Some(sprite)) = self.sprites.get(draw.sprite) else { continue };
+                let frame = draw.steps as usize % sprite.frames(draw.action).max(1);
+                for &((key, position, size, layer_angle), _) in self.cell_frames.get(&(draw.sprite, draw.action, frame)).into_iter().flatten() {
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * draw.scale));
+                    let [red, green, blue] = draw.tint;
+                    quads.push((sprite.texture(key), draw.at, corners, [red, green, blue, draw.alpha / 255.0], true, false));
+                }
+            }
+            // Poison Buster's blasts: each layer in #3737FF at 0.85 of its alpha, and a halo 4 pixels bigger on every side at 0.5.
+            if let Some(Some(sprite)) = self.sprites.get(cells::BLAST) {
+                for draw in self.prims.cells.blasts(now, &position_of) {
+                    for &((key, position, size, layer_angle), alpha) in self.cell_frames.get(&(cells::BLAST, 0, draw.frame)).into_iter().flatten() {
+                        let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0);
+                        let (low, high) = corners.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(low, high), corner| {
+                            ([low[0].min(corner[0]), low[1].min(corner[1])], [high[0].max(corner[0]), high[1].max(corner[1])])
+                        });
+                        let middle = [(low[0] + high[0]) / 2.0, (low[1] + high[1]) / 2.0];
+                        let grown = corners.map(|[x, y]| [x + if x <= middle[0] { -4.0 } else { 4.0 }, y + if y <= middle[1] { -4.0 } else { 4.0 }]);
+                        let (body, halo) = cells::blast_alphas(alpha);
+                        quads.push((sprite.texture(key), draw.at, corners, [55.0 / 255.0, 55.0 / 255.0, 1.0, body / 255.0], true, false));
+                        quads.push((sprite.texture(key), draw.at, grown, [55.0 / 255.0, 55.0 / 255.0, 1.0, halo / 255.0], true, false));
+                    }
                 }
             }
             // Boost Knuckle's fists: the first as the sprite colours it, the three after it white ghosts.
@@ -4716,18 +4815,9 @@ mod tests {
         assert_eq!((table.units.get(&0x82), table.units.get(&0xb3), table.units.get(&0xcb)), (Some(&91), Some(&370), Some(&142)));
         // Earth Strain and Gospel play once and are kept; a warp portal starts again.
         assert!(table.units_once.contains(&0xcb) && table.units_once.contains(&0xb3) && !table.units_once.contains(&0x80));
-        // Wall of Thorns shows 912, started again while it stands: its cast and the ground under it.
+        // Wall of Thorns shows 912, started again while it stands: its tree is drawn in code, with no STR.
         assert_eq!(table.units.get(&0xe6), Some(&912));
-        assert!(!table.units_once.contains(&0xe6));
-        let thorns: Vec<(&str, &str, bool, bool)> =
-            table.parts[&912].iter().map(|part| (part.file.as_str(), part.folder.as_str(), part.attached, part.once)).collect();
-        assert_eq!(
-            thorns,
-            [
-                ("mineffect/new_wallofthorn/new_wallofthorn_cast/new_wallofthorn_cast", "mineffect/new_wallofthorn/new_wallofthorn_cast/", false, false),
-                ("new_wallofthorn/new_wallofthorn_cast_bottom/new_wallofthorn_cast_bottom", "new_wallofthorn/new_wallofthorn_cast_bottom/", false, false)
-            ]
-        );
+        assert!(!table.units_once.contains(&0xe6) && !table.parts.contains_key(&912));
         // Earth Strain's 142 keeps its quake and sound, which play once with it.
         assert_eq!(table.quakes[&142], [(Duration::ZERO, QUAKE_LONG)]);
         assert_eq!(table.sounds[&142][0].file, "effect\\wizard_earthspike");
@@ -4820,7 +4910,7 @@ mod tests {
         let str = Str { fps: 60, frames: 160, layers: vec![layer] };
         assert_eq!((str_ticks(&str, None), str_ticks(&str, Some(40)), str_ticks(&str, Some(500))), (121, 40, 121));
         // A ground unit's starts again 8 ticks before its length; Quagmire's 20.
-        assert_eq!((restart_ticks(25, 40), restart_ticks(95, 150)), (32, 130));
+        assert_eq!((restart_ticks(25, 0, 40), restart_ticks(95, 0, 150)), (32, 130));
         // (320, 240) is the anchor: a corner 10 left and 10 up of it is (−10, −10) sprite pixels, and on screen that's
         // q times it from the feet, then 80 screen pixels up whatever q is (the shader's pixel offset).
         let corner = str_corner([320.0, 240.0], [-10.0, -10.0], 0.0);
@@ -5433,7 +5523,7 @@ mod tests {
         assert_eq!((table.units[&148], table.units[&216]), (145, 145));
         assert!(!table.units_once.contains(&148) && !table.units_once.contains(&216) && !table.sounds.contains_key(&145));
         assert!(table.parts.contains_key(&145));
-        assert_eq!((restart_ticks(145, 80), restart_ticks(145, 200), restart_ticks(25, 40)), (75, 75, 32));
+        assert_eq!((restart_ticks(145, 148, 80), restart_ticks(145, 216, 200), restart_ticks(25, 0, 40)), (75, 75, 32));
         // Explosion Spirits' glints: one set of four against Steel Body's sixteen; both forced or not as the list says.
         assert_eq!((4 * glint_sets(203), 4 * glint_sets(254)), (4, 16));
         assert!(force_drawn(203) && force_drawn(138) && !force_drawn(254));
@@ -6315,5 +6405,43 @@ mod tests {
             table.sounds[&GREEN_CASTING].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>(),
             [("effect\\EF_BeginSpell", 0, false)]
         );
+    }
+
+    #[test]
+    fn the_cells_sprites_blasts_and_strikings_copies_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // A ground unit starts again 1 tick before its length for the walls, the Insignias and their like, 7 for Fire Walk's.
+        for kind in [228, 230, 231, 232, 233, 235, 241, 242, 243, 244, 258] {
+            assert_eq!(restart_ticks(0, kind, 100), 99, "{kind}");
+        }
+        assert_eq!((restart_ticks(920, 220, 40), restart_ticks(0, 221, 40), restart_ticks(0, 9, 100), restart_ticks(95, 0, 150)), (33, 33, 92, 130));
+        assert_eq!((restart_ticks(912, 230, 1000), restart_ticks(916, 231, 2000)), (999, 1999));
+        // Wall of Thorns: no STR left; the Ifrits and the whirlwinds stand on their units, not on skills' lines.
+        assert!(!table.parts.contains_key(&WALL_OF_THORNS) && table.units[&230] == WALL_OF_THORNS);
+        assert!(
+            [231, 241, 242, 243, 244].iter().all(|kind| table.units[kind] == DEMONIC_FIRE) && table.units[&232] == 917 && table.units[&233] == DEMONIC_FIRE_3
+        );
+        assert_eq!(table.units[&235], VACUUM_EXTREME);
+        for (skill, field, effect) in
+            [(2485, "effectId", 916), (2486, "effectId", 917), (2487, "effectId", 918), (2453, "effectId", 921), (2443, "groundEffectId", 920)]
+        {
+            assert!(table.skill(skill, field).is_empty(), "{skill} {effect}");
+        }
+        // The sounds at the listener at once.
+        for (effect, file) in [
+            (916, "effect\\EF_FireWall"),
+            (917, "effect\\EF_FireWall"),
+            (918, "effect\\EF_FireWall"),
+            (921, "effect\\S스펠피스트"),
+            (923, "effect\\S포이즌버스터"),
+        ] {
+            assert_eq!(sounds(effect), [(file, 0, true)], "{effect}");
+        }
+        // Poison Buster on its targets; Striking on its status, with no looks of its own.
+        assert!(
+            table.struck(2448).unwrap().contains(&(Who::Target, POISON_BUSTER_FX)) && table.struck(742).unwrap().contains(&(Who::Target, POISON_BUSTER_FX))
+        );
+        assert!(table.status(445).contains(&crate::actor::STRIKING) && !table.sounds.contains_key(&crate::actor::STRIKING));
     }
 }
