@@ -38,7 +38,7 @@ struct Emitter {
 pub struct Spears {
     chevrons: Vec<Chevron>,
     emitters: Vec<Emitter>,
-    /// The lights the emitters launched since last asked: the unit and the offset from its feet (effect 850 has no look yet).
+    /// The lights the emitters launched since last asked: the unit and the offset from its feet.
     launched: Vec<(Option<u32>, Vector)>,
 }
 
@@ -101,7 +101,7 @@ impl Spears {
                     emitter.strength = (emitter.strength - 5).max(0);
                 }
                 emitter.radius += 0.05;
-                // ponytail: once a tick, not once a drawn frame; effect 850 has no look yet.
+                // ponytail: once a tick, not once a drawn frame.
                 if emitter.age <= LAUNCH_LAST && emitter.strength > 0 {
                     self.launched.push((emitter.unit, orbit(emitter.age)));
                 }

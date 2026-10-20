@@ -5117,6 +5117,8 @@ length	988	100
 length	1020	100
 length	920	40
 length	95	150
+length	850	100
+length	932	100
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
 skillwav	268	effect\mon_맹룡과강	0	listener
 skillquake	268	0	200
