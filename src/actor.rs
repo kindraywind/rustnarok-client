@@ -777,6 +777,15 @@ pub struct SpriteSet {
 
 impl SpriteSet {
     /// Which part an image is (`PartGroup`).
+    /// How far the swing moves an image: the head 40 px, any gear 10, the body not at all.
+    pub fn swing_reach(&self, key: ImageKey) -> f32 {
+        match self.layers.get(key.0).map(|layer| layer.part) {
+            Some(Part::Head) => 40.0,
+            Some(Part::Body) | None => 0.0,
+            Some(_) => 10.0,
+        }
+    }
+
     pub fn part_group(&self, key: ImageKey) -> PartGroup {
         match self.layers.get(key.0).map(|layer| layer.part) {
             Some(Part::Weapon | Part::WeaponGlow) => PartGroup::Weapon,
@@ -2172,8 +2181,42 @@ pub const GLOW_WEAPON: u32 = 0x2;
 pub const GLOW_FLICKER: u32 = 0x4;
 pub const GLOW_OUTLINE: u32 = 0x8;
 pub const GLOW_REFLECT: u32 = 0x200;
+/// Marsh of Abyss' and Great Echo's swing: a player's head and gear run round circles; the age n (0 to 35) is in the upper half.
+pub const GLOW_SWING: u32 = 0x40;
+/// Hovering's two blue copies of every part; their alpha (0 to 160) is in the upper half.
+pub const GLOW_BLUE: u32 = 0x4000;
 /// Sound of Destruction's: four copies slide out of every part; the age n (0 to 69) of the effect's 30th tick on is in the upper half.
 pub const GLOW_SPREAD: u32 = 0x1000;
+
+/// How far the swing (466) moves a part at its age n: round a circle `reach` px wide, eased by the cosine, as whole pixels
+/// from the anchor `(x, y)` in sprite pixels (y down). The body has a reach of 0, the head 40, any other part 10.
+pub fn swing_offset(n: u32, reach: f32, [x, y]: [f32; 2]) -> [f32; 2] {
+    // ponytail: sums are rounded to a millionth before they are cut, so a float's dust doesn't take a whole pixel off.
+    let whole = |value: f64| ((value * 1e6).round() / 1e6).trunc();
+    let mut angle = whole(180.0 - 180.0 * (5.0 * f64::from(n)).to_radians().cos());
+    if angle >= 360.0 {
+        angle -= 360.0;
+    }
+    let (sin, cos) = angle.to_radians().sin_cos();
+    let reach = f64::from(reach);
+    [whole(f64::from(x) + reach * sin) as f32, whole(f64::from(y) + reach - reach * cos) as f32]
+}
+
+/// The alpha of Hovering's blue copies at tick t (0 to 199): they open over 10 ticks, glow, and close from tick 150.
+pub fn blue_alpha(t: u32) -> f32 {
+    let f = match t {
+        0..=25 => t,
+        26..=150 => 25,
+        151..=175 => 175 - t,
+        _ => 0,
+    };
+    match f {
+        0..=10 => 15.0 * f as f32,
+        11..=20 => 160.0,
+        21..=50 => 5.0 * (51 - f) as f32,
+        _ => 0.0,
+    }
+}
 
 /// The body flags and colour a status's looping effect gives its unit: Berserk red, Marionette pink with the outline,
 /// Assumptio's outline, Kaite's copies, Aura Blade's weapon.
@@ -2238,6 +2281,13 @@ pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: 
             copies.push(GlowCopy { additive: false, color: [1.0, 1.0, 1.0, (100.0 - 5.0 * s) / 255.0], grow: s * unit, offset: [0.0; 2] });
         }
         part.color = [1.0, 1.0, 1.0, 150.0 / 255.0];
+    }
+    // Hovering: two more copies of every part, added on in blue.
+    if flags & GLOW_BLUE != 0 {
+        let alpha = (flags >> 16) as f32 / 255.0;
+        for _ in 0..2 {
+            copies.push(GlowCopy { additive: true, color: [5.0 / 255.0, 5.0 / 255.0, 1.0, alpha], grow: 0.0, offset: [0.0; 2] });
+        }
     }
     // Four white copies of every part slide right, left, down and up, fainter as they go.
     if flags & GLOW_SPREAD != 0 {
@@ -4224,5 +4274,41 @@ mod tests {
             !was
         };
         assert_eq!([drawn(), drawn(), drawn()], [true, false, true]);
+    }
+
+    #[test]
+    fn the_swing_runs_the_head_and_gear_round_circles_and_hovering_glows_blue() {
+        let head = |n: u32| swing_offset(n, 40.0, [0.0; 2]);
+        let gear = |n: u32| swing_offset(n, 10.0, [0.0; 2]);
+        let ages = [0, 6, 9, 12, 15, 18, 21, 24, 27, 30, 35];
+        assert_eq!(
+            ages.map(head),
+            [
+                [0.0, 0.0],
+                [16.0, 3.0],
+                [31.0, 15.0],
+                [40.0, 40.0],
+                [29.0, 67.0],
+                [0.0, 80.0],
+                [-28.0, 67.0],
+                [-40.0, 40.0],
+                [-31.0, 15.0],
+                [-16.0, 3.0],
+                [0.0, 0.0]
+            ]
+        );
+        assert_eq!(
+            ages.map(gear),
+            [[0.0, 0.0], [4.0, 0.0], [7.0, 3.0], [10.0, 10.0], [7.0, 16.0], [0.0, 20.0], [-7.0, 16.0], [-10.0, 10.0], [-7.0, 3.0], [-4.0, 0.0], [0.0, 0.0]]
+        );
+        // With another anchor the sum is cut: 5.5 + 16.27 is 21.
+        assert_eq!(swing_offset(6, 40.0, [5.5, 2.5])[0], 21.0);
+        // The blue copies' alpha at t = 0, 5, 10, 11, 20, 21, 25, 26, 150, 151, 154, 155, 164, 165, 175, 176, 200.
+        let ticks = [0, 5, 10, 11, 20, 21, 25, 26, 150, 151, 154, 155, 164, 165, 175, 176, 200];
+        assert_eq!(ticks.map(blue_alpha), [0.0, 75.0, 150.0, 160.0, 160.0, 150.0, 130.0, 130.0, 130.0, 135.0, 150.0, 160.0, 160.0, 150.0, 0.0, 0.0, 0.0]);
+        // Two added-on copies of every part, in #0505FF, at the alpha in the flags' upper half.
+        let (_, copies) = glow_copies(GLOW_BLUE | 160 << 16, None, PartGroup::Gear, 0.0, 0.0, 1.0, true);
+        assert_eq!(copies.len(), 2);
+        assert!(copies.iter().all(|copy| copy.additive && copy.color == [5.0 / 255.0, 5.0 / 255.0, 1.0, 160.0 / 255.0] && copy.grow == 0.0));
     }
 }

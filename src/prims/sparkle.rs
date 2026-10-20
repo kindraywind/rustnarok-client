@@ -157,6 +157,84 @@ impl Hallutime {
     }
 }
 
+/// Hovering's and Emergency Cool's (EF_HATED 543) blue sparkles: a set of four squares on each of ticks 0, 4 … 80, each rising from
+/// where the unit stood, in #9696FA.
+pub struct Blues {
+    pub unit: Option<u32>,
+    pub start: Instant,
+    /// The sets made so far, and where the unit last stood.
+    pub made: u32,
+    last: Option<Vector>,
+    pub squares: Vec<Rise>,
+}
+
+pub const BLUE_SETS: u32 = 21;
+const BLUE_TINT: [f32; 3] = [150.0 / 255.0, 150.0 / 255.0, 250.0 / 255.0];
+
+/// One blue square: where it starts (6 up), its size and how fast it rises.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rise {
+    pub k: usize,
+    pub born: u32,
+    pub half_diagonal: f32,
+    pub at: Vector,
+    pub rise: f32,
+}
+
+impl Blues {
+    pub fn new(unit: Option<u32>, start: Instant) -> Self {
+        Self { unit, start, made: 0, last: None, squares: Vec::new() }
+    }
+
+    fn tick(&self, now: Instant) -> Option<u32> {
+        let age = now.checked_duration_since(self.start)?;
+        Some((age.as_millis() / TICK.as_millis()) as u32)
+    }
+
+    /// Whether anything of it is still to show: the last set is gone 54 ticks after tick 80.
+    pub fn alive(&self, now: Instant) -> bool {
+        self.tick(now).is_some_and(|tick| tick < 4 * (BLUE_SETS - 1) + 55)
+    }
+
+    /// Makes the sets whose ticks have come, where `position_of` has the unit's feet then; each square's choices come from `rand(n)`.
+    pub fn advance(&mut self, now: Instant, position_of: &impl Fn(Option<u32>) -> Option<Vector>, mut rand: impl FnMut(u32) -> u32) {
+        self.last = position_of(self.unit).or(self.last);
+        let Some(tick) = self.tick(now) else { return };
+        while self.made < BLUE_SETS && tick >= 4 * self.made {
+            if let Some(feet) = self.last {
+                for k in 0..SQUARES_PER_WAVE {
+                    let half_diagonal = 2.0 + 0.1 * rand(10) as f32;
+                    let x = feet[0] + rand(11) as f32 - 5.0;
+                    let z = feet[2] + rand(11) as f32 - 5.0;
+                    let rise = 0.10 + 0.01 * rand(20) as f32;
+                    // The game's one more draw, at the square's first tick, is thrown away.
+                    let _ = rand(360);
+                    self.squares.push(Rise { k, born: 4 * self.made, half_diagonal, at: [x, feet[1] + 6.0, z], rise });
+                }
+            }
+            self.made += 1;
+        }
+    }
+
+    /// The camera-facing squares at `now`, added on and not following the unit.
+    pub fn quads<'a>(&self, now: Instant, dim: bool, texture_of: impl Fn(&str) -> Option<&'a Texture>) -> Vec<EffectQuad<'a>> {
+        let Some(tick) = self.tick(now) else { return Vec::new() };
+        let mut quads = Vec::new();
+        for square in &self.squares {
+            let n = tick.saturating_sub(square.born);
+            if tick < square.born || !(2..=54).contains(&n) {
+                continue;
+            }
+            let alpha = drawn_alpha(n, dim);
+            let Some(texture) = texture_of(texture_at(square.k, n)) else { continue };
+            let place = [square.at[0], square.at[1] + n as f32 * square.rise, square.at[2]];
+            let tint = [BLUE_TINT[0], BLUE_TINT[1], BLUE_TINT[2], alpha as f32 / 255.0];
+            quads.push((texture, place, corners(square.half_diagonal, spin_at(n)), tint, true, false));
+        }
+        quads
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,5 +414,26 @@ mod tests {
         let effects_txt = include_str!("../effects.txt");
         assert!(effects_txt.lines().any(|line| line == "length\t793\t100"));
         assert!(!effects_txt.lines().any(|line| line.starts_with("wav\t793")));
+    }
+
+    #[test]
+    fn hovering_lets_blue_sparkles_rise_in_21_sets() {
+        let start = Instant::now();
+        let feet = [10.0, 5.0, 20.0];
+        let mut blues = Blues::new(Some(1), start);
+        let run = |blues: &mut Blues, tick: u32| blues.advance(start + TICK * tick, &|_| Some(feet), |_| 0);
+        for tick in 0..=82 {
+            run(&mut blues, tick);
+            // A set of four on ticks 0, 4 … 80 and none between.
+            assert_eq!(blues.squares.len() as u32, 4 * (tick / 4 + 1).min(BLUE_SETS), "tick {tick}");
+        }
+        assert_eq!(blues.made, 21);
+        // Every draw 0: half-diagonal 2.0, x and z the feet − 5, rise 0.10, 6 up; absolute: the unit moving changes nothing.
+        let first = blues.squares[0];
+        assert_eq!((first.half_diagonal, first.at, first.rise), (2.0, [5.0, 11.0, 15.0], 0.10));
+        // Alpha at ages 2, 10, 11, 54, 55: 15, 135, 132, 3, 0; the twinkle at ages 35 and 36 for the first square.
+        assert_eq!([2, 10, 11, 54, 55].map(alpha_at), [15, 135, 132, 3, 0]);
+        assert_eq!([texture_at(0, 34), texture_at(0, 35), texture_at(0, 36), texture_at(0, 37)], [POK1, POK3, POK3, POK1]);
+        assert!(blues.alive(start + TICK * 134) && !blues.alive(start + TICK * 135));
     }
 }

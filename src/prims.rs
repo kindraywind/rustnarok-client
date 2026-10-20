@@ -146,6 +146,7 @@ pub struct Prims {
     pub boomerangs: boomerang::Boomerangs,
     pub napalms: Vec<napalm::Napalm>,
     pub sparkles: Vec<sparkle::Hallutime>,
+    pub blues: Vec<sparkle::Blues>,
     pub blitzes: blitz::Blitzes,
     pub spheres: tanji::Spheres,
     pub huujin: huujin::Huujin,
@@ -565,6 +566,11 @@ impl Prims {
     }
 
     /// EF_HALLUTIME (793) round an Escape copy's feet.
+    /// Hovering's blue sparkles round `unit` (None = the player).
+    pub fn blue_sparkles(&mut self, unit: Option<u32>, now: Instant) {
+        self.blues.push(sparkle::Blues::new(unit, now));
+    }
+
     pub fn sparkle(&mut self, unit: Option<u32>, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.sparkles.push(sparkle::Hallutime::new(unit, at, now, rand));
     }
@@ -577,6 +583,7 @@ impl Prims {
         self.transcend.forget(unit);
         self.dancer.forget(unit);
         self.guard.forget(unit);
+        self.brawl.forget(unit);
     }
 
     /// The camera-facing squares for effect 793 at `now`.
@@ -587,7 +594,11 @@ impl Prims {
         texture_of: impl Fn(&str) -> Option<&'a crate::render::Texture>,
         position_of: &impl Fn(Option<u32>) -> Option<Vector>,
     ) -> Vec<EffectQuad<'a>> {
-        self.sparkles.iter().flat_map(|s| s.quads(now, dim, &texture_of, position_of)).collect()
+        self.sparkles
+            .iter()
+            .flat_map(|s| s.quads(now, dim, &texture_of, position_of))
+            .chain(self.blues.iter().flat_map(|blues| blues.quads(now, dim, &texture_of)))
+            .collect()
     }
 
     /// What the cold hits and bursts draw at `now`, in screen pixels from their units' feet.
@@ -649,6 +660,7 @@ impl Prims {
         self.bursts.retain(|burst| burst.alive(now));
         self.napalms.retain(|napalm| napalm.alive(now));
         self.sparkles.retain(|sparkle| sparkle.alive(now));
+        self.blues.retain(|blues| blues.alive(now));
         self.blitzes.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
     }
 
