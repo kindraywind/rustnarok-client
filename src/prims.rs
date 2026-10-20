@@ -23,6 +23,7 @@ pub mod star;
 pub mod stone;
 pub mod tanji;
 pub mod throw;
+pub mod transcend;
 pub mod walls;
 pub mod waterball;
 
@@ -64,28 +65,65 @@ struct Builder {
     red: bool,
 }
 
-/// Soul Strike's ghost (the game's prim kind 8): it flies from over the caster to the target in a straight line on
-/// the ground's plane, slow at first and faster at the end, bulging out to one side of that line (its own way round,
-/// a fan) and back.
+/// A ghost (the game's prim kind 8): Soul Strike's flies from over the caster to the target in a straight line on the ground's
+/// plane, slow at first and faster at the end, bulging out to one side of that line (its own way round, a fan) and back; Soul
+/// Drain's and Indulge's are the same with other numbers.
 struct Ghost {
     start: Instant,
+    /// Ticks it is ahead of its time: 1 for a ghost whose first step is its first tick.
+    lead: u32,
     ticks: u32,
+    life: u32,
     base: Vector,
     /// Along the ground toward the target, and how far a tick on average.
     forward: [f32; 2],
     speed: f32,
-    /// Taken off the speed: falls from 3.5 to −3.5 over the flight.
+    /// Taken off the speed: falls from its first value to the same below zero over the flight.
     slow: f32,
+    slow_fall: f32,
     /// How far out of the line (world units), and how fast that changes.
     bulge: f32,
     bulge_speed: f32,
     /// Which way round the line it bulges (degrees: 0 up).
     turn: f32,
     along: f32,
-    /// Where it was drawn on the last ticks, newest first.
+    /// Where it was drawn on the last ticks, newest first, and how many.
     trail: VecDeque<Vector>,
+    trail_len: usize,
+    /// Its size and colour.
+    scale: f32,
+    tint: [f32; 3],
     /// Dark Strike's red glow.
     red: bool,
+}
+
+/// What makes a ghost: when it starts, where it flies, how fast, and how it looks.
+struct GhostSpec {
+    start: Instant,
+    lead: u32,
+    life: u32,
+    /// Where its trail begins (the caster's feet) and where the ghost does.
+    trail_from: Vector,
+    base: Vector,
+    forward: [f32; 2],
+    speed: f32,
+    slow: f32,
+    turn: f32,
+    trail_len: usize,
+    scale: f32,
+    tint: [f32; 3],
+    red: bool,
+}
+
+/// One copy of a ghost to draw: where, how opaque (0 to 1), how big, its turn, its colour and whether it is a red one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GhostDraw {
+    pub at: Vector,
+    pub alpha: f32,
+    pub scale: f32,
+    pub turn: f32,
+    pub tint: [f32; 3],
+    pub red: bool,
 }
 
 /// The ghosts in flight and the Soul Strikes letting them out; the cold hits bursting; Fire Ball's and Jupitel
@@ -117,6 +155,7 @@ pub struct Prims {
     pub ground: ground::Ground,
     pub songs: songs::Songs,
     pub knight: knight::Knight,
+    pub transcend: transcend::Transcend,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -344,23 +383,48 @@ pub fn ghost_times(hits: u16) -> Vec<Duration> {
 }
 
 impl Ghost {
+    /// Soul Strike's (or Dark Strike's) ghost from `from` to `to`, bulging round `turn`.
     fn new(start: Instant, from: Vector, to: Vector, turn: f32, red: bool) -> Self {
         let [dx, dz] = [to[0] - from[0], to[2] - from[2]];
         let distance = f32::hypot(dx, dz);
         let forward = if distance > 0.0 { [dx / distance, dz / distance] } else { [0.0, 1.0] };
-        Self {
+        Self::from_spec(GhostSpec {
             start,
-            ticks: 0,
+            lead: 0,
+            life: GHOST_LIFE,
+            trail_from: from,
             base: [from[0], from[1] + GHOST_RISE, from[2]],
             forward,
             speed: distance / GHOST_LIFE as f32,
             slow: 3.5,
+            turn,
+            trail_len: GHOST_TRAIL,
+            scale: GHOST_SCALE,
+            tint: [1.0; 3],
+            red,
+        })
+    }
+
+    fn from_spec(spec: GhostSpec) -> Self {
+        Self {
+            start: spec.start,
+            lead: spec.lead,
+            ticks: 0,
+            life: spec.life,
+            base: spec.base,
+            forward: spec.forward,
+            speed: spec.speed,
+            slow: spec.slow,
+            slow_fall: 2.0 * spec.slow / spec.life as f32,
             bulge: 0.0,
             bulge_speed: -2.0,
-            turn,
+            turn: spec.turn,
             along: 0.0,
-            trail: VecDeque::new(),
-            red,
+            trail: std::iter::repeat_n(spec.trail_from, spec.trail_len).collect(),
+            trail_len: spec.trail_len,
+            scale: spec.scale,
+            tint: spec.tint,
+            red: spec.red,
         }
     }
 
@@ -368,19 +432,27 @@ impl Ghost {
     /// goes on along the line.
     fn step(&mut self) {
         self.bulge += self.bulge_speed;
-        self.bulge_speed += 4.0 / GHOST_LIFE as f32;
-        self.slow -= 7.0 / GHOST_LIFE as f32;
+        self.bulge_speed += 4.0 / self.life as f32;
+        self.slow -= self.slow_fall;
         self.along += self.speed - self.slow;
         self.ticks += 1;
         let (sin, cos) = self.turn.to_radians().sin_cos();
-        // The bulge is the game's y (down) turned about the line: up at 0°, to the line's right at 90°.
+        // The bulge is the game's y (down) turned about the line: up at 0°, to the line's right (a quarter turn clockwise
+        // seen from above: toward +x when flying toward −z) at 90°.
         let [fx, fz] = self.forward;
-        let right = [fz, -fx];
+        let right = [-fz, fx];
         let out = -self.bulge;
         let at = [self.base[0] + fx * self.along + right[0] * out * sin, self.base[1] + out * cos, self.base[2] + fz * self.along + right[1] * out * sin];
         self.trail.push_front(at);
-        self.trail.truncate(GHOST_TRAIL);
+        self.trail.truncate(self.trail_len);
     }
+}
+
+/// The ground direction a flight takes for the heading of (dx, dz): the whole degree before the heading's own (0 below 1).
+fn flight_direction(dx: f32, dz: f32) -> [f32; 2] {
+    let heading = crate::actor::step_rot(dx, dz).trunc();
+    let (sin, cos) = (if heading < 1.0 { 0.0 } else { heading - 1.0 }).to_radians().sin_cos();
+    [sin, -cos]
 }
 
 impl Prims {
@@ -390,6 +462,59 @@ impl Prims {
             return;
         }
         self.builders.push(Builder { start: now, ticks: 0, from, to, count: u32::from(count.max(1)), red });
+    }
+
+    /// Soul Drain (EF_ENERGYDRAIN2) from the caster's feet `from` to the target's `to`: three sparks fanned −90°, 0° and 90°,
+    /// each flying from over the target toward the caster, their choices from `rand(n)` (0 to n − 1).
+    pub fn soul_drain(&mut self, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let distance = f32::hypot(from[0] - to[0], from[2] - to[2]);
+        let forward = flight_direction(from[0] - to[0], from[2] - to[2]);
+        for angle in [-90.0, 0.0, 90.0] {
+            let (red, blue) = (rand(81) as f32, rand(81) as f32);
+            let scale = 1.5 + 0.1 * rand(6) as f32;
+            self.ghosts.push(Ghost::from_spec(GhostSpec {
+                start: now,
+                lead: 1,
+                life: 60,
+                trail_from: from,
+                base: [to[0], from[1] + GHOST_RISE, to[2]],
+                forward,
+                speed: distance / 60.0,
+                slow: 2.0,
+                turn: lookup(angle),
+                trail_len: 7,
+                scale,
+                tint: [(160.0 + red) / 255.0, (160.0 + blue) / 255.0, 1.0],
+                red: false,
+            }));
+        }
+    }
+
+    /// Indulge (EF_ENERGYDRAIN3) round the caster's feet `at`: three sparks on each of five ticks, each flying out against a
+    /// heading of its own and back; their choices from `rand(n)` in the order the game draws them.
+    pub fn indulge(&mut self, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        for wave in 0..5 {
+            for angle in [-90.0, 0.0, 90.0] {
+                let (first, second) = (rand(7) as f32, rand(7) as f32);
+                let (red, blue) = (rand(81) as f32, rand(81) as f32);
+                let scale = 1.0 + 0.1 * rand(6) as f32;
+                self.ghosts.push(Ghost::from_spec(GhostSpec {
+                    start: now + TICK * wave,
+                    lead: 1,
+                    life: 60,
+                    trail_from: at,
+                    base: [at[0], at[1] + GHOST_RISE, at[2]],
+                    forward: flight_direction(second - 3.0, first - 3.0),
+                    speed: 0.0,
+                    slow: 2.0,
+                    turn: lookup(angle),
+                    trail_len: 7,
+                    scale,
+                    tint: [(160.0 + red) / 255.0, 1.0, (160.0 + blue) / 255.0],
+                    red: false,
+                }));
+            }
+        }
     }
 
     /// COLDHIT (EF_COLDHIT) on a unit (None = the player) from `now`, its random choices from `rand(n)`.
@@ -414,6 +539,7 @@ impl Prims {
         self.sparkles.retain(|s| s.unit != Some(unit));
         self.walls.forget(unit);
         self.ground.forget(unit);
+        self.transcend.forget(unit);
     }
 
     /// The camera-facing squares for effect 793 at `now`.
@@ -462,11 +588,11 @@ impl Prims {
         }
         self.builders.retain(|builder| builder.ticks < ghost_tick(builder.count));
         for ghost in &mut self.ghosts {
-            while ghost.ticks < due(ghost.start).min(GHOST_LIFE) {
+            while now >= ghost.start && ghost.ticks < (due(ghost.start) + ghost.lead).min(ghost.life) {
                 ghost.step();
             }
         }
-        self.ghosts.retain(|ghost| due(ghost.start) < GHOST_LIFE);
+        self.ghosts.retain(|ghost| now < ghost.start || due(ghost.start) < ghost.life);
         for hit in &mut self.cold_hits {
             hit.advance(now);
         }
@@ -489,14 +615,22 @@ impl Prims {
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is
     /// 1 − i/n as opaque and 1 − i/2n as big.
     /// Each copy is also turned by its ghost's fan angle (degrees, clockwise on the screen).
-    pub fn ghosts(&self) -> Vec<(Vector, f32, f32, f32, bool)> {
-        let copies = GHOST_TRAIL as f32;
+    pub fn ghosts(&self) -> Vec<GhostDraw> {
         self.ghosts
             .iter()
+            .filter(|ghost| ghost.ticks > 0)
             .flat_map(|ghost| {
+                let copies = ghost.trail_len as f32;
                 ghost.trail.iter().enumerate().map(move |(age, &at)| {
                     let share = age as f32 / copies;
-                    (at, 254.0 / 255.0 * (1.0 - share), GHOST_SCALE * (1.0 - share / 2.0), ghost.turn, ghost.red)
+                    GhostDraw {
+                        at,
+                        alpha: 254.0 / 255.0 * (1.0 - share),
+                        scale: ghost.scale * (1.0 - share / 2.0),
+                        turn: ghost.turn,
+                        tint: ghost.tint,
+                        red: ghost.red,
+                    }
                 })
             })
             .collect()
@@ -616,11 +750,124 @@ mod tests {
         assert_eq!(ghost.trail.len(), GHOST_TRAIL);
         // The oldest copy is a twelfth as opaque and 13/24 as big.
         let mut flying = Prims { ghosts: vec![ghost], ..Prims::default() };
-        let (_, alpha, scale, _, _) = flying.ghosts()[GHOST_TRAIL - 1];
-        assert!((alpha - 254.0 / 255.0 / 12.0).abs() < 1e-4 && (scale - GHOST_SCALE * 13.0 / 24.0).abs() < 1e-4);
+        let oldest = flying.ghosts()[GHOST_TRAIL - 1];
+        assert!((oldest.alpha - 254.0 / 255.0 / 12.0).abs() < 1e-4 && (oldest.scale - GHOST_SCALE * 13.0 / 24.0).abs() < 1e-4);
         flying.ghosts.clear();
         prims.advance(start + TICK * 200);
         assert!(prims.ghosts.is_empty() && prims.builders.is_empty());
+    }
+
+    #[test]
+    fn soul_drain_throws_three_blue_sparks_back_to_the_caster() {
+        let start = Instant::now();
+        let mut prims = Prims::default();
+        let (caster, target) = ([0.0, 3.0, 0.0], [25.0, 0.0, 0.0]);
+        // Every draw 0: colour (160, 160, 255), scale 1.5, three sparks fanned −90, 0, 90 (−90 looked up as −89).
+        prims.soul_drain(caster, target, start, |_| 0);
+        assert_eq!(prims.ghosts.len(), 3);
+        assert_eq!(prims.ghosts.iter().map(|ghost| ghost.turn).collect::<Vec<_>>(), [-89.0, 0.0, 90.0]);
+        assert!(
+            prims
+                .ghosts
+                .iter()
+                .all(|ghost| ghost.tint == [160.0 / 255.0, 160.0 / 255.0, 1.0] && ghost.scale == 1.5 && ghost.trail_len == 7 && ghost.life == 60)
+        );
+        // It starts over the target, 10 up at the caster's height; and flies toward the caster along the heading before its own.
+        assert_eq!(prims.ghosts[1].base, [25.0, 13.0, 0.0]);
+        // F_t = t (d/60 − 2) + t (t + 1)/30 for d = 25: −18.02 at t = 23, d + 2 = 27 at t = 60; A_t = −2t + t (t − 1)/30.
+        let mut spark = Ghost::from_spec(GhostSpec {
+            start,
+            lead: 1,
+            life: 60,
+            trail_from: caster,
+            base: [25.0, 13.0, 0.0],
+            forward: [-1.0, 0.0],
+            speed: 25.0 / 60.0,
+            slow: 2.0,
+            turn: 0.0,
+            trail_len: 7,
+            scale: 1.5,
+            tint: [1.0; 3],
+            red: false,
+        });
+        let (mut along, mut bulge) = (vec![], vec![]);
+        for _ in 0..60 {
+            spark.step();
+            along.push(spark.along);
+            bulge.push(spark.bulge);
+        }
+        assert!((along[22] - -18.017).abs() < 0.01 && (along[59] - 27.0).abs() < 0.01);
+        assert!((bulge[29] - -31.0).abs() < 0.01 && (bulge[59] - -2.0).abs() < 0.01 && (bulge[0] - -2.0).abs() < 0.01);
+        // A spark turned 90° flying toward −z arcs out to +x.
+        let mut side = Ghost::new(start, [0.0; 3], [0.0, 0.0, -40.0], 90.0, false);
+        for _ in 0..20 {
+            side.step();
+        }
+        assert!(side.trail[0][0] > 10.0, "{:?}", side.trail[0]);
+        // The trail starts filled with the caster's feet: on the first draw the older copies are there, copy 3 at 254 − 3 · 254/7.
+        prims.advance(start);
+        let draws = prims.ghosts();
+        assert_eq!(draws.len(), 21);
+        assert_eq!(draws[1].at, caster);
+        assert!((draws[3].alpha - (254.0 - 3.0 * 254.0 / 7.0) / 255.0).abs() < 1e-4 && (draws[3].scale - 1.5 * (1.0 - 3.0 / 14.0)).abs() < 1e-4);
+        // Drawn on ticks 0…59, not 60.
+        prims.advance(start + TICK * 59);
+        assert_eq!(prims.ghosts().len(), 21);
+        prims.advance(start + TICK * 60);
+        assert!(prims.ghosts.is_empty());
+    }
+
+    #[test]
+    fn indulge_loops_fifteen_sparks_out_and_back() {
+        let start = Instant::now();
+        let mut prims = Prims::default();
+        let caster = [10.0, 1.0, 10.0];
+        prims.indulge(caster, start, |_| 0);
+        assert_eq!(prims.ghosts.len(), 15);
+        // Three on each of ticks 0…4; the colour (160, 255, 160), scale 1.0, speed 0, starting 10 up.
+        for wave in 0..5 {
+            assert_eq!(prims.ghosts.iter().filter(|ghost| ghost.start == start + TICK * wave).count(), 3);
+        }
+        assert!(
+            prims
+                .ghosts
+                .iter()
+                .all(|ghost| ghost.tint == [160.0 / 255.0, 1.0, 160.0 / 255.0] && ghost.scale == 1.0 && ghost.speed == 0.0 && ghost.base == [10.0, 11.0, 10.0])
+        );
+        // The heading of (−3, −3) is 315°: the flight takes the degree before, 314°.
+        let [fx, fz] = prims.ghosts[0].forward;
+        assert!((fx - 314.0_f32.to_radians().sin()).abs() < 1e-4 && (fz + 314.0_f32.to_radians().cos()).abs() < 1e-4);
+        // F_t = −(2t − t (t + 1)/30): −29 at t = 29, 0 at 59, +2 at 60.
+        let mut spark = Ghost::from_spec(GhostSpec {
+            start,
+            lead: 1,
+            life: 60,
+            trail_from: caster,
+            base: [10.0, 11.0, 10.0],
+            forward: [0.0, -1.0],
+            speed: 0.0,
+            slow: 2.0,
+            turn: 0.0,
+            trail_len: 7,
+            scale: 1.0,
+            tint: [1.0; 3],
+            red: false,
+        });
+        let mut along = vec![];
+        for _ in 0..60 {
+            spark.step();
+            along.push(spark.along);
+        }
+        assert!((along[28] - -29.0).abs() < 0.01 && along[58].abs() < 0.01 && (along[59] - 2.0).abs() < 0.01);
+        // Nothing before a wave's tick; a spark made at tick 4 is last drawn at tick 63.
+        prims.advance(start);
+        assert_eq!(prims.ghosts().len(), 3 * 7);
+        prims.advance(start + TICK * 63);
+        assert!(prims.ghosts().iter().any(|draw| draw.alpha > 0.0));
+        let last = prims.ghosts.iter().filter(|ghost| ghost.start == start + TICK * 4).count();
+        assert_eq!(last, 3);
+        prims.advance(start + TICK * 64);
+        assert!(prims.ghosts.is_empty());
     }
 
     #[test]

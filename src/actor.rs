@@ -2156,6 +2156,8 @@ pub struct Actor {
     pub ghosts: Vec<Ghost>,
     /// Cursed Circle: the body darkened.
     pub cursed: bool,
+    /// Magic Power's toggle: flips each frame the weapon is drawn.
+    pub flicker: std::cell::Cell<bool>,
 }
 
 /// The effect that leaves copies of a unit behind it while a status is on (the quickens, Overthrust...).
@@ -2166,6 +2168,8 @@ pub const AFTERIMAGE: u32 = 166;
 /// alpha 150 (Kaite).
 pub const GLOW_ADDITIVE: u32 = 0x1;
 pub const GLOW_WEAPON: u32 = 0x2;
+/// Magic Power's flicker: the weapon drawn once more added on, on every other drawn frame (players only).
+pub const GLOW_FLICKER: u32 = 0x4;
 pub const GLOW_OUTLINE: u32 = 0x8;
 pub const GLOW_REFLECT: u32 = 0x200;
 
@@ -2180,6 +2184,7 @@ pub fn status_body(effect: u32) -> Option<(u32, Option<[u8; 3]>)> {
         375 => Some((GLOW_OUTLINE, None)),
         419 => Some((GLOW_REFLECT, None)),
         474 => Some((GLOW_WEAPON, None)),
+        382 => Some((GLOW_FLICKER, None)),
         _ => None,
     }
 }
@@ -2207,7 +2212,7 @@ pub struct GlowCopy {
 /// How a part is drawn under the body flags `flags` and colour `tint`: its own copy (added on, or blended at its own
 /// alpha), and the copies around it. `breath` is Assumptio's angle in degrees (0–180), `spread` Kaite's 0–20, and
 /// `unit` the screen pixels one unit of growth takes (400 / the camera's distance).
-pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: f32, spread: f32, unit: f32) -> (GlowCopy, Vec<GlowCopy>) {
+pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: f32, spread: f32, unit: f32, player: bool) -> (GlowCopy, Vec<GlowCopy>) {
     let color = tint.map_or([1.0; 4], |[red, green, blue]| [f32::from(red) / 255.0, f32::from(green) / 255.0, f32::from(blue) / 255.0, 1.0]);
     let body = group == PartGroup::Body;
     let additive = (body && flags & GLOW_ADDITIVE != 0) || (group == PartGroup::Weapon && flags & GLOW_WEAPON != 0);
@@ -2215,8 +2220,13 @@ pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: 
     let mut copies = Vec::new();
     if body && flags & GLOW_OUTLINE != 0 {
         let sin = breath.to_radians().sin();
-        copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 100.0 / 255.0], grow: (3.0 + sin) * unit });
-        copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 120.0 / 255.0], grow: (5.0 + 2.0 * sin) * unit });
+        if player {
+            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 100.0 / 255.0], grow: (3.0 + sin) * unit });
+            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 120.0 / 255.0], grow: (5.0 + 2.0 * sin) * unit });
+        } else {
+            // A monster or an NPC gets one copy in its own colour.
+            copies.push(GlowCopy { additive: true, color: [1.0; 4], grow: (1.5 * sin + 5.0) * unit });
+        }
     }
     if flags & GLOW_REFLECT != 0 && !part.additive {
         for k in [5.0, 10.0, 15.0, 20.0] {
@@ -2328,6 +2338,7 @@ impl Actor {
             glows: Vec::new(),
             ghosts: Vec::new(),
             cursed: false,
+            flicker: std::cell::Cell::new(false),
         }
     }
 
@@ -2886,33 +2897,34 @@ impl Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     #[test]
     fn draws_parts_again_for_statuses() {
         let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
         // Berserk: the body added on in #FF6464, the weapon blended in the same colour, nothing grown.
         let (flags, tint) = status_body(368).unwrap();
-        let (body, copies) = glow_copies(flags, tint, PartGroup::Body, 0.0, 0.0, 1.0);
+        let (body, copies) = glow_copies(flags, tint, PartGroup::Body, 0.0, 0.0, 1.0, true);
         assert!(body.additive && copies.is_empty() && near(body.color[1], 100.0 / 255.0));
-        assert!(!glow_copies(flags, tint, PartGroup::Weapon, 0.0, 0.0, 1.0).0.additive);
+        assert!(!glow_copies(flags, tint, PartGroup::Weapon, 0.0, 0.0, 1.0, true).0.additive);
         // Assumptio: two added-on copies of the body, grown 3 + sin and 5 + 2·sin units (at 90°: 4 and 7), alpha 100 and
         // 120; none for the weapon.
         let (flags, tint) = status_body(375).unwrap();
-        let (body, copies) = glow_copies(flags, tint, PartGroup::Body, 90.0, 0.0, 400.0 / 300.0);
+        let (body, copies) = glow_copies(flags, tint, PartGroup::Body, 90.0, 0.0, 400.0 / 300.0, true);
         assert!(!body.additive);
         assert_eq!(copies.len(), 2);
         assert!(copies.iter().all(|copy| copy.additive));
         assert!(near(copies[0].grow, 4.0 * 400.0 / 300.0) && near(copies[1].grow, 7.0 * 400.0 / 300.0));
         assert!(near(copies[0].color[3], 100.0 / 255.0) && near(copies[1].color[3], 120.0 / 255.0));
-        assert!(glow_copies(flags, tint, PartGroup::Weapon, 90.0, 0.0, 1.0).1.is_empty());
+        assert!(glow_copies(flags, tint, PartGroup::Weapon, 90.0, 0.0, 1.0, true).1.is_empty());
         // Kaite: every part at alpha 150 with four growing copies 5 apart, fainter as they grow.
         let (flags, tint) = status_body(419).unwrap();
-        let (part, copies) = glow_copies(flags, tint, PartGroup::Gear, 0.0, 2.0, 1.0);
+        let (part, copies) = glow_copies(flags, tint, PartGroup::Gear, 0.0, 2.0, 1.0, true);
         assert!(near(part.color[3], 150.0 / 255.0));
         assert_eq!(copies.iter().map(|copy| copy.grow).collect::<Vec<_>>(), [7.0, 12.0, 17.0, 2.0]);
         assert!(near(copies[3].color[3], 90.0 / 255.0) && !copies[0].additive);
         // Aura Blade: the weapon added on; Marionette pink with the outline.
-        assert!(glow_copies(status_body(474).unwrap().0, None, PartGroup::Weapon, 0.0, 0.0, 1.0).0.additive);
+        assert!(glow_copies(status_body(474).unwrap().0, None, PartGroup::Weapon, 0.0, 0.0, 1.0, true).0.additive);
         assert_eq!(status_body(396), Some((GLOW_ADDITIVE | GLOW_OUTLINE, Some([0xFF, 0x59, 0xB6]))));
         assert_eq!(status_body(166), None);
     }
@@ -4174,5 +4186,28 @@ mod tests {
         // Any other player: 6 riding, 0 on foot; monsters and NPCs 0.
         assert_eq!((glint_rise(true, 7, RIDING), glint_rise(true, 7, 0), glint_rise(true, 1, 0)), (6.0, 0.0, 0.0));
         assert_eq!((glint_rise(false, 13, RIDING), glint_rise(false, 4023, 0)), (0.0, 0.0));
+    }
+
+    #[test]
+    fn assumptio_gives_a_monster_one_copy_and_magic_power_only_flickers() {
+        // The player's two copies, a monster's one grown 6.5 · (400/D) at breath angle 90.
+        let (_, player) = glow_copies(GLOW_OUTLINE, None, PartGroup::Body, 90.0, 0.0, 2.0, true);
+        assert_eq!(player.len(), 2);
+        let (_, monster) = glow_copies(GLOW_OUTLINE, None, PartGroup::Body, 90.0, 0.0, 2.0, false);
+        assert_eq!(monster.len(), 1);
+        assert!(monster[0].additive && monster[0].color == [1.0; 4] && (monster[0].grow - 6.5 * 2.0).abs() < 1e-4);
+        // Magic Power has the flicker flag alone and no colour.
+        assert_eq!(status_body(382), Some((GLOW_FLICKER, None)));
+        assert_eq!(GLOW_FLICKER, 0x4);
+        let (part, copies) = glow_copies(GLOW_FLICKER, None, PartGroup::Weapon, 0.0, 0.0, 1.0, true);
+        assert!(!part.additive && copies.is_empty());
+        // The toggle starts off and a copy shows when it was off: copy, none, copy.
+        let toggle = Cell::new(false);
+        let drawn = || {
+            let was = toggle.get();
+            toggle.set(!was);
+            !was
+        };
+        assert_eq!([drawn(), drawn(), drawn()], [true, false, true]);
     }
 }
