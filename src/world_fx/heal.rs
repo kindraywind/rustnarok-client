@@ -1,5 +1,5 @@
 //! The heal object of effect packets and scripts (253, 312, 313, 320, 325, 1143, 1144): crowns of light round the unit,
-//! built from rings and leaning walls of 21 segments each, with sparkles rising through them.
+//! built from rings and leaning walls (two passes of 21 segments each), with sparkles rising through them.
 
 use super::{Assets, Class, FLAGS_EFFECT, Face, Fx, Seen, Tex, WorldFx, triangles};
 use crate::world::Vector;
@@ -206,7 +206,7 @@ struct Band {
 }
 
 /// A ring of variant `v`: two passes of 21 segments standing straight up.
-// ponytail: the draws of a pass come in the table's column order (height, start angle, radius), a per-segment height after them.
+// The draws of a pass come in the table's column order (height, start angle, radius), a per-segment height after them.
 fn ring(v: u8, rand: &mut impl FnMut(u32) -> u32) -> Band {
     let shared = (v == 3).then(|| 40.0 + rand(20) as f32);
     let mut segments = Vec::new();
@@ -223,7 +223,7 @@ fn ring(v: u8, rand: &mut impl FnMut(u32) -> u32) -> Band {
             let top = match v {
                 0 | 1 | 5 => 60.0,
                 2 => 90.0,
-                3 => shared.unwrap_or(40.0),
+                3 => shared.unwrap_or_default(),
                 _ if pass == 0 => 40.0,
                 _ => 40.0 + rand(20) as f32,
             };
@@ -634,7 +634,6 @@ mod tests {
         assert_eq!(fx.iter().count(), 2);
         run_ticks(&mut fx, 2, &units);
         assert!(fx.is_empty());
-        // The sparkles of the calls made by age 50 are cut with it.
         for id in IDS {
             assert!(fx.registered(id) && is_class(id));
         }
