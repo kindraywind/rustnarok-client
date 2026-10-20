@@ -1258,14 +1258,19 @@ impl App {
         // of both lines (drawn with the names below); the server tells those each time the pointer comes onto them, as
         // what it sends unasked can be stale.
         let mut name_block = None;
-        let pointed = match hovered(&game.hit_boxes, pointer.0, players_first) {
-            Some(Owner::Unit(id)) if game.units.get(&id).is_some_and(|actor| !actor.hidden && actor.kind != NPC && actor.sprites.is_some()) => Some(id),
+        // Ourselves count here (not for clicks): the game picks the own character too, and names it.
+        let pointed = match hovered_named(&game.hit_boxes, pointer.0, players_first) {
+            Some(Owner::Unit(id)) => game
+                .units
+                .get(&id)
+                .filter(|actor| !actor.hidden && actor.kind != NPC && actor.sprites.is_some())
+                .zip(feet_of.get(&id))
+                .map(|(actor, &feet)| (id, actor, feet)),
+            Some(Owner::Player) => Some((game.account_id, &game.player, player_feet)),
             _ => None,
         };
-        if let Some(id) = pointed
-            && let Some(actor) = game.units.get(&id)
-            && let Some(&feet) = feet_of.get(&id)
-        {
+        let pointed_id = pointed.map(|(id, ..)| id);
+        if let Some((id, actor, feet)) = pointed {
             let tag = game.name_tags.get(&id).filter(|_| actor.kind == PLAYER);
             let color = name_color(actor.kind, actor.job, actor.level, our_summons.contains(&Some(id)), own_level);
             let siege = game.map_property.is_some_and(|(_, flags)| versus::siege(flags));
@@ -1286,11 +1291,11 @@ impl App {
                 }
                 None => labels.push((shown_name.to_owned(), feet, color)),
             }
-            if actor.kind == PLAYER && game.pointed != pointed {
+            if actor.kind == PLAYER && game.pointed != pointed_id {
                 let _ = game.session.ask_name(id);
             }
         }
-        game.pointed = pointed;
+        game.pointed = pointed_id;
         // The item under the pointer shows its name and amount.
         if let Some(Owner::Item(id)) = hovered(&game.hit_boxes, pointer.0, players_first)
             && let Some(item) = game.ground.get(&id)
