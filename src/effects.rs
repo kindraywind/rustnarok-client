@@ -1553,7 +1553,7 @@ impl Banded {
         if is_bloom(self.effect) {
             self.bloom_bands(age).into_iter().map(|(_, band, heights)| (band, heights)).collect()
         } else {
-            // ponytail: earth (56) and poison (59) turn like water, fire and wind.
+            // ponytail: earth (56) and poison (59) turn like water, fire and wind; Earth Grave's cast (1664) has its own sheet.
             let earth = self.effect == EARTH_CAST;
             let shape_of: fn(usize, u32, u32) -> Band = if earth { earth_turning } else { turning };
             let wave: fn(usize, f32, u32, usize) -> f32 = if earth { earth_height } else { turning_height };
@@ -3856,6 +3856,10 @@ impl Effects {
     /// Shows what a skill's unit on the ground shows (`kind`: rathena's UNT_ number) until `forget(id)`.
     #[allow(clippy::too_many_arguments)]
     pub fn play_unit(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, kind: u32, id: u32, at: Vector, range: u8, now: Instant) {
+        // Epiclesis' rings start once with their unit: a second sight of it leaves them be.
+        if table.units.get(&kind) == Some(&EPICLESIS_CELL) && self.prims.holes.stands(id) {
+            return;
+        }
         // The server tells again of units coming back into sight.
         self.forget(id);
         self.unit_kinds.insert(id, kind);

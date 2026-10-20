@@ -323,6 +323,11 @@ impl Holes {
         }
     }
 
+    /// Whether skill unit `id` has a hole standing.
+    pub fn stands(&self, id: u32) -> bool {
+        self.holes.iter().any(|hole| hole.id == id)
+    }
+
     pub fn forget(&mut self, id: u32) {
         self.holes.retain(|hole| hole.id != id);
     }
@@ -531,8 +536,9 @@ mod tests {
         // It lives 99 999 999 ticks and is started once: one hole, whatever the time.
         holes.advance(start + TICK * 3_000_000);
         assert_eq!(holes.holes.len(), 1);
+        assert!(holes.stands(7) && !holes.stands(8));
         holes.forget(7);
-        assert!(holes.holes.is_empty());
+        assert!(holes.holes.is_empty() && !holes.stands(7));
     }
 
     #[test]
