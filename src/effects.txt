@@ -725,10 +725,6 @@ skill	2295	effectId	816
 skill	2296	effectId	817
 skill	2297	effectId	818
 skill	2298	effectId	820
-skill	2310	beforeHitEffectId	906
-skill	2318	effectId	908
-skill	2319	effectId	909
-skill	2325	effectId	910
 skill	2328	effectId	888
 skill	2414	groundEffectId	856
 skill	2417	effectId	863
@@ -1414,8 +1410,6 @@ part	856	3D	file=effect/melody_b.bmp;red=1;green=0.6;blue=0.6;alphaMax=0.6;attac
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=30000;red=0.0001;green=1.0;blue=0.0001;size=400;posz=7;zIndex=1;wav=effect/ef_readyportal;file=effect/ef_epitree.tga
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=990;duplicate=15;timeBetweenDupli=2000;red=0.0001;green=1.0;blue=0.0001;sizeStart=380;sizeEnd=420;posz=7;zIndex=1;file=effect/ef_epitree.tga
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=990;duplicate=15;timeBetweenDupli=2000;delayOffset=1000;red=0.0001;green=1.0;blue=0.0001;sizeStart=420;sizeEnd=380;posz=7;zIndex=1;file=effect/ef_epitree.tga
-part	906	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;rotate=true;angle=0;toAngle=-611;poszStart=20;poszEnd=5;size=100;zIndex=1;file=effect/shield.bmp;wav=effect/프레셔
-part	906	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;delayOffset=501;fadeOut=true;angle=-611;posz=5;size=100;zIndex=1;file=effect/shield.bmp;delayWav=500;wav=effect/lg_shieldpress
 part	930	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;rotate=true;angle=0;toAngle=-611;poszStart=20;poszEnd=5;size=100;zIndex=1;file=effect/cross1.bmp;wav=effect/프레셔
 part	930	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;delayOffset=501;fadeOut=true;angle=-611;posz=5;size=100;zIndex=1;file=effect/cross1.bmp
 ring	2	textureName=lens2;angleX=-90;posZ=1;rotateWithCamera=true;bottomSize=0.37;topSize=1;height=4;animation=1;fade=true;duration=150;alphaMax=0.8;wav=effect/ef_hit3;attachedEntity=true
@@ -1579,6 +1573,7 @@ func	732	quake	0	200
 func	756	quake	288	200
 func	835	quake	704	650
 func	863	quake	0	650
+func	906	quake	528	650
 unit	133	141
 rsm	143	외부소품\트랩03_3
 rsm	144	외부소품\트랩02
@@ -2051,11 +2046,14 @@ wav	889	effect\mon_맹룡과강	80
 wav	892	effect\EF_hit2	160
 wav	892	effect\EF_hit4	320
 wav	893	effect\SR_KNUCKLEARROW	0	listener
-wav	906	effect\프레셔	0
-wav	906	effect\lg_shieldpress	500
+wav	905	effect\LG_TRAMPLE	0	listener
+wav	906	effect\프레셔	48
+wav	906	effect\LG_SHIELDPRESS	400
+wav	907	effect\LG_PINPOINTATTACK	416
 wav	908	effect\lg_prestige	0
-wav	909	effect\lg_banding	0
-wav	910	effect\lg_inspiration	0
+wav	909	effect\LG_BANDING	160
+wav	910	effect\LG_INSPIRATION	160
+wav	911	effect\EF_BeginSpell	0
 wav	922	effect\s사이킥웨이브	0
 wav	928	effect\wl_jackfrost	0
 wav	929	effect\s워머	0
@@ -4790,6 +4788,7 @@ ground	2449	caster	886
 ground	2450	caster	886
 ground	2518	caster	885
 ground	2518	caster	886
+ground	2518	ground	899
 ground	2571	ground	1062
 ground	5028	ground	1106
 ground	5042	ground	1112
@@ -5145,6 +5144,7 @@ skillwav	2001	effect\닌자_던지기	0	listener
 skillwav	2014	effect\닌자_던지기	0	listener
 skillwav	2028	effect\t_낙법	0	listener
 skillwav	2021	effect\수둔	0	listener
+skillwav	2324	effect\LG_HESPERUSLIT	0	listener
 hitwav	2034	effect\mon_맹룡과강	0	listener
 skillwav	2350	effect\스윙댄스	0	listener
 skillwav	2351	effect\연인들을위한심포니	0	listener

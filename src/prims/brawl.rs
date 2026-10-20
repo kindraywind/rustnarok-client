@@ -19,7 +19,16 @@ pub const STORM: &str = "data\\texture\\effect\\storm2.tga";
 pub const STRIP: &str = "data\\texture\\effect\\line3.tga";
 /// Hesperus Lit's disc: a ring blast (128 px) that grows 7 % a tick for 69 ticks.
 pub const BLAST: &str = "data\\texture\\effect\\explosive_1_128.bmp";
-const DISC_LAST: u32 = 69;
+/// A disc's colour, how fast its alpha rises to ten times that, and the last tick it is drawn.
+pub struct DiscLook {
+    tint: [f32; 3],
+    rise: f32,
+    last: u32,
+}
+
+/// Hesperus Lit's faint blue disc (#0505FF) and Trample's very faint dark red one (#9B0505).
+pub const BLUE_DISC: DiscLook = DiscLook { tint: [5.0 / 255.0, 5.0 / 255.0, 1.0], rise: 6.0, last: 69 };
+pub const RED_DISC: DiscLook = DiscLook { tint: [155.0 / 255.0, 5.0 / 255.0, 5.0 / 255.0], rise: 2.0, last: 29 };
 pub const GOLD_STRIP: &str = "data\\texture\\effect\\line3y.tga";
 pub const RAY: &str = sniper::RAY;
 pub const CLOUD: &str = sniper::CLOUD;
@@ -374,9 +383,9 @@ pub fn disc_half(n: u32) -> f32 {
     0.9 * 15.0 * 1.07_f32.powi(n as i32)
 }
 
-/// The disc's alpha at n: 6 a tick to 60, then 1 less a tick.
-pub fn disc_alpha(n: u32) -> f32 {
-    if n <= 10 { 6.0 * n as f32 } else { (60.0 - (n - 10) as f32).max(0.0) }
+/// The disc's alpha at n: `rise` a tick to ten times that, then 1 less a tick.
+pub fn disc_alpha(rise: f32, n: u32) -> f32 {
+    if n <= 10 { rise * n as f32 } else { (10.0 * rise - (n - 10) as f32).max(0.0) }
 }
 
 /// Hundred Spear's line alpha at its age a: 20 a tick to 200, held to 20, then 2 less a tick.
@@ -412,8 +421,9 @@ struct Spread {
     last: u32,
 }
 
-/// Hesperus Lit's and Chilly Air's faint blue disc spreading flat under a unit.
+/// Hesperus Lit's faint blue disc and Trample's faint red one spreading flat under a unit.
 struct Disc {
+    look: &'static DiscLook,
     unit: Option<u32>,
     start: Instant,
 }
@@ -596,9 +606,9 @@ impl Brawl {
         }
     }
 
-    /// The disc of Hesperus Lit and Chilly Air under `unit`.
-    pub fn disc(&mut self, unit: Option<u32>, now: Instant) {
-        self.discs.push(Disc { unit, start: now });
+    /// Hesperus Lit's disc (or Trample's, `red`) under `unit`.
+    pub fn disc(&mut self, red: bool, unit: Option<u32>, now: Instant) {
+        self.discs.push(Disc { look: if red { &RED_DISC } else { &BLUE_DISC }, unit, start: now });
     }
 
     /// Tetra Vortex's cast on `unit` for `length` ticks, replacing the last.
@@ -748,7 +758,7 @@ impl Brawl {
             }
         }
         self.tetras.retain(|tetra| passes(tetra.start, now) <= tetra.length + 33);
-        self.discs.retain(|disc| passes(disc.start, now) <= DISC_LAST + 1);
+        self.discs.retain(|disc| passes(disc.start, now) <= disc.look.last + 1);
         self.flares.retain(|flares| passes(flares.start, now) <= 30);
         self.hops.retain(|hops| passes(hops.start, now) <= 100);
         self.rays.retain(|rays| passes(rays.start, now) <= RAY_LAST + 1);
@@ -888,11 +898,12 @@ impl Brawl {
         let mut walls = Vec::new();
         for disc in &self.discs {
             let (Some(feet), n) = (position_of(disc.unit), passes(disc.start, now)) else { continue };
-            if n == 0 || n > DISC_LAST {
+            if n == 0 || n > disc.look.last {
                 continue;
             }
             let half = disc_half(n);
-            let tint = [5.0 / 255.0, 5.0 / 255.0, 1.0, disc_alpha(n) / 255.0];
+            let [red, green, blue] = disc.look.tint;
+            let tint = [red, green, blue, disc_alpha(disc.look.rise, n) / 255.0];
             let corner = |x: f32, z: f32, uv: [f32; 2]| MeshVertex { position: [feet[0] + x * half, feet[1] + 5.0, feet[2] + z * half], uv, tint };
             let [a, b, c, d] = [corner(1.0, 0.0, [0.0, 1.0]), corner(0.0, 1.0, [1.0, 1.0]), corner(-1.0, 0.0, [1.0, 0.0]), corner(0.0, -1.0, [0.0, 0.0])];
             walls.push(Wall { texture: BLAST, vertices: vec![a, b, c, a, c, d], additive: true, forced: false });
@@ -1369,9 +1380,9 @@ mod tests {
         assert!(walls.iter().all(|wall| wall.vertices.iter().all(|vertex| vertex.tint[..3] == KNUCKLE_TINTS[2])));
         // Hesperus Lit: the half-diagonal 0.9 × 15 × 1.07ⁿ, alpha 6, 60, 59, 1, 0 at n = 1, 10, 11, 69, 70.
         assert!((disc_half(1) - 0.9 * 15.0 * 1.07).abs() < 1e-3);
-        assert_eq!([1, 10, 11, 69, 70].map(disc_alpha), [6.0, 60.0, 59.0, 1.0, 0.0]);
+        assert_eq!([1, 10, 11, 69, 70].map(|n| disc_alpha(6.0, n)), [6.0, 60.0, 59.0, 1.0, 0.0]);
         let mut disc = Brawl::default();
-        disc.disc(Some(1), start);
+        disc.disc(false, Some(1), start);
         let feet = [3.0, 2.0, 4.0];
         let walls = disc.top_meshes(start, |_| Some(feet));
         assert_eq!(walls.len(), 1);
@@ -1382,5 +1393,26 @@ mod tests {
         assert!((wall.vertices[0].position[0] - (feet[0] + disc_half(1))).abs() < 1e-3);
         assert!(!disc.top_meshes(start + TICK * 68, |_| Some(feet)).is_empty() && disc.top_meshes(start + TICK * 69, |_| Some(feet)).is_empty());
         assert!(disc.top_meshes(start, |_| None).is_empty(), "it follows the unit");
+    }
+
+    #[test]
+    fn trample_spreads_a_very_faint_dark_red_disc() {
+        let start = Instant::now();
+        // R = 14.4 at n = 1, 26.6 at 10, 102.8 at 30; alpha 2, 20, 19, 1, 0 at n = 1, 10, 11, 29, 30.
+        assert_eq!([1, 10, 30].map(|n| (disc_half(n) * 10.0).round() / 10.0), [14.4, 26.6, 102.8]);
+        assert_eq!([1, 10, 11, 29, 30].map(|n| disc_alpha(2.0, n)), [2.0, 20.0, 19.0, 1.0, 0.0]);
+        let mut brawl = Brawl::default();
+        brawl.disc(true, Some(1), start);
+        let feet = [3.0, 2.0, 4.0];
+        let walls = brawl.top_meshes(start, |_| Some(feet));
+        assert_eq!(walls.len(), 1);
+        assert!(walls[0].additive && walls[0].texture == BLAST);
+        assert_eq!(walls[0].vertices[0].tint, [155.0 / 255.0, 5.0 / 255.0, 5.0 / 255.0, 2.0 / 255.0]);
+        // Drawn for n = 1 to 29, following the caster.
+        assert!(!brawl.top_meshes(start + TICK * 28, |_| Some(feet)).is_empty() && brawl.top_meshes(start + TICK * 29, |_| Some(feet)).is_empty());
+        assert!(brawl.top_meshes(start, |_| None).is_empty());
+        // Hesperus Lit's blue disc beside it keeps its own length.
+        brawl.disc(false, Some(1), start);
+        assert_eq!(brawl.top_meshes(start + TICK * 40, |_| Some(feet)).len(), 1);
     }
 }

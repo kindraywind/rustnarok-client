@@ -1002,7 +1002,10 @@ pub fn circle_ignores(status: u16, on: bool, value: i64) -> bool {
 
 /// A cast's aura: one a caster has at a time.
 pub fn is_cast_aura(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59 | TETRA_CASTING | SHADOW_CAST | BUBBLE_CAST | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    matches!(
+        effect,
+        12 | 54..=59 | TETRA_CASTING | SHADOW_CAST | BUBBLE_CAST | COUPLE_CASTING | BLUE_CASTING | GREEN_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923
+    )
 }
 
 /// The effects made of bands.
@@ -1023,6 +1026,7 @@ pub fn is_banded(effect: u32) -> bool {
                 | 367
                 | 441
                 | TETRA_CASTING
+                | GREEN_CASTING
                 | SHADOW_CAST
                 | BUBBLE_CAST
                 | 1872
@@ -1080,7 +1084,8 @@ const ARRIVAL_BANDS: [[f32; 3]; 4] = [[3.7, 30.0, 90.0], [3.4, 30.0, 90.0], [3.6
 fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
     (cast_ms / 16).max(if effect == BUBBLE_CAST {
         100
-    } else if matches!(effect, 12 | 58 | TETRA_CASTING | SHADOW_CAST | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) {
+    } else if matches!(effect, 12 | 58 | TETRA_CASTING | SHADOW_CAST | COUPLE_CASTING | BLUE_CASTING | GREEN_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    {
         56
     } else {
         70
@@ -1111,6 +1116,7 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         BUBBLE_CAST => ("ring_white", [0xFF, 0xFF, 0xFF], true),
         COUPLE_CASTING => ("ring_red", [0xFF, 0x59, 0xB6], true),
         BLUE_CASTING => ("ring_blue", [0x64, 0x64, 0xFF], true),
+        GREEN_CASTING => ("ring_white", [0x64, 0xFF, 0x64], true),
         54 => ("ring_blue", [0xC3, 0xC3, 0xFF], false),
         55 => ("ring_yellow", [0xFF, 0xAF, 0xAF], true),
         57 => ("ring_yellow", [0xFF, 0xFF, 0xFF], false),
@@ -1251,7 +1257,10 @@ fn arrival_bands(age: u32) -> [Band; 4] {
 
 /// The auras made of two sets of blooming bands.
 fn is_bloom(effect: u32) -> bool {
-    matches!(effect, 12 | 58 | 367 | TETRA_CASTING | SHADOW_CAST | BUBBLE_CAST | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    matches!(
+        effect,
+        12 | 58 | 367 | TETRA_CASTING | SHADOW_CAST | BUBBLE_CAST | COUPLE_CASTING | BLUE_CASTING | GREEN_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923
+    )
 }
 
 impl Banded {
@@ -1880,6 +1889,15 @@ const TIGER_CANNON_FX: u32 = 889;
 const ELBOW_LINES: u32 = 892;
 const KNUCKLE_LINES: u32 = 893;
 const GROUND_SHAKE: u32 = 894;
+/// Hesperus Lit's pillars, Trample's red disc, Shield Press' shield, Pinpoint Attack's shields and swords, the three buffs' needles
+/// and the Genetic casts' green aura (`prims::chi`, `prims::brawl`, `prims::knight`, `prims::guard`).
+const BLUE_LINE: u32 = 899;
+const GROUND_SHAKE_RED: u32 = 905;
+const SHIELD_PRESS_FX: u32 = 906;
+const PINPOINT_FX: u32 = 907;
+const PRESTIGE_FX: u32 = 908;
+const INSPIRATION_FX: u32 = 910;
+const GREEN_CASTING: u32 = 911;
 /// Exceed Break's needles, the Dragon Combo's rays, the Sura's chi burst and Moon Slasher's spin (`prims::chi`, `prims::brawl`).
 const PRIME_CHARGE: u32 = 882;
 const DRAGON_RAYS: u32 = 885;
@@ -2042,7 +2060,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 37] = [
+pub const AIMED: [u32; 38] = [
+    PINPOINT_FX,
     ELBOW_LINES,
     KNUCKLE_LINES,
     SPEAR_RUSH,
@@ -2122,6 +2141,9 @@ impl Effects {
             if quagmire_heard(pick(0, 11)) {
                 self.play_sounds(table, id, [at[0], at[1] - 100.0, at[2]], now);
             }
+        } else if id == GREEN_CASTING {
+            // The Genetic casts sound 100 up, so quietly.
+            self.play_sounds(table, id, [at[0], at[1] + 100.0, at[2]], now);
         } else {
             self.play_sounds(table, id, at, now);
         }
@@ -2451,9 +2473,27 @@ impl Effects {
                 self.textures.entry(sniper::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sniper::RAY, true).ok());
                 self.prims.monk.tiger_cannon(at, now, self.min, |n| pick(0, n.saturating_sub(1)));
             }
+            (BLUE_LINE, _) => {
+                self.textures.entry(chi::RING_BLUE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, chi::RING_BLUE, true).ok());
+                self.prims.chi.pillars(at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (GROUND_SHAKE_RED, Target::Unit(unit)) => {
+                self.textures.entry(brawl::BLAST.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::BLAST, true).ok());
+                self.prims.brawl.disc(true, unit, now);
+            }
+            (SHIELD_PRESS_FX, Target::Unit(unit)) => {
+                for (path, keyed) in [(knight::SHIELD, false), (knight::CROSS_FLASH, true)] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, keyed).ok());
+                }
+                self.prims.knight.pressure(true, unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (PRESTIGE_FX..=INSPIRATION_FX, Target::Unit(unit) | Target::Status(unit, _)) => {
+                self.textures.entry(chi::NEEDLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, chi::NEEDLE, true).ok());
+                self.prims.chi.buff(id, unit, 500, now, |n| pick(0, n.saturating_sub(1)));
+            }
             (GROUND_SHAKE, Target::Unit(unit)) => {
                 self.textures.entry(brawl::BLAST.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::BLAST, true).ok());
-                self.prims.brawl.disc(unit, now);
+                self.prims.brawl.disc(false, unit, now);
             }
             (SOUND_NOTES, _) => {
                 for path in guard::NOTES {
@@ -2651,7 +2691,7 @@ impl Effects {
                 for (path, keyed) in [(knight::CROSS, false), (knight::CROSS_FLASH, true)] {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, keyed).ok());
                 }
-                self.prims.knight.pressure(unit, now, |n| pick(0, n.saturating_sub(1)));
+                self.prims.knight.pressure(false, unit, now, |n| pick(0, n.saturating_sub(1)));
             }
             (MARTYR, Target::Unit(unit)) => {
                 self.textures.entry(knight::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, knight::RAY, true).ok());
@@ -3277,6 +3317,13 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.waterballs.throw(from, to, now);
             }
+            PINPOINT_FX => {
+                for path in [guard::SHIELD, guard::SWORD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.play_sounds(table, id, from, now);
+                self.prims.guard.pinpoint(caster, to, now, |n| pick(0, n.saturating_sub(1)));
+            }
             ELBOW_LINES => {
                 self.textures.entry(sniper::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sniper::CLOUD, true).ok());
                 self.play_sounds(table, id, from, now);
@@ -3610,6 +3657,7 @@ impl Effects {
         self.prims.transcend.forget_status(unit, status);
         self.prims.brawl.forget_status(unit, status);
         self.prims.waves.forget_status(unit, status);
+        self.prims.chi.forget_status(unit, status);
         if status == 330 {
             self.prims.circles.forget(unit);
         }
@@ -6197,5 +6245,52 @@ mod tests {
         assert!(AIMED.contains(&KNUCKLE_LINES) && table.struck(2336).unwrap().contains(&(Who::Caster, KNUCKLE_LINES)));
         assert_eq!(sounds(KNUCKLE_LINES), [("effect\\SR_KNUCKLEARROW", 0, true)]);
         assert!(table.struck(2324).unwrap().contains(&(Who::Target, GROUND_SHAKE)) && table.struck(8418).unwrap().contains(&(Who::Caster, GROUND_SHAKE)));
+    }
+
+    #[test]
+    fn the_royal_guard_buffs_hesperus_lit_trample_and_the_genetic_casts_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // 899: Hesperus Lit's target and Ride in Lightning's cell; Hesperus Lit's sound is the skill's, at the use.
+        assert!(table.struck(2324).unwrap().contains(&(Who::Target, BLUE_LINE)) && table.ground(2518).unwrap().contains(&(Who::Ground, BLUE_LINE)));
+        assert!(!table.sounds.contains_key(&BLUE_LINE));
+        assert_eq!((table.skill_sounds[&2324][0].file.as_str(), table.skill_sounds[&2324][0].listener), ("effect\\LG_HESPERUSLIT", true));
+        // 905: Trample's disc on its caster with the sound at the listener.
+        assert!(table.struck(2309).unwrap().contains(&(Who::Caster, GROUND_SHAKE_RED)));
+        assert_eq!(sounds(GROUND_SHAKE_RED), [("effect\\LG_TRAMPLE", 0, true)]);
+        // 906: no part rows or skill row left; the sounds at 48 and 400 ms and the shake at 528 ms.
+        assert_eq!(sounds(SHIELD_PRESS_FX), [("effect\\프레셔", 48, false), ("effect\\LG_SHIELDPRESS", 400, false)]);
+        assert_eq!(table.quakes[&SHIELD_PRESS_FX], [(Duration::from_millis(528), QUAKE_LONG)]);
+        assert!(!table.parts.contains_key(&SHIELD_PRESS_FX) && table.skill(2310, "beforeHitEffectId").is_empty());
+        assert!(table.struck(2310).unwrap().contains(&(Who::Caster, SHIELD_PRESS_FX)) && table.struck(2324).unwrap().contains(&(Who::Target, SHIELD_PRESS_FX)));
+        // 907: aimed from the caster at the target, its sound 416 ms in at the caster.
+        assert!(AIMED.contains(&PINPOINT_FX) && table.struck(2312).unwrap().contains(&(Who::Caster, PINPOINT_FX)));
+        assert_eq!(sounds(PINPOINT_FX), [("effect\\LG_PINPOINTATTACK", 416, false)]);
+        // 908 to 910: the skills' effect rows are gone; Banding's status holds 909; the sounds at 160 ms (908 has none new).
+        for skill in [2318, 2319, 2325] {
+            assert!(table.skill(skill, "effectId").is_empty(), "{skill}");
+        }
+        assert!(table.used(2318).unwrap().contains(&(Who::Caster, PRESTIGE_FX)) && table.used(2325).unwrap().contains(&(Who::Caster, INSPIRATION_FX)));
+        assert!(table.status(405).contains(&(PRESTIGE_FX + 1)));
+        assert_eq!((sounds(909), sounds(910)), (vec![("effect\\LG_BANDING", 160, false)], vec![("effect\\LG_INSPIRATION", 160, false)]));
+        assert_eq!(sounds(PRESTIGE_FX), [("effect\\lg_prestige", 0, false)]);
+    }
+
+    #[test]
+    fn the_genetic_casts_glow_green_and_sound_100_up() {
+        // A cast aura like 826's: white rings tinted #64FF64, added on, the short aura (60 ticks or less) and the long cycle.
+        assert!(is_cast_aura(GREEN_CASTING) && is_banded(GREEN_CASTING) && is_bloom(GREEN_CASTING));
+        assert_eq!(aura_look(GREEN_CASTING), ("ring_white", [0x64, 0xFF, 0x64], true));
+        assert_eq!((aura_ticks(GREEN_CASTING, 400), aura_ticks(GREEN_CASTING, 2000), aura_ticks(GREEN_CASTING, 0)), (56, 125, 56));
+        let first = |ticks: u32| (0..4).map(|band| bloom(0, band, ticks, 0).map(|shape| shape.alpha)).collect::<Vec<_>>();
+        assert_eq!(first(60), [None, None, None, None], "the short aura starts every band at 0");
+        assert_eq!(first(62)[0], Some(177.0), "the long cycle starts from 180, 3 down on the first tick");
+        let table = Table::load();
+        assert_eq!(table.cast_aura(2494, 12), Some(GREEN_CASTING));
+        assert!(table.caster(2494).is_some_and(|effect| effect == GREEN_CASTING));
+        assert_eq!(
+            table.sounds[&GREEN_CASTING].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>(),
+            [("effect\\EF_BeginSpell", 0, false)]
+        );
     }
 }

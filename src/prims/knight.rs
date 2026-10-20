@@ -14,6 +14,7 @@ use crate::world::{MeshVertex, Vector};
 
 pub const PURPLE_SLASH: &str = "data\\texture\\effect\\purpleslash.tga";
 pub const CROSS: &str = "data\\texture\\effect\\cross_old.bmp";
+pub const SHIELD: &str = super::guard::SHIELD;
 pub const CROSS_FLASH: &str = "data\\texture\\effect\\explosive_1_128.bmp";
 pub const RAY: &str = "data\\texture\\effect\\alpha_center.tga";
 
@@ -50,6 +51,8 @@ struct Breaker {
 }
 
 struct Pressure {
+    /// What falls: the cross, or Shield Press' shield.
+    icon: &'static str,
     unit: Option<u32>,
     start: Instant,
     spin: f32,
@@ -239,9 +242,10 @@ impl Knight {
         }
     }
 
-    /// Pressure on `unit`: a cross falls onto it, its spin from `rand(n)`.
-    pub fn pressure(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
-        self.pressures.push(Pressure { unit, start: now, spin: rand(360) as f32, landed: None });
+    /// Pressure on `unit`: a cross falls onto it (a shield for Shield Press and Hesperus Lit), its spin from `rand(n)`.
+    pub fn pressure(&mut self, shield: bool, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let icon = if shield { SHIELD } else { CROSS };
+        self.pressures.push(Pressure { icon, unit, start: now, spin: rand(360) as f32, landed: None });
     }
 
     /// Martyr's Reckoning on `unit`: 20 rays, per ray the plane's turn from `rand(n)`.
@@ -377,13 +381,13 @@ impl Knight {
             let n = t + 1;
             let at = |n: u32| [feet[0], feet[1] + cross_height(n), feet[2]];
             if (1..=71).contains(&n) {
-                crosses.push(Potion { icon: CROSS, at: at(n), spin: cross_spin(pressure.spin, n), alpha: cross_alpha(n) });
+                crosses.push(Potion { icon: pressure.icon, at: at(n), spin: cross_spin(pressure.spin, n), alpha: cross_alpha(n) });
             }
             for k in 1..=3 {
                 let Some(earlier) = n.checked_sub(k).filter(|&earlier| (1..=71).contains(&earlier)) else { continue };
                 let alpha = (cross_alpha(earlier) - (75 + 25 * k) as f32).max(0.0);
                 if alpha > 0.0 {
-                    crosses.push(Potion { icon: CROSS, at: at(earlier), spin: cross_spin(pressure.spin, n), alpha });
+                    crosses.push(Potion { icon: pressure.icon, at: at(earlier), spin: cross_spin(pressure.spin, n), alpha });
                 }
             }
         }
@@ -486,7 +490,7 @@ mod tests {
     fn pressure_drops_a_cross_with_three_ghosts_and_lands_a_flash() {
         let start = Instant::now();
         let mut knight = Knight::default();
-        knight.pressure(Some(1), start, |_| 0);
+        knight.pressure(false, Some(1), start, |_| 0);
         // n: height, alpha — 1: 112, 20; 10: 85, 200; 32: 19, 200; 33: 19, 195; 71: 19, 5; 72: gone.
         assert_eq!([1, 10, 32, 33, 71].map(cross_height), [112.0, 85.0, 19.0, 19.0, 19.0]);
         assert_eq!([1, 10, 32, 33, 71, 72].map(cross_alpha), [20.0, 200.0, 200.0, 195.0, 5.0, 0.0]);
@@ -614,5 +618,23 @@ mod tests {
         assert!((slash_distance(27) - 32.3).abs() < 0.1);
         knight.advance(start + TICK * 61, |_| None);
         assert!(knight.breakers.is_empty());
+    }
+
+    #[test]
+    fn shield_press_drops_a_shield_the_way_pressure_drops_a_cross() {
+        let start = Instant::now();
+        let feet = [3.0, 1.0, 4.0];
+        let mut knight = Knight::default();
+        knight.pressure(true, Some(1), start, |_| 0);
+        let crosses = knight.crosses(start + TICK * 12, |_| Some(feet));
+        // The shield in the cross' place: 200 at n = 13 then the ghosts, and the same heights.
+        assert_eq!(crosses.iter().map(|cross| cross.alpha).collect::<Vec<_>>(), [200.0, 100.0, 75.0, 50.0]);
+        assert!(crosses.iter().all(|cross| cross.icon == SHIELD));
+        assert_eq!(SHIELD, "data\\texture\\effect\\shield.bmp");
+        assert_eq!([1, 10, 32, 33].map(cross_height), [112.0, 85.0, 19.0, 19.0]);
+        assert_eq!([1, 10, 32, 33].map(cross_alpha), [20.0, 200.0, 200.0, 195.0]);
+        // Pressure's own cross is unchanged.
+        knight.pressure(false, Some(2), start, |_| 0);
+        assert!(knight.crosses(start, |_| Some(feet)).iter().any(|cross| cross.icon == CROSS));
     }
 }

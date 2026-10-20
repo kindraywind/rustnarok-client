@@ -55,6 +55,8 @@ const COLUMNS: [f32; 5] = [0.0, 45.0, 90.0, 135.0, 180.0];
 const STRIP_ELEMENTS: usize = 32;
 pub const STRIP_TINT: [f32; 3] = [250.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0];
 const STRIP_TICKS: u32 = 300;
+/// Pinpoint Attack's squares (#0505FF).
+const PINPOINT_TINT: [f32; 3] = [5.0 / 255.0, 5.0 / 255.0, 1.0];
 
 /// One of Fog Wall's boxes over a cell.
 struct Fog {
@@ -82,6 +84,8 @@ struct Strip {
     pieces: Vec<Piece>,
     /// Strip Accessory's: upright squares in turning vertical planes, seen through the ground, not squares facing the camera.
     upright: bool,
+    /// The colour of the upright squares.
+    tint: [f32; 3],
 }
 
 /// Preserve's dome round the caster.
@@ -104,6 +108,8 @@ enum Flicker {
     Pierce(u32),
     /// Memorize's yellow (ticks 10 to 35).
     Memorize,
+    /// Pinpoint Attack's weapon, added on while e mod 4 is 0 or 1 (ticks 0 to 299).
+    Weapon,
     /// Double Casting's red strobe in a white glow (ticks 10 to 50).
     DoubleCast,
     /// Refresh's and Abundance's green flicker, the poisons' magenta, in outline copies (ticks 0 to 30).
@@ -186,6 +192,7 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
     match flicker {
         Flicker::Poison => (e <= 80).then_some(if even { (GLOW_ADDITIVE, Some([0xFF, 0x00, 0xFF])) } else { (0, Some([255; 3])) }),
         Flicker::Strobe(rgb, first, last) => (first..=last).contains(&e).then_some(if even { (GLOW_ADDITIVE, Some(rgb)) } else { (0, Some([255; 3])) }),
+        Flicker::Weapon => (e < 300 && e % 4 < 2).then_some((crate::actor::GLOW_WEAPON, None)),
         Flicker::Memorize => (10..=35).contains(&e).then_some(if even { (GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])) } else { (0, Some([255; 3])) }),
         Flicker::DoubleCast => {
             (10..=50).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) })
@@ -294,22 +301,29 @@ impl Guard {
     /// Full Strip's pieces flying out from the target's feet `at`: 8 prims of 4, alternating shield and sword; each piece's
     /// choices from `rand(n)` in the order the game draws them (its wait, azimuth, elevation, spin, and one that is not used).
     pub fn strip(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.burst(at, now, false, 8, |prim| if prim % 2 == 0 { (SHIELD, 5.0) } else { (SWORD, 9.0) }, rand);
+        self.burst(at, now, false, 8, STRIP_TINT, |prim| if prim % 2 == 0 { (SHIELD, 5.0) } else { (SWORD, 9.0) }, rand);
     }
 
     /// Strip Accessory's 32 red icons in upright planes, eight prims of four, their fifth draw each the plane's turn.
     pub fn accessory(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.burst(at, now, true, 8, |prim| (ACCESSORIES[prim], if prim == 6 { 4.0 } else { 5.0 }), rand);
+        self.burst(at, now, true, 8, STRIP_TINT, |prim| (ACCESSORIES[prim], if prim == 6 { 4.0 } else { 5.0 }), rand);
     }
 
     /// Weapon Crush's 32 weapon icons, four of each of eight, the same way, all with a half-diagonal of 5.
     pub fn weapon_crush(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.burst(at, now, false, 8, |prim| (WEAPONS[prim], 5.0), rand);
+        self.burst(at, now, false, 8, STRIP_TINT, |prim| (WEAPONS[prim], 5.0), rand);
     }
 
     /// Sound of Destruction's 16 red music notes in upright planes: four prims of four, melody_a, melody_b, melody_a, melody_b.
     pub fn notes(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.burst(at, now, true, 4, |prim| (NOTES[prim % 2], 6.0), rand);
+        self.burst(at, now, true, 4, STRIP_TINT, |prim| (NOTES[prim % 2], 6.0), rand);
+    }
+
+    /// Pinpoint Attack's 32 blue shields and swords in upright planes round the target's feet `at`, shield first, and the caster's
+    /// weapon flickering added on for 300 ticks.
+    pub fn pinpoint(&mut self, caster: Option<u32>, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.burst(at, now, true, 8, PINPOINT_TINT, |prim| if prim % 2 == 0 { (SHIELD, 5.0) } else { (SWORD, 9.0) }, rand);
+        self.bodies.push(Body { unit: caster, start: now, flicker: Flicker::Weapon });
     }
 
     fn burst(
@@ -318,6 +332,7 @@ impl Guard {
         now: Instant,
         upright: bool,
         prims: usize,
+        tint: [f32; 3],
         icon_of: impl Fn(usize) -> (&'static str, f32),
         mut rand: impl FnMut(u32) -> u32,
     ) {
@@ -331,7 +346,7 @@ impl Guard {
                 pieces.push(Piece { half, icon, wait, azimuth, elevation, spin, turn });
             }
         }
-        self.strips.push(Strip { at, start: now, pieces, upright });
+        self.strips.push(Strip { at, start: now, pieces, upright, tint });
     }
 
     /// Preserve's dome on `unit`, facing `facing` degrees.
@@ -497,7 +512,7 @@ impl Guard {
                 let (el_sin, el_cos) = piece.elevation.to_radians().sin_cos();
                 let centre = [strip.at[0] + radius * el_cos * az_cos, strip.at[1] + radius * el_sin, strip.at[2] + radius * el_cos * az_sin];
                 let (turn_sin, turn_cos) = ((piece.turn + 5.0 * (t + 1) as f32) % 360.0).to_radians().sin_cos();
-                let tint = [STRIP_TINT[0], STRIP_TINT[1], STRIP_TINT[2], coin_alpha(n as u32).trunc().clamp(0.0, 255.0) / 255.0];
+                let tint = [strip.tint[0], strip.tint[1], strip.tint[2], coin_alpha(n as u32).trunc().clamp(0.0, 255.0) / 255.0];
                 let corner = |j: usize, uv: [f32; 2]| {
                     let (sin, cos) = ((piece.spin + 90.0 * j as f32) % 360.0).to_radians().sin_cos();
                     MeshVertex {
@@ -884,5 +899,42 @@ mod tests {
         assert_eq!((glow(0), glow(30)), (Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 0, 0xFF]))), Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 0, 0xFF])))));
         assert!(glow(31).is_none());
         assert_eq!(guard.body_tint(Some(1), start + TICK * 31), Some([8, 8, 255]));
+    }
+
+    #[test]
+    fn pinpoint_attack_bursts_32_blue_shields_and_swords_and_flickers_the_weapon() {
+        use crate::actor::GLOW_WEAPON;
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        let mut draws = 0;
+        guard.pinpoint(Some(1), [5.0, 1.0, 5.0], start, |_| {
+            draws += 1;
+            0
+        });
+        // 8 prims of 4, five draws each, shield then sword, half-diagonal 5.0 and 9.0, upright planes.
+        assert_eq!(draws, 32 * 5);
+        let pieces = &guard.strips[0].pieces;
+        assert_eq!(pieces.len(), 32);
+        assert!((0..32).all(|index| if (index / 4) % 2 == 0 {
+            pieces[index].icon == SHIELD && pieces[index].half == 5.0
+        } else {
+            pieces[index].icon == SWORD && pieces[index].half == 9.0
+        }));
+        assert!(guard.strips[0].upright);
+        // Added on in #0505FF, over everything, the same alpha as Strip Accessory's (25 at n = 1, 250 at 10, 5 at 60, 0 at 61).
+        assert!(guard.upright_pieces(start + TICK * 17).is_empty());
+        let walls = guard.upright_pieces(start + TICK * 18);
+        assert_eq!(walls.len(), 2);
+        assert!(walls.iter().all(|wall| wall.additive));
+        assert_eq!(walls[0].vertices[0].tint, [5.0 / 255.0, 5.0 / 255.0, 1.0, 25.0 / 255.0]);
+        assert_eq!([1, 10, 25, 26, 60, 61].map(coin_alpha), [25.0, 250.0, 250.0, 243.0, 5.0, 0.0]);
+        assert!(!guard.upright_pieces(start + TICK * 77).is_empty() && guard.upright_pieces(start + TICK * 78).is_empty());
+        // The weapon is added on while e mod 4 is 0 or 1, until tick 299; Strip Accessory's squares stay red.
+        let weapon = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        assert_eq!([0, 1, 4, 5, 296, 297].map(weapon), [Some((GLOW_WEAPON, None)); 6]);
+        assert!([2, 3, 6, 7, 298, 299, 300].iter().all(|&tick| weapon(tick).is_none()));
+        assert!(guard.glow(Some(2), start).is_none());
+        guard.accessory([0.0; 3], start, |_| 0);
+        assert_eq!(guard.upright_pieces(start + TICK * 18).iter().find(|wall| wall.texture == ACCESSORIES[0]).unwrap().vertices[0].tint[..3], STRIP_TINT);
     }
 }
