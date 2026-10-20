@@ -180,10 +180,11 @@ pub enum MapEvent {
         remaining: u16,
         ok: bool,
     },
-    /// A unit shows an effect by its ID (ZC_NOTIFY_EFFECT2/3).
+    /// A unit shows an effect by its ID (ZC_NOTIFY_EFFECT2/3), optionally with a number.
     Effect {
         id: u32,
         effect: u32,
+        num: Option<i32>,
     },
     /// A level up, refining result and the like on a unit (ZC_NOTIFY_EFFECT): which kind.
     MiscEffect {

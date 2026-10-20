@@ -1178,12 +1178,9 @@ impl App {
                             );
                         }
                     }
-                    DamageKind::Heal { sp } => put(
-                        damage.kind,
-                        number(actor::heal_number(ticks), if sp { [0.0, 0.0, 1.0] } else { [0.0, 1.0, 0.0] }).collect(),
-                        &mut billboards,
-                        &mut over_numbers,
-                    ),
+                    DamageKind::Heal { color } => {
+                        put(damage.kind, number(actor::heal_number(ticks), color.map(|c| c as f32 / 255.0)).collect(), &mut billboards, &mut over_numbers)
+                    }
                     DamageKind::Combo => {
                         if newest_combo.get(&damage.target) == Some(&damage.start) {
                             put(damage.kind, number(actor::total_number(ticks), [1.0, 1.0, 0.0]).collect(), &mut billboards, &mut over_numbers);

@@ -2645,10 +2645,41 @@ enum DamageKind {
     Lucky,
     /// MISS over the attacker: white from a monster or NPC, red from anyone else.
     Miss { red: bool },
-    /// Green HP or blue SP, rising slowly.
-    Heal { sp: bool },
+    /// Coloured number (green HP, blue SP, or custom colour), rising slowly.
+    Heal { color: [u8; 3] },
     /// The running total of a multi-hit, high above in yellow; each new one replaces the last.
     Combo,
+}
+
+/// The heal colours for green HP and blue SP numbers.
+pub const HEAL_GREEN: [u8; 3] = [0x00, 0xFF, 0x00];
+pub const HEAL_BLUE: [u8; 3] = [0x00, 0x00, 0xFF];
+
+/// The number colour for effects that carry numbers (331, 332, 657–664).
+pub fn number_color(id: u32) -> Option<[u8; 3]> {
+    match id {
+        331 | 657 => Some([0x00, 0xFF, 0x00]), // green
+        332 | 658 => Some([0x00, 0x00, 0xFF]), // blue
+        659 => Some([0xFF, 0x00, 0x00]),       // red
+        660 => Some([0xFF, 0x00, 0xFF]),       // magenta
+        661 => Some([0x00, 0x00, 0x00]),       // black
+        662 => Some([0xFF, 0xFF, 0xFF]),       // white
+        663 => Some([0xFF, 0xFF, 0x00]),       // yellow
+        664 => Some([0xFF, 0x55, 0xB1]),       // pink
+        _ => None,
+    }
+}
+
+/// The number, target, and colour for an effect packet (0x0284) with a number.
+/// An unknown AID shows nothing (returns None).
+pub fn effect_number(id: u32, effect: u32, num: Option<i32>, account_id: u32, in_view: &impl Fn(u32) -> bool) -> Option<(Option<u32>, i32, [u8; 3])> {
+    let is_player = id == account_id;
+    if !is_player && !in_view(id) {
+        return None;
+    }
+    let target = (!is_player).then_some(id);
+    let (num, color) = (num?, number_color(effect)?);
+    Some((target, num.max(0), color))
 }
 
 /// Heal numbers take the depth test. Hits, criticals, MISS, Lucky and totals draw over walls and the ground.
@@ -5934,7 +5965,7 @@ mod tests {
 
     #[test]
     fn heal_numbers_keep_the_depth_test() {
-        assert!(number_depth_tested(DamageKind::Heal { sp: false }) && number_depth_tested(DamageKind::Heal { sp: true }));
+        assert!(number_depth_tested(DamageKind::Heal { color: HEAL_GREEN }) && number_depth_tested(DamageKind::Heal { color: HEAL_BLUE }));
         assert!(!number_depth_tested(DamageKind::Hit { taken: false, sp: false }));
         assert!(!number_depth_tested(DamageKind::Hit { taken: true, sp: false }));
         assert!(!number_depth_tested(DamageKind::Hit { taken: false, sp: true }));
@@ -5942,6 +5973,60 @@ mod tests {
         assert!(!number_depth_tested(DamageKind::Miss { red: true }));
         assert!(!number_depth_tested(DamageKind::Lucky));
         assert!(!number_depth_tested(DamageKind::Combo));
+    }
+
+    #[test]
+    fn effect_number_colours_and_potions() {
+        assert_eq!(number_color(331), Some([0x00, 0xFF, 0x00]));
+        assert_eq!(number_color(332), Some([0x00, 0x00, 0xFF]));
+        assert_eq!(number_color(657), Some([0x00, 0xFF, 0x00]));
+        assert_eq!(number_color(658), Some([0x00, 0x00, 0xFF]));
+        assert_eq!(number_color(659), Some([0xFF, 0x00, 0x00]));
+        assert_eq!(number_color(660), Some([0xFF, 0x00, 0xFF]));
+        assert_eq!(number_color(661), Some([0x00, 0x00, 0x00]));
+        assert_eq!(number_color(662), Some([0xFF, 0xFF, 0xFF]));
+        assert_eq!(number_color(663), Some([0xFF, 0xFF, 0x00]));
+        assert_eq!(number_color(664), Some([0xFF, 0x55, 0xB1]));
+        for other in [0, 1, 312, 330, 333, 656, 665, 1143, 2371] {
+            assert_eq!(number_color(other), None, "effect {other} has no number color");
+        }
+        // Potions keep green and SP Recovery keeps blue.
+        assert_eq!(HEAL_GREEN, [0x00, 0xFF, 0x00]);
+        assert_eq!(HEAL_BLUE, [0x00, 0x00, 0xFF]);
+        // Negative num is clamped to 0.
+        let num: i32 = -50;
+        assert_eq!(num.max(0), 0);
+        let num_zero: i32 = 0;
+        assert_eq!(num_zero.max(0), 0);
+        let num_pos: i32 = 1234;
+        assert_eq!(num_pos.max(0), 1234);
+    }
+
+    #[test]
+    fn effect_numbers_target_and_unknown_aid() {
+        let account_id = 150008;
+        let unit_id = 2000001;
+        let unknown_aid = 9999999;
+        let in_view = |id| id == unit_id;
+
+        // On unit in view: effect 657, num 1234 -> green "1234" over unit
+        assert_eq!(effect_number(unit_id, 657, Some(1234), account_id, &in_view), Some((Some(unit_id), 1234, [0x00, 0xFF, 0x00])));
+
+        // On player (account_id): target is None (player)
+        assert_eq!(effect_number(account_id, 657, Some(1234), account_id, &in_view), Some((None, 1234, [0x00, 0xFF, 0x00])));
+
+        // Unknown AID: shows nothing
+        assert_eq!(effect_number(unknown_aid, 657, Some(1234), account_id, &in_view), None);
+
+        // Effect without number (0x01f3): shows nothing
+        assert_eq!(effect_number(unit_id, 657, None, account_id, &in_view), None);
+
+        // Effect with non-number ID (e.g. 312, 1143): shows nothing
+        assert_eq!(effect_number(unit_id, 312, Some(100), account_id, &in_view), None);
+        assert_eq!(effect_number(unit_id, 1143, Some(100), account_id, &in_view), None);
+
+        // Clamped negative number
+        assert_eq!(effect_number(unit_id, 659, Some(-50), account_id, &in_view), Some((Some(unit_id), 0, [0xFF, 0x00, 0x00])));
     }
 
     #[test]

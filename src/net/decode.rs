@@ -1100,7 +1100,8 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             id: packet[18],
             color: [packet[21], packet[20], packet[19]],
         },
-        ZC_NOTIFY_EFFECT2 | ZC_NOTIFY_EFFECT3 => MapEvent::Effect { id: u32_at(2), effect: u32_at(6) },
+        ZC_NOTIFY_EFFECT2 => MapEvent::Effect { id: u32_at(2), effect: u32_at(6), num: None },
+        ZC_NOTIFY_EFFECT3 => MapEvent::Effect { id: u32_at(2), effect: u32_at(6), num: Some(i32_at(10)) },
         ZC_SHORTCUT_KEY_LIST => MapEvent::Hotkeys {
             rotate: packet[2],
             tab: u16_at(3),
