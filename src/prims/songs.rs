@@ -3,9 +3,9 @@
 
 use std::time::Instant;
 
-use super::passes;
 use super::sage::{ring_point, ring_quads};
 use super::walls::Wall;
+use super::{burst, passes};
 use crate::world::{MeshVertex, Vector};
 
 pub const HERB: &str = "data\\texture\\유저인터페이스\\item\\하얀허브.bmp";
@@ -51,6 +51,13 @@ const CONE_TICKS: u32 = 119;
 /// Shrink's flashes and the sound at its tick 5; Close Confine's from tick 21 to 59.
 const SHRINK_TICKS: u32 = 200;
 const CONFINE_TICKS: u32 = 60;
+/// The dances last 100 ticks, their streaks 50 of them, and only the ones made by tick 50 are seen.
+const DANCE_TICKS: u32 = 100;
+const STREAK_LIFE: u32 = 50;
+const STREAKS_SEEN: u32 = 50;
+const STREAK_WIDTH: f32 = 0.18;
+const DANCE_VIOLET: [u8; 3] = [0xB6, 0x59, 0xFF];
+pub const STREAK_TEXTURE: &str = "data\\texture\\effect\\ac_center2.tga";
 
 struct Icon {
     picture: &'static str,
@@ -81,11 +88,32 @@ struct Body {
     start: Instant,
 }
 
-/// A performer's cone of bubbles.
+/// A performer's cone of bubbles: its second layer's colour and how many times as strong as the first it is.
 struct Cone {
     unit: Option<u32>,
     start: Instant,
     length: u32,
+    rgb: [f32; 3],
+    strength: f32,
+}
+
+/// A streak of Adaptation or Eternal Chaos, made on tick `born`: its yaw, how far from the unit, half-length, colour, and whether
+/// it falls instead of rising.
+struct Streak {
+    born: u32,
+    yaw: f32,
+    distance: f32,
+    half: f32,
+    rgb: [f32; 3],
+    falling: bool,
+}
+
+/// Adaptation's (848) and Eternal Chaos' (864) violet flicker and streaks on a unit; `status` is the one it stands for.
+struct Dance {
+    unit: Option<u32>,
+    status: Option<u16>,
+    start: Instant,
+    streaks: Vec<Streak>,
 }
 
 /// One icon to draw: its picture, place, spin (degrees), half-diagonal (world units) and alpha (0 to 255).
@@ -104,6 +132,7 @@ pub struct Songs {
     shrinks: Vec<Body>,
     confines: Vec<Body>,
     cones: Vec<Cone>,
+    dances: Vec<Dance>,
 }
 
 /// An icon's alpha at its n-th tick (from 1) in a cloud of `length` ticks: 5 a tick to 245, held, then 5 less a tick over the last 50.
@@ -145,6 +174,55 @@ pub fn confine_tint(e: u32) -> Option<[u8; 3]> {
 /// Shrink's body at tick e: added on in #FAFA64 on the even ticks 6 to 24.
 pub fn shrink_glow(e: u32) -> Option<(u32, Option<[u8; 3]>)> {
     ((6..=24).contains(&e) && e.is_multiple_of(2)).then_some((crate::actor::GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])))
+}
+
+/// A streak's colour (X, X, 255): blue to white.
+fn bluish(x: u32) -> [f32; 3] {
+    [x as f32 / 255.0, x as f32 / 255.0, 1.0]
+}
+
+/// How far a streak has risen (or fallen) after its tick k: its speed grows by 0.015 a tick and the height by the speed.
+pub fn streak_travel(k: u32) -> f32 {
+    0.015 * ((k + 1) * (k + 2)) as f32 / 2.0
+}
+
+/// Adaptation's body at tick e: added on in #B659FF on the even ticks 4 to 90, drawn white on the odd ones.
+pub fn dance_glow(e: u32) -> Option<(u32, Option<[u8; 3]>)> {
+    (4..=90).contains(&e).then(|| if e.is_multiple_of(2) { (crate::actor::GLOW_ADDITIVE, Some(DANCE_VIOLET)) } else { (0, Some([255; 3])) })
+}
+
+/// The violet the body is left in drifts back to white by 8 a channel a tick after tick 90.
+pub fn dance_tint(e: u32) -> Option<[u8; 3]> {
+    let drift = (e.checked_sub(90).filter(|&after| after > 0)? * 8) as u16;
+    let tint = DANCE_VIOLET.map(|channel| (u16::from(channel) + drift).min(255) as u8);
+    (tint != [255; 3]).then_some(tint)
+}
+
+impl Streak {
+    /// Two crossed upright blades over the unit's feet at its tick k: one in the x–y plane, one in the y–z plane.
+    fn wall(&self, feet: Vector, k: u32) -> Option<Wall> {
+        let alpha = burst::alpha(k, 0.0, 10.0, 200.0, 30, STREAK_LIFE);
+        if alpha <= 0.0 {
+            return None;
+        }
+        let (sin, cos) = self.yaw.to_radians().sin_cos();
+        let height = if self.falling { 20.0 - streak_travel(k) } else { 5.0 + streak_travel(k) };
+        let centre = [feet[0] + self.distance * sin, feet[1] + height, feet[2] + self.distance * cos];
+        let tint = [self.rgb[0], self.rgb[1], self.rgb[2], alpha / 255.0];
+        let blade = |along_x: bool| {
+            let corner = |side: f32, end: f32| {
+                let (x, z) = if along_x { (side * STREAK_WIDTH, 0.0) } else { (0.0, side * STREAK_WIDTH) };
+                MeshVertex {
+                    position: [centre[0] + x, centre[1] + end * self.half, centre[2] + z],
+                    uv: [if end > 0.0 { 1.0 } else { 0.0 }, if side < 0.0 { 1.0 } else { 0.0 }],
+                    tint,
+                }
+            };
+            let [a, b, c, d] = [corner(-1.0, 1.0), corner(1.0, 1.0), corner(1.0, -1.0), corner(-1.0, -1.0)];
+            [a, b, c, a, c, d]
+        };
+        Some(Wall { texture: STREAK_TEXTURE, vertices: [blade(true), blade(false)].concat(), additive: false, forced: false })
+    }
 }
 
 /// A cone's alpha at tick a: 3 a tick to 87, held, then from tick 74 2 less a tick.
@@ -199,7 +277,7 @@ impl Cone {
         let texture = cone_picture(a);
         [
             Wall { texture, vertices: vertices([1.0; 3], alpha.trunc()), additive: false, forced: false },
-            Wall { texture, vertices: vertices([1.0, 0.0, 0.0], (3.0 * alpha).min(255.0).trunc()), additive: true, forced: false },
+            Wall { texture, vertices: vertices(self.rgb, (self.strength * alpha).min(255.0).trunc()), additive: true, forced: false },
         ]
     }
 }
@@ -246,9 +324,39 @@ impl Songs {
         self.confines.push(Body { unit, start: now });
     }
 
-    /// A performer's cone of bubbles on `unit`, `length` ticks (at least 120).
-    pub fn cone(&mut self, unit: Option<u32>, length: u32, now: Instant) {
-        self.cones.push(Cone { unit, start: now, length: length.max(120) });
+    /// A performer's cone of bubbles (effect 840 to 845) on `unit`, `length` ticks (at least 120): the second layer red at
+    /// three times the alpha for 840, green, yellow, white, magenta or cyan at twice for 841 to 845.
+    pub fn cone(&mut self, effect: u32, unit: Option<u32>, length: u32, now: Instant) {
+        let (rgb, strength) = match effect {
+            841 => ([0.0, 1.0, 0.0], 2.0),
+            842 => ([1.0, 1.0, 0.0], 2.0),
+            843 => ([1.0, 1.0, 1.0], 2.0),
+            844 => ([1.0, 0.0, 1.0], 2.0),
+            845 => ([0.0, 1.0, 1.0], 2.0),
+            _ => ([1.0, 0.0, 0.0], 3.0),
+        };
+        self.cones.push(Cone { unit, start: now, length: length.max(120), rgb, strength });
+    }
+
+    /// Adaptation (`falling` false) or Eternal Chaos (`falling` true) on `unit`, for the status `status` if it is one: a streak
+    /// made every second tick, its choices from `rand(n)` (0 to n − 1) in the order the game draws them.
+    pub fn dance(&mut self, unit: Option<u32>, status: Option<u16>, falling: bool, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let mut streaks = Vec::new();
+        for born in (0..DANCE_TICKS).step_by(2) {
+            let (yaw, distance, half) = (rand(360) as f32, 3.0 + rand(7) as f32, (rand(60) + 30) as f32 / 10.0);
+            streaks.push(Streak { born, yaw, distance, half, rgb: bluish(rand(256)), falling: false });
+            if falling {
+                let (yaw, distance, half) = (rand(360) as f32, 3.0 + rand(7) as f32, (rand(60) + 30) as f32 / 10.0);
+                let rgb = [0, 1, 2].map(|_| if rand(3) == 0 { 1.0 } else { 140.0 / 255.0 });
+                streaks.push(Streak { born, yaw, distance, half, rgb, falling: true });
+            }
+        }
+        self.dances.push(Dance { unit, status, start: now, streaks });
+    }
+
+    /// A status that went off or came on again takes its dances with it.
+    pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
+        self.dances.retain(|dance| !(dance.unit == unit && dance.status == Some(status)));
     }
 
     /// Puts the clouds' icons round the player (`player`, once known) over the ground (`ground_at(x, z)`) and runs them up to
@@ -273,6 +381,7 @@ impl Songs {
         self.shrinks.retain(|body| passes(body.start, now) <= SHRINK_TICKS);
         self.confines.retain(|body| passes(body.start, now) <= CONFINE_TICKS);
         self.cones.retain(|cone| passes(cone.start, now) <= cone.length);
+        self.dances.retain(|dance| passes(dance.start, now) <= DANCE_TICKS);
     }
 
     /// The cloud's icons at `now`.
@@ -290,12 +399,14 @@ impl Songs {
 
     /// The body flags and colour Shrink gives `unit` at `now`.
     pub fn glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
-        self.shrinks.iter().filter(|body| body.unit == unit).find_map(|body| shrink_glow(passes(body.start, now).checked_sub(1)?))
+        let shrinking = self.shrinks.iter().filter(|body| body.unit == unit).find_map(|body| shrink_glow(passes(body.start, now).checked_sub(1)?));
+        shrinking.or_else(|| self.dances.iter().filter(|dance| dance.unit == unit).find_map(|dance| dance_glow(passes(dance.start, now).checked_sub(1)?)))
     }
 
     /// The colour Close Confine gives `unit`'s body at `now`.
     pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
-        self.confines.iter().filter(|body| body.unit == unit).find_map(|body| confine_tint(passes(body.start, now).checked_sub(1)?))
+        let blinking = self.confines.iter().filter(|body| body.unit == unit).find_map(|body| confine_tint(passes(body.start, now).checked_sub(1)?));
+        blinking.or_else(|| self.dances.iter().filter(|dance| dance.unit == unit).find_map(|dance| dance_tint(passes(dance.start, now).checked_sub(1)?)))
     }
 
     /// Whether `unit`'s parts shake now: Close Confine's, from tick 21 to 59.
@@ -313,6 +424,15 @@ impl Songs {
             let (Some(feet), Some(a)) = (position_of(cone.unit), passes(cone.start, now).checked_sub(1)) else { continue };
             if a < CONE_TICKS.min(cone.length - 1) {
                 walls.extend(cone.walls(feet, a));
+            }
+        }
+        for dance in &self.dances {
+            let (Some(feet), Some(e)) = (position_of(dance.unit), passes(dance.start, now).checked_sub(1)) else { continue };
+            for streak in dance.streaks.iter().filter(|streak| streak.born <= STREAKS_SEEN) {
+                let Some(k) = e.checked_sub(streak.born).filter(|&k| k < STREAK_LIFE.min(DANCE_TICKS - streak.born - 1)) else { continue };
+                if let Some(wall) = streak.wall(feet, k) {
+                    walls.push(wall);
+                }
             }
         }
         walls
@@ -417,7 +537,7 @@ mod tests {
     fn four_cones_of_red_bubbles_turn_round_the_performer() {
         let start = Instant::now();
         let mut songs = Songs::default();
-        songs.cone(None, 0, start);
+        songs.cone(840, None, 0, start);
         assert_eq!(songs.cones[0].length, 120);
         // α at a = 0, 28, 29, 73, 74, 116, 117: 3, 87, 87, 87, 85, 1, 0.
         assert_eq!([0, 28, 29, 73, 74, 116, 117].map(cone_alpha), [3.0, 87.0, 87.0, 87.0, 85.0, 1.0, 0.0]);
@@ -445,5 +565,107 @@ mod tests {
         assert!(songs.meshes(start, |_| None).is_empty());
         songs.advance(start + TICK * 122, None, |_, _| 0.0, |_| 0);
         assert!(songs.cones.is_empty());
+    }
+
+    #[test]
+    fn the_coloured_cones_differ_in_their_second_layer() {
+        let start = Instant::now();
+        let feet = [0.0; 3];
+        let second = |effect: u32, a: u32| {
+            let mut songs = Songs::default();
+            songs.cone(effect, None, 0, start);
+            let walls = songs.meshes(start + TICK * a, |_| Some(feet));
+            (walls[1].vertices[0].tint, walls[1].additive)
+        };
+        // Green, yellow, white, magenta, cyan at twice the alpha: 6 at a = 0, 174 at 28 and 29's 174, 170 at 74, 2 at 116.
+        let colours = [(841, [0.0, 1.0, 0.0]), (842, [1.0, 1.0, 0.0]), (843, [1.0, 1.0, 1.0]), (844, [1.0, 0.0, 1.0]), (845, [0.0, 1.0, 1.0])];
+        for (effect, rgb) in colours {
+            let tints: Vec<f32> = [0, 28, 74, 116, 117].map(|a| (second(effect, a).0[3] * 255.0).round()).to_vec();
+            assert_eq!(tints, [6.0, 174.0, 170.0, 2.0, 0.0], "{effect}");
+            assert_eq!(second(effect, 0).0[..3], rgb);
+            assert!(second(effect, 0).1);
+        }
+        // 840 stays red at three times.
+        assert_eq!(second(840, 0).0[..3], [1.0, 0.0, 0.0]);
+        assert_eq!((second(840, 0).0[3] * 255.0).round(), 9.0);
+        // Each cast adds a cone; drawn on ticks 0…118, not 119.
+        let mut songs = Songs::default();
+        songs.cone(842, None, 0, start);
+        songs.cone(842, None, 0, start + TICK * 10);
+        assert_eq!(songs.meshes(start + TICK * 20, |_| Some(feet)).len(), 4);
+        assert_eq!(songs.meshes(start + TICK * 118, |_| Some(feet)).len(), 4, "the second is on its tick 108");
+        assert_eq!(songs.meshes(start + TICK * 119, |_| Some(feet)).len(), 2, "only the second remains");
+    }
+
+    #[test]
+    fn adaptation_flickers_violet_and_lifts_26_streaks() {
+        let start = Instant::now();
+        let mut songs = Songs::default();
+        songs.dance(Some(1), None, false, start, |_| 0);
+        assert_eq!(songs.dances[0].streaks.len(), 50);
+        // The body: additive #B659FF on the even ticks 4 to 90, white on the odd; nothing at 3 and 91.
+        let glow = |e: u32| songs.glow(Some(1), start + TICK * e);
+        assert_eq!(glow(4), Some((crate::actor::GLOW_ADDITIVE, Some([0xB6, 0x59, 0xFF]))));
+        assert_eq!(glow(5), Some((0, Some([255; 3]))));
+        assert_eq!(glow(90), glow(4));
+        assert!(glow(3).is_none() && glow(91).is_none());
+        // Afterwards the colour drifts back to white by 8 a channel a tick.
+        let tint = |e: u32| songs.body_tint(Some(1), start + TICK * e);
+        assert_eq!((tint(90), tint(91), tint(92)), (None, Some([0xBE, 0x61, 0xFF]), Some([0xC6, 0x69, 0xFF])));
+        assert_eq!(tint(120), None);
+        // 26 streaks can be seen (made at ticks 0, 2 … 50).
+        let feet = [10.0, 1.0, 10.0];
+        let seen = |e: u32| songs.meshes(start + TICK * e, |_| Some(feet)).len();
+        let mut ever = 0;
+        for e in 0..100 {
+            ever = ever.max(seen(e));
+        }
+        assert_eq!(songs.dances[0].streaks.iter().filter(|streak| streak.born <= STREAKS_SEEN).count(), 26);
+        assert!(ever <= 26 && ever > 20);
+        // With every draw 0 a streak starts 3 from the unit and 5 up (travel 0.015), W = 3.0, colour (0, 0, 255).
+        let first = songs.meshes(start, |_| Some(feet));
+        assert_eq!(first.len(), 1);
+        let vertices = &first[0].vertices;
+        assert_eq!(vertices.len(), 12);
+        let middle = [(vertices[0].position[0] + vertices[1].position[0]) / 2.0, vertices[0].position[1] - 3.0, vertices[0].position[2]];
+        assert!((middle[0] - 10.0).abs() < 0.01 && (middle[2] - 13.0).abs() < 0.01 && (middle[1] - 1.0 - 5.015).abs() < 0.01, "{middle:?}");
+        assert_eq!(vertices[0].tint[..3], [0.0, 0.0, 1.0]);
+        assert_eq!(first[0].texture, STREAK_TEXTURE);
+        // Alpha at k = 0, 19, 29, 30, 48, 49: 10, 200, 200, 190, 10, 0; the height after k = 9 and 49.
+        assert_eq!([0, 19, 29, 30, 48, 49].map(|k| burst::alpha(k, 0.0, 10.0, 200.0, 30, 50)), [10.0, 200.0, 200.0, 190.0, 10.0, 0.0]);
+        assert!((streak_travel(9) - 0.825).abs() < 0.001 && (streak_travel(49) - 19.125).abs() < 0.001 && (streak_travel(19) - 3.15).abs() < 0.001);
+        // The streak made at tick 50 shows 49 ticks; the one made at 52 is never seen.
+        assert!(songs.dances[0].streaks.iter().all(|streak| streak.rgb == [0.0, 0.0, 1.0] && !streak.falling));
+        assert_eq!(seen(50 + 48 + 1) % 2, 0);
+    }
+
+    #[test]
+    fn eternal_chaos_adds_falling_streaks_and_a_repeated_status_replaces_its_copy() {
+        let start = Instant::now();
+        let mut songs = Songs::default();
+        // A rising streak's draws then a falling one's, three R(3) for its colour: 0 gives 255, anything else 140.
+        let mut draws = [0u32, 0, 0, 77, 0, 0, 0, 0, 1, 2].into_iter().cycle();
+        songs.dance(None, Some(79), true, start, |n| draws.next().unwrap().min(n - 1));
+        assert_eq!(songs.dances[0].streaks.len(), 100);
+        let falling: Vec<&Streak> = songs.dances[0].streaks.iter().filter(|streak| streak.falling).collect();
+        assert_eq!(falling.len(), 50);
+        assert_eq!(falling[0].rgb, [1.0, 140.0 / 255.0, 140.0 / 255.0]);
+        // 52 seen in all (26 of each), the falling one starting 20 up and ending 0.9 up after k = 49.
+        assert_eq!(songs.dances[0].streaks.iter().filter(|streak| streak.born <= STREAKS_SEEN).count(), 52);
+        assert!((20.0 - streak_travel(49) - 0.875).abs() < 0.001);
+        let feet = [0.0; 3];
+        let top = songs.meshes(start, |_| Some(feet));
+        assert_eq!(top.len(), 2, "a rising and a falling one at tick 0");
+        assert!(top[1].vertices.iter().map(|vertex| vertex.position[1]).fold(f32::MIN, f32::max) > 19.0);
+        // The status coming on again, or going off, takes the old copy.
+        songs.forget_status(None, 79);
+        assert!(songs.dances.is_empty());
+        songs.dance(None, Some(79), true, start, |_| 0);
+        songs.forget_status(Some(5), 79);
+        assert_eq!(songs.dances.len(), 1, "another unit's");
+        songs.forget_status(None, 82);
+        assert_eq!(songs.dances.len(), 1, "another status");
+        songs.advance(start + TICK * 101, None, |_, _| 0.0, |_| 0);
+        assert!(songs.dances.is_empty());
     }
 }
