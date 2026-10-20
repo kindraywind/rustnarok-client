@@ -120,13 +120,27 @@ pub fn attack_scale(attack_ms: i32, bow: bool) -> f32 {
     (if bow { motion } else { motion.min(ATTACK_PACE) }) / ATTACK_PACE
 }
 
-/// A job's sprite names: its body (also its .imf and garment motions), its weapons' folder and file prefix, and its
-/// body dyes.
+/// A job's sprite names: its body (also its garment motions), its .imf, its body dyes, and its weapons' folder and
+/// file prefix (None: no weapon drawn).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct JobSprites {
     pub body: &'static str,
-    pub weapon: &'static str,
+    pub imf: &'static str,
     pub palette: &'static str,
+    pub weapon: Option<(&'static str, &'static str)>,
+}
+
+impl JobSprites {
+    /// A weapon file of this job (no extension): `name` is the weapon's name ending (`_단검`).
+    pub fn weapon_path(&self, race: &str, sex: &str, name: &str) -> Option<String> {
+        let (folder, prefix) = self.weapon?;
+        Some(format!("data\\sprite\\{race}\\{folder}\\{prefix}_{sex}{name}"))
+    }
+
+    /// The .imf (which frames put the head behind the body).
+    pub fn imf_path(&self, sex: &str) -> String {
+        format!("data\\imf\\{}_{sex}.imf", self.imf)
+    }
 }
 
 /// The sprite names of a job (src/job_sprites.txt), mounted and costume bodies included.
@@ -135,14 +149,16 @@ pub fn job_sprites(job: u16) -> Option<JobSprites> {
     TABLE.get(&job).copied()
 }
 
-/// Lines of job, body, weapon and palette names, tab-separated; `#` starts a comment line.
+/// Lines of job, body, imf, palette and weapon names, tab-separated; `#` starts a comment line.
 fn parse_job_sprites(text: &'static str) -> HashMap<u16, JobSprites> {
     text.lines()
         .filter(|line| !line.starts_with('#'))
         .filter_map(|line| {
             let mut fields = line.split('\t');
             let job = fields.next()?.parse().ok()?;
-            Some((job, JobSprites { body: fields.next()?, weapon: fields.next()?, palette: fields.next()? }))
+            let (body, imf, palette, weapon) = (fields.next()?, fields.next()?, fields.next()?, fields.next()?);
+            let weapon = (weapon != "-").then(|| weapon.split_once('\\').unwrap_or((weapon, weapon)));
+            Some((job, JobSprites { body, imf, palette, weapon }))
         })
         .collect()
 }
@@ -674,12 +690,14 @@ impl SpriteSet {
         let bottom = (!orcish).then(|| headgear(look.head_bottom, Part::HeadBottom)).flatten();
         let mid = (!orcish && look.head_mid != look.head_bottom).then(|| headgear(look.head_mid, Part::HeadMid)).flatten();
         let top = (!orcish && look.head_top != look.head_bottom && look.head_top != look.head_mid).then(|| headgear(look.head_top, Part::HeadTop)).flatten();
-        let weapon = (look.weapon > 0).then(|| {
-            let view = tables.view(look.weapon);
-            let name = tables.weapons.get(&view).cloned().unwrap_or_else(|| format!("_{view}"));
-            let path = format!("data\\sprite\\{race}\\{0}\\{0}_{sex}{name}", names.weapon);
-            (load(path.clone(), None, Part::Weapon), load(format!("{path}_검광"), None, Part::WeaponGlow))
-        });
+        let weapon = (look.weapon > 0)
+            .then(|| {
+                let view = tables.view(look.weapon);
+                let name = tables.weapons.get(&view).cloned().unwrap_or_else(|| format!("_{view}"));
+                let path = names.weapon_path(race, sex, &name)?;
+                Some((load(path.clone(), None, Part::Weapon), load(format!("{path}_검광"), None, Part::WeaponGlow)))
+            })
+            .flatten();
         // The four classic shields have names; newer ones are named by their view ID.
         let shield = (look.shield > 0).then(|| {
             let name = match tables.view(look.shield) {
@@ -748,7 +766,7 @@ impl SpriteSet {
             })
             .flatten();
         let dressing = Dressing {
-            head_first: grf.read(&format!("data\\imf\\{class}_{sex}.imf")).ok().and_then(|bytes| sprite::parse_imf(&bytes).ok()).unwrap_or_default(),
+            head_first: grf.read(&names.imf_path(sex)).ok().and_then(|bytes| sprite::parse_imf(&bytes).ok()).unwrap_or_default(),
             robe_over_body,
             robe_over_headgear: robe.is_some() && rules.is_some_and(|rules| rules.robe_over_headgear(look.robe)),
             headgear,
@@ -3459,11 +3477,21 @@ mod tests {
 
     #[test]
     fn names_each_jobs_sprites() {
-        let table = parse_job_sprites("# job\tbody\tweapon\tpalette\n4014\t로드페코\t페코페코_기사\t로드페코\nbad line\n");
+        let table = parse_job_sprites("# job\tbody\timf\tpalette\tweapon\n4014\t로드페코\t기사\t로드페코\t페코페코_기사\nbad line\n");
         assert_eq!(table.len(), 1);
-        assert_eq!(table[&4014], JobSprites { body: "로드페코", weapon: "페코페코_기사", palette: "로드페코" });
-        // The table in the repository: a transcendent knight's weapons are a knight's, a Doram's dyes their own.
-        assert_eq!(job_sprites(4008).map(|names| (names.body, names.weapon)), Some(("로드나이트", "기사")));
+        assert_eq!(table[&4014], JobSprites { body: "로드페코", imf: "기사", palette: "로드페코", weapon: Some(("페코페코_기사", "페코페코_기사")) });
+        // The table in the repository: rebirth jobs keep the first class's weapon folder, third jobs their own, the
+        // newer mounts the unmounted class's.
+        let weapon = |job| job_sprites(job).and_then(|names| names.weapon);
+        assert_eq!(job_sprites(4013).map(|names| (names.weapon, names.imf)), Some((Some(("어세신", "어세신")), "어세신크로스")));
+        assert_eq!(weapon(4059), Some(("길로틴크로스", "길로틴크로스")));
+        assert_eq!(job_sprites(4056).map(|names| (names.weapon, names.imf)), Some((Some(("레인져", "레인져")), "헌터")));
+        assert_eq!(weapon(4116), Some(("검사", "검사")));
+        assert_eq!(weapon(4219), Some(("summoner", "cart_summoner")));
+        assert_eq!(weapon(4216), None);
+        assert!(include_str!("job_sprites.txt").lines().filter(|line| !line.starts_with('#')).all(|line| line.split('\t').count() == 5));
+        assert_eq!(job_sprites(4013).unwrap().weapon_path("인간족", "남", "_카타르_카타르").unwrap(), "data\\sprite\\인간족\\어세신\\어세신_남_카타르_카타르");
+        assert_eq!(job_sprites(4008).unwrap().imf_path("여"), "data\\imf\\기사_여.imf");
         assert_eq!(job_sprites(4218).map(|names| names.palette), Some("묘족"));
         assert!(job_sprites(4023).is_some() && job_sprites(4080).is_some() && job_sprites(31).is_none());
     }
