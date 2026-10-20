@@ -2809,7 +2809,26 @@ impl App {
                 .or_else(|| owner.filter(|id| feet_of.contains_key(id) && !game.units.contains_key(id)).map(|_| world_str::Body::skill_unit()))
         };
         let scene = world_str::Scene { player: player_feet, feet: &feet_of_unit, body: &body_of, longitude: yaw.to_degrees(), right: view.right, up: view.up };
-        game.effects.advance_world(now, &scene);
+        // The world objects draw unless far, /effect hides them, or their owner's body is hidden.
+        let effects_shown = |id: u32| effects_on || effects::force_drawn(id);
+        let hidden = |unit: Option<u32>| {
+            let seen = match unit {
+                None => Some(actor::seen(game.player.hide_option, true, clairvoyance)),
+                Some(id) => game.units.get(&id).map(|actor| actor::seen(actor.hide_option, false, clairvoyance)),
+            };
+            matches!(seen, Some(actor::Seen::Nothing | actor::Seen::Shadow))
+        };
+        let size = |unit: Option<u32>| match unit {
+            None => player_scale,
+            Some(id) => game.units.get(&id).map_or(1.0, |actor| unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent)),
+        };
+        let fx_seen = world_fx::Seen {
+            eye: world_fx::Eye { right: view.right, up: view.up, forward: view.forward },
+            shows: &effects_shown,
+            hidden: &hidden,
+            size: &size,
+        };
+        game.effects.advance_world(gpu, grf, now, &scene, &fx_seen);
         // The Sight option (bit 0x1) keeps a flame circling its unit.
         let sights: Vec<_> = std::iter::once((None, game.player.hide_option & 1 != 0))
             .chain(game.units.iter().map(|(&id, actor)| (Some(id), actor.hide_option & 1 != 0)))
@@ -2847,7 +2866,12 @@ impl App {
                 }
             }
         }
-        let top_meshes = game.effects.top_meshes(now, feet_of_unit);
+        let mut top_meshes = game.effects.top_meshes(now, feet_of_unit);
+        // The world objects' faces: the effect list joins the meshes, the lists over everything the top meshes.
+        let mut fx_lists = game.effects.fx_lists(&fx_seen, |point| view.depth_of(point));
+        effect_meshes.append(&mut fx_lists.effect);
+        top_meshes.append(&mut fx_lists.top_add);
+        top_meshes.append(&mut fx_lists.top);
         // Max-level auras under the feet of those in sight, with the effects (unless /aura2 has them off).
         if effects_on && !self.graphics.aura_off {
             let seconds = now.duration_since(game.entered).as_secs_f32();
@@ -2913,6 +2937,7 @@ impl App {
             screen: &screen_shapes,
             cover: &cover,
             top_meshes: &top_meshes,
+            fx: &fx_lists,
             time: now.duration_since(game.entered).as_secs_f32(),
             blind: game.blind.showing(),
             tint: game.scene.tint(),

@@ -613,7 +613,7 @@ pub fn attack_action(job: u16, sex: u8, weapon_type: u32) -> usize {
 
 /// Identifies a decoded image: layer, image kind, index, the layer's tint, and how it was turned ahead of time for a
 /// flat preview (`SpriteSet::flat_frame`): 0 upright, else degrees clockwise, plus 360 when mirrored first.
-type ImageKey = (usize, u32, usize, [u8; 4], u16);
+pub type ImageKey = (usize, u32, usize, [u8; 4], u16);
 
 /// One image of a frame: which image, top-left offset from the feet, size (negative width = mirrored), and degrees
 /// to turn it clockwise about its middle.
