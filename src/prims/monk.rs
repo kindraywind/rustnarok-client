@@ -27,6 +27,8 @@ const SPARK_TINT: [u8; 3] = [0x82, 0x82, 0xFA];
 pub struct StreakLook {
     texture: &'static str,
     count: usize,
+    /// How many under /mineffect.
+    count_min: usize,
     /// Each streak's count starts at −`counter_from` − R(`counter_span`).
     counter_from: i32,
     counter_span: u32,
@@ -43,6 +45,7 @@ pub struct StreakLook {
 const ASURA: StreakLook = StreakLook {
     texture: LENS,
     count: 96,
+    count_min: 96,
     counter_from: 10,
     counter_span: 25,
     step: 3.0,
@@ -51,10 +54,24 @@ const ASURA: StreakLook = StreakLook {
     tint: [1.0; 3],
     over: false,
 };
+/// Tiger Cannon's: Asura Strike's streaks, 20 prims of 4 (6 under /mineffect), in #41B8F0 over everything.
+const TIGER_CANNON: StreakLook = StreakLook {
+    texture: super::sniper::RAY,
+    count: 80,
+    count_min: 24,
+    counter_from: 10,
+    counter_span: 25,
+    step: 3.0,
+    half_width: 0.7,
+    half_length: 24.0 * 0.7,
+    tint: [65.0 / 255.0, 184.0 / 255.0, 240.0 / 255.0],
+    over: true,
+};
 /// Raid's: 20 prims of 4, half-width 1 and half-length 16, in #41B8F0.
 const RAID: StreakLook = StreakLook {
     texture: LENS_RAID,
     count: 80,
+    count_min: 80,
     counter_from: 20,
     counter_span: 10,
     step: 2.0,
@@ -229,13 +246,18 @@ impl Monk {
         self.burst(&ASURA, at, now, min, rand);
     }
 
+    /// Tiger Cannon's sky-blue streaks over the target's feet `at`.
+    pub fn tiger_cannon(&mut self, at: Vector, now: Instant, min: bool, rand: impl FnMut(u32) -> u32) {
+        self.burst(&TIGER_CANNON, at, now, min, rand);
+    }
+
     /// Raid's streaks over the user's feet `at`.
     pub fn raid(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.burst(&RAID, at, now, false, rand);
     }
 
     fn burst(&mut self, look: &'static StreakLook, at: Vector, now: Instant, min: bool, mut rand: impl FnMut(u32) -> u32) {
-        let streaks = (0..look.count)
+        let streaks = (0..if min { look.count_min } else { look.count })
             .map(|_| {
                 let counter = -look.counter_from - rand(look.counter_span) as i32;
                 let yaw = rand(360) as f32;
@@ -550,5 +572,23 @@ mod tests {
         assert!(draw.sprite == SPEARS && draw.scale == 1.0 && draw.alpha == 255.0 && !draw.mirrored && draw.turn == 0.0);
         // The action from the direction target → caster and the camera: 0, 1, 2, 3 for 200, 100, 40 and 300.
         assert_eq!([200, 100, 40, 300].map(claw_action), [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn tiger_cannon_shoots_80_sky_blue_streaks_over_everything() {
+        let start = Instant::now();
+        let at = [5.0, 1.0, 5.0];
+        let mut monk = Monk::default();
+        monk.tiger_cannon(at, start, false, |_| 0);
+        assert_eq!(monk.starbursts[0].streaks.len(), 80);
+        let mut small = Monk::default();
+        small.tiger_cannon(at, start, true, |_| 0);
+        assert_eq!(small.starbursts[0].streaks.len(), 24, "fewer under /mineffect");
+        // Asura Strike's streaks, 0.7 wide and 16.8 either side, in #41B8F0 with the ray picture, none in the depth-tested pass.
+        assert!(monk.meshes(start + TICK * 20, false).is_empty());
+        let (texture, vertices) = monk.meshes(start + TICK * 20, true).into_iter().next().unwrap();
+        assert_eq!((texture, vertices.len()), (crate::prims::sniper::RAY, 80 * 6));
+        assert_eq!(vertices[0].tint[..3], [65.0 / 255.0, 184.0 / 255.0, 240.0 / 255.0]);
+        assert_eq!((vertices[0].tint[3] * 255.0).round(), 15.0);
     }
 }

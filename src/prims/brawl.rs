@@ -17,6 +17,9 @@ pub const LENS: [&str; 2] = ["data\\texture\\effect\\lens1.tga", "data\\texture\
 pub const WHITE: &str = "data\\texture\\effect\\white02.bmp";
 pub const STORM: &str = "data\\texture\\effect\\storm2.tga";
 pub const STRIP: &str = "data\\texture\\effect\\line3.tga";
+/// Hesperus Lit's disc: a ring blast (128 px) that grows 7 % a tick for 69 ticks.
+pub const BLAST: &str = "data\\texture\\effect\\explosive_1_128.bmp";
+const DISC_LAST: u32 = 69;
 pub const GOLD_STRIP: &str = "data\\texture\\effect\\line3y.tga";
 pub const RAY: &str = sniper::RAY;
 pub const CLOUD: &str = sniper::CLOUD;
@@ -44,6 +47,8 @@ const STRIP_PRIMS: usize = 8;
 const STRIP_LAST: u32 = 49;
 /// Hundred Spear's lines: 120 ticks, in pale yellows.
 const GOLD_LAST: u32 = 119;
+/// Knuckle Arrow's lines' tints: #6969FF, #4141FF, #1919FF.
+const KNUCKLE_TINTS: [[f32; 3]; 3] = [[105.0 / 255.0, 105.0 / 255.0, 1.0], [65.0 / 255.0, 65.0 / 255.0, 1.0], [25.0 / 255.0, 25.0 / 255.0, 1.0]];
 const GOLD_TINTS: [[f32; 3]; 3] = [[1.0, 1.0, 225.0 / 255.0], [1.0, 1.0, 205.0 / 255.0], [1.0, 1.0, 185.0 / 255.0]];
 const STRIP_TINTS: [[f32; 3]; 3] = [[225.0 / 255.0, 225.0 / 255.0, 1.0], [205.0 / 255.0, 205.0 / 255.0, 1.0], [185.0 / 255.0, 185.0 / 255.0, 1.0]];
 
@@ -341,13 +346,37 @@ pub struct Strip {
     growth: f32,
 }
 
+/// Which lines: Dark Illusion's pale ones, Hundred Spear's gold ones or Knuckle Arrow's blue ones.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LineKind {
+    Pale,
+    Gold,
+    Knuckle,
+}
+
+impl LineKind {
+    /// Whether it is one of the quicker, longer-lived kinds (gold and Knuckle Arrow's): 120 ticks, growing speed.
+    fn fast(self) -> bool {
+        self != LineKind::Pale
+    }
+}
+
 struct Lines {
-    /// Hundred Spear's gold lines instead of Dark Illusion's pale ones.
-    gold: bool,
+    kind: LineKind,
     start: Instant,
     from: Vector,
     heading: f32,
     strips: Vec<Strip>,
+}
+
+/// The disc's half-diagonal after n ticks: 0.9 of a size of 15 grown 7 % a tick.
+pub fn disc_half(n: u32) -> f32 {
+    0.9 * 15.0 * 1.07_f32.powi(n as i32)
+}
+
+/// The disc's alpha at n: 6 a tick to 60, then 1 less a tick.
+pub fn disc_alpha(n: u32) -> f32 {
+    if n <= 10 { 6.0 * n as f32 } else { (60.0 - (n - 10) as f32).max(0.0) }
 }
 
 /// Hundred Spear's line alpha at its age a: 20 a tick to 200, held to 20, then 2 less a tick.
@@ -381,6 +410,12 @@ struct Spread {
     /// The ticks its flag is set on: Sound of Destruction's 30 to 99, the chi burst's 0 to 29.
     first: u32,
     last: u32,
+}
+
+/// Hesperus Lit's and Chilly Air's faint blue disc spreading flat under a unit.
+struct Disc {
+    unit: Option<u32>,
+    start: Instant,
 }
 
 /// Camouflage's translucent unit (744): alpha 50 while the status lasts, then 8 more a tick back to 255.
@@ -454,6 +489,7 @@ pub struct Brawl {
     reds: Vec<Marked>,
     cloaks: Vec<Cloak>,
     tetras: Vec<Tetra>,
+    discs: Vec<Disc>,
     manholes: Vec<Option<u32>>,
 }
 
@@ -560,6 +596,11 @@ impl Brawl {
         }
     }
 
+    /// The disc of Hesperus Lit and Chilly Air under `unit`.
+    pub fn disc(&mut self, unit: Option<u32>, now: Instant) {
+        self.discs.push(Disc { unit, start: now });
+    }
+
     /// Tetra Vortex's cast on `unit` for `length` ticks, replacing the last.
     pub fn tetra(&mut self, unit: Option<u32>, length: u32, now: Instant) {
         self.tetras.retain(|tetra| tetra.unit != unit);
@@ -617,29 +658,38 @@ impl Brawl {
 
     /// Dark Illusion's 32 lines from the caster's feet `from` toward `to`, each streak's choices from `rand(n)`.
     pub fn lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.make_lines(false, from, to, now, rand);
+        self.make_lines(LineKind::Pale, from, to, now, rand);
     }
 
     /// Hundred Spear's 32 gold lines, quicker and longer, the same way.
     pub fn spear_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.make_lines(true, from, to, now, rand);
+        self.make_lines(LineKind::Gold, from, to, now, rand);
     }
 
-    fn make_lines(&mut self, gold: bool, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    /// Knuckle Arrow's 32 blue lines over everything, the same way.
+    pub fn knuckle_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make_lines(LineKind::Knuckle, from, to, now, rand);
+    }
+
+    fn make_lines(&mut self, kind: LineKind, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
         let mut strips = Vec::new();
         for prim in 0..STRIP_PRIMS {
             for _ in 0..4 {
                 let side = (15 + rand(11)) as f32 * if prim % 2 == 0 { -1.0 } else { 1.0 };
                 let phase = rand(200) as f32;
-                let half = if gold { 0.5 + 0.1 * rand(6) as f32 } else { 0.3 + 0.1 * rand(4) as f32 };
-                let length = if gold { (40 + rand(31)) as f32 } else { (20 + rand(31)) as f32 };
+                let half = if kind == LineKind::Gold { 0.5 + 0.1 * rand(6) as f32 } else { 0.3 + 0.1 * rand(4) as f32 };
+                let length = if kind == LineKind::Gold { (40 + rand(31)) as f32 } else { (20 + rand(31)) as f32 };
                 let colour = rand(3) as usize;
-                let (speed, growth) = if gold { (1.0 + 0.1 * rand(11) as f32, 0.05) } else { (1.5 + 0.1 * rand(21) as f32, 0.0) };
+                let (speed, growth) = match kind {
+                    LineKind::Gold => (1.0 + 0.1 * rand(11) as f32, 0.05),
+                    LineKind::Knuckle => (1.5 + 0.1 * rand(21) as f32, 0.05),
+                    LineKind::Pale => (1.5 + 0.1 * rand(21) as f32, 0.0),
+                };
                 strips.push(Strip { side, phase, half, length, colour, speed, growth });
             }
         }
         let heading = bearing(to[0] - from[0], to[2] - from[2]) as f32;
-        self.lines.push(Lines { gold, start: now, from, heading, strips });
+        self.lines.push(Lines { kind, start: now, from, heading, strips });
     }
 
     /// A shake of `unit`'s parts on ticks `first` to `last` (Dark Illusion's 0 to 34, Sky Net Blow's 31 to 50).
@@ -698,11 +748,12 @@ impl Brawl {
             }
         }
         self.tetras.retain(|tetra| passes(tetra.start, now) <= tetra.length + 33);
+        self.discs.retain(|disc| passes(disc.start, now) <= DISC_LAST + 1);
         self.flares.retain(|flares| passes(flares.start, now) <= 30);
         self.hops.retain(|hops| passes(hops.start, now) <= 100);
         self.rays.retain(|rays| passes(rays.start, now) <= RAY_LAST + 1);
         self.tornados.retain(|tornado| passes(tornado.start, now) <= TORNADO_LAST + 1);
-        self.lines.retain(|lines| passes(lines.start, now) <= if lines.gold { GOLD_LAST } else { STRIP_LAST } + 1);
+        self.lines.retain(|lines| passes(lines.start, now) <= if lines.kind.fast() { GOLD_LAST } else { STRIP_LAST } + 1);
         self.spreads.retain(|spread| passes(spread.start, now) <= 100);
         self.spins.retain(|spin| passes(spin.start, now) <= SPIN_TICKS + 1);
         self.shakes.retain(|shake| passes(shake.start, now) <= shake.last + 1);
@@ -835,6 +886,17 @@ impl Brawl {
     /// Dark Illusion's lines and the Dragon Combo's rays, drawn over everything with no depth test.
     pub fn top_meshes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<Wall> {
         let mut walls = Vec::new();
+        for disc in &self.discs {
+            let (Some(feet), n) = (position_of(disc.unit), passes(disc.start, now)) else { continue };
+            if n == 0 || n > DISC_LAST {
+                continue;
+            }
+            let half = disc_half(n);
+            let tint = [5.0 / 255.0, 5.0 / 255.0, 1.0, disc_alpha(n) / 255.0];
+            let corner = |x: f32, z: f32, uv: [f32; 2]| MeshVertex { position: [feet[0] + x * half, feet[1] + 5.0, feet[2] + z * half], uv, tint };
+            let [a, b, c, d] = [corner(1.0, 0.0, [0.0, 1.0]), corner(0.0, 1.0, [1.0, 1.0]), corner(-1.0, 0.0, [1.0, 0.0]), corner(0.0, -1.0, [0.0, 0.0])];
+            walls.push(Wall { texture: BLAST, vertices: vec![a, b, c, a, c, d], additive: true, forced: false });
+        }
         for rays in self.rays.iter().filter(|rays| rays.dragon) {
             let (Some(feet), Some(t)) = (position_of(rays.unit), passes(rays.start, now).checked_sub(1)) else { continue };
             let a = t + 1;
@@ -846,7 +908,7 @@ impl Brawl {
         for lines in &self.lines {
             let Some(t) = passes(lines.start, now).checked_sub(1) else { continue };
             let a = t + 1;
-            if a > if lines.gold { GOLD_LAST } else { STRIP_LAST } {
+            if a > if lines.kind.fast() { GOLD_LAST } else { STRIP_LAST } {
                 continue;
             }
             let (sin, cos) = lines.heading.to_radians().sin_cos();
@@ -856,8 +918,12 @@ impl Brawl {
                 let middle = [lines.from[0] + strip.side * side_cos, lines.from[1] + 6.0, lines.from[2] + strip.side * side_sin];
                 let (head, tail) = (strip.at(a) + strip.length - 100.0, strip.at(a) - 100.0);
                 let place = |along: f32, across: f32| [middle[0] + cos * along - sin * across, middle[1], middle[2] + sin * along + cos * across];
-                let rgb = if lines.gold { GOLD_TINTS[strip.colour] } else { STRIP_TINTS[strip.colour] };
-                let alpha = if lines.gold { gold_alpha(a) } else { strip_alpha(a) };
+                let rgb = match lines.kind {
+                    LineKind::Gold => GOLD_TINTS[strip.colour],
+                    LineKind::Knuckle => KNUCKLE_TINTS[strip.colour],
+                    LineKind::Pale => STRIP_TINTS[strip.colour],
+                };
+                let alpha = if lines.kind.fast() { gold_alpha(a) } else { strip_alpha(a) };
                 let tint = [rgb[0], rgb[1], rgb[2], alpha / 255.0];
                 let [p, q, r, s] = [
                     MeshVertex { position: place(head, -strip.half), uv: [0.0, 0.0], tint },
@@ -867,7 +933,12 @@ impl Brawl {
                 ];
                 vertices.extend([p, q, r, p, r, s]);
             }
-            walls.push(Wall { texture: if lines.gold { GOLD_STRIP } else { STRIP }, vertices, additive: false, forced: false });
+            walls.push(Wall {
+                texture: if lines.kind == LineKind::Gold { GOLD_STRIP } else { STRIP },
+                vertices,
+                additive: lines.kind == LineKind::Knuckle,
+                forced: false,
+            });
         }
         walls
     }
@@ -1277,5 +1348,39 @@ mod tests {
         assert_eq!(glow(0), Some((crate::actor::GLOW_SPREAD, None)));
         assert_eq!(glow(29), Some((crate::actor::GLOW_SPREAD | 29 << crate::actor::PARAM_SHIFT, None)));
         assert!(glow(30).is_none());
+    }
+
+    #[test]
+    fn knuckle_arrow_races_32_blue_lines_and_hesperus_lit_spreads_a_disc() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.knuckle_lines([10.0, 1.0, 10.0], [50.0, 1.0, 10.0], start, |_| 0);
+        let strips = &brawl.lines[0].strips;
+        assert_eq!(strips.len(), 32);
+        assert!(strips.iter().all(|strip| strip.speed == 1.5 && strip.growth == 0.05 && strip.half == 0.3 && strip.length == 20.0));
+        // Over everything, added on, in #6969FF, #4141FF and #1919FF.
+        let walls = brawl.top_meshes(start, |_| Some([0.0; 3]));
+        assert!(walls.iter().all(|wall| wall.additive && wall.texture == STRIP));
+        let tints: Vec<[f32; 3]> = walls.iter().flat_map(|wall| wall.vertices.iter().map(|vertex| [vertex.tint[0], vertex.tint[1], vertex.tint[2]])).collect();
+        assert!(tints.iter().all(|tint| *tint == KNUCKLE_TINTS[0]));
+        let mut last = Brawl::default();
+        last.knuckle_lines([10.0, 1.0, 10.0], [50.0, 1.0, 10.0], start, |n| n - 1);
+        let walls = last.top_meshes(start, |_| Some([0.0; 3]));
+        assert!(walls.iter().all(|wall| wall.vertices.iter().all(|vertex| vertex.tint[..3] == KNUCKLE_TINTS[2])));
+        // Hesperus Lit: the half-diagonal 0.9 × 15 × 1.07ⁿ, alpha 6, 60, 59, 1, 0 at n = 1, 10, 11, 69, 70.
+        assert!((disc_half(1) - 0.9 * 15.0 * 1.07).abs() < 1e-3);
+        assert_eq!([1, 10, 11, 69, 70].map(disc_alpha), [6.0, 60.0, 59.0, 1.0, 0.0]);
+        let mut disc = Brawl::default();
+        disc.disc(Some(1), start);
+        let feet = [3.0, 2.0, 4.0];
+        let walls = disc.top_meshes(start, |_| Some(feet));
+        assert_eq!(walls.len(), 1);
+        let wall = &walls[0];
+        assert!(wall.additive && wall.texture == BLAST && wall.vertices.len() == 6);
+        assert_eq!(wall.vertices[0].tint[..3], [5.0 / 255.0, 5.0 / 255.0, 1.0]);
+        assert!(wall.vertices.iter().all(|vertex| vertex.position[1] == feet[1] + 5.0));
+        assert!((wall.vertices[0].position[0] - (feet[0] + disc_half(1))).abs() < 1e-3);
+        assert!(!disc.top_meshes(start + TICK * 68, |_| Some(feet)).is_empty() && disc.top_meshes(start + TICK * 69, |_| Some(feet)).is_empty());
+        assert!(disc.top_meshes(start, |_| None).is_empty(), "it follows the unit");
     }
 }

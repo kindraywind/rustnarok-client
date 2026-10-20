@@ -32,6 +32,8 @@ pub type Glow = Option<(u32, Option<[u8; 3]>)>;
 pub enum Shot {
     SharpShooting,
     ArrowVulcan,
+    /// Crescent Elbow's eight blue lines, drawn over everything.
+    CrescentElbow,
 }
 
 /// One element of a line prim: when it was made, its wait, and its numbers.
@@ -249,6 +251,11 @@ impl Sniper {
         self.lines.push(Lines { shot, caster, aim, start: now, made: 0, last: None, elements: Vec::new() });
     }
 
+    /// Crescent Elbow's (892) lines from `caster` toward `aim`: a prim of four elements on each of ticks 0 and 1.
+    pub fn elbow(&mut self, caster: Option<u32>, aim: Vector, now: Instant) {
+        self.lines.push(Lines { shot: Shot::CrescentElbow, caster, aim, start: now, made: 0, last: None, elements: Vec::new() });
+    }
+
     /// Wind Walk's four arcs over the place `at`, each band's radius and lean from `rand(n)`.
     pub fn wind_walk(&mut self, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
         let bands = (0..4)
@@ -295,7 +302,11 @@ impl Sniper {
     pub fn advance(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>, mut rand: impl FnMut(u32) -> u32) {
         for lines in &mut self.lines {
             lines.last = position_of(lines.caster).or(lines.last);
-            let prims = if lines.shot == Shot::SharpShooting { SHARP_PRIMS } else { VULCAN_PRIMS };
+            let prims = match lines.shot {
+                Shot::SharpShooting => SHARP_PRIMS,
+                Shot::ArrowVulcan => VULCAN_PRIMS,
+                Shot::CrescentElbow => 2,
+            };
             while lines.made < prims && passes(lines.start, now) > lines.made {
                 if let Some(feet) = lines.last {
                     let made = lines.made;
@@ -321,6 +332,21 @@ impl Sniper {
     /// The colour a flash left on `unit`'s body, fading back to white.
     pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
         self.bodies.iter().filter(|coloured| coloured.unit == unit).find_map(|coloured| coloured.at(passes(coloured.start, now).checked_sub(1)?).1)
+    }
+
+    /// Crescent Elbow's lines at `now`, drawn over everything with no depth test.
+    pub fn top_meshes(&self, now: Instant) -> Vec<Wall> {
+        let mut walls = Vec::new();
+        for lines in self.lines.iter().filter(|lines| lines.shot == Shot::CrescentElbow) {
+            let Some(t) = passes(lines.start, now).checked_sub(1) else { continue };
+            for element in &lines.elements {
+                let e = element.age + t as i32 - element.made as i32 + 1;
+                if (1..=14).contains(&e) {
+                    walls.extend(element.walls(lines.shot, line_alpha(lines.shot, e as u32)));
+                }
+            }
+        }
+        walls
     }
 
     /// Every mesh to draw at `now`; `position_of` gives a unit's feet.
@@ -354,7 +380,7 @@ impl Sniper {
             walls.push(Wall { texture: RAY, vertices: thin, additive: true, forced: false });
             walls.push(Wall { texture: RAY, vertices: wide, additive: false, forced: false });
         }
-        for lines in &self.lines {
+        for lines in self.lines.iter().filter(|lines| lines.shot != Shot::CrescentElbow) {
             let Some(t) = passes(lines.start, now).checked_sub(1) else { continue };
             for element in &lines.elements {
                 let e = element.age + t as i32 - element.made as i32 + 1;
@@ -383,6 +409,17 @@ impl Element {
         let (dx, dz) = (aim[0] - feet[0], aim[2] - feet[2]);
         let distance = f32::hypot(dx, dz);
         let bearing = bearing(dx, dz) as f32;
+        if shot == Shot::CrescentElbow {
+            // Its wait, then five R(100): x, z, how far it backs off, the height and the length.
+            let age = -(rand(20) as i32);
+            let x = feet[0] - 3.0 + 0.06 * rand(100) as f32;
+            let z = feet[2] - 3.0 + 0.06 * rand(100) as f32;
+            let back = 0.15 * rand(100) as f32;
+            let height = 8.0 + 0.04 * rand(100) as f32;
+            let length = 20.0 + 0.2 * rand(100) as f32;
+            let (sin, cos) = bearing.to_radians().sin_cos();
+            return Self { made, age, start: [x - cos * back, feet[1], z - sin * back], radius: 0.25, height, length, bearing };
+        }
         let vulcan = shot == Shot::ArrowVulcan;
         let age = if vulcan { -30 - rand(110) as i32 } else { -45 - rand(20) as i32 };
         let x = feet[0] + 0.08 * rand(100) as f32 - 4.0;
@@ -401,7 +438,12 @@ impl Element {
         let end = [self.start[0] + self.length * cos, self.start[1], self.start[2] + self.length * sin];
         let (side_sin, side_cos) = ((self.bearing + 90.0) % 360.0).to_radians().sin_cos();
         let pink = [1.0, 89.0 / 255.0, 182.0 / 255.0];
-        let (rgb, wide) = if shot == Shot::SharpShooting { ([1.0; 3], self.radius + 0.25) } else { (pink, 2.0 * self.radius) };
+        let (rgb, wide) = match shot {
+            Shot::SharpShooting => ([1.0; 3], self.radius + 0.25),
+            Shot::ArrowVulcan => (pink, 2.0 * self.radius),
+            Shot::CrescentElbow => ([55.0 / 255.0, 55.0 / 255.0, 1.0], 0.5),
+        };
+        let texture = if shot == Shot::CrescentElbow { CLOUD } else { RAY };
         let tint = [rgb[0], rgb[1], rgb[2], alpha / 255.0];
         let pass = |rho: f32, additive: bool| {
             let ring = |at: Vector, s: u32| {
@@ -418,7 +460,7 @@ impl Element {
                 ];
                 vertices.extend([a, b, c, a, c, d]);
             }
-            Wall { texture: RAY, vertices, additive, forced: false }
+            Wall { texture, vertices, additive, forced: false }
         };
         [pass(self.radius, false), pass(wide, true)]
     }
@@ -590,5 +632,34 @@ mod tests {
         assert_eq!(outline(3), Some((crate::actor::GLOW_OUTLINE, Some([250; 3]))));
         assert_eq!((outline(6).unwrap().1, outline(8).unwrap().1, outline(5).unwrap().1), (Some([100; 3]), Some([100; 3]), Some([250; 3])));
         assert!(outline(29).is_some() && outline(30).is_none());
+    }
+
+    #[test]
+    fn crescent_elbow_leaves_eight_blue_lines_over_everything() {
+        let start = Instant::now();
+        let feet = [10.0, 1.0, 10.0];
+        let aim = [30.0, 1.0, 10.0];
+        let mut sniper = Sniper::default();
+        sniper.elbow(Some(1), aim, start);
+        for tick in 0..4 {
+            sniper.advance(start + TICK * tick, |_| Some(feet), |_| 0);
+        }
+        // Two prims of four, made on ticks 0 and 1.
+        assert_eq!(sniper.lines[0].elements.len(), 8);
+        // Every draw 0: 3 west and 3 north of the caster's feet, 8 up, 0.25 round, 20 long, along the bearing to the aim.
+        let element = &sniper.lines[0].elements[0];
+        assert!(near(element.start[0], 7.0) && near(element.start[2], 7.0) && element.height == 8.0 && element.radius == 0.25 && near(element.length, 20.0));
+        // Alpha at e = 1, 5, 6, 14, 15: 8, 40, 36, 4, hidden.
+        assert_eq!([1, 5, 6, 14, 15].map(|e| line_alpha(Shot::CrescentElbow, e)), [8.0, 40.0, 36.0, 4.0, 0.0]);
+        // Over everything, never in the depth-tested pass: thin and blended, then 0.5 wide and added on, in #3737FF.
+        assert!(sniper.meshes(start, |_| Some(feet)).is_empty());
+        let walls = sniper.top_meshes(start);
+        assert_eq!(walls.len(), 2 * 4);
+        assert!(!walls[0].additive && walls[1].additive && walls.iter().all(|wall| wall.texture == CLOUD && wall.vertices.len() == 30));
+        assert_eq!(walls[0].vertices[0].tint[..3], [55.0 / 255.0, 55.0 / 255.0, 1.0]);
+        assert_eq!((walls[0].vertices[0].tint[3] * 255.0).round(), 8.0);
+        let across = |wall: &Wall| wall.vertices.iter().map(|vertex| (vertex.position[2] - element.start[2]).abs()).fold(0.0, f32::max);
+        assert!(across(&walls[0]) <= 0.251 && across(&walls[1]) <= 0.501 && across(&walls[1]) > 0.3);
+        assert_eq!(sniper.top_meshes(start + TICK * 1).len(), 2 * 8);
     }
 }

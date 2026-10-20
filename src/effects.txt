@@ -1414,7 +1414,6 @@ part	856	3D	file=effect/melody_b.bmp;red=1;green=0.6;blue=0.6;alphaMax=0.6;attac
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=30000;red=0.0001;green=1.0;blue=0.0001;size=400;posz=7;zIndex=1;wav=effect/ef_readyportal;file=effect/ef_epitree.tga
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=990;duplicate=15;timeBetweenDupli=2000;red=0.0001;green=1.0;blue=0.0001;sizeStart=380;sizeEnd=420;posz=7;zIndex=1;file=effect/ef_epitree.tga
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=990;duplicate=15;timeBetweenDupli=2000;delayOffset=1000;red=0.0001;green=1.0;blue=0.0001;sizeStart=420;sizeEnd=380;posz=7;zIndex=1;file=effect/ef_epitree.tga
-part	889	3D	wav=effect/mon_아수라 패황권;duplicate=24;timeBetweenDupli=0;file=effect/lens1.tga;delayStart=100;duration=250;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;red=0.1;green=0.1;blue=1.0;overlay=true;rotateToTarget=true;rotateWithCamera=true
 part	906	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;rotate=true;angle=0;toAngle=-611;poszStart=20;poszEnd=5;size=100;zIndex=1;file=effect/shield.bmp;wav=effect/프레셔
 part	906	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;delayOffset=501;fadeOut=true;angle=-611;posz=5;size=100;zIndex=1;file=effect/shield.bmp;delayWav=500;wav=effect/lg_shieldpress
 part	930	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=500;rotate=true;angle=0;toAngle=-611;poszStart=20;poszEnd=5;size=100;zIndex=1;file=effect/cross1.bmp;wav=effect/프레셔
@@ -2048,7 +2047,9 @@ wav	882	effect\LG_EXEEDBREAK	160
 wav	883	effect\ef_readyportal	0
 wav	885	effect\mon_맹룡과강	80
 wav	888	effect\sr_earthshaker	0
-wav	889	effect\mon_아수라 패황권	0
+wav	889	effect\mon_맹룡과강	80
+wav	892	effect\EF_hit2	160
+wav	892	effect\EF_hit4	320
 wav	893	effect\SR_KNUCKLEARROW	0	listener
 wav	906	effect\프레셔	0
 wav	906	effect\lg_shieldpress	500
@@ -4367,6 +4368,7 @@ struck	2327	target	548
 struck	2327	target	550
 struck	2327	caster	886
 struck	2327	caster	890
+struck	2330	target	889
 struck	2332	caster	886
 struck	2336	target	458
 struck	2426	target	466
@@ -4670,6 +4672,7 @@ used	2338	caster	886
 used	2341	caster	886
 used	2341	target	886
 used	2342	caster	886
+used	2342	caster	892
 used	2345	caster	886
 used	2345	target	886
 used	2346	caster	886

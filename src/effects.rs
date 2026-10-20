@@ -1874,6 +1874,12 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Tiger Cannon's starburst, Crescent Elbow's and Knuckle Arrow's blue lines and Hesperus Lit's disc (`prims::monk`, `prims::sniper`,
+/// `prims::brawl`).
+const TIGER_CANNON_FX: u32 = 889;
+const ELBOW_LINES: u32 = 892;
+const KNUCKLE_LINES: u32 = 893;
+const GROUND_SHAKE: u32 = 894;
 /// Exceed Break's needles, the Dragon Combo's rays, the Sura's chi burst and Moon Slasher's spin (`prims::chi`, `prims::brawl`).
 const PRIME_CHARGE: u32 = 882;
 const DRAGON_RAYS: u32 = 885;
@@ -2036,7 +2042,9 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 35] = [
+pub const AIMED: [u32; 37] = [
+    ELBOW_LINES,
+    KNUCKLE_LINES,
     SPEAR_RUSH,
     GREAT_ECHO_V,
     SONIC_WAVE,
@@ -2439,6 +2447,14 @@ impl Effects {
                 self.prims.brawl.chi_spread(unit, now);
             }
             (MOON_SPIN, Target::Unit(unit)) => self.prims.brawl.moon_spin(unit, now),
+            (TIGER_CANNON_FX, _) => {
+                self.textures.entry(sniper::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sniper::RAY, true).ok());
+                self.prims.monk.tiger_cannon(at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+            }
+            (GROUND_SHAKE, Target::Unit(unit)) => {
+                self.textures.entry(brawl::BLAST.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::BLAST, true).ok());
+                self.prims.brawl.disc(unit, now);
+            }
             (SOUND_NOTES, _) => {
                 for path in guard::NOTES {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
@@ -3261,6 +3277,16 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.waterballs.throw(from, to, now);
             }
+            ELBOW_LINES => {
+                self.textures.entry(sniper::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sniper::CLOUD, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.sniper.elbow(caster, to, now);
+            }
+            KNUCKLE_LINES => {
+                self.textures.entry(brawl::STRIP.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::STRIP, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.brawl.knuckle_lines(from, to, now, |n| pick(0, n.saturating_sub(1)));
+            }
             SPEAR_RUSH => {
                 self.textures.entry(brawl::GOLD_STRIP.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::GOLD_STRIP, true).ok());
                 self.play_quakes(table, id, now);
@@ -3674,6 +3700,14 @@ impl Effects {
         if !self.only_forced {
             let rings = self.prims.first.top_meshes(now);
             meshes.extend(rings.into_iter().filter_map(|(path, triangles)| Some((self.textures.get(path)?.as_ref()?, triangles, false))));
+            // Crescent Elbow's lines, with no depth test.
+            meshes.extend(
+                self.prims
+                    .sniper
+                    .top_meshes(now)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            );
             // Strip Accessory's icons in upright planes, seen through the ground.
             meshes.extend(
                 self.prims
@@ -6147,5 +6181,21 @@ mod tests {
         assert!(!table.sounds.contains_key(&CHI_BURST));
         // Moon Slasher and Sky Net Blow turn the caster.
         assert!(table.struck(2320).unwrap().contains(&(Who::Caster, MOON_SPIN)) && table.struck(2327).unwrap().contains(&(Who::Caster, MOON_SPIN)));
+    }
+
+    #[test]
+    fn tiger_cannon_crescent_elbow_knuckle_arrow_and_hesperus_lit_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Tiger Cannon on its target with its own sound 80 ms in; no part row left to double it.
+        assert!(table.struck(2330).unwrap().contains(&(Who::Target, TIGER_CANNON_FX)));
+        assert_eq!(sounds(TIGER_CANNON_FX), [("effect\\mon_맹룡과강", 80, false)]);
+        // Crescent Elbow launched by its caster (aimed, so its sounds play from the arm), two hits 160 and 320 ms in.
+        assert!(AIMED.contains(&ELBOW_LINES) && table.used(2342).unwrap().contains(&(Who::Caster, ELBOW_LINES)));
+        assert_eq!(sounds(ELBOW_LINES), [("effect\\EF_hit2", 160, false), ("effect\\EF_hit4", 320, false)]);
+        // Knuckle Arrow keeps its sound at the listener and aims its lines; Hesperus Lit's disc goes on both its skills' targets.
+        assert!(AIMED.contains(&KNUCKLE_LINES) && table.struck(2336).unwrap().contains(&(Who::Caster, KNUCKLE_LINES)));
+        assert_eq!(sounds(KNUCKLE_LINES), [("effect\\SR_KNUCKLEARROW", 0, true)]);
+        assert!(table.struck(2324).unwrap().contains(&(Who::Target, GROUND_SHAKE)) && table.struck(8418).unwrap().contains(&(Who::Caster, GROUND_SHAKE)));
     }
 }
