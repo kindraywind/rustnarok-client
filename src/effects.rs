@@ -18,6 +18,7 @@ use crate::prims::{
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
+use crate::world_fx::{self, WorldFx};
 use crate::world_str::{self, Worlds};
 
 /// A quad's corners as texture coordinates: top left, top right, bottom right, bottom left.
@@ -1858,6 +1859,38 @@ pub struct Effects {
     worlds: Worlds,
     world_clock: Option<Instant>,
     black: Option<Texture>,
+    /// The world objects that build their pictures in code (`world_fx`); they tick with the STR world copies.
+    fx: WorldFx,
+}
+
+/// What the world objects load, through the effects' caches.
+struct FxAssets<'a> {
+    gpu: &'a Gpu,
+    grf: &'a Grf,
+    textures: &'a mut HashMap<String, Option<Texture>>,
+    loaded: &'a mut HashMap<String, Option<Rc<Loaded>>>,
+    sprites: &'a mut HashMap<String, Option<SpriteSet>>,
+}
+
+impl world_fx::Assets for FxAssets<'_> {
+    fn texture(&mut self, path: &str) -> Option<[f32; 2]> {
+        let (gpu, grf) = (self.gpu, self.grf);
+        self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok()).as_ref().map(|texture| texture.size)
+    }
+
+    fn str(&mut self, file: &str) -> Option<Rc<Loaded>> {
+        let (gpu, grf) = (self.gpu, self.grf);
+        // The textures sit in the file's folder.
+        let folder = file.rsplit_once(['/', '\\']).map_or(String::new(), |(directory, _)| format!("{directory}/"));
+        self.loaded.entry(format!("{folder}|{file}")).or_insert_with(|| load(gpu, grf, file, &folder)).clone()
+    }
+
+    fn sprite(&mut self, path: &str, action: usize, frame: usize) -> Option<(usize, Vec<Placed>)> {
+        let (gpu, grf) = (self.gpu, self.grf);
+        let sprite = self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path)).as_mut()?;
+        let frames = sprite.frame_count(action)?.max(1);
+        Some((frames, sprite.frame_at(gpu, action, 0, Timing::Span((frame as f32 + 0.5) / frames as f32))))
+    }
 }
 
 /// The effects drawn even with /effect off (the data's ForceRenderEffect list): warp portals, Safety Wall, the
@@ -2662,23 +2695,51 @@ impl Effects {
         self.worlds.head_owners()
     }
 
-    /// Runs the STR world copies' 16 ms ticks that came due, before the units, and queues the sounds and shakes they fire.
-    pub fn advance_world(&mut self, now: Instant, scene: &world_str::Scene) {
+    fn fx_assets<'a>(&'a mut self, gpu: &'a Gpu, grf: &'a Grf) -> (&'a mut WorldFx, FxAssets<'a>) {
+        (&mut self.fx, FxAssets { gpu, grf, textures: &mut self.textures, loaded: &mut self.loaded, sprites: &mut self.sprites })
+    }
+
+    /// Runs the STR world copies' and the world objects' 16 ms ticks that came due, before the units, and queues the sounds
+    /// and shakes they fire; then the drawn objects' frame step.
+    pub fn advance_world(&mut self, gpu: &Gpu, grf: &Grf, now: Instant, scene: &world_str::Scene, seen: &world_fx::Seen) {
         let clock = self.world_clock.get_or_insert(now);
         let due = str_frame(now.saturating_duration_since(*clock));
         // A long stall (a loading screen) skips ahead rather than running every tick.
         *clock = if due > WORLD_TICKS_MAX { now } else { *clock + Duration::from_secs_f32(STR_TICK_MS / 1000.0) * due };
-        if self.worlds.is_empty() {
+        if self.worlds.is_empty() && self.fx.is_empty() {
             return;
         }
         for _ in 0..due.min(WORLD_TICKS_MAX) {
-            for fired in self.worlds.tick(scene) {
+            let mut fired = self.worlds.tick(scene);
+            let (fx, mut assets) = self.fx_assets(gpu, grf);
+            fired.extend(fx.tick(scene, &mut assets));
+            for fired in fired {
                 match fired {
                     world_str::Fired::Sound(file, at) => self.sounds.push((now, file, at)),
                     world_str::Fired::Quake => self.quakes.push((now, QUAKE_LONG)),
                 }
             }
         }
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        fx.frame(seen, &mut assets);
+    }
+
+    /// Starts world object `id` (`Some(None)` owner = the player, None = at the point), or returns the copy running.
+    pub fn launch_fx(&mut self, gpu: &Gpu, grf: &Grf, launch: &world_fx::Launch) -> Option<u32> {
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        fx.launch(launch, &mut assets)
+    }
+
+    /// The world objects' faces by draw list; `depth_of` sorts the translucent and adding lists.
+    pub fn fx_lists(&self, seen: &world_fx::Seen, depth_of: impl Fn(Vector) -> f32) -> world_fx::Lists<EffectMesh<'_>> {
+        world_fx::Lists::sort(self.fx.faces(seen), depth_of).map(|face| {
+            let texture = match face.texture {
+                world_fx::Tex::Path(path) => self.textures.get(path)?.as_ref()?,
+                world_fx::Tex::Str(loaded, layer, index) => loaded.textures.get(layer)?.get(index)?.as_ref()?,
+                world_fx::Tex::Sprite(path, key) => self.sprites.get(path)?.as_ref()?.texture_of(key)?,
+            };
+            Some((texture, face.vertices, face.additive))
+        })
     }
 
     /// Sounds effect `id` makes, with none of its looks (Manhole's on a monster).
@@ -2701,6 +2762,15 @@ impl Effects {
             if let Some(copy) = serial.zip(status).and_then(|(serial, _)| self.worlds.get_mut(serial)) {
                 copy.status = copy.status.or(status);
             }
+            return;
+        }
+        // A registered world object.
+        if self.fx.registered(id) {
+            let owner = match target {
+                Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
+                _ => None,
+            };
+            self.launch_fx(gpu, grf, &world_fx::Launch::at(id, owner, at));
             return;
         }
         if id == BASH && self.min {

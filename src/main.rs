@@ -152,6 +152,7 @@ mod weather;
 mod whisper;
 mod window;
 mod world;
+mod world_fx;
 mod world_str;
 mod worldmap;
 

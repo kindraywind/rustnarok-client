@@ -262,7 +262,7 @@ impl View {
     }
 
     /// How far in front of the eye a point is, along the view.
-    fn depth_of(&self, point: Vector) -> f32 {
+    pub fn depth_of(&self, point: Vector) -> f32 {
         dot(subtract(point, self.eye), self.forward)
     }
 
@@ -515,6 +515,26 @@ fn mesh_vertex(position: vec3<f32>, uv: vec2<f32>, tint: vec4<f32>) -> MeshOutpu
 
 @fragment fn mesh_fs(in: MeshOutput) -> @location(0) vec4<f32> {
     let color = textureSample(image, image_sampler, vec2(fract(in.uv.x), in.uv.y)) * in.tint;
+    return vec4(apply_fog(color.rgb, in.fog), color.a);
+}
+
+// The world objects' opaque faces: clamped, texels under alpha 207 dropped, unblended.
+@fragment fn mesh_cut_fs(in: MeshOutput) -> @location(0) vec4<f32> {
+    let texel = textureSample(image, image_sampler, clamp(in.uv, vec2(0.0), vec2(1.0)));
+    if (texel.a < 207.0 / 255.0) { discard; }
+    return vec4(apply_fog(texel.rgb * in.tint.rgb, in.fog), 1.0);
+}
+
+// The world objects' faces drawn with the unit sprites, in the sprites' two passes.
+@fragment fn mesh_solid_fs(in: MeshOutput) -> @location(0) vec4<f32> {
+    let color = textureSample(image, image_sampler, in.uv) * in.tint;
+    if (color.a < SOLID) { discard; }
+    return vec4(apply_fog(color.rgb, in.fog), color.a);
+}
+
+@fragment fn mesh_soft_fs(in: MeshOutput) -> @location(0) vec4<f32> {
+    let color = textureSample(image, image_sampler, in.uv) * in.tint;
+    if (color.a < 0.02 || color.a >= SOLID) { discard; }
     return vec4(apply_fog(color.rgb, in.fog), color.a);
 }
 
@@ -781,6 +801,11 @@ pub struct World {
     cover_pipeline: wgpu::RenderPipeline,
     mesh_pipelines: [wgpu::RenderPipeline; 2],
     top_mesh_pipelines: [wgpu::RenderPipeline; 2],
+    /// The world objects' lists (`world_fx::List`): opaque; the floor's, blended and added; with the sprites, solid and
+    /// soft. Their translucent list uses the blended mesh pipeline.
+    fx_opaque_pipeline: wgpu::RenderPipeline,
+    fx_floor_pipelines: [wgpu::RenderPipeline; 2],
+    fx_sprite_pipelines: [wgpu::RenderPipeline; 2],
     depth: RefCell<Option<([u32; 2], wgpu::TextureView)>>,
 }
 
@@ -1015,6 +1040,15 @@ impl World {
             pipeline_compared("mesh", "mesh_fs", mesh_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false, wgpu::CompareFunction::Always),
             pipeline_compared("mesh", "mesh_fs", mesh_buffer_layout(), Some(additive), false, wgpu::CompareFunction::Always),
         ];
+        let fx_opaque_pipeline = pipeline("mesh", "mesh_cut_fs", mesh_buffer_layout(), None, true);
+        let fx_floor_pipelines = [
+            pipeline("mesh_add", "mesh_fs", mesh_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false),
+            pipeline("mesh_add", "mesh_fs", mesh_buffer_layout(), Some(additive), false),
+        ];
+        let fx_sprite_pipelines = [
+            pipeline("mesh", "mesh_solid_fs", mesh_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), true),
+            pipeline("mesh", "mesh_soft_fs", mesh_buffer_layout(), Some(wgpu::BlendState::ALPHA_BLENDING), false),
+        ];
 
         let water = MapWater::load(gpu, grf, &gnd, &rsw);
 
@@ -1066,6 +1100,9 @@ impl World {
             cover_pipeline,
             mesh_pipelines,
             top_mesh_pipelines,
+            fx_opaque_pipeline,
+            fx_floor_pipelines,
+            fx_sprite_pipelines,
             depth: RefCell::new(None),
         })
     }
@@ -1494,6 +1531,8 @@ pub struct WorldFrame<'a> {
     pub cover: &'a [CoverQuad<'a>],
     /// Shapes over everything, with no depth test, after the STRs.
     pub top_meshes: &'a [EffectMesh<'a>],
+    /// The world objects' other lists: opaque, floor and with the sprites, and translucent before the meshes.
+    pub fx: &'a crate::world_fx::Lists<EffectMesh<'a>>,
     /// Seconds since the map was entered, for animated textures.
     pub time: f32,
     /// The player is blind (health bit 0x10 or status 1205): lava draws as ordinary water, and models use the ambient.
@@ -1636,7 +1675,14 @@ impl WorldPass for WorldFrame<'_> {
                 usage: wgpu::BufferUsages::VERTEX,
             })
         });
-        let mesh_vertices: Vec<MeshVertex> = self.meshes.iter().chain(self.top_meshes).flat_map(|(_, vertices, _)| vertices.iter().copied()).collect();
+        // One buffer for every effect shape: the world objects' opaque, floor, with-sprites and translucent lists, the meshes,
+        // then the shapes over everything; `mesh_starts` is where each begins.
+        let mesh_lists: [&[EffectMesh]; 6] = [&self.fx.opaque, &self.fx.floor, &self.fx.with_sprites, &self.fx.translucent, self.meshes, self.top_meshes];
+        let mut mesh_starts = [0u32; 6];
+        for index in 1..6 {
+            mesh_starts[index] = mesh_starts[index - 1] + mesh_lists[index - 1].iter().map(|(_, vertices, _)| vertices.len() as u32).sum::<u32>();
+        }
+        let mesh_vertices: Vec<MeshVertex> = mesh_lists.iter().flat_map(|list| list.iter()).flat_map(|(_, vertices, _)| vertices.iter().copied()).collect();
         let mesh_buffer = (!mesh_vertices.is_empty()).then(|| {
             gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("effect shapes"),
@@ -1720,6 +1766,12 @@ impl WorldPass for WorldFrame<'_> {
                 pass.draw(range.clone(), 0..1);
             }
         }
+        // The world objects' opaque faces with the models, and their floor faces under the units.
+        if let Some(buffer) = &mesh_buffer {
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            draw_meshes(&mut pass, &self.fx.opaque, mesh_starts[0], |_| &world.fx_opaque_pipeline);
+            draw_meshes(&mut pass, &self.fx.floor, mesh_starts[1], |additive| &world.fx_floor_pipelines[usize::from(additive)]);
+        }
         if let Some(buffer) = &sprite_buffer {
             pass.set_vertex_buffer(0, buffer.slice(..));
             let draw = |pass: &mut wgpu::RenderPass, index: usize| {
@@ -1732,6 +1784,15 @@ impl WorldPass for WorldFrame<'_> {
             for pipeline in [&world.sprite_pipeline, &world.soft_pipeline] {
                 pass.set_pipeline(pipeline);
                 order.iter().for_each(|&index| draw(&mut pass, index));
+            }
+        }
+        // The world objects' faces with the sprites, in their two passes.
+        if let Some(buffer) = &mesh_buffer
+            && !self.fx.with_sprites.is_empty()
+        {
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            for pipeline in &world.fx_sprite_pipelines {
+                draw_meshes(&mut pass, &self.fx.with_sprites, mesh_starts[2], |_| pipeline);
             }
         }
         // The parts drawn again for statuses, over the units.
@@ -1794,14 +1855,9 @@ impl WorldPass for WorldFrame<'_> {
         }
         if let Some(buffer) = &mesh_buffer {
             pass.set_vertex_buffer(0, buffer.slice(..));
-            let mut first = 0u32;
-            for (texture, vertices, additive) in self.meshes {
-                let count = vertices.len() as u32;
-                pass.set_pipeline(&world.mesh_pipelines[usize::from(*additive)]);
-                pass.set_bind_group(1, texture.bind_group(), &[]);
-                pass.draw(first..first + count, 0..1);
-                first += count;
-            }
+            // The world objects' translucent faces, blended, then the effect shapes.
+            draw_meshes(&mut pass, &self.fx.translucent, mesh_starts[3], |_| &world.mesh_pipelines[0]);
+            draw_meshes(&mut pass, self.meshes, mesh_starts[4], |additive| &world.mesh_pipelines[usize::from(additive)]);
         }
         if let Some(buffer) = &effect_buffer {
             pass.set_vertex_buffer(0, buffer.slice(..));
@@ -1831,14 +1887,7 @@ impl WorldPass for WorldFrame<'_> {
         // Then the shapes over everything, after the other shapes in the same buffer.
         if let Some(buffer) = &mesh_buffer {
             pass.set_vertex_buffer(0, buffer.slice(..));
-            let mut first = self.meshes.iter().map(|(_, vertices, _)| vertices.len() as u32).sum::<u32>();
-            for (texture, vertices, additive) in self.top_meshes {
-                let count = vertices.len() as u32;
-                pass.set_pipeline(&world.top_mesh_pipelines[usize::from(*additive)]);
-                pass.set_bind_group(1, texture.bind_group(), &[]);
-                pass.draw(first..first + count, 0..1);
-                first += count;
-            }
+            draw_meshes(&mut pass, self.top_meshes, mesh_starts[5], |additive| &world.top_mesh_pipelines[usize::from(additive)]);
         }
         // Last in the world, over the ground, models, units and effects, and not fogged.
         if let Some(buffer) = &cover_buffer {
@@ -2080,6 +2129,17 @@ fn blend_passes(translucency: bool, depth_flag: bool) -> &'static [BlendPass] {
 }
 
 /// Puts things back to front: the deepest first.
+/// Draws effect shapes from the bound buffer, the first at vertex `first`, each with the pipeline for its blending.
+fn draw_meshes<'a>(pass: &mut wgpu::RenderPass, meshes: &[EffectMesh], mut first: u32, pipeline: impl Fn(bool) -> &'a wgpu::RenderPipeline) {
+    for (texture, vertices, additive) in meshes {
+        let count = vertices.len() as u32;
+        pass.set_pipeline(pipeline(*additive));
+        pass.set_bind_group(1, texture.bind_group(), &[]);
+        pass.draw(first..first + count, 0..1);
+        first += count;
+    }
+}
+
 fn back_to_front<T>(items: &mut [T], depth: impl Fn(&T) -> f32) {
     items.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
 }
