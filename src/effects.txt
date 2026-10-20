@@ -1581,6 +1581,7 @@ func	266	quake	0	200
 func	303	quake	132	650
 func	365	quake	528	650
 func	380	quake	480	650
+func	522	quake	0	650
 func	387	quake	480	650
 func	512	quake	132	650
 func	537	quake	200	650
@@ -1908,9 +1909,13 @@ wav	495	effect\복호격	336
 wav	495	effect\복호격	496
 wav	496	effect\black_maximize_power_sword_bic	0
 wav	502	effect\EF_BeginSpell	0
+wav	505	effect\priest_suffragium	0
 wav	507	effect\mapae	0
 wav	508	effect\itempokjuk	0
+wav	518	effect\wizard_fire_pillar_b	480
 wav	519	effect\fast	0
+wav	520	effect\cru_shield boomerang	0
+wav	522	effect\wizard_earthspike	0	listener
 wav	523	effect\priest_slowpoison	0
 wav	524	effect\priest_slowpoison	0
 wav	525	effect\priest_slowpoison	0
@@ -2055,6 +2060,7 @@ wav	1918	effect\ef_beginspell	0
 wav	1923	effect\ef_beginspell	0
 wav	914	effect\G스포어익스플로젼	0
 wav	1132	effect\mon_금강불괴	0
+wav	1195	effect\EF_BeginSpell	0
 hit	1	0	-1
 hit	2	0	-1
 hit	3	0	-1
@@ -5055,3 +5061,4 @@ skillwav	320	effect\석양의 어쌔신	0	listener
 skillwav	329	effect\행운의	0	listener
 skillwav	330	effect\당신을 위한 서비스	0	listener
 skillwav	366	effect\마법력 증폭	0	listener
+skillwav	482	effect\마법력 증폭	0	listener

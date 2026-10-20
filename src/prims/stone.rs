@@ -69,6 +69,8 @@ struct Spike {
     fade: u32,
     /// The skill unit on the ground it stands for: it goes with it.
     unit: Option<u32>,
+    /// Gravitation Field's: every 6 ticks it bobs (the speed is −1.2 at age 2 and 1.18 at age 5 of each cycle).
+    cycle: bool,
 }
 
 /// The axes of a spike turned `yaw` about the vertical, then pitched `pitch` from lying along it (90: upright), in
@@ -111,11 +113,19 @@ impl Spike {
             alpha_step,
             fade: life - 10,
             unit: None,
+            cycle: false,
         }
     }
 
     /// One tick: the speed changes and it moves on its axis; then it stops, sinks or fades as told.
     fn step(&mut self) {
+        if self.cycle {
+            match self.age % 6 {
+                2 => (self.speed, self.change) = (-1.2, 0.0),
+                5 => (self.speed, self.change) = (1.18, 0.01),
+                _ => {}
+            }
+        }
         let speed = match self.turn {
             Some((age, speed)) if age == self.age => {
                 self.change = 0.0;
@@ -211,6 +221,24 @@ impl Stone {
             let yaw = ((60 * (k - 1)) as f32 + below(60 * k)).min(360.0);
             let outer = Spike::new(now, at, 20.0, [yaw, 100.0], [4.0 + below(100) / 100.0, 20.0], 240, left);
             self.spikes.push(Spike { speed: 1.5, stop: 2, alpha: 250.0, ..outer });
+        }
+    }
+
+    /// Gravitation Field at `at` from `now`: 100 faint spikes on a 5 by 5 field, four a cell (two stone, two ice) 10 under the ground,
+    /// bobbing together for 250 ticks; those of a skill unit `unit` go with it.
+    pub fn gravitation(&mut self, at: Vector, now: Instant, unit: Option<u32>) {
+        for z in [-10.0, -5.0, 0.0, 5.0, 10.0] {
+            for x in [-10.0, -5.0, 0.0, 5.0, 10.0] {
+                for i in 0..4 {
+                    // Two draws thrown away, then the size, the yaw and the pitch.
+                    let _ = (below(360), below(2));
+                    let half = (300.0 + below(50)) / 100.0;
+                    let angles = [below(360), below(40) + 60.0];
+                    let spike = Spike::new(now, [at[0] + x, at[1], at[2] + z], 10.0, angles, [half, 18.0], 250, 249);
+                    let texture = if i < 2 { STONE } else { ICE_TEXTURE };
+                    self.spikes.push(Spike { texture, speed: 1.0, change: 0.01, stop: u32::MAX, cycle: true, alpha: 20.0, fade: 240, unit, ..spike });
+                }
+            }
         }
     }
 
@@ -578,5 +606,47 @@ mod tests {
         spikes.grimtooth([0.0; 3], [0.0, 0.0, 2.0], start);
         spikes.advance(start + TICK * 30);
         assert_eq!(spikes.spikes.len(), 1);
+    }
+
+    #[test]
+    fn gravitation_field_bobs_100_faint_spikes() {
+        let start = Instant::now();
+        let mut spikes = Stone::default();
+        spikes.gravitation([0.0, 2.0, 0.0], start, None);
+        spikes.gravitation([50.0, 2.0, 0.0], start, Some(9));
+        assert_eq!(spikes.spikes.len(), 200);
+        // 4 per cell over 25 cells: stone for i = 0, 1 and ice for 2, 3.
+        let first: Vec<&Spike> = spikes.spikes[..100].iter().collect();
+        assert_eq!(first.iter().filter(|spike| spike.texture == STONE).count(), 50);
+        assert_eq!(first.iter().filter(|spike| spike.texture == ICE_TEXTURE).count(), 50);
+        assert!(first[0].alpha == 20.0 && first[0].half >= 3.0 && first[0].half < 3.5 && first[0].height == 18.0);
+        // The travel after ages 0…7: 1.01, 2.03, 0.83, −0.37, −1.57, −0.38, 0.82, 2.03.
+        let mut spike = Spike { ..spikes.spikes.remove(0) };
+        let mut travel = Vec::new();
+        for _ in 0..8 {
+            spike.step();
+            travel.push((spike.rise * 100.0).round() / 100.0);
+        }
+        assert_eq!(travel, [1.01, 2.03, 0.83, -0.37, -1.57, -0.38, 0.82, 2.03]);
+        // Alpha 20 until age 240, 18 after it, 0 at 249; the base is 10 under the ground.
+        let mut fading = Spike::new(start, [0.0; 3], 10.0, [0.0, 90.0], [3.0, 18.0], 250, 249);
+        fading.alpha = 20.0;
+        fading.fade = 240;
+        for _ in 0..240 {
+            fading.step();
+        }
+        assert_eq!(fading.alpha, 20.0);
+        fading.step();
+        assert!((fading.alpha - 18.0).abs() < 1e-4);
+        for _ in 0..9 {
+            fading.step();
+        }
+        assert!(fading.alpha.abs() < 1e-3);
+        assert_eq!(fading.base[1], -10.0);
+        // The unit's copies go with the unit; the packet's run their ticks.
+        spikes.forget(9);
+        assert_eq!(spikes.spikes.len(), 99);
+        spikes.advance(start + TICK * 300);
+        assert!(spikes.spikes.is_empty());
     }
 }
