@@ -27,7 +27,13 @@ const FUNNEL_ALPHA: f32 = 240.0;
 const PUFF_EVERY: u32 = 5;
 const PUFF_LIFE: u32 = 10;
 /// Berserk's tint (#FA7878) is held to tick 150, then goes back to white by 8 a channel a tick.
-const BERSERK_TINT: [u8; 3] = [0xFA, 0x78, 0x78];
+/// What tells Berserk Pitcher's effect from Enchant Blade's and its sisters': the body's tint and the streaks' colour.
+pub struct BerserkLook {
+    tint: [u8; 3],
+    streak: [f32; 3],
+}
+pub const BERSERK: BerserkLook = BerserkLook { tint: [0xFA, 0x78, 0x78], streak: [240.0 / 255.0, 0.0, 0.0] };
+pub const ENCHANT_BLADE: BerserkLook = BerserkLook { tint: [0xFA, 0xFA, 0xC8], streak: [240.0 / 255.0, 240.0 / 255.0, 120.0 / 255.0] };
 const BERSERK_HELD: u32 = 150;
 const CYLINDER_LIFE: u32 = 50;
 const STREAK_LIFE: u32 = 40;
@@ -127,6 +133,7 @@ struct Streak {
 
 /// A Berserk Pitcher's effect on its owner.
 struct Berserk {
+    look: &'static BerserkLook,
     unit: Option<u32>,
     start: Instant,
     streaks: Vec<Streak>,
@@ -250,10 +257,10 @@ pub fn cylinder_height(p: u32) -> f32 {
 
 impl Streak {
     /// Two crossed upright blades at tick p of its own over the owner's `feet`, red.
-    fn blades(&self, feet: Vector, p: u32) -> Vec<MeshVertex> {
+    fn blades(&self, feet: Vector, p: u32, rgb: [f32; 3]) -> Vec<MeshVertex> {
         let (sin, cos) = self.yaw.to_radians().sin_cos();
         let centre = [feet[0] + self.distance * sin, feet[1] + self.speed * (p + 1) as f32, feet[2] + self.distance * cos];
-        let tint = tint([240.0 / 255.0, 0.0, 0.0], burst::alpha(p, 0.0, 9.0, 180.0, 20, STREAK_LIFE));
+        let tint = tint(rgb, burst::alpha(p, 0.0, 9.0, 180.0, 20, STREAK_LIFE));
         let (width, half) = (0.2, self.half);
         let blade = |along_x: bool| {
             let corner = |side: f32, end: f32| {
@@ -449,7 +456,7 @@ impl Walls {
     }
 
     /// A Berserk Pitcher's effect on `unit` (None = the player): its 24 streaks drawn now from `rand(n)` (0 to n − 1).
-    pub fn berserk(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    pub fn berserk(&mut self, unit: Option<u32>, now: Instant, look: &'static BerserkLook, mut rand: impl FnMut(u32) -> u32) {
         // One streak every 4 ticks from 16 to 108: yaw, distance, speed, half-length.
         let streaks = (16..=108)
             .step_by(4)
@@ -461,7 +468,7 @@ impl Walls {
                 Streak { born, yaw, distance, speed, half }
             })
             .collect();
-        self.berserks.push(Berserk { unit, start: now, streaks });
+        self.berserks.push(Berserk { look, unit, start: now, streaks });
     }
 
     /// Defender's walls (black) or Reflect Shield's (yellow) on `unit`.
@@ -551,7 +558,7 @@ impl Walls {
         self.berserks.iter().filter(|berserk| berserk.unit == unit).find_map(|berserk| {
             let tick = passes(berserk.start, now).checked_sub(1)?;
             let fade = tick.saturating_sub(BERSERK_HELD) as u16 * 8;
-            let tint = BERSERK_TINT.map(|channel| (u16::from(channel) + fade).min(255) as u8);
+            let tint = berserk.look.tint.map(|channel| (u16::from(channel) + fade).min(255) as u8);
             (tint != [255; 3]).then_some(tint)
         })
     }
@@ -572,7 +579,7 @@ impl Walls {
             }
             for streak in &berserk.streaks {
                 if let Some(p) = tick.checked_sub(streak.born).filter(|&p| p < STREAK_LIFE) {
-                    walls.push(Wall { texture: STREAK, vertices: streak.blades(feet, p), additive: false, forced: false });
+                    walls.push(Wall { texture: STREAK, vertices: streak.blades(feet, p, berserk.look.streak), additive: false, forced: false });
                 }
             }
         }
@@ -693,7 +700,7 @@ mod tests {
     fn berserk_tints_then_raises_a_cylinder_and_24_streaks() {
         let start = Instant::now();
         let mut walls = Walls::default();
-        walls.berserk(Some(5), start, |_| 0);
+        walls.berserk(Some(5), start, &BERSERK, |_| 0);
         // #FA7878 to tick 150, then 8 a channel a tick back to white.
         let tint = |tick: u32| walls.body_tint(Some(5), start + TICK * tick);
         assert_eq!([0, 150].map(tint), [Some([250, 120, 120]); 2]);
@@ -948,5 +955,24 @@ mod tests {
         assert_eq!(walls.meshes(start + TICK * 58, |_| Some([0.0; 3])).len(), 4);
         assert!(walls.meshes(start + TICK * 59, |_| Some([0.0; 3])).is_empty());
         assert_eq!(ribbon_alpha(&STEEL_BODY_RIBBONS, 10), 200.0);
+    }
+
+    #[test]
+    fn enchant_blade_tints_pale_yellow_with_yellow_streaks() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        walls.berserk(Some(5), start, &ENCHANT_BLADE, |_| 0);
+        // #FAFAC8 held to tick 150, then 8 a channel a tick back to white.
+        assert_eq!(walls.body_tint(Some(5), start + TICK * 150), Some([0xFA, 0xFA, 0xC8]));
+        assert_eq!(walls.body_tint(Some(5), start + TICK * 151), Some([0xFF, 0xFF, 0xD0]));
+        let feet = [0.0; 3];
+        let streak = walls.meshes(start + TICK * 30, |_| Some(feet)).into_iter().find(|wall| wall.texture == STREAK).unwrap();
+        assert_eq!(streak.vertices[0].tint[..3], [240.0 / 255.0, 240.0 / 255.0, 120.0 / 255.0]);
+        // Berserk Pitcher's own are still red.
+        let mut red = Walls::default();
+        red.berserk(Some(5), start, &BERSERK, |_| 0);
+        assert_eq!(red.body_tint(Some(5), start + TICK * 150), Some([0xFA, 0x78, 0x78]));
+        let blade = red.meshes(start + TICK * 30, |_| Some(feet)).into_iter().find(|wall| wall.texture == STREAK).unwrap();
+        assert_eq!(blade.vertices[0].tint[..3], [240.0 / 255.0, 0.0, 0.0]);
     }
 }

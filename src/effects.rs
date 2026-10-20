@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, dancer, first, ground, guard, huujin, knight, monk, sage, shafts, shards, sight, sniper, songs, spray, star,
-    stone, tanji, throw, transcend, walls, waterball,
+    balls, blitz, bolts, boomerang, brawl, burst, circle, dancer, first, ground, guard, huujin, knight, monk, sage, shafts, shards, sight, sniper, songs,
+    spray, star, stone, tanji, throw, transcend, walls, waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1825,6 +1825,13 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Detonator's flush, Release's spheres, Oratio's status circle, Enchant Blade's tint, the poisons' magenta and Weapon Crush's weapons.
+const CONCENTRATION2: u32 = 750;
+const RELEASE: u32 = 751;
+const MAGIC_CIRCLE: u32 = 755;
+const POTION_BERSERK2: u32 = 756;
+const PURPLE_BODY: u32 = 768;
+const WEAPON_CRUSH: u32 = 770;
 /// Renovatio's shafts, Hundred Spear's flashes, Oratio's ring (Detecting's) and Camouflage's translucent unit.
 const RENOVATIO: u32 = 719;
 const SPEAR_FLASH: u32 = 723;
@@ -1920,7 +1927,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 29] = [
+pub const AIMED: [u32; 30] = [
+    RELEASE,
     SPEAR_FLASH,
     BLOOD_DRAIN,
     CHEMICAL,
@@ -1997,6 +2005,14 @@ impl Effects {
     /// its sound), any other effect plays as it is.
     #[allow(clippy::too_many_arguments)]
     pub fn play_cast_aura(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, unit: Option<u32>, at: Vector, cast_ms: u32, now: Instant) {
+        // Poison Smoke's cast flickers the caster magenta; one with no cast time shows nothing.
+        if id == PURPLE_BODY {
+            if cast_ms > 0 {
+                self.play_sounds(table, id, at, now);
+                self.prims.guard.purple(unit, now);
+            }
+            return;
+        }
         // Spirit Recovery's cast throws three drops round the caster; one with no cast time shows nothing.
         if id == BLOOD_DRAIN {
             if cast_ms > 0 {
@@ -2242,6 +2258,18 @@ impl Effects {
                 self.prims.shafts.play(at, now);
             }
             (CLOAKING, Target::Status(unit, _)) => self.prims.brawl.cloak(unit, now),
+            (CONCENTRATION2, Target::Unit(unit)) => self.prims.guard.concentration(unit, now),
+            (PURPLE_BODY, Target::Unit(unit)) => self.prims.guard.purple(unit, now),
+            (MAGIC_CIRCLE, Target::Status(unit, _)) => {
+                self.textures.entry(circle::CIRCLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, circle::CIRCLE, true).ok());
+                self.prims.circles.oratio(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (WEAPON_CRUSH, _) => {
+                for path in guard::WEAPONS {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.guard.weapon_crush(at, now, |n| pick(0, n.saturating_sub(1)));
+            }
             (QUAKE_BODY, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 0, 34),
             (SKY_NET_SHAKE, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 31, 50),
             (RED_HIT, Target::Unit(unit)) => self.prims.brawl.red(unit, now),
@@ -2429,7 +2457,7 @@ impl Effects {
         }
         // Berserk Pitcher's tint, cylinder and streaks, Defender's walls and Grand Cross's cross, made in code.
         let wall_textures: &[&str] = match id {
-            BERSERK => &[walls::ALPHA_DOWN, walls::STREAK],
+            BERSERK | POTION_BERSERK2 => &[walls::ALPHA_DOWN, walls::STREAK],
             DEFENDER => &[walls::RING_BLACK],
             PROVIDENCE | REFLECT_SHIELD => &[walls::RING_YELLOW],
             ABSORB_SPIRITS => &[walls::RING_BLUE],
@@ -2440,7 +2468,8 @@ impl Effects {
             self.textures.entry((*path).to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
         }
         match (id, target) {
-            (BERSERK, Target::Unit(unit)) => self.prims.walls.berserk(unit, now, |n| pick(0, n.saturating_sub(1))),
+            (BERSERK, Target::Unit(unit)) => self.prims.walls.berserk(unit, now, &walls::BERSERK, |n| pick(0, n.saturating_sub(1))),
+            (POTION_BERSERK2, Target::Unit(unit)) => self.prims.walls.berserk(unit, now, &walls::ENCHANT_BLADE, |n| pick(0, n.saturating_sub(1))),
             (DEFENDER, Target::Unit(unit)) => self.prims.walls.defender(unit, now, walls::RING_BLACK),
             (REFLECT_SHIELD, Target::Unit(unit)) => self.prims.walls.defender(unit, now, walls::RING_YELLOW),
             (PROVIDENCE, Target::Unit(unit)) => self.prims.walls.providence(unit, now),
@@ -2944,6 +2973,11 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.waterballs.throw(from, to, now);
             }
+            RELEASE => {
+                self.sprites.entry(balls::FIRE_BALL_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, balls::FIRE_BALL_SPRITE));
+                self.play_sounds(table, id, from, now);
+                self.prims.balls.release(from, to, now);
+            }
             SPEAR_FLASH => {
                 self.sprites.entry(monk::SPEARS.to_owned()).or_insert_with(|| SpriteSet::at(grf, monk::SPEARS));
                 self.play_sounds(table, id, from, now);
@@ -3206,6 +3240,9 @@ impl Effects {
     pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
         self.prims.songs.forget_status(unit, status);
         // Camouflage, Stealth Field or Elemental Veil went off: the unit climbs back to opaque.
+        if status == 330 {
+            self.prims.circles.forget(unit);
+        }
         if matches!(status, 360 | 379 | 1301) {
             self.prims.brawl.uncloak(unit, Instant::now());
         }
@@ -3850,6 +3887,7 @@ impl Effects {
             }
         }
         quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, spear, &self.textures, self.yaw));
+        quads.extend(self.prims.circles.quads(now, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads.extend(self.prims.sparkle_quads(now, self.dim, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads
     }
@@ -5397,5 +5435,33 @@ mod tests {
         // Camouflage, Stealth Field and Elemental Veil: the cloaking sound at tick 0.
         assert_eq!(sounds(CLOAKING), [("effect\\assasin_cloaking", 0, false)]);
         assert!([360, 379, 1301].iter().all(|&status| table.status(status).contains(&CLOAKING)));
+    }
+
+    #[test]
+    fn detonator_release_warg_dash_oratio_enchant_blade_the_poisons_and_weapon_crush_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Detonator's sound; Release's at tick 5 at the listener, launched from the caster at the target.
+        assert_eq!(sounds(CONCENTRATION2), [("effect\\ac_concentration", 0, false)]);
+        assert_eq!(sounds(RELEASE), [("effect\\EF_FireBall", 80, true)]);
+        assert!(AIMED.contains(&RELEASE) && table.used(2230).unwrap().contains(&(Who::Caster, RELEASE)));
+        // Warg Dash leaves copies like the quickens; Oratio's circle is on its status.
+        assert!(table.status(358).contains(&crate::actor::AFTERIMAGE) && table.status(330).contains(&MAGIC_CIRCLE));
+        // Enchant Blade and its sisters: no sound of their own, the shake at tick 18, the casting aura on the last two.
+        assert!(!table.sounds.contains_key(&POTION_BERSERK2));
+        assert_eq!(table.quakes[&POTION_BERSERK2], [(Duration::from_millis(288), QUAKE_SHORT)]);
+        assert_eq!((table.skill_sounds[&2001][0].file.as_str(), table.skill_sounds[&2014][0].file.as_str()), ("effect\\닌자_던지기", "effect\\닌자_던지기"));
+        assert!(!table.skill_sounds.contains_key(&2015) && !table.skill_sounds.contains_key(&2018));
+        assert!(table.used(2015).unwrap().contains(&(Who::Caster, 441)) && table.used(2018).unwrap().contains(&(Who::Caster, 441)));
+        // The poisons: Antidote's and Poison Smoke's cast flicker; their skills' sounds.
+        assert!(table.used(2026).unwrap().contains(&(Who::Target, PURPLE_BODY)) && table.cast_aura(2032, 12) == Some(PURPLE_BODY));
+        assert_eq!((table.skill_sounds[&2028][0].file.as_str(), table.skill_sounds[&2021][0].file.as_str()), ("effect\\t_낙법", "effect\\수둔"));
+        assert_eq!((table.hit_sounds[&2034][0].file.as_str(), table.hit_sounds[&2031][0].file.as_str()), ("effect\\mon_맹룡과강", "effect\\EF_PoisonAttack"));
+        // Cross Ripper Slasher: five sounds at the listener at ticks 5, 20, 35, 50, 65.
+        assert!(table.struck(2037).unwrap().contains(&(Who::Caster, 769)));
+        assert_eq!(sounds(769), [80, 320, 560, 800, 1040].map(|ms| ("effect\\T_날라차기", ms, true)));
+        // Weapon Crush: four sounds on the target.
+        assert_eq!(sounds(WEAPON_CRUSH), [16, 176, 336, 496].map(|ms| ("effect\\복호격", ms, false)));
+        assert!(table.struck(2030).unwrap().contains(&(Who::Target, WEAPON_CRUSH)));
     }
 }

@@ -1609,6 +1609,7 @@ func	666	quake	560	650
 func	666	quake	1120	650
 func	668	quake	0	650
 func	732	quake	0	200
+func	756	quake	288	200
 func	863	quake	0	650
 unit	133	141
 rsm	143	외부소품\트랩03_3
@@ -2003,6 +2004,17 @@ wav	731	dragon_h	0
 wav	732	effect\wizard_earthspike	0
 wav	734	effect\chainlight	0
 wav	744	effect\assasin_cloaking	0
+wav	750	effect\ac_concentration	0
+wav	751	effect\EF_FireBall	80	listener
+wav	769	effect\T_날라차기	80	listener
+wav	769	effect\T_날라차기	320	listener
+wav	769	effect\T_날라차기	560	listener
+wav	769	effect\T_날라차기	800	listener
+wav	769	effect\T_날라차기	1040	listener
+wav	770	effect\복호격	16
+wav	770	effect\복호격	176
+wav	770	effect\복호격	336
+wav	770	effect\복호격	496
 wav	799	effect\wl_stasis	0
 wav	802	effect\wl_whiteimprison	0
 wav	803	effect\wl_recognizedspell	0
@@ -3769,7 +3781,7 @@ cast	2019	12
 cast	2020	12
 cast	2021	12
 cast	2022	-1
-cast	2032	16
+cast	2032	768
 cast	2033	16
 cast	2036	12
 cast	2038	-1
@@ -4246,6 +4258,7 @@ struck	2031	target	589
 struck	2034	caster	768
 struck	2034	caster	773
 struck	2037	target	550
+struck	2037	caster	769
 struck	2055	caster	265
 struck	2056	caster	265
 struck	2218	caster	804
@@ -4589,12 +4602,15 @@ used	2009	caster	731
 used	2013	caster	538
 used	2014	caster	756
 used	2015	caster	756
+used	2015	caster	441
 used	2018	caster	756
 used	2017	caster	17
 used	2017	target	263
 used	2017	target	330
+used	2018	caster	441
 used	2019	caster	538
 used	2026	target	21
+used	2026	target	768
 used	2027	caster	771
 used	2028	caster	768
 used	2039	target	441
@@ -4931,6 +4947,7 @@ status	869	792
 status	350	833
 status	351	789
 status	358	752
+status	358	166
 status	360	744
 status	379	744
 status	394	809
@@ -5101,3 +5118,8 @@ skillwav	2205	effect\t_에너지방출	0	listener
 hitwav	2012	_enemy_hit_wind2	0	listener
 hitquake	2012	0	650
 hitwav	2031	effect\EF_PoisonAttack	0	listener
+skillwav	2001	effect\닌자_던지기	0	listener
+skillwav	2014	effect\닌자_던지기	0	listener
+skillwav	2028	effect\t_낙법	0	listener
+skillwav	2021	effect\수둔	0	listener
+hitwav	2034	effect\mon_맹룡과강	0	listener

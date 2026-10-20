@@ -15,6 +15,19 @@ use crate::world::{MeshVertex, Vector};
 pub const FOG: &str = "data\\texture\\effect\\ring_white.tga";
 pub const SHIELD: &str = "data\\texture\\effect\\shield.bmp";
 pub const SWORD: &str = "data\\texture\\effect\\sword.bmp";
+/// Weapon Crush's eight weapon icons, one a prim.
+pub const WEAPONS: [&str; 8] = [
+    "data\\texture\\유저인터페이스\\item\\루드라의활.bmp",
+    "data\\texture\\유저인터페이스\\item\\아트로스의흉기.bmp",
+    "data\\texture\\유저인터페이스\\item\\모닝스타.bmp",
+    "data\\texture\\유저인터페이스\\item\\바스타드소드.bmp",
+    "data\\texture\\유저인터페이스\\item\\글레이브.bmp",
+    "data\\texture\\유저인터페이스\\item\\블레이드휩.bmp",
+    "data\\texture\\유저인터페이스\\item\\드래곤슬레이어.bmp",
+    "data\\texture\\유저인터페이스\\item\\배틀액스.bmp",
+];
+/// Detonator's flush (#9B9BFF).
+const LILAC: [u8; 3] = [0x9B, 0x9B, 0xFF];
 pub const TILE: &str = "data\\texture\\effect\\a01.bmp";
 /// Fog Wall's box colour (#505050), the dome's three shells (#CDFFCD, #9BFF9B, #E1FFE1).
 const FOG_TINT: f32 = 80.0 / 255.0;
@@ -73,8 +86,10 @@ enum Flicker {
     Memorize,
     /// Double Casting's red strobe in a white glow (ticks 10 to 50).
     DoubleCast,
-    /// Refresh's and Abundance's green flicker in outline copies (ticks 0 to 30).
-    Green,
+    /// Refresh's and Abundance's green flicker, the poisons' magenta, in outline copies (ticks 0 to 30).
+    Outlined([u8; 3]),
+    /// Detonator's lilac flush (ticks 10 to 33).
+    Concentration,
 }
 
 /// Chase Walk's cast turning its caster.
@@ -147,7 +162,8 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
         Flicker::DoubleCast => {
             (10..=50).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) })
         }
-        Flicker::Green => (e <= 30).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 0xFF, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) }),
+        Flicker::Outlined(rgb) => (e <= 30).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb)) } else { (GLOW_OUTLINE, Some([255; 3])) }),
+        Flicker::Concentration => (10..=33).contains(&e).then_some((if even { GLOW_ADDITIVE } else { 0 }, Some(LILAC))),
         Flicker::Pierce(length) => {
             (e < length.min(141)).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])) } else { (GLOW_OUTLINE, Some([255; 3])) })
         }
@@ -244,14 +260,23 @@ impl Guard {
 
     /// Full Strip's pieces flying out from the target's feet `at`: 8 prims of 4, alternating shield and sword; each piece's
     /// choices from `rand(n)` in the order the game draws them (its wait, azimuth, elevation, spin, and one that is not used).
-    pub fn strip(&mut self, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    pub fn strip(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.burst(at, now, |prim| if prim % 2 == 0 { (SHIELD, 5.0) } else { (SWORD, 9.0) }, rand);
+    }
+
+    /// Weapon Crush's 32 weapon icons, four of each of eight, the same way, all with a half-diagonal of 5.
+    pub fn weapon_crush(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.burst(at, now, |prim| (WEAPONS[prim], 5.0), rand);
+    }
+
+    fn burst(&mut self, at: Vector, now: Instant, icon_of: impl Fn(usize) -> (&'static str, f32), mut rand: impl FnMut(u32) -> u32) {
         let mut pieces = Vec::with_capacity(STRIP_ELEMENTS);
         for prim in 0..8 {
             for _ in 0..4 {
                 let wait = -18 - rand(30) as i32;
                 let (azimuth, elevation, spin) = (rand(360) as f32, rand(360) as f32, rand(360) as f32);
                 let _ = rand(360);
-                let (icon, half) = if prim % 2 == 0 { (SHIELD, 5.0) } else { (SWORD, 9.0) };
+                let (icon, half) = icon_of(prim);
                 pieces.push(Piece { half, icon, wait, azimuth, elevation, spin });
             }
         }
@@ -276,7 +301,17 @@ impl Guard {
 
     /// Refresh's, Abundance's and Phantom Thrust's green flicker on `unit`.
     pub fn green(&mut self, unit: Option<u32>, now: Instant) {
-        self.bodies.push(Body { unit, start: now, flicker: Flicker::Green });
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0, 0xFF, 0]) });
+    }
+
+    /// The Guillotine Cross poisons' magenta flicker on `unit`.
+    pub fn purple(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0xFF, 0, 0xFF]) });
+    }
+
+    /// Detonator's lilac flush of `unit`.
+    pub fn concentration(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Concentration });
     }
 
     /// Double Casting's strobe on `unit`.
@@ -372,7 +407,8 @@ impl Guard {
             match body.flicker {
                 Flicker::Poison if e > 80 => fade_back([0xFF, 0x00, 0xFF], e - 80),
                 Flicker::Preserve if e > 30 => fade_back([0xFA; 3], e - 30),
-                Flicker::Green if e > 30 => fade_back([0, 0xFF, 0], e - 30),
+                Flicker::Outlined(rgb) if e > 30 => fade_back(rgb, e - 30),
+                Flicker::Concentration if e > 33 => fade_back(LILAC, e - 33),
                 _ => None,
             }
         })
@@ -552,5 +588,35 @@ mod tests {
         // The colour fades back to white by 8 a channel a tick after the last green.
         assert_eq!(guard.body_tint(Some(1), start + TICK * 31), Some([8, 255, 8]));
         assert_eq!(guard.body_tint(Some(1), start + TICK * 62), None);
+    }
+
+    #[test]
+    fn detonator_flushes_lilac_the_poisons_flicker_magenta_and_weapon_crush_bursts_weapons() {
+        use crate::actor::{GLOW_ADDITIVE, GLOW_OUTLINE};
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.concentration(Some(1), start);
+        guard.purple(Some(2), start);
+        // Detonator: #9B9BFF on ticks 10 to 33, added on only on the even ones; nothing on 9 and 34; back to white in 13 ticks.
+        let lilac = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        assert!(lilac(9).is_none() && lilac(34).is_none());
+        assert_eq!(lilac(10), Some((GLOW_ADDITIVE, Some([0x9B, 0x9B, 0xFF]))));
+        assert_eq!(lilac(11), Some((0, Some([0x9B, 0x9B, 0xFF]))));
+        assert_eq!((lilac(32).unwrap().0, lilac(33).unwrap().0), (GLOW_ADDITIVE, 0));
+        assert_eq!(guard.body_tint(Some(1), start + TICK * 34), Some([0xA3, 0xA3, 0xFF]));
+        assert_eq!(guard.body_tint(Some(1), start + TICK * 47), None);
+        // The poisons: outline copies on ticks 0 to 30, #FF00FF added on the even ticks, #FFFFFF on the odd.
+        let purple = |tick: u32| guard.glow(Some(2), start + TICK * tick);
+        assert_eq!(purple(0), Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0xFF]))));
+        assert_eq!(purple(1), Some((GLOW_OUTLINE, Some([255; 3]))));
+        assert!(purple(30).is_some() && purple(31).is_none());
+        // Weapon Crush: 32 icons from 8 prims, in the issue's order, all with a half-diagonal of 5, the first shown on tick 18.
+        guard.weapon_crush([5.0, 1.0, 5.0], start, |_| 0);
+        let pieces = &guard.strips[0].pieces;
+        assert_eq!(pieces.len(), 32);
+        assert!(pieces.iter().all(|piece| piece.half == 5.0));
+        assert!((0..8).all(|prim| pieces[4 * prim..4 * prim + 4].iter().all(|piece| piece.icon == WEAPONS[prim])));
+        assert!(WEAPONS[0].ends_with("루드라의활.bmp") && WEAPONS[7].ends_with("배틀액스.bmp"));
+        assert!(guard.pieces(start + TICK * 17).is_empty() && guard.pieces(start + TICK * 18).len() == 32);
     }
 }
