@@ -5,6 +5,7 @@
 # part <effect id> <2D|3D> <name=value;...>: a texture (or a sprite) moving from a start to an end over its duration
 # ring <effect id> <name=value;...>: a textured cylinder growing, turning and fading
 # spr <effect id> <sprite under data\sprite\이팩트\ without .spr> <follows the unit 1/0> <name=value;... or ->: a sprite's animation
+#   (frameTicks=<n>;frameTicksRan=<m>: n + a random number below m ticks a frame, drawn at each start; sideAction=<action>: action 0, or this one on a draw of two; restart=true: starts again with its ground unit's effect)
 # func <effect id> quake <delay ms> <duration ms>: what the client does in code for the effect; quake shakes the camera
 # length <effect id> <ticks>: how long an effect's STR plays (16 ms ticks) when shorter than its keys; on a ground unit it starts again 8 ticks before that (Quagmire's 95: 20)
 # unit <skill unit type> <effect id> [once]: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there (once: played once and kept, not started again)
@@ -173,8 +174,8 @@ str	603	firehit%d	-	1	1	3
 str	608	cook_suc	-	1
 str	609	cook_fail	-	1
 str	612	itempokjuk	-	1
-str	635	fire dragon	-	0
-str	636	icy	-	0
+str	635	fire dragon	-	1
+str	636	icy	-	1
 str	646	트랙킹	-	1
 str	649	불스아이	-	1
 str	668	dragon_h	-	1
@@ -1418,8 +1419,6 @@ ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=79.8;duration=20000;attachedEntity=true
 ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=4.5;height=-4;duration=800
 ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=2.5;height=-4;duration=800
-ring	628	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
-ring	628	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
 ring	715	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.5;topSize=1.5;height=2.0;alphaMax=40;blendMode=2;rotateWithCamera=true;red=0.2;green=0.6;blue=1.0;duration=20000;attachedEntity=true
 ring	715	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.58;topSize=1.58;height=2.1;alphaMax=32;blendMode=2;rotateWithCamera=true;angleY=10;red=0.2;green=0.6;blue=1.0;duration=20000;attachedEntity=true
 ring	715	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.65;topSize=1.65;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=26.6;red=0.1;green=0.4;blue=1.0;duration=20000;attachedEntity=true
@@ -1466,11 +1465,11 @@ spr	588	m_ef06	1	-
 spr	589	m_ef07	1	delayFrame=64;firstFrame=1;onTop=true
 spr	604	cconfine	1	stopAtEnd=true
 spr	612	합격_	1	-
-spr	630	그림자베기	1	-
-spr	631	다다미 뒤집기	1	-
-spr	632	안개베기	1	-
-spr	633	일섬	1	-
-spr	634	화염진	1	repeat=true
+spr	630	그림자베기	1	delayFrame=64;firstFrame=1;onTop=true;sideAction=4
+spr	631	다다미	1	delayFrame=96;firstFrame=1;yOffset=-6
+spr	632	안개베기	1	delayFrame=64;firstFrame=1;onTop=true;sideAction=2
+spr	633	일섬	1	delayFrame=32;firstFrame=1;onTop=true;yOffset=-6;frame=0
+spr	634	화염진	1	repeat=true;firstFrame=1;frameTicks=3;frameTicksRan=5;restart=true;yOffset=-1
 spr	637	데스페라도	1	delayFrame=64;firstFrame=1;onTop=true
 spr	638	라이트닝스피어	0	frame=0;repeat=true;yOffset=-7
 spr	639	블라인드스피어	0	-
@@ -1928,7 +1927,7 @@ wav	622	effect\ef_thunderstorm	0
 wav	623	effect\피어싱샷	448
 wav	624	effect\t_바람방출	16
 wav	627	effect\디스암	336
-wav	628	effect\bash3d5	0
+wav	628	effect\더스트샷	0
 wav	630	effect\그림자베기	0
 wav	631	effect\다다미뒤집기	0
 wav	632	effect\안개베기	0
@@ -5227,6 +5226,7 @@ length	554	200
 length	555	200
 length	675	200
 length	850	100
+length	634	23
 length	932	100
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
 skillwav	10	effect\ef_sight	0
