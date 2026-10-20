@@ -41,6 +41,8 @@ struct Slash {
 }
 
 struct Breaker {
+    /// Ticks Meteor Assault holds a prim's slashes back.
+    delay: u32,
     caster: Option<u32>,
     start: Instant,
     from: Vector,
@@ -224,7 +226,17 @@ impl Knight {
             headings[k] = (toward + rand(31) as f32 - 15.0).rem_euclid(360.0);
         }
         let slashes = std::array::from_fn(|k| Slash { height: heights[k], heading: headings[k] });
-        self.breakers.push(Breaker { caster, start: now, from, slashes });
+        self.breakers.push(Breaker { delay: 0, caster, start: now, from, slashes });
+    }
+
+    /// Meteor Assault from the caster's feet `from`: 8 prims of 4 slashes flying out in the compass directions, each prim holding back
+    /// R(6) ticks; their choices from `rand(n)` (0 to n − 1), per prim the hold then a height a slash.
+    pub fn meteor(&mut self, caster: Option<u32>, from: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        for prim in 0..8 {
+            let delay = rand(6);
+            let slashes = [(); 4].map(|()| Slash { height: 10.0 - rand(5) as f32, heading: 45.0 * prim as f32 });
+            self.breakers.push(Breaker { delay, caster, start: now, from, slashes });
+        }
     }
 
     /// Pressure on `unit`: a cross falls onto it, its spin from `rand(n)`.
@@ -265,7 +277,7 @@ impl Knight {
             }
         }
         self.spirals.retain(|spiral| passes(spiral.start, now) <= SPIRAL_LAST + 10);
-        self.breakers.retain(|breaker| passes(breaker.start, now) <= 55);
+        self.breakers.retain(|breaker| passes(breaker.start, now) <= 60 + breaker.delay);
         self.pressures.retain(|pressure| passes(pressure.start, now) <= 75);
         self.martyrs.retain(|martyr| passes(martyr.start, now) <= 50);
     }
@@ -296,7 +308,7 @@ impl Knight {
         for breaker in &self.breakers {
             let Some(t) = passes(breaker.start, now).checked_sub(1) else { continue };
             for (k, slash) in breaker.slashes.iter().enumerate() {
-                let a = k as i32 - 27 + t as i32;
+                let a = k as i32 - 27 - breaker.delay as i32 + t as i32;
                 let alpha = slash_alpha(a);
                 if alpha <= 0.0 {
                     continue;
@@ -572,5 +584,35 @@ mod tests {
         martyr.martyr(Some(3), start, |_| 0);
         assert_eq!(martyr.martyrs[0].rays.len(), 20);
         assert!(martyr.glow(Some(3), start + TICK * 40).is_some() && martyr.glow(Some(3), start + TICK * 41).is_none());
+    }
+
+    #[test]
+    fn meteor_assault_fans_32_slashes_out_in_eight_directions() {
+        let start = Instant::now();
+        let mut knight = Knight::default();
+        knight.meteor(Some(1), [10.0, 1.0, 10.0], start, |_| 0);
+        assert_eq!(knight.breakers.len(), 8);
+        assert_eq!(knight.breakers.iter().map(|breaker| breaker.slashes[0].heading).collect::<Vec<_>>(), [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]);
+        // Every draw 0: 10 up, no hold; slash k first shows on tick 29 − k (k = 3: tick 26), and last on 54 − k.
+        assert!(knight.breakers.iter().all(|breaker| breaker.delay == 0 && breaker.slashes.iter().all(|slash| slash.height == 10.0)));
+        let count = |knight: &Knight, tick: u32| knight.meshes(start + TICK * tick, |_| None).len();
+        assert_eq!((count(&knight, 25), count(&knight, 26), count(&knight, 29), count(&knight, 54), count(&knight, 55)), (0, 8, 32, 8, 0));
+        // A hold of r ticks pushes the whole prim r ticks later.
+        let mut held = Knight::default();
+        held.meteor(Some(1), [0.0; 3], start, |bound| if bound == 6 { 5 } else { 0 });
+        assert_eq!(count(&held, 30), 0);
+        assert_eq!(count(&held, 31), 8);
+        assert_eq!(count(&held, 59), 8);
+        assert_eq!(count(&held, 60), 0);
+        // The same body flash as Soul Breaker: #FF00FF added on, ticks 0…10.
+        assert_eq!(knight.glow(Some(1), start), Some((crate::actor::GLOW_ADDITIVE, Some([0xFF, 0, 0xFF]))));
+        assert!(knight.glow(Some(1), start + TICK * 10).is_some() && knight.glow(Some(1), start + TICK * 11).is_none());
+        // The lilac slash quad, the same alpha and distance: 10 at a = 2, 90 at 10, 32.3 out at 27.
+        let wall = &knight.meshes(start + TICK * 29, |_| None)[0];
+        assert!(wall.texture == PURPLE_SLASH && !wall.additive && wall.vertices.len() == 6);
+        assert_eq!((slash_alpha(2), slash_alpha(10), slash_alpha(28)), (10.0, 90.0, 0.0));
+        assert!((slash_distance(27) - 32.3).abs() < 0.1);
+        knight.advance(start + TICK * 61, |_| None);
+        assert!(knight.breakers.is_empty());
     }
 }

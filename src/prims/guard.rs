@@ -1,0 +1,439 @@
+//! The guard and poison skills' code-made shapes, a 16 ms tick at a time: Fog Wall's grey boxes over each cell (405), Full Strip's
+//! flying shields and swords (495), Preserve's green dome of sparkle tiles (496), and the body flickers of Enchant Deadly Poison,
+//! Preserve and Spiral Pierce's cast (493, 496, 502).
+//!
+//! A shape's own age n counts from 1 at its first tick; t is the ticks since the effect started.
+
+use std::time::Instant;
+
+use super::ground::Potion;
+use super::passes;
+use super::shards::coin_alpha;
+use super::walls::Wall;
+use crate::world::{MeshVertex, Vector};
+
+pub const FOG: &str = "data\\texture\\effect\\ring_white.tga";
+pub const SHIELD: &str = "data\\texture\\effect\\shield.bmp";
+pub const SWORD: &str = "data\\texture\\effect\\sword.bmp";
+pub const TILE: &str = "data\\texture\\effect\\a01.bmp";
+/// Fog Wall's box colour (#505050), the dome's three shells (#CDFFCD, #9BFF9B, #E1FFE1).
+const FOG_TINT: f32 = 80.0 / 255.0;
+const SHELLS: [([f32; 3], bool); 3] =
+    [([205.0 / 255.0, 1.0, 205.0 / 255.0], true), ([155.0 / 255.0, 1.0, 155.0 / 255.0], true), ([225.0 / 255.0, 1.0, 225.0 / 255.0], false)];
+/// The dome's ρ and k offsets of each shell from its radius h = 10, and the rows' half-sizes, latitudes and tilts.
+const DOME_HEIGHT: f32 = 10.0;
+const ROWS: [(f32, f32, f32); 3] = [(315.0, 45.0, 2.0), (0.0, 90.0, 3.0), (45.0, 135.0, 2.0)];
+const COLUMNS: [f32; 5] = [0.0, 45.0, 90.0, 135.0, 180.0];
+/// Full Strip: 8 prims of 4 elements, alternating shield and sword.
+const STRIP_ELEMENTS: usize = 32;
+pub const STRIP_TINT: [f32; 3] = [250.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0];
+const STRIP_TICKS: u32 = 300;
+
+/// One of Fog Wall's boxes over a cell.
+struct Fog {
+    id: u32,
+    at: Vector,
+    start: Instant,
+    angle: f32,
+}
+
+/// One of Full Strip's pieces: a shield (half-diagonal 5) or a sword (9) flying out from where the target stood.
+struct Piece {
+    half: f32,
+    icon: &'static str,
+    wait: i32,
+    azimuth: f32,
+    elevation: f32,
+    spin: f32,
+}
+
+struct Strip {
+    at: Vector,
+    start: Instant,
+    pieces: Vec<Piece>,
+}
+
+/// Preserve's dome round the caster.
+struct Dome {
+    unit: Option<u32>,
+    start: Instant,
+    /// The facing at tick 0 the dome's first turn comes from.
+    facing: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flicker {
+    /// Enchant Deadly Poison's magenta (ticks 0 to 80).
+    Poison,
+    /// Preserve's white (ticks 10 to 30).
+    Preserve,
+    /// Spiral Pierce's cast: outline copies and yellow for its length, at most 141 ticks.
+    Pierce(u32),
+}
+
+struct Body {
+    unit: Option<u32>,
+    start: Instant,
+    flicker: Flicker,
+}
+
+#[derive(Default)]
+pub struct Guard {
+    fogs: Vec<Fog>,
+    strips: Vec<Strip>,
+    domes: Vec<Dome>,
+    bodies: Vec<Body>,
+}
+
+/// A fog box's height at its age n: it breathes between 9.6 and 32 and rises over the first 89 ticks.
+pub fn fog_height(start_angle: f32, n: u32) -> f32 {
+    let angle = (start_angle + n as f32) % 360.0;
+    let height = 32.0 * angle.to_radians().sin() * 0.35 + 32.0 * 0.65;
+    if n < 90 { height * (n as f32).to_radians().sin() } else { height }
+}
+
+/// The dome's alpha at its age n: 20 a tick to 100, held to 26, then 6 less a tick from 27.
+pub fn dome_alpha(n: u32) -> f32 {
+    match n {
+        1..=5 => 20.0 * n as f32,
+        6..=26 => 100.0,
+        _ => (100.0 - 6.0 * (n - 26) as f32).max(0.0),
+    }
+}
+
+/// How far the dome's outer shell has swollen at n: 0.1 a tick from 27.
+pub fn dome_grow(n: u32) -> f32 {
+    0.1 * n.saturating_sub(26) as f32
+}
+
+/// The dome's turn at n from the facing at tick 0: facing + 270 on the first tick, then 10 more a tick.
+pub fn dome_turn(facing: f32, n: u32) -> f32 {
+    ((facing.trunc() + 270.0) + 10.0 * (n - 1) as f32).rem_euclid(360.0)
+}
+
+/// A body's flags and colour at tick e for a flicker, or None while it does nothing.
+fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
+    use crate::actor::{GLOW_ADDITIVE, GLOW_OUTLINE};
+    let even = e.is_multiple_of(2);
+    match flicker {
+        Flicker::Poison => (e <= 80).then_some(if even { (GLOW_ADDITIVE, Some([0xFF, 0x00, 0xFF])) } else { (0, Some([255; 3])) }),
+        Flicker::Preserve => (10..=30).contains(&e).then_some(if even { (GLOW_ADDITIVE, Some([0xFA; 3])) } else { (0, Some([255; 3])) }),
+        Flicker::Pierce(length) => {
+            (e < length.min(141)).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])) } else { (GLOW_OUTLINE, Some([255; 3])) })
+        }
+    }
+}
+
+/// What a flash left on a body fades back from, by 8 a channel a tick.
+fn fade_back(from: [u8; 3], ticks: u32) -> Option<[u8; 3]> {
+    let drift = (ticks * 8) as u16;
+    let tint = from.map(|channel| (u16::from(channel) + drift).min(255) as u8);
+    (tint != [255; 3]).then_some(tint)
+}
+
+impl Fog {
+    fn walls(&self, n: u32) -> Wall {
+        let height = fog_height(self.angle, n);
+        let (half, up) = (2.5, 1.0);
+        let corners = [[half, half], [half, -half], [-half, -half], [-half, half]];
+        let mut vertices = Vec::new();
+        // The four sides at alpha 30, then the two diagonals at 60.
+        let walls = [(0, 1, 30.0), (1, 2, 30.0), (2, 3, 30.0), (3, 0, 30.0), (0, 2, 60.0), (1, 3, 60.0)];
+        for (first, second, alpha) in walls {
+            let tint = [FOG_TINT, FOG_TINT, FOG_TINT, alpha / 255.0];
+            let point = |corner: [f32; 2], rise: f32, uv: [f32; 2]| MeshVertex {
+                position: [self.at[0] + corner[0], self.at[1] + rise, self.at[2] + corner[1]],
+                uv,
+                tint,
+            };
+            let [a, b, c, d] = [
+                point(corners[first], up, [0.0, 1.0]),
+                point(corners[second], up, [1.0, 1.0]),
+                point(corners[second], up + height, [1.0, 0.0]),
+                point(corners[first], up + height, [0.0, 0.0]),
+            ];
+            vertices.extend([a, b, c, a, c, d]);
+        }
+        Wall { texture: FOG, vertices, additive: false, forced: false }
+    }
+}
+
+impl Dome {
+    /// The dome's 45 quads at its age n: 15 tiles in three shells, their corners round the caster's feet.
+    fn walls(&self, feet: Vector, n: u32) -> Vec<Wall> {
+        let alpha = dome_alpha(n) / 255.0;
+        let turn = dome_turn(self.facing, n);
+        let grow = dome_grow(n);
+        let mut walls = Vec::new();
+        for (shell, &(rgb, additive)) in SHELLS.iter().enumerate() {
+            let (radius, lift) = match shell {
+                0 => (DOME_HEIGHT, DOME_HEIGHT + 2.0),
+                1 => (DOME_HEIGHT + 0.2, DOME_HEIGHT),
+                _ => (DOME_HEIGHT + 0.4 + grow, DOME_HEIGHT),
+            };
+            let tint = [rgb[0], rgb[1], rgb[2], alpha];
+            let mut vertices = Vec::new();
+            for &(latitude, tilt, half) in &ROWS {
+                let (lat_sin, lat_cos) = latitude.to_radians().sin_cos();
+                let (tilt_sin, tilt_cos) = tilt.to_radians().sin_cos();
+                for &column in &COLUMNS {
+                    let (a_sin, a_cos) = ((column + turn - 90.0).rem_euclid(360.0)).to_radians().sin_cos();
+                    let (b_sin, b_cos) = ((column + turn - 180.0).rem_euclid(360.0)).to_radians().sin_cos();
+                    // The tile's centre; the game's y points down, so the client's up is the negative of it.
+                    let centre = [radius * lat_cos * a_cos, -(radius * lat_sin - lift), radius * lat_cos * a_sin];
+                    let corner = |x: f32, y: f32, z: f32, uv: [f32; 2]| MeshVertex {
+                        position: [feet[0] + centre[0] + x * b_cos - z * b_sin, feet[1] + centre[1] - y, feet[2] + centre[2] + z * b_cos + x * b_sin],
+                        uv,
+                        tint,
+                    };
+                    let (up, deep) = (half * tilt_sin, half * tilt_cos);
+                    let [a, b, c, d] = [
+                        corner(half, up, deep, [0.0, 1.0]),
+                        corner(-half, up, deep, [1.0, 1.0]),
+                        corner(-half, -up, -deep, [1.0, 0.0]),
+                        corner(half, -up, -deep, [0.0, 0.0]),
+                    ];
+                    vertices.extend([a, b, c, a, c, d]);
+                }
+            }
+            walls.push(Wall { texture: TILE, vertices, additive, forced: false });
+        }
+        walls
+    }
+}
+
+impl Guard {
+    /// Fog Wall's box over the cell `at` of skill unit `id`; its start angle from `rand(n)` (0 to n − 1).
+    pub fn keep_fog(&mut self, id: u32, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        self.fogs.push(Fog { id, at, start: now, angle: rand(360) as f32 });
+    }
+
+    pub fn forget(&mut self, id: u32) {
+        self.fogs.retain(|fog| fog.id != id);
+    }
+
+    /// Full Strip's pieces flying out from the target's feet `at`: 8 prims of 4, alternating shield and sword; each piece's
+    /// choices from `rand(n)` in the order the game draws them (its wait, azimuth, elevation, spin, and one that is not used).
+    pub fn strip(&mut self, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let mut pieces = Vec::with_capacity(STRIP_ELEMENTS);
+        for prim in 0..8 {
+            for _ in 0..4 {
+                let wait = -18 - rand(30) as i32;
+                let (azimuth, elevation, spin) = (rand(360) as f32, rand(360) as f32, rand(360) as f32);
+                let _ = rand(360);
+                let (icon, half) = if prim % 2 == 0 { (SHIELD, 5.0) } else { (SWORD, 9.0) };
+                pieces.push(Piece { half, icon, wait, azimuth, elevation, spin });
+            }
+        }
+        self.strips.push(Strip { at, start: now, pieces });
+    }
+
+    /// Preserve's dome on `unit`, facing `facing` degrees.
+    pub fn preserve(&mut self, unit: Option<u32>, facing: f32, now: Instant) {
+        self.domes.push(Dome { unit, start: now, facing });
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Preserve });
+    }
+
+    /// Enchant Deadly Poison's flicker on `unit`.
+    pub fn poison(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Poison });
+    }
+
+    /// Spiral Pierce's cast on `unit` for `length` ticks: it replaces the last.
+    pub fn pierce(&mut self, unit: Option<u32>, length: u32, now: Instant) {
+        self.bodies.retain(|body| !(body.unit == unit && matches!(body.flicker, Flicker::Pierce(_))));
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Pierce(length) });
+    }
+
+    /// A cast cut off: Spiral Pierce's flicker goes.
+    pub fn cut_pierce(&mut self) {
+        self.bodies.retain(|body| !matches!(body.flicker, Flicker::Pierce(_)));
+    }
+
+    pub fn advance(&mut self, now: Instant) {
+        self.strips.retain(|strip| passes(strip.start, now) <= STRIP_TICKS);
+        self.domes.retain(|dome| passes(dome.start, now) <= 200);
+        self.bodies.retain(|body| passes(body.start, now) <= 300);
+    }
+
+    /// Every wall at `now`; `position_of` gives a unit's feet.
+    pub fn meshes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<Wall> {
+        let mut walls = Vec::new();
+        for fog in &self.fogs {
+            let n = passes(fog.start, now);
+            if n >= 1 {
+                walls.push(fog.walls(n));
+            }
+        }
+        for dome in &self.domes {
+            let (Some(feet), n) = (position_of(dome.unit), passes(dome.start, now)) else { continue };
+            if (1..43).contains(&n) {
+                walls.extend(dome.walls(feet, n));
+            }
+        }
+        walls
+    }
+
+    /// Full Strip's pieces at `now`: where, spin, half-diagonal and alpha.
+    pub fn pieces(&self, now: Instant) -> Vec<Piece3> {
+        let mut pieces = Vec::new();
+        for strip in &self.strips {
+            let Some(t) = passes(strip.start, now).checked_sub(1) else { continue };
+            for piece in &strip.pieces {
+                let n = piece.wait + t as i32 + 1;
+                if !(1..=60).contains(&n) {
+                    continue;
+                }
+                let radius = 12.0 + n as f32;
+                let (az_sin, az_cos) = piece.azimuth.to_radians().sin_cos();
+                let (el_sin, el_cos) = piece.elevation.to_radians().sin_cos();
+                let at = [strip.at[0] + radius * el_cos * az_cos, strip.at[1] - radius * el_sin, strip.at[2] + radius * el_cos * az_sin];
+                let spin = (piece.spin + 3.0 * (t + 1) as f32) % 360.0;
+                pieces.push(Piece3 { potion: Potion { icon: piece.icon, at, spin, alpha: coin_alpha(n as u32) }, half: piece.half });
+            }
+        }
+        pieces
+    }
+
+    /// The body flags and colour an effect gives `unit` at `now`.
+    pub fn glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
+        self.bodies.iter().filter(|body| body.unit == unit).find_map(|body| flicker_at(body.flicker, passes(body.start, now).checked_sub(1)?))
+    }
+
+    /// The colour a flash left on `unit`'s body, fading back to white.
+    pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
+        self.bodies.iter().filter(|body| body.unit == unit).find_map(|body| {
+            let e = passes(body.start, now).checked_sub(1)?;
+            match body.flicker {
+                Flicker::Poison if e > 80 => fade_back([0xFF, 0x00, 0xFF], e - 80),
+                Flicker::Preserve if e > 30 => fade_back([0xFA; 3], e - 30),
+                _ => None,
+            }
+        })
+    }
+}
+
+/// A Full Strip piece to draw: a picture at a place (see `Potion`) and its half-diagonal in world units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Piece3 {
+    pub potion: Potion,
+    pub half: f32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prims::TICK;
+
+    fn near(got: f32, want: f32) -> bool {
+        (got - want).abs() < 0.01
+    }
+
+    #[test]
+    fn fog_wall_rises_and_breathes() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.keep_fog(4, [10.0, 2.0, 10.0], start, |_| 0);
+        // With the angle 0: p at n = 1, 89, 90: 0.3664, 31.993, 32.0; with 180 it is 9.6 at n = 90.
+        assert!(near(fog_height(0.0, 1), 0.3664) && near(fog_height(0.0, 89), 31.993) && near(fog_height(0.0, 90), 32.0));
+        assert!(near(fog_height(180.0, 90), 9.6));
+        // Twelve triangles: four sides at alpha 30 and two diagonals at 60, the base 1 up, in the box's grey.
+        let walls = guard.meshes(start, |_| None);
+        assert_eq!(walls.len(), 1);
+        assert!(walls[0].texture == FOG && !walls[0].additive && walls[0].vertices.len() == 36);
+        let alpha = |wall: &Wall, wall_index: usize| (wall.vertices[wall_index * 6].tint[3] * 255.0).round();
+        assert_eq!([0, 3, 4, 5].map(|k| alpha(&walls[0], k)), [30.0, 30.0, 60.0, 60.0]);
+        assert_eq!(walls[0].vertices[0].tint[..3], [80.0 / 255.0; 3]);
+        assert!(near(walls[0].vertices[0].position[1], 3.0));
+        // It goes with its unit.
+        guard.forget(4);
+        assert!(guard.meshes(start, |_| None).is_empty());
+    }
+
+    #[test]
+    fn full_strip_throws_16_shields_and_16_swords() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.strip([5.0, 1.0, 5.0], start, |_| 0);
+        let pieces = &guard.strips[0].pieces;
+        assert_eq!(pieces.len(), 32);
+        assert_eq!((pieces.iter().filter(|piece| piece.half == 5.0).count(), pieces.iter().filter(|piece| piece.half == 9.0).count()), (16, 16));
+        assert!(pieces[..4].iter().all(|piece| piece.icon == SHIELD) && pieces[4..8].iter().all(|piece| piece.icon == SWORD));
+        // Every draw 0: first shown on tick 18 (n = 1: alpha 25, r 13), alpha at n = 10, 25, 26, 60, 61: 250, 250, 243, 5, 0.
+        let at = |tick: u32| guard.pieces(start + TICK * tick);
+        assert!(at(17).is_empty());
+        let first = at(18);
+        assert_eq!(first.len(), 32);
+        assert_eq!(first[0].potion.alpha, 25.0);
+        assert!(near(f32::hypot(first[0].potion.at[0] - 5.0, first[0].potion.at[2] - 5.0), 13.0));
+        assert_eq!([10, 25, 26, 60, 61].map(coin_alpha), [250.0, 250.0, 243.0, 5.0, 0.0]);
+        assert!(at(77).len() == 32 && at(78).is_empty());
+        // r at n = 60 is 72; the spin goes up 3 a tick.
+        assert!(near(f32::hypot(at(77)[0].potion.at[0] - 5.0, at(77)[0].potion.at[2] - 5.0), 72.0));
+        assert!(near(at(19)[0].potion.spin - at(18)[0].potion.spin, 3.0));
+        // Elevation 0, azimuth 0: straight out along +x at the target's height.
+        assert!(near(first[0].potion.at[1], 1.0));
+        guard.advance(start + TICK * 301);
+        assert!(guard.strips.is_empty());
+    }
+
+    #[test]
+    fn preserve_stands_a_green_dome_of_45_tiles() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.preserve(Some(1), 90.4, start);
+        // Alpha at n = 1, 5, 26, 27, 42, 43: 20, 100, 100, 94, 4, 0; grow at 27 and 42: 0.1, 1.6.
+        assert_eq!([1, 5, 26, 27, 42, 43].map(dome_alpha), [20.0, 100.0, 100.0, 94.0, 4.0, 0.0]);
+        assert!(near(dome_grow(27), 0.1) && near(dome_grow(42), 1.6));
+        // The first turn is the facing (truncated) + 270, then 10 a tick.
+        assert_eq!((dome_turn(90.4, 1), dome_turn(90.4, 2), dome_turn(90.4, 4)), (0.0, 10.0, 30.0));
+        let feet = [0.0; 3];
+        let walls = guard.meshes(start, |_| Some(feet));
+        assert_eq!(walls.len(), 3);
+        assert!(walls.iter().all(|wall| wall.texture == TILE && wall.vertices.len() == 15 * 6));
+        assert_eq!(walls.iter().map(|wall| wall.additive).collect::<Vec<_>>(), [true, true, false]);
+        assert_eq!(walls[0].vertices[0].tint[..3], [205.0 / 255.0, 1.0, 205.0 / 255.0]);
+        assert_eq!((walls[0].vertices[0].tint[3] * 255.0).round(), 20.0);
+        // The tiles are 2, 3 and 2 wide by row: the equator row's first tile has corners 3·√2 apart… across its diagonal.
+        let tile = |row: usize, column: usize| &walls[0].vertices[(row * 5 + column) * 6..(row * 5 + column + 1) * 6];
+        let width = |tile: &[MeshVertex]| f32::hypot(tile[0].position[0] - tile[1].position[0], tile[0].position[2] - tile[1].position[2]);
+        assert!(near(width(tile(0, 0)), 4.0) && near(width(tile(1, 0)), 6.0) && near(width(tile(2, 0)), 4.0));
+        // Shell 3 swells with the grow; drawn on ticks 0…41, gone at 42.
+        let radius = |tick: u32| {
+            let walls = guard.meshes(start + TICK * tick, |_| Some(feet));
+            walls[2].vertices.iter().map(|vertex| f32::hypot(vertex.position[0], vertex.position[2])).fold(0.0, f32::max)
+        };
+        assert!(radius(41) > radius(25) + 1.0);
+        assert!(guard.meshes(start + TICK * 42, |_| Some(feet)).is_empty());
+        // The body: additive #FAFAFA on the even ticks of 10…30, white on the odd; nothing at 9 and the fade after.
+        let glow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        assert_eq!(glow(10), Some((crate::actor::GLOW_ADDITIVE, Some([0xFA; 3]))));
+        assert_eq!(glow(11), Some((0, Some([255; 3]))));
+        assert!(glow(9).is_none() && glow(30).is_some() && glow(31).is_none());
+    }
+
+    #[test]
+    fn enchant_deadly_poison_and_spiral_pierces_cast_flicker_the_body() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.poison(Some(1), start);
+        guard.pierce(Some(2), 200, start);
+        // Poison: additive #FF00FF on even ticks to 80, white on odd, nothing at 81.
+        let poison = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        assert_eq!(poison(0), Some((crate::actor::GLOW_ADDITIVE, Some([0xFF, 0, 0xFF]))));
+        assert_eq!(poison(1), Some((0, Some([255; 3]))));
+        assert!(poison(80).is_some() && poison(81).is_none());
+        assert!(guard.body_tint(Some(1), start + TICK * 81).is_some(), "the magenta fades back");
+        // Pierce: outline copies on ticks 0…140, additive #FAFA64 on even ticks, #FFFFFF on odd.
+        let pierce = |guard: &Guard, tick: u32| guard.glow(Some(2), start + TICK * tick);
+        assert_eq!(pierce(&guard, 0), Some((crate::actor::GLOW_OUTLINE | crate::actor::GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64]))));
+        assert_eq!(pierce(&guard, 1), Some((crate::actor::GLOW_OUTLINE, Some([255; 3]))));
+        assert!(pierce(&guard, 140).is_some() && pierce(&guard, 141).is_none());
+        // It stops with a shorter cast, and a second cast replaces the first.
+        guard.pierce(Some(2), 10, start);
+        assert_eq!(guard.bodies.iter().filter(|body| body.unit == Some(2)).count(), 1);
+        assert!(pierce(&guard, 9).is_some() && pierce(&guard, 10).is_none());
+        guard.cut_pierce();
+        assert!(pierce(&guard, 0).is_none());
+    }
+}

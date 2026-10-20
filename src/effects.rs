@@ -12,7 +12,7 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, burst, dancer, first, ground, huujin, knight, monk, sage, shards, sight, sniper, songs, star, stone, tanji, throw,
+    balls, blitz, bolts, boomerang, burst, dancer, first, ground, guard, huujin, knight, monk, sage, shards, sight, sniper, songs, star, stone, tanji, throw,
     transcend, walls, waterball,
 };
 use crate::render::{Gpu, Texture};
@@ -1439,6 +1439,8 @@ fn glint_at(first_alpha: i32, age: u32) -> (i32, u32) {
 
 #[derive(Default)]
 pub struct Effects {
+    /// Each unit's facing in degrees: set each frame (Preserve's dome starts from it).
+    pub facings: HashMap<Option<u32>, f32>,
     /// How much higher (or lower) a unit's glints sit: set each frame (`glint_rise`).
     pub rises: HashMap<Option<u32>, f32>,
     loaded: HashMap<String, Option<Rc<Loaded>>>,
@@ -1788,6 +1790,14 @@ const STEAL_COIN: u32 = 274;
 /// (`prims::sniper`).
 /// Moonlit Water Mill's crescents and Spider Web's web (`prims::dancer`), Marionette's tube (`prims::transcend`), Head Crush's and
 /// Joint Beat's rays (`prims::knight`) and Mind Breaker's flicker.
+/// Fog Wall's boxes, Full Strip's pieces, Preserve's dome and the flickers of Enchant Deadly Poison and Spiral Pierce's cast
+/// (`prims::guard`); Meteor Assault's slashes (`prims::knight`).
+const FOG_WALL: u32 = 405;
+const METEOR_ASSAULT: u32 = 409;
+const ENCHANT_DEADLY_POISON: u32 = 493;
+const FULL_STRIP: u32 = 495;
+const PRESERVE: u32 = 496;
+const PIERCE_CAST: u32 = 502;
 const MOONLIT: u32 = 394;
 const MARIONETTE_LINK: u32 = 395;
 const HEAD_CRUSH: u32 = 399;
@@ -1925,6 +1935,12 @@ impl Effects {
     /// its sound), any other effect plays as it is.
     #[allow(clippy::too_many_arguments)]
     pub fn play_cast_aura(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, unit: Option<u32>, at: Vector, cast_ms: u32, now: Instant) {
+        // Spiral Pierce's cast: the caster glows and flickers yellow for the cast.
+        if id == PIERCE_CAST {
+            self.play_sounds(table, id, at, now);
+            self.prims.guard.pierce(unit, cast_ms / crate::prims::TICK.as_millis() as u32, now);
+            return;
+        }
         // Twilight Alchemy: 320 icons round the own player for the cast.
         if matches!(id, 573..=575) {
             let pictures: &[&str] = match id {
@@ -2104,6 +2120,26 @@ impl Effects {
         if let (RIBBONS, Target::Unit(unit)) = (id, target) {
             self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
             self.prims.walls.ribbons(unit, now);
+        }
+        // Meteor Assault's slashes, Full Strip's shields and swords, Preserve's dome, Enchant Deadly Poison's flicker.
+        match (id, target) {
+            (METEOR_ASSAULT, Target::Unit(unit)) => {
+                self.textures.entry(knight::PURPLE_SLASH.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, knight::PURPLE_SLASH, true).ok());
+                self.prims.knight.meteor(unit, at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (ENCHANT_DEADLY_POISON, Target::Unit(unit)) => self.prims.guard.poison(unit, now),
+            (FULL_STRIP, _) => {
+                for path in [guard::SHIELD, guard::SWORD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.guard.strip(at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (PRESERVE, Target::Unit(unit)) => {
+                self.textures.entry(guard::TILE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, guard::TILE, true).ok());
+                let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
+                self.prims.guard.preserve(unit, facing, now);
+            }
+            _ => {}
         }
         // Moonlit Water Mill's crescents, Head Crush's and Joint Beat's rays, Mind Breaker's flicker and the web on a unit.
         match (id, target) {
@@ -2502,7 +2538,10 @@ impl Effects {
         self.unit_kinds.insert(id, kind);
         if let Some(&effect) = table.units.get(&kind) {
             // Volcano's, Deluge's, Violent Gale's and Land Protector's cells keep their loops, drawn in code.
-            if effect == SPIDER_WEB {
+            if effect == FOG_WALL {
+                self.textures.entry(guard::FOG.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, guard::FOG, true).ok());
+                self.prims.guard.keep_fog(id, at, now, |n| pick(0, n.saturating_sub(1)));
+            } else if effect == SPIDER_WEB {
                 self.textures.entry(dancer::WEB.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, dancer::WEB, true).ok());
                 self.prims.dancer.web(Some(id), None, at, now, |n| pick(0, n.saturating_sub(1)));
             } else if effect == GOSPEL {
@@ -3000,6 +3039,7 @@ impl Effects {
     /// The colour an effect gives `unit`'s body at `now` (Berserk Pitcher's red).
     pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
         let flashing = mix_tints(self.prims.walls.body_tint(unit, now), self.prims.ground.body_tint(unit, now));
+        let flashing = mix_tints(flashing, self.prims.guard.body_tint(unit, now));
         let flashing = mix_tints(flashing, self.prims.sniper.body_tint(unit, now));
         let flashing = mix_tints(flashing, self.prims.songs.body_tint(unit, now));
         mix_tints(flashing, self.prims.transcend.body_tint(unit, now))
@@ -3014,6 +3054,7 @@ impl Effects {
             .or_else(|| self.prims.knight.glow(unit, now))
             .or_else(|| self.prims.transcend.glow(unit, now))
             .or_else(|| self.prims.sniper.glow(unit, now))
+            .or_else(|| self.prims.guard.glow(unit, now))
     }
 
     /// How many degrees `unit` has been turned since this was last asked (Falcon Assault's spin).
@@ -3024,6 +3065,7 @@ impl Effects {
     /// A cast cut off: Twilight Alchemy's icons go.
     pub fn cut_twilight(&mut self) {
         self.prims.songs.cut_twilight();
+        self.prims.guard.cut_pierce();
     }
 
     /// Whether `unit`'s parts shake now (Close Confine's).
@@ -3190,6 +3232,13 @@ impl Effects {
             .chain(sage)
             .chain(burst_rings)
             .chain(other_walls)
+            .chain(
+                self.prims
+                    .guard
+                    .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .chain(
                 self.prims
                     .dancer
@@ -3482,6 +3531,13 @@ impl Effects {
                         quads.push((texture, at, corners, [red, green, blue, alpha / 255.0], true, true));
                     }
                 }
+            }
+            // Full Strip's shields and swords: additive squares facing the camera, red.
+            for piece in self.prims.guard.pieces(now) {
+                let Some(Some(texture)) = self.textures.get(piece.potion.icon) else { continue };
+                let corners = ground::plain_square(piece.potion.spin, piece.half * PIXELS_PER_UNIT, false);
+                let [red, green, blue] = guard::STRIP_TINT;
+                quads.push((texture, piece.potion.at, corners, [red, green, blue, piece.potion.alpha.trunc().clamp(0.0, 255.0) / 255.0], true, false));
             }
             // Gospel's cross over its cell: a square facing the camera, added on.
             if let Some(Some(texture)) = self.textures.get(transcend::CROSS) {
@@ -4965,5 +5021,29 @@ mod tests {
         // The web: on the skill unit and on the status.
         assert_eq!(table.units[&183], 404);
         assert!(table.units_once.contains(&183) && table.status(735).contains(&404) && !table.sounds.contains_key(&404));
+    }
+
+    #[test]
+    fn fog_wall_meteor_assault_deadly_poison_full_strip_preserve_and_the_pierce_cast() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        // Fog Wall's boxes stand with their units, Meteor Assault's slashes come from the use and the pulse strikes.
+        assert!(table.units[&182] == 405 && table.units_once.contains(&182) && !table.sounds.contains_key(&405));
+        assert_eq!(
+            (table.used(406), table.struck(661), table.struck(712)),
+            (Some(&[(Who::Caster, 409)][..]), Some(&[(Who::Caster, 409)][..]), Some(&[(Who::Caster, 409)][..]))
+        );
+        assert!(!table.floaters.contains_key(&409) && sounds(409) == [("effect\\메테오 어썰트", 0)]);
+        // Enchant Deadly Poison: six sounds, its own file; Full Strip: four, the strip sound; Preserve keeps its sound.
+        assert_eq!(sounds(493), [0, 80, 176, 288, 416, 640].map(|ms| ("effect\\assasin_enchantpoison", ms)));
+        assert_eq!(sounds(495), [16, 176, 336, 496].map(|ms| ("effect\\복호격", ms)));
+        assert_eq!(sounds(496), [("effect\\black_maximize_power_sword_bic", 0)]);
+        assert_eq!(
+            (table.used(378), table.used(476), table.used(475)),
+            (Some(&[(Who::Caster, 493)][..]), Some(&[(Who::Target, 495)][..]), Some(&[(Who::Caster, 496)][..]))
+        );
+        // Spiral Pierce's cast glows: its aura is 502, with the begin-spell sound.
+        assert_eq!(table.cast_aura(397, 12), Some(502));
+        assert_eq!(sounds(502), [("effect\\EF_BeginSpell", 0)]);
     }
 }
