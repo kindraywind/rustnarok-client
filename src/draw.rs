@@ -901,7 +901,7 @@ impl App {
                     glows.push((texture, *feet, [[left, top], [right, top], [right, bottom], [left, bottom]], tint, false, 0.0));
                     continue;
                 }
-                let Some((flags, body_tint)) = glow.filter(|(flags, _)| *flags != 0) else {
+                let Some((flags, body_tint)) = glow.filter(|(flags, tint)| *flags != 0 || tint.is_some()) else {
                     billboards.push((texture, *feet, position, size, tint, angle, layer));
                     continue;
                 };

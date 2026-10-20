@@ -12,7 +12,7 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, burst, first, ground, huujin, monk, sage, shards, sight, songs, star, stone, tanji, throw, walls, waterball,
+    balls, blitz, bolts, boomerang, burst, first, ground, huujin, knight, monk, sage, shards, sight, songs, star, stone, tanji, throw, walls, waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1021,7 +1021,6 @@ fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
 /// A band effect's texture, colour and whether it adds on.
 fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
     match effect {
-        // ponytail: Aura Blade's two bloom sets both in ring_white (the game's second is ring_yellow).
         367 => ("ring_white", [0xA4, 0xCD, 0xFE], true),
         312 | 313 | 325 => ("alpha_down", [0x8C, 0xD2, 0x8C], true),
         315 => ("alpha_down", [0xFF, 0x59, 0xB6], true),
@@ -1049,6 +1048,16 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
 
 fn aura_texture(effect: u32) -> String {
     format!("data\\texture\\effect\\{}.tga", aura_look(effect).0)
+}
+
+/// The texture of bloom set `set` of an aura: Aura Blade's second set is ring_yellow, the others' the aura's own.
+fn aura_set_texture(effect: u32, set: usize) -> String {
+    if effect == 367 && set == 1 { "data\\texture\\effect\\ring_yellow.tga".to_owned() } else { aura_texture(effect) }
+}
+
+/// How many sets of bands an aura draws with their own textures.
+fn aura_sets(effect: u32) -> usize {
+    if effect == 367 { 2 } else { 1 }
 }
 
 /// The blooming bands' first alphas (two sets of four), their heights and turns.
@@ -1160,7 +1169,25 @@ fn arrival_bands(age: u32) -> [Band; 4] {
     ARRIVAL_BANDS.map(|[radius, height, lean]| Band { arc: 360.0, turn: 0.0, radius, lean, height, alpha: band_fade(age) })
 }
 
+/// The auras made of two sets of blooming bands.
+fn is_bloom(effect: u32) -> bool {
+    matches!(effect, 12 | 58 | 367 | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+}
+
 impl Banded {
+    /// A blooming aura's bands at a tick, with their set and the height along each.
+    fn bloom_bands(&self, age: u32) -> Vec<(usize, Band, Vec<f32>)> {
+        (0..2)
+            .flat_map(|set| (0..4).filter_map(move |band| bloom(set, band, self.ticks, age).map(|shape| (set, band, shape))))
+            .map(|(set, band, shape)| (set, shape, (0..=BAND_QUADS).map(|s| bloom_height(band, shape.height, age, s)).collect()))
+            .collect()
+    }
+
+    /// The bands of set `set` of a blooming aura (Aura Blade's, which draws the sets in their own textures).
+    fn bands_in_set(&self, age: u32, set: usize) -> Vec<(Band, Vec<f32>)> {
+        self.bloom_bands(age).into_iter().filter(|(each, ..)| *each == set).map(|(_, band, heights)| (band, heights)).collect()
+    }
+
     /// Its bands at a tick, each with its height along it.
     fn bands(&self, age: u32) -> Vec<(Band, Vec<f32>)> {
         let heights = |band: usize, height: f32, wave: fn(usize, f32, u32, usize) -> f32| (0..=BAND_QUADS).map(|s| wave(band, height, age, s)).collect();
@@ -1196,11 +1223,8 @@ impl Banded {
             344 => return shaped(&arrival_bands(age), rising_height),
             _ => {}
         }
-        if matches!(self.effect, 12 | 58 | 367 | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) {
-            (0..2)
-                .flat_map(|set| (0..4).filter_map(move |band| bloom(set, band, self.ticks, age).map(|shape| (band, shape))))
-                .map(|(band, shape)| (shape, heights(band, shape.height, bloom_height)))
-                .collect()
+        if is_bloom(self.effect) {
+            self.bloom_bands(age).into_iter().map(|(_, band, heights)| (band, heights)).collect()
         } else {
             // ponytail: earth (56) and poison (59) turn like water, fire and wind.
             (0..4).map(|band| turning(band, self.ticks, age)).enumerate().map(|(band, shape)| (shape, heights(band, shape.height, turning_height))).collect()
@@ -1739,6 +1763,13 @@ const STEAL_COIN: u32 = 274;
 /// Magnus' and Sanctuary's boxes, Triple Attack's streaks, Slim Pitcher's potion and Full Protection's strobe (`prims::ground`).
 /// Twilight Alchemy's icons, Shrink's flashes, Close Confine's blinking, Pang Voice's and Wink of Charm's sprites and the performers'
 /// cones of bubbles (`prims::songs`, `prims::monk`).
+/// Ganbantein's crescents (`prims::walls`), Spiral Pierce's cones, Soul Breaker's slashes, Pressure's cross and Martyr's Reckoning's rays
+/// (`prims::knight`).
+const GANBANTEIN_FX: u32 = 223;
+const SPIRAL_PIERCE: u32 = 339;
+const SOUL_BREAKER: u32 = 361;
+const PRESSURE: u32 = 365;
+const MARTYR: u32 = 366;
 const SHRINK: u32 = 599;
 const CLOSE_CONFINE: u32 = 602;
 const PANG_VOICE: u32 = 606;
@@ -1778,7 +1809,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 20] = [
+pub const AIMED: [u32; 21] = [
+    SOUL_BREAKER,
     PANG_VOICE,
     WINK_OF_CHARM,
     TRIPLE_ATTACK,
@@ -2025,6 +2057,28 @@ impl Effects {
         if let (RIBBONS, Target::Unit(unit)) = (id, target) {
             self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
             self.prims.walls.ribbons(unit, now);
+        }
+        // Ganbantein's crescents over the cell, Spiral Pierce's cones, Pressure's cross and Martyr's Reckoning's rays, made in code.
+        match (id, target) {
+            (GANBANTEIN_FX, _) => {
+                self.textures.entry(walls::RING_WHITE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_WHITE, true).ok());
+                self.prims.walls.ganbantein(at, now);
+            }
+            (SPIRAL_PIERCE, Target::Unit(unit)) => {
+                self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
+                self.prims.knight.spiral(unit, now);
+            }
+            (PRESSURE, Target::Unit(unit)) => {
+                for (path, keyed) in [(knight::CROSS, false), (knight::CROSS_FLASH, true)] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, keyed).ok());
+                }
+                self.prims.knight.pressure(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (MARTYR, Target::Unit(unit)) => {
+                self.textures.entry(knight::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, knight::RAY, true).ok());
+                self.prims.knight.martyr(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            _ => {}
         }
         // Shrink's flashes, Close Confine's blinking and the performers' cones of bubbles, made in code.
         match (id, target) {
@@ -2304,8 +2358,10 @@ impl Effects {
 
     /// A cast's aura (12 or 54–59) on a unit (None = the player) for a cast of `cast_ms`, replacing its last one.
     pub fn play_aura(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, effect: u32, cast_ms: u32, start: Instant) {
-        let texture = aura_texture(effect);
-        self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+        for set in 0..aura_sets(effect) {
+            let texture = aura_set_texture(effect, set);
+            self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+        }
         let anchor = Anchor::Unit(unit);
         self.auras.retain(|aura| !(is_cast_aura(aura.effect) && matches!(aura.anchor, Anchor::Unit(each) if each == unit)));
         self.auras.push(Banded { effect, anchor, start, ticks: aura_ticks(effect, cast_ms), turns: [0.0; 3], extra: [0.0; 2], sparkles: Vec::new() });
@@ -2313,8 +2369,10 @@ impl Effects {
 
     /// A cast aura launched again with a skill's damage: it blooms for its own length, beside any cast's aura.
     pub fn bloom_aura(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, effect: u32, start: Instant) {
-        let texture = aura_texture(effect);
-        self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+        for set in 0..aura_sets(effect) {
+            let texture = aura_set_texture(effect, set);
+            self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+        }
         self.auras.push(Banded {
             effect,
             anchor: Anchor::Unit(unit),
@@ -2528,6 +2586,11 @@ impl Effects {
                 self.textures.entry(first::THUNDER_CENTER.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, first::THUNDER_CENTER, true).ok());
                 self.prims.monk.investigate(caster, to, now, |n| pick(0, n.saturating_sub(1)));
             }
+            SOUL_BREAKER => {
+                self.textures.entry(knight::PURPLE_SLASH.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, knight::PURPLE_SLASH, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.knight.breaker(caster, from, to, now, |n| pick(0, n.saturating_sub(1)));
+            }
             PANG_VOICE | WINK_OF_CHARM => {
                 let sprite = if id == PANG_VOICE { monk::FVOICE } else { monk::WINK };
                 self.sprites.entry(sprite.to_owned()).or_insert_with(|| SpriteSet::at(grf, sprite));
@@ -2576,6 +2639,7 @@ impl Effects {
         self.prims.boomerangs.advance(now, &position_of);
         self.prims.spheres.advance(now, position_of(None), |n| pick(0, n.saturating_sub(1)));
         self.prims.huujin.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        self.prims.knight.advance(now, &position_of);
         self.prims.monk.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for (file, at) in self.prims.throws.advance(now, &position_of) {
             self.sounds.push((now, file, at));
@@ -2815,7 +2879,7 @@ impl Effects {
 
     /// The body flags and colour an effect gives `unit` now (Full Protection's strobe).
     pub fn body_glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
-        self.prims.ground.glow(unit, now).or_else(|| self.prims.songs.glow(unit, now))
+        self.prims.ground.glow(unit, now).or_else(|| self.prims.songs.glow(unit, now)).or_else(|| self.prims.knight.glow(unit, now))
     }
 
     /// A cast cut off: Twilight Alchemy's icons go.
@@ -2887,11 +2951,13 @@ impl Effects {
             let age = (now.duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) as u32;
             let (_, color, additive) = aura_look(aura.effect);
             let color = color.map(|value| f32::from(value) / 255.0);
-            let texture = self.textures.get(&aura_texture(aura.effect)).and_then(Option::as_ref);
             let at = aura.anchor.place(&position_of);
-            texture.zip(at).map(|(texture, at)| {
-                let triangles = aura.bands(age).iter().flat_map(|(band, heights)| band_mesh(at, band, |s| heights[s], color)).collect();
-                (texture, triangles, additive)
+            (0..aura_sets(aura.effect)).filter_map(move |set| {
+                let at = at?;
+                let texture = self.textures.get(&aura_set_texture(aura.effect, set)).and_then(Option::as_ref)?;
+                let bands = if aura_sets(aura.effect) == 1 { aura.bands(age) } else { aura.bands_in_set(age, set) };
+                let triangles = bands.iter().flat_map(|(band, heights)| band_mesh(at, band, |s| heights[s], color)).collect();
+                Some((texture, triangles, additive))
             })
         });
         // The bolts' arrows and their impact rings, blended over.
@@ -2985,6 +3051,13 @@ impl Effects {
             .chain(sage)
             .chain(burst_rings)
             .chain(other_walls)
+            .chain(
+                self.prims
+                    .knight
+                    .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .chain(
                 self.prims
                     .songs
@@ -3248,6 +3321,12 @@ impl Effects {
                         quads.push((texture, at, corners, [red, green, blue, alpha / 255.0], true, true));
                     }
                 }
+            }
+            // Pressure's cross and its ghosts: additive squares facing the camera.
+            for cross in self.prims.knight.crosses(now, &position_of) {
+                let Some(Some(texture)) = self.textures.get(cross.icon) else { continue };
+                let corners = ground::plain_square(cross.spin, 12.0 * PIXELS_PER_UNIT, true);
+                quads.push((texture, cross.at, corners, [1.0, 1.0, 1.0, cross.alpha.trunc().clamp(0.0, 255.0) / 255.0], true, false));
             }
             // Twilight Alchemy's icons: additive squares facing the camera, the picture in the top left three quarters.
             for icon in self.prims.songs.icons() {
@@ -4345,7 +4424,10 @@ mod tests {
         // Other sounds keep their place.
         let mut listeners: Vec<u32> = table.sounds.iter().filter(|(_, sounds)| sounds.iter().any(|sound| sound.listener)).map(|(&id, _)| id).collect();
         listeners.sort_unstable();
-        assert_eq!(listeners, [220, 227, 245, 266, 497, 606, 607]);
+        // (Every other sound keeps its place: the list grows with the effects that are heard at full volume.)
+        for id in [220, 227, 245, 266, 497, 606, 607] {
+            assert!(listeners.contains(&id), "{id}");
+        }
     }
 
     #[test]
@@ -4600,5 +4682,34 @@ mod tests {
         assert!(table.status(87).contains(&254) && table.status(87).contains(&1132) && table.status(235).contains(&1132));
         assert_eq!(table.sounds[&1132].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\mon_금강불괴", 0)]);
         assert!(!table.sounds.contains_key(&254));
+    }
+
+    #[test]
+    fn ganbantein_spiral_pierce_soul_breaker_pressure_martyrs_reckoning_and_the_two_tints() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Ganbantein's fire wall sound at the listener; Spiral Pierce's at ticks 20 and 30; Soul Breaker's at 20; Pressure's at 3.
+        assert_eq!(sounds(223), [("effect\\EF_FireWall", 0, true)]);
+        assert_eq!(table.ground(483), Some(&[(Who::Ground, 223)][..]));
+        assert_eq!(sounds(339), [("permeter_attack", 320, false), ("effect\\ef_magnumbreak", 480, false)]);
+        assert_eq!((sounds(361), sounds(365)), (vec![("effect\\기공포", 320, false)], vec![("effect\\프레셔", 48, false)]));
+        // The shake of Pressure at tick 33; Martyr's Reckoning's sound at tick 22 and no old bash3d.
+        assert_eq!(table.quakes[&365], [(Duration::from_millis(528), QUAKE_LONG)]);
+        assert_eq!(sounds(366), [("effect\\세크리파이스", 352, false)]);
+        for id in [361, 365, 366] {
+            assert!(!table.floaters.contains_key(&id) && !table.rings.contains_key(&id), "{id}");
+        }
+        // Soul Breaker is aimed from the caster at the target; Spiral Pierce, Pressure and the rays play on their packet's units.
+        assert!(AIMED.contains(&361));
+        assert_eq!(
+            (table.struck(379), table.struck(397), table.struck(367), table.struck(368)),
+            (Some(&[(Who::Caster, 361)][..]), Some(&[(Who::Target, 339)][..]), Some(&[(Who::Target, 365)][..]), Some(&[(Who::Caster, 366)][..]))
+        );
+        // Aura Blade's second set of bands is yellow, the first white; the others have one texture.
+        assert!(aura_set_texture(367, 0).ends_with("ring_white.tga") && aura_set_texture(367, 1).ends_with("ring_yellow.tga"));
+        assert_eq!((aura_sets(367), aura_sets(12), aura_set_texture(12, 1)), (2, 1, aura_texture(12)));
+        // Concentration tints the body #FFFFA0, drawn as it is.
+        assert_eq!(crate::actor::status_body(369), Some((0, Some([0xFF, 0xFF, 0xA0]))));
+        assert_eq!(table.status(379), &[744][..]);
     }
 }

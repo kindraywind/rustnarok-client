@@ -11,6 +11,7 @@ pub mod burst;
 pub mod first;
 pub mod ground;
 pub mod huujin;
+pub mod knight;
 pub mod monk;
 pub mod napalm;
 pub mod sage;
@@ -115,6 +116,7 @@ pub struct Prims {
     pub stars: star::Stars,
     pub ground: ground::Ground,
     pub songs: songs::Songs,
+    pub knight: knight::Knight,
 }
 
 /// COLDHIT's shard and smoke textures.
