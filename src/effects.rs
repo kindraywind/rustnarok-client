@@ -2260,6 +2260,9 @@ const SKY_NET_SHAKE: u32 = 550;
 const QUAKE_BODY: u32 = 458;
 pub const REVERBERATION: u32 = 464;
 const SPINED_BODY: u32 = 466;
+/// Prominence Kick's spin (the same swing), and Misty Frost's blue glow.
+const PROMINENCE_SPIN: u32 = 1224;
+const MISTY_FROST: u32 = 1420;
 const CAST_SPIN: u32 = 501;
 const GREEN_BODY: u32 = 538;
 const HATED: u32 = 543;
@@ -3129,7 +3132,8 @@ impl Effects {
                 self.textures.entry(linker::FROST.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, linker::FROST, false).ok());
                 self.prims.linker.frost(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
-            (SPINED_BODY, Target::Unit(unit)) => self.prims.brawl.swing(unit, now),
+            (SPINED_BODY | PROMINENCE_SPIN, Target::Unit(unit)) => self.prims.brawl.swing(unit, now),
+            (MISTY_FROST, Target::Status(unit, _)) => self.prims.bodies.start(body::Change::MistyFrost, unit, now),
             (GREEN_BODY, Target::Unit(unit)) => self.prims.guard.green(unit, now),
             (HATED, Target::Unit(unit)) => {
                 for path in crate::prims::sparkle::TEXTURES {
@@ -7720,5 +7724,22 @@ mod tests {
         assert!(!table.sounds.contains_key(&EF_FROSTDIVER3));
         assert!(table.used(2204).unwrap().contains(&(Who::Caster, EF_FROSTDIVER3)));
         assert!(table.used(720).unwrap().contains(&(Who::Caster, EF_FROSTDIVER3)));
+    }
+
+    #[test]
+    fn zangetsu_kagemusya_misty_frost_and_prominence_kick_have_their_rows() {
+        let table = Table::load();
+        assert_eq!(table.status(657), [1003]);
+        assert_eq!(table.status(656), [crate::actor::KAGEMUSYA]);
+        assert_eq!(table.status(1141), [MISTY_FROST]);
+        assert!(table.struck(2593).unwrap().contains(&(Who::Target, PROMINENCE_SPIN)));
+        assert_eq!(table.sounds[&PROMINENCE_SPIN].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\mon_침투경", 80)]);
+        assert_eq!([1003, crate::actor::KAGEMUSYA, MISTY_FROST, PROMINENCE_SPIN].map(|id| table.lengths[&id]), [99_999_999, 99_999_999, 99_999_999, 50]);
+        // The spin shares the swing's flag: on ticks 14 to 49 only, the counter from 0 to 35.
+        let start = Instant::now();
+        let mut brawl = brawl::Brawl::default();
+        brawl.swing(Some(1), start);
+        let g = |tick: u32| brawl.glow(Some(1), start + crate::prims::TICK * tick).map(|(flags, _)| flags >> crate::actor::PARAM_SHIFT);
+        assert_eq!([13, 14, 49, 50].map(g), [None, Some(0), Some(35), None]);
     }
 }
