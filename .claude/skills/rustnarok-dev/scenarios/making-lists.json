@@ -19,7 +19,7 @@
     {"say": "@item 507 1"}, {"wait": 300}, {"say": "@item 1093 1"}, {"wait": 500},
     {"say": "@useskill 228 10 self"}, {"wait_for": {"event": "MakeList", "ms": 5000}},
     {"wait": 300}, {"move": [900, 700]},
-    {"shot": "pharmacy-list", "crop": [362, 267, 300, 234]},
+    {"shot": "pharmacy-list", "crop": [362, 405, 310, 180]},
     {"click_on": {"pick_item": 501}, "count": 2}, {"wait_for": {"packet": "0x018f", "ms": 5000}}, {"wait": 300},
     {"expect": {"chat": "Red Potion", "windows_closed": ["PickList"]}},
     {"say": "@itemreset"}, {"wait": 800},
@@ -34,11 +34,11 @@
     {"say": "@item 7144 1"}, {"wait": 300}, {"say": "@item 507 1"}, {"wait": 300},
     {"say": "@item 1093 1"}, {"wait": 300}, {"say": "@item 7134 1"}, {"wait": 500},
     {"say": "@useskill 228 10 self"}, {"wait_for": {"event": "MakeList", "ms": 5000}},
-    {"click": [616, 478]}, {"wait": 500},
+    {"click": [632, 556]}, {"wait": 500},
     {"expect": {"windows_closed": ["PickList"]}},
     {"say": "@item 7134 1"}, {"wait": 500},
     {"say": "@useskill 228 10 self"}, {"wait_for": {"event": "MakeList", "ms": 5000}},
-    {"click": [616, 478]}, {"wait": 300},
+    {"click": [632, 556]}, {"wait": 300},
     {"say": "@job 0"}, {"wait": 500}
   ]
 }

@@ -2172,7 +2172,7 @@ impl App {
             window.draw(shop_layer.window(), &assets.chrome, &assets.skill_descript, font, pointer.0, &cooling, skill_info);
         }
         if let Some((list, _)) = &game.pick {
-            list.draw(shop_layer.window(), &assets.chrome, &assets.pick_list, icons, items, skill_info, messages, font, pointer);
+            list.draw(shop_layer.window(), &assets.chrome, &assets.pick_list, &assets.npc_menu, icons, items, skill_info, messages, font, pointer);
         }
         if let Some(shop) = &game.shop {
             shop.draw(shop_layer.window(), &assets.chrome, &assets.shop, icons, items, messages, font, pointer);

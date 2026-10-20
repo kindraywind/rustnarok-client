@@ -3067,16 +3067,22 @@ impl App {
                 }
             }
             // What to make, cook or craft: the pick list with the items by ID.
-            MapEvent::MakeList(items) | MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) if items.is_empty() => {
+            MapEvent::MakeList(items) if items.is_empty() => {
+                game.question_box = Some(BoxQuestion::Notice(NOTHING_TO_MAKE));
+            }
+            MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) if items.is_empty() => {
                 game.chat_line(self.messages.get(NOTHING_TO_MAKE).cloned().unwrap_or_default(), CHAT_ERROR);
                 // An empty making list still waits for an answer.
                 let _ = match event_kind {
-                    Some(Picking::Make) => game.session.make(0),
                     Some(Picking::Cook(kind)) => game.session.cook(kind, 0),
                     _ => Ok(()),
                 };
             }
-            MapEvent::MakeList(items) | MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) => {
+            MapEvent::MakeList(items) => {
+                let rows = items.into_iter().map(|id| net::InventoryItem { id, identified: true, ..Default::default() }).collect();
+                game.pick = Some((pick_list::PickList::text(MAKING_TITLE, rows), Picking::Make));
+            }
+            MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) => {
                 let picking = event_kind.unwrap_or(Picking::Arrow);
                 let rows = items.into_iter().map(|id| net::InventoryItem { id, identified: true, ..Default::default() }).collect();
                 let mut list = pick_list::PickList::new(if matches!(picking, Picking::Arrow) { ARROW_TITLE } else { MAKING_TITLE }, rows);
@@ -3098,8 +3104,10 @@ impl App {
                 list.skills = true;
                 game.pick = Some((list, Picking::SkillSelect(why)));
             }
-            MapEvent::RepairList(items) | MapEvent::UpgradeList(items) if items.is_empty() => {}
-            MapEvent::RepairList(items) => game.pick = Some((pick_list::PickList::new(REPAIR_TITLE, items), Picking::Repair)),
+            MapEvent::RepairList(items) | MapEvent::UpgradeList(items) if items.is_empty() => {
+                game.question_box = Some(BoxQuestion::Notice(NOTHING_TO_MAKE));
+            }
+            MapEvent::RepairList(items) => game.pick = Some((pick_list::PickList::text(REPAIR_TITLE, items), Picking::Repair)),
             MapEvent::MergeOpen(indexes) => {
                 let stacks = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
                 game.pick = Some((pick_list::PickList::merging(stacks), Picking::Merge));
@@ -3120,7 +3128,7 @@ impl App {
                     game.chat_line(message(MERGE_TOO_MANY), CHAT_ERROR);
                 }
             }
-            MapEvent::UpgradeList(items) => game.pick = Some((pick_list::PickList::new(UPGRADE_TITLE, items), Picking::Upgrade)),
+            MapEvent::UpgradeList(items) => game.pick = Some((pick_list::PickList::text(UPGRADE_TITLE, items), Picking::Upgrade)),
             MapEvent::Repaired { ok, .. } => {
                 let (id, color) = if ok { (REPAIRED, CHAT_ITEM) } else { (NOT_REPAIRED, CHAT_ERROR) };
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);

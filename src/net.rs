@@ -2602,7 +2602,7 @@ fn encode_repair(item: Option<&InventoryItem>) -> [u8; 26] {
 }
 
 /// CZ_REQ_WEAPONREFINE: the weapon's inventory index (0: none, which ends the list).
-fn encode_upgrade(index: u32) -> [u8; 6] {
+pub fn encode_upgrade(index: u32) -> [u8; 6] {
     let mut packet = [0u8; 6];
     packet[..2].copy_from_slice(&CZ_REQ_WEAPONREFINE.to_le_bytes());
     packet[2..].copy_from_slice(&index.to_le_bytes());
