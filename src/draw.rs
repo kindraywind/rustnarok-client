@@ -418,19 +418,6 @@ impl App {
         let walk_now = now.max(game.walk_clock);
         game.walk_clock = walk_now;
         let player_cell = game.player.update(walk_now);
-        // ponytail: footprints alternate 326 and 327, one on each cell just left, only while we are chase-walking.
-        // Others don't see the walker, so they don't see our prints. A new chase starts again at 326.
-        if game.player.hide_option & actor::OPTION_CHASEWALK != 0 {
-            let stepped = game.player.steps_left().to_vec();
-            for cell in stepped {
-                let effect = actor::chase_footprint(game.player.footprints);
-                game.player.footprints = game.player.footprints.wrapping_add(1);
-                let at = [cell[0].max(0) as u16, cell[1].max(0) as u16];
-                game.play_effect_at(gpu, grf, &self.effect_table, effect, at);
-            }
-        } else {
-            game.player.footprints = 0;
-        }
         game.player.step_companions(actor::world_xz(player_cell), now);
         if walking
             && !game.player.moving()
@@ -504,6 +491,10 @@ impl App {
         let mut bodies = HashMap::new();
         if head_owners.contains(&None) {
             bodies.insert(None, world_body(gpu, &mut game.player, player_scale));
+        }
+        // Chase Walk's footprints: one every 12 ticks while we move; others don't see the walker, so only our own are made.
+        for (effect, at, heading) in game.player.step_chase(now, player_feet) {
+            game.effects.chase_print(gpu, grf, effect, at, heading, now);
         }
         // Our own character in Hiding shows its shadow alone (a frame with no sprite); cloaked, chase-walking or
         // GM-hidden, nothing. We are never drawn as a silhouette.

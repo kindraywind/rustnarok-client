@@ -15,6 +15,11 @@ pub const FIN: &str = "data\\texture\\effect\\magic_blue.tga";
 /// Running's footprints: the left foot (447) and the right (448).
 pub const FOOT_LEFT: &str = "data\\texture\\effect\\foot_l2.tga";
 pub const FOOT_RIGHT: &str = "data\\texture\\effect\\foot_r2.tga";
+/// Chase Walk's footprints: the left (326) and the right (327), pale grey.
+pub const CHASE_LEFT: &str = "data\\texture\\effect\\foot_l_b.tga";
+pub const CHASE_RIGHT: &str = "data\\texture\\effect\\foot_r_b.tga";
+/// Chase Walk's print is 5 across to the corner on the ground (4.5 in all), drawn once.
+const CHASE_RADIUS: f32 = 0.9 * 5.0;
 /// A footprint lasts 340 ticks, 6 across to the corner on the ground and 0.2 up.
 const PRINT_LIFE: u32 = 340;
 const PRINT_RADIUS: f32 = 0.9 * 6.0;
@@ -123,6 +128,16 @@ pub struct Kicks {
     running: Vec<Option<u32>>,
     /// The footprints on the ground now.
     pub prints: Vec<Footprint>,
+}
+
+/// A print's picture, the radius of its corners and how many times it is drawn, by the effect that left it.
+fn print_look(effect: u32) -> (&'static str, f32, usize) {
+    match effect {
+        326 => (CHASE_LEFT, CHASE_RADIUS, 1),
+        327 => (CHASE_RIGHT, CHASE_RADIUS, 1),
+        448 => (FOOT_RIGHT, PRINT_RADIUS, 2),
+        _ => (FOOT_LEFT, PRINT_RADIUS, 2),
+    }
 }
 
 /// A footprint's alpha at its age n: 150 less 1 for every other tick (0 at 299).
@@ -332,13 +347,19 @@ impl Kicks {
         }
     }
 
-    /// The footprints' squares at `now`: a flat dark grey print 0.2 up, fading from 150 by 1 every other tick (gone at 4.8 s), each drawn
-    /// twice and blended.
+    /// A Chase Walk print (326 left, 327 right) at `at`, turned `heading` degrees.
+    pub fn chase_print(&mut self, effect: u32, at: Vector, heading: f32, now: Instant) {
+        self.prints.push(Footprint { effect, at, heading, start: now });
+    }
+
+    /// The footprints' squares at `now`: a flat print 0.2 up, fading from 150 by 1 every other tick (gone at 4.8 s), blended: Running's
+    /// dark grey ones drawn twice, Chase Walk's pale ones once.
     pub fn print_meshes(&self, now: Instant) -> Vec<Wall> {
         let mut walls = Vec::new();
-        for texture in [FOOT_LEFT, FOOT_RIGHT] {
+        for texture in [FOOT_LEFT, FOOT_RIGHT, CHASE_LEFT, CHASE_RIGHT] {
             let mut vertices = Vec::new();
-            for print in self.prints.iter().filter(|print| (print.effect == 447) == (texture == FOOT_LEFT)) {
+            for print in self.prints.iter().filter(|print| print_look(print.effect).0 == texture) {
+                let (_, radius, copies) = print_look(print.effect);
                 let alpha = print_alpha(passes(print.start, now));
                 if alpha <= 0 {
                     continue;
@@ -346,10 +367,10 @@ impl Kicks {
                 let tint = [1.0, 1.0, 1.0, alpha as f32 / 255.0];
                 let corner = |j: u32, uv: [f32; 2]| {
                     let (sin, cos) = (print.heading + 90.0 * j as f32).to_radians().sin_cos();
-                    MeshVertex { position: [print.at[0] + PRINT_RADIUS * cos, print.at[1] + PRINT_UP, print.at[2] + PRINT_RADIUS * sin], uv, tint }
+                    MeshVertex { position: [print.at[0] + radius * cos, print.at[1] + PRINT_UP, print.at[2] + radius * sin], uv, tint }
                 };
                 let [a, b, c, d] = [corner(0, [0.0, 1.0]), corner(1, [1.0, 1.0]), corner(2, [1.0, 0.0]), corner(3, [0.0, 0.0])];
-                for _ in 0..2 {
+                for _ in 0..copies {
                     vertices.extend([a, b, c, a, c, d]);
                 }
             }
@@ -620,6 +641,29 @@ mod tests {
         assert_eq!(alphas, [11.0, 35.0, 11.0]);
         // It follows the target.
         assert!(kicks.fin_meshes(|_| None).is_empty());
+    }
+
+    #[test]
+    fn a_chase_walk_print_is_one_pale_square_of_radius_4_5() {
+        let start = Instant::now();
+        let mut kicks = Kicks::default();
+        kicks.chase_print(326, [10.0, 1.0, 20.0], 135.0, start);
+        kicks.chase_print(327, [12.0, 1.0, 20.0], 0.0, start);
+        let walls = kicks.print_meshes(start);
+        // One wall for each picture, one blended white quad each, alpha 149 at n = 1, 0.2 up, radius 4.5 at the heading.
+        assert_eq!(walls.iter().map(|wall| wall.texture).collect::<Vec<_>>(), [CHASE_LEFT, CHASE_RIGHT]);
+        assert!(walls.iter().all(|wall| !wall.additive && wall.vertices.len() == 6));
+        let first = &walls[0].vertices[0];
+        assert_eq!(first.tint, [1.0, 1.0, 1.0, 149.0 / 255.0]);
+        assert!((first.position[1] - 1.2).abs() < 1e-5);
+        let (dx, dz) = (first.position[0] - 10.0, first.position[2] - 20.0);
+        assert!((dx.hypot(dz) - 4.5).abs() < 1e-4 && (dz.atan2(dx).to_degrees() - 135.0).abs() < 1e-3);
+        // Alpha at n = 1, 2, 3, 299, 300: 149, 149, 148, 0, 0; gone at tick 340, and Running's own prints are still twice.
+        assert_eq!([1, 2, 3, 299, 300].map(print_alpha), [149, 149, 148, 0, 0]);
+        kicks.advance(start + TICK * 341, |_| None, |_| 0);
+        assert!(kicks.prints.is_empty());
+        kicks.prints.push(Footprint { effect: 447, at: [0.0; 3], heading: 0.0, start });
+        assert_eq!(kicks.print_meshes(start)[0].vertices.len(), 12);
     }
 
     #[test]

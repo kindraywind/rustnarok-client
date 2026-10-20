@@ -227,11 +227,16 @@ pub fn seen(option: u32, own: bool, clairvoyance: bool) -> Seen {
     }
 }
 
-/// The footprint a chase walk leaves on step `n` (0 the first): 326, then 327.
-// ponytail: they alternate, one per cell stepped, and only our own walker leaves them (others don't see the walker,
-// so they don't see our footprints). A new chase starts again at 326.
-pub fn chase_footprint(step: u32) -> u32 {
-    if step.is_multiple_of(2) { EF_FOOT } else { EF_FOOT2 }
+/// Chase Walk's counter reaches 12 for the left print (326) and 24 for the right (327), then goes back to 1.
+const CHASE_LEFT_AT: u32 = 12;
+const CHASE_RIGHT_AT: u32 = 24;
+
+/// A chase walk's footprint counter: ticks counted, where the last check saw the unit, and the tick clock.
+#[derive(Default)]
+struct ChaseSteps {
+    c: u32,
+    last: Option<[f32; 3]>,
+    clock: Option<Instant>,
 }
 
 /// The option bits that change what a player wears (`Look::option`): outfits, mounts and the orcish face.
@@ -2027,9 +2032,8 @@ pub struct Actor {
     /// the way it moved, so a changed walk never winds the legs back.
     distance: f32,
     /// Cells a finished step just left (not a slide). Cleared at the start of the next update.
-    stepped: Vec<[i32; 2]>,
-    /// Chase-walk footprints left so far, so 326 and 327 alternate.
-    pub footprints: u32,
+    /// Chase Walk's footprint counter (`step_chase`).
+    chase: ChaseSteps,
     /// The facing in the sprites' eight directions, and exactly, in degrees (`angle_of`, `step_rot`: 0 south, 90
     /// east).
     pub direction: u8,
@@ -2442,8 +2446,7 @@ impl Actor {
             walk_frames: 0,
             step_ms: f32::from(speed.max(1)),
             distance: 0.0,
-            stepped: Vec::new(),
-            footprints: 0,
+            chase: ChaseSteps::default(),
             direction,
             rot: rot_of(direction),
             facing_from_server: true,
@@ -2958,9 +2961,38 @@ impl Actor {
         !self.path.is_empty()
     }
 
-    /// Cells a step finished on this update just left, until the next update.
-    pub fn steps_left(&self) -> &[[i32; 2]] {
-        &self.stepped
+    /// Runs Chase Walk's footprint counter (option bit 0x4000) up to `now`, a whole tick at a time: it counts the ticks the option is
+    /// on and, at the 12th and 24th, the unit standing at `feet` leaves a print (326 left, 327 right) if it moved since the last
+    /// such check. Returns each print's effect, place and heading (the step's bearing + 135). Off, the counter and the place reset.
+    // ponytail: the first check only remembers the place, as there is no step to take a heading from.
+    pub fn step_chase(&mut self, now: Instant, feet: [f32; 3]) -> Vec<(u32, [f32; 3], f32)> {
+        let clock = self.chase.clock.get_or_insert(now);
+        let whole = (now.saturating_duration_since(*clock).as_millis() / 16).min(200) as u32;
+        *clock += Duration::from_millis(u64::from(whole) * 16);
+        let on = self.hide_option & OPTION_CHASEWALK != 0;
+        let mut prints = Vec::new();
+        for _ in 0..whole {
+            if !on {
+                self.chase.c = 0;
+                self.chase.last = None;
+                continue;
+            }
+            self.chase.c += 1;
+            let effect = match self.chase.c {
+                CHASE_LEFT_AT => EF_FOOT,
+                CHASE_RIGHT_AT => EF_FOOT2,
+                _ => continue,
+            };
+            if let Some(before) = self.chase.last.filter(|&before| before != feet) {
+                let heading = (crate::prims::tanji::bearing(feet[0] - before[0], feet[2] - before[2]) as f32 + 135.0).rem_euclid(360.0);
+                prints.push((effect, feet, heading));
+            }
+            self.chase.last = Some(feet);
+            if self.chase.c == CHASE_RIGHT_AT {
+                self.chase.c = 1;
+            }
+        }
+        prints
     }
 
     /// One frame: the cell follows the node times; the drawn point closes (now − last) / (end − last) of the way on
@@ -2968,7 +3000,6 @@ impl Actor {
     /// it to the odometer; past the last node it stands on it. Returns where it's drawn, in cells.
     pub fn update(&mut self, now: Instant) -> [f32; 2] {
         let now_ms = crate::shown_ms(now);
-        self.stepped.clear();
         self.walk_frames = self.walk_frames.saturating_sub(1);
         // The latest swing that has come starts; the earlier ones are skipped, not played over each other.
         if let Some(&(action, start, scale)) = self.swings.iter().filter(|(_, start, _)| *start <= now).max_by_key(|(_, start, _)| *start) {
@@ -2983,9 +3014,6 @@ impl Actor {
         }
         let mut passed = None;
         while let Some(&(next, arrives)) = self.path.first().filter(|&&(_, arrives)| arrives <= now_ms) {
-            if !self.sliding {
-                self.stepped.push(self.cell);
-            }
             self.cell = next;
             self.path.remove(0);
             self.passed.push((next, arrives));
@@ -3620,18 +3648,31 @@ mod tests {
     }
 
     #[test]
-    fn leaves_a_footprint_on_each_cell_a_chase_walk_steps() {
-        assert_eq!([0, 1, 2].map(chase_footprint), [EF_FOOT, EF_FOOT2, EF_FOOT]);
+    fn a_chase_walk_leaves_a_print_every_12_ticks_while_it_moves() {
+        let start = Instant::now();
+        let tick = |ticks: u64| start + Duration::from_millis(16 * ticks);
         let mut actor = Actor::new("a".into(), None, [10, 10], 0, 100);
-        let start = ms(0);
-        actor.walk_from([10, 10], [8, 8], vec![[11, 10], [12, 10]], start, start, false);
-        let at = |ms: u64| start + Duration::from_millis(ms);
-        actor.update(at(50));
-        assert!(actor.steps_left().is_empty(), "still on the first cell");
-        actor.update(at(150));
-        assert_eq!(actor.steps_left(), &[[10, 10]]);
-        actor.update(at(250));
-        assert_eq!(actor.steps_left(), &[[11, 10]]);
+        // Nothing without the option: the counter stays at 0.
+        assert!(actor.step_chase(tick(30), [0.0; 3]).is_empty() && actor.chase.c == 0);
+        actor.hide_option = OPTION_CHASEWALK;
+        // No print before c = 12; at 12 the first check only remembers the place; a unit that has not moved leaves none at 24.
+        let mut run = |ticks: u64, feet: [f32; 3]| actor.step_chase(tick(30 + ticks), feet);
+        assert!(run(0, [0.0; 3]).is_empty());
+        assert!(run(11, [0.0; 3]).is_empty());
+        assert!(run(12, [0.0; 3]).is_empty());
+        assert!(run(24, [0.0; 3]).is_empty(), "standing still");
+        // The counter went back to 1 after the check at 24: the left print is due 11 ticks on (c = 12), the right 12 after it. The unit
+        // having moved +x each time, 326 then 327 at heading 0 + 135.
+        assert!(run(34, [5.0, 0.0, 0.0]).is_empty());
+        assert_eq!(run(35, [5.0, 0.0, 0.0]), [(EF_FOOT, [5.0, 0.0, 0.0], 135.0)]);
+        assert_eq!(run(47, [10.0, 0.0, 0.0]), [(EF_FOOT2, [10.0, 0.0, 0.0], 135.0)]);
+        // The counter goes back to 1 again; moving +z, the heading is that step's bearing + 135.
+        let turned = crate::prims::tanji::bearing(0.0, 5.0) as f32 + 135.0;
+        assert_eq!(run(58, [10.0, 0.0, 5.0]), [(EF_FOOT, [10.0, 0.0, 5.0], turned)]);
+        // The option going off resets the counter and the place.
+        actor.hide_option = 0;
+        actor.step_chase(tick(30 + 59), [10.0, 0.0, 5.0]);
+        assert_eq!((actor.chase.c, actor.chase.last), (0, None));
     }
 
     #[test]
