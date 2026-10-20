@@ -445,6 +445,18 @@ pub fn glow(mut image: RgbaImage) -> RgbaImage {
     image
 }
 
+/// STR textures are loaded with a black key too: a texel whose colour is 0 in the 16-bit format the game keeps the
+/// picture in becomes transparent. A BMP is A1R5G5B5 (r, g and b all below 8), a TGA A4R4G4B4 (all below 16).
+pub fn key_out_black(mut image: RgbaImage, tga: bool) -> RgbaImage {
+    let below = if tga { 16 } else { 8 };
+    for pixel in image.pixels_mut() {
+        if pixel.0[..3].iter().all(|&channel| channel < below) {
+            pixel.0 = [0; 4];
+        }
+    }
+    image
+}
+
 /// Magenta, the client's color key, becomes transparent.
 pub fn key_out(mut image: RgbaImage) -> RgbaImage {
     for pixel in image.pixels_mut() {

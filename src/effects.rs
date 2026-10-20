@@ -5876,7 +5876,9 @@ fn load(gpu: &Gpu, grf: &Grf, file: &str, folder: &str) -> Option<Rc<Loaded>> {
                 .map(|name| {
                     // A name without an extension is a .bmp.
                     let extension = if name.contains('.') { "" } else { ".bmp" };
-                    gpu.try_load_texture(grf, &format!("data\\texture\\effect\\{folder}{name}{extension}"), true).ok()
+                    let path = format!("data\\texture\\effect\\{folder}{name}{extension}");
+                    let image = crate::render::load_image(grf, &path).ok()?;
+                    Some(gpu.texture(&crate::render::key_out_black(image, path.to_lowercase().ends_with(".tga")), true))
                 })
                 .collect()
         })
@@ -6080,7 +6082,8 @@ mod tests {
     fn cannon_ticks(worlds: &mut Worlds, count: usize, units: &HashMap<u32, Vector>) {
         let feet = |unit: Option<u32>| unit.map_or(Some([0.0; 3]), |id| units.get(&id).copied());
         let body = |_: Option<u32>| None;
-        let scene = world_str::Scene { player: [0.0; 3], feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0] };
+        let scene =
+            world_str::Scene { player: [0.0; 3], feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], ground: &|_, _| 0.0 };
         for _ in 0..count {
             worlds.tick(&scene);
         }

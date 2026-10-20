@@ -5952,6 +5952,19 @@ mod tests {
     }
 
     #[test]
+    fn str_textures_lose_their_black() {
+        // An STR texture's black key: blank_box.bmp's black goes clear; a BMP's (8, 0, 0) stays, a TGA's goes.
+        let black = |rgb: [u8; 3], tga: bool| {
+            render::key_out_black(image::RgbaImage::from_pixel(1, 1, image::Rgba([rgb[0], rgb[1], rgb[2], 255])), tga).get_pixel(0, 0).0
+        };
+        assert_eq!(black([0, 0, 0], false), [0; 4]);
+        assert_eq!(black([7, 7, 7], false), [0; 4]);
+        assert_eq!(black([8, 0, 0], false), [8, 0, 0, 255]);
+        assert_eq!(black([8, 0, 0], true), [0; 4]);
+        assert_eq!(black([0, 0, 16], true), [0, 0, 16, 255]);
+    }
+
+    #[test]
     fn locks_and_lets_go_of_pairs() {
         // Cursed Circle: one Sura (1) catches two units; the release names the last one and the Sura.
         let mut locks = Vec::new();
