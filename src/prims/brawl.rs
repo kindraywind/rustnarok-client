@@ -298,6 +298,8 @@ struct Tornado {
     /// Reverberation's: red, each square drawn twice, and gone with the trap `kept`.
     red: bool,
     kept: Option<u32>,
+    /// Seven Wind's: a plain blue-violet funnel, one for each caster.
+    seven: Option<Option<u32>>,
 }
 
 pub struct Wisp {
@@ -569,6 +571,15 @@ impl Brawl {
         self.spins.push(Spin { unit, start: now, done: 0, table: true });
     }
 
+    /// Seven Wind's blue-violet tornado and wisps where `unit` stood (`at`), replacing the unit's last.
+    pub fn seven_wind(&mut self, unit: Option<u32>, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.tornados.retain(|tornado| tornado.seven != Some(unit));
+        self.tornado(at, now, None, rand);
+        if let Some(tornado) = self.tornados.last_mut() {
+            tornado.seven = Some(unit);
+        }
+    }
+
     /// Reverberation's red tornado and wisps at a trap's cell `at`, gone with the trap `id`.
     pub fn trap_tornado(&mut self, id: u32, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.tornado(at, now, Some(id), rand);
@@ -663,7 +674,7 @@ impl Brawl {
                 wisps.push(Wisp { height: height - drop * k as f32, turn: 90.0 * k as f32, radius: radius - step * k as f32, lean });
             }
         }
-        self.tornados.push(Tornado { at, start: now, first, turns: Vec::new(), wisps, red: kept.is_some(), kept });
+        self.tornados.push(Tornado { at, start: now, first, turns: Vec::new(), wisps, red: kept.is_some(), kept, seven: None });
     }
 
     /// Dark Illusion's 32 lines from the caster's feet `from` toward `to`, each streak's choices from `rand(n)`.
@@ -876,9 +887,16 @@ impl Brawl {
                     let veil = (0..SQUARES.len()).flat_map(|i| tornado.square(i, turn, [1.0; 3], (alpha / 3.0).floor())).collect();
                     walls.push(Wall { texture: STORM, vertices: veil, additive: false, forced: false });
                 }
-                let rgb = if tornado.red { [1.0, 55.0 / 255.0, 55.0 / 255.0] } else { [50.0 / 255.0, 50.0 / 255.0, 1.0] };
+                let rgb = if tornado.red {
+                    [1.0, 55.0 / 255.0, 55.0 / 255.0]
+                } else if tornado.seven.is_some() {
+                    [130.0 / 255.0, 130.0 / 255.0, 1.0]
+                } else {
+                    [50.0 / 255.0, 50.0 / 255.0, 1.0]
+                };
                 let vertices = (0..SQUARES.len()).flat_map(|i| tornado.square(i, turn, rgb, alpha)).collect();
-                walls.push(Wall { texture: STORM, vertices, additive: true, forced: false });
+                // Seven Wind's squares are blended, not added on.
+                walls.push(Wall { texture: STORM, vertices, additive: tornado.seven.is_none(), forced: false });
             }
             if a <= WISP_LAST {
                 for wisp in &tornado.wisps {
@@ -1414,5 +1432,29 @@ mod tests {
         // Hesperus Lit's blue disc beside it keeps its own length.
         brawl.disc(false, Some(1), start);
         assert_eq!(brawl.top_meshes(start + TICK * 40, |_| Some(feet)).len(), 1);
+    }
+
+    #[test]
+    fn seven_wind_leaves_a_blue_violet_funnel_where_the_caster_stood() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.seven_wind(Some(1), [10.0, 1.0, 10.0], start, |_| 0);
+        brawl.seven_wind(Some(2), [30.0, 1.0, 30.0], start, |_| 0);
+        assert_eq!(brawl.tornados.len(), 2);
+        // A second Seven Wind of the same caster replaces the first.
+        brawl.seven_wind(Some(1), [50.0, 1.0, 50.0], start, |_| 0);
+        assert_eq!(brawl.tornados.len(), 2);
+        let walls = brawl.meshes(start, |_| Some([99.0; 3]));
+        // Each funnel: one wall of ten squares in #8282FF, blended, and the eight wisps beside it added on; nothing follows.
+        let storm: Vec<&Wall> = walls.iter().filter(|wall| wall.texture == STORM).collect();
+        assert_eq!(storm.len(), 2);
+        assert!(storm.iter().all(|wall| !wall.additive && wall.vertices.len() == 60 && wall.vertices[0].tint[..3] == [130.0 / 255.0, 130.0 / 255.0, 1.0]));
+        assert_eq!(walls.iter().filter(|wall| wall.texture == CLOUD && wall.additive).count(), 16);
+        assert!(storm.iter().all(|wall| wall.vertices.iter().all(|vertex| vertex.position[0] < 95.0)));
+        // Windmill's stays blue and added on.
+        let mut other = Brawl::default();
+        other.windmill(Some(1), [0.0; 3], start, |_| 0);
+        let blue = other.meshes(start, |_| None).into_iter().find(|wall| wall.texture == STORM).unwrap();
+        assert!(blue.additive && blue.vertices[0].tint[..3] == [50.0 / 255.0, 50.0 / 255.0, 1.0]);
     }
 }
