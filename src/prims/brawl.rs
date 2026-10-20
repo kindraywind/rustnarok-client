@@ -393,12 +393,14 @@ pub enum LineKind {
     Shot,
     /// Cross Impact's orange and red ones: the gold lines exactly, in two pictures.
     Cross,
+    /// Cannon Spear's: the pale lines' numbers in the gold picture.
+    Cannon,
 }
 
 impl LineKind {
-    /// Whether it is one of the quicker, longer-lived kinds (gold and Knuckle Arrow's): 120 ticks, growing speed.
+    /// Whether it is one of the quicker, longer-lived kinds (gold, Knuckle Arrow's, Piercing Shot's and Cross Impact's): 120 ticks, growing speed.
     fn fast(self) -> bool {
-        self != LineKind::Pale
+        !matches!(self, LineKind::Pale | LineKind::Cannon)
     }
 }
 
@@ -602,6 +604,11 @@ impl Brawl {
     /// Windmill's tornado and wisps where the caster stands (`at`), and its spin, on `unit`.
     pub fn windmill(&mut self, unit: Option<u32>, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.tornado(at, now, None, rand);
+        self.caster_spin(unit, now);
+    }
+
+    /// Cart Tornado's four turns of `unit`, 30° a tick, with no tornado of this module's.
+    pub fn caster_spin(&mut self, unit: Option<u32>, now: Instant) {
         self.spins.push(Spin { unit, start: now, done: 0, table: false });
     }
 
@@ -757,6 +764,11 @@ impl Brawl {
         self.make_lines(LineKind::Shot, false, from, to, now, rand);
     }
 
+    /// Cannon Spear's 32 pale blue lines in the gold picture, the same way.
+    pub fn cannon_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make_lines(LineKind::Cannon, false, from, to, now, rand);
+    }
+
     /// Knuckle Arrow's 32 blue lines over everything, the same way.
     pub fn knuckle_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.make_lines(LineKind::Knuckle, false, from, to, now, rand);
@@ -782,7 +794,7 @@ impl Brawl {
                 let (speed, growth) = match kind {
                     LineKind::Gold | LineKind::Cross => (1.0 + 0.1 * rand(11) as f32, 0.05),
                     LineKind::Knuckle | LineKind::Shot => (1.5 + 0.1 * rand(21) as f32, 0.05),
-                    LineKind::Pale => (1.5 + 0.1 * rand(21) as f32, 0.0),
+                    LineKind::Pale | LineKind::Cannon => (1.5 + 0.1 * rand(21) as f32, 0.0),
                 };
                 strips.push(Strip { side, phase, half, length, colour, speed, growth });
             }
@@ -1049,7 +1061,7 @@ impl Brawl {
                     LineKind::Gold | LineKind::Cross => GOLD_TINTS[strip.colour],
                     LineKind::Knuckle => KNUCKLE_TINTS[strip.colour],
                     LineKind::Shot => SHOT_TINTS[strip.colour],
-                    LineKind::Pale => STRIP_TINTS[strip.colour],
+                    LineKind::Pale | LineKind::Cannon => STRIP_TINTS[strip.colour],
                 };
                 let alpha = if lines.kind.fast() { gold_alpha(a) } else { strip_alpha(a) };
                 let tint = [rgb[0], rgb[1], rgb[2], alpha / 255.0];
@@ -1070,7 +1082,7 @@ impl Brawl {
             }
             walls.push(Wall {
                 texture: match lines.kind {
-                    LineKind::Gold | LineKind::Shot => GOLD_STRIP,
+                    LineKind::Gold | LineKind::Shot | LineKind::Cannon => GOLD_STRIP,
                     LineKind::Cross if lines.min => CROSS_PITCH_MIN,
                     LineKind::Cross => CROSS_PITCH,
                     _ => STRIP,
@@ -1540,6 +1552,61 @@ mod tests {
         assert!(brawl.meshes(start, |_| None).is_empty());
         brawl.advance(start + TICK * 46, |_| 0);
         assert!(brawl.rays.is_empty());
+    }
+
+    #[test]
+    fn cannon_spear_races_32_pale_lines_in_the_gold_picture() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.cannon_lines([10.0, 1.0, 10.0], [50.0, 1.0, 10.0], start, |_| 0);
+        let strips = &brawl.lines[0].strips;
+        // 16 each side, alternating prims; every draw 0: s ∓ 15, phase 0, half-width 0.3, length 20, #E1E1FF, speed 1.5 and constant.
+        assert_eq!(strips.len(), 32);
+        assert_eq!(strips.iter().filter(|strip| strip.side == -15.0).count(), 16);
+        assert_eq!(strips.iter().map(|strip| strip.side).take(8).collect::<Vec<_>>(), [-15.0; 4].into_iter().chain([15.0; 4]).collect::<Vec<_>>());
+        assert!(strips.iter().all(|strip| strip.phase == 0.0
+            && strip.half == 0.3
+            && strip.length == 20.0
+            && strip.speed == 1.5
+            && strip.colour == 0
+            && strip.growth == 0.0));
+        // The largest draws: s ∓ 25, phase 199, half-width 0.6, length 50, colour 2 (#B9B9FF), speed 3.5.
+        let mut largest = Brawl::default();
+        largest.cannon_lines([0.0; 3], [40.0, 0.0, 0.0], start, |n| n - 1);
+        let strip = &largest.lines[0].strips[0];
+        assert_eq!((strip.side, strip.phase, strip.length, strip.colour), (-25.0, 199.0, 50.0, 2));
+        assert!(near(strip.half, 0.6) && near(strip.speed, 3.5));
+        assert_eq!(largest.lines[0].strips[4].side, 25.0);
+        // Alpha at n = 1, 10, 20, 21, 50: 12, 120, 120, 116, 0; the run wraps at 200.
+        assert_eq!([1, 10, 20, 21, 50].map(strip_alpha), [12.0, 120.0, 120.0, 116.0, 0.0]);
+        assert_eq!(strips[0].at(133), 1.5 * 133.0 - 0.0);
+        assert!(near(strips[0].at(134), 1.5 * 134.0 - 200.0));
+        // Drawn over everything in the gold picture, blended, in the pale tints; gone after tick 48.
+        let walls = brawl.top_meshes(start, |_| Some([0.0; 3]));
+        assert_eq!(walls.len(), 1);
+        assert!(!walls[0].additive && walls[0].texture == GOLD_STRIP && walls[0].vertices.len() == 32 * 6);
+        assert_eq!(walls[0].vertices[0].tint[..3], [225.0 / 255.0, 225.0 / 255.0, 1.0]);
+        assert!(near(walls[0].vertices[0].tint[3] * 255.0, 12.0));
+        assert!(!brawl.top_meshes(start + TICK * 48, |_| Some([0.0; 3])).is_empty() && brawl.top_meshes(start + TICK * 49, |_| Some([0.0; 3])).is_empty());
+    }
+
+    #[test]
+    fn cart_tornado_turns_its_caster_four_times() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.caster_spin(Some(1), start);
+        // The facing added after e = 0, 1, 47: 30, 60, 1440; nothing from e = 48; no tornado.
+        let mut turned = 0.0;
+        let mut at = Vec::new();
+        for tick in 0..60 {
+            turned += brawl.turned(Some(1), start + TICK * tick);
+            if [0, 1, 47, 48, 59].contains(&tick) {
+                at.push(turned);
+            }
+        }
+        assert_eq!(at, [30.0, 60.0, 1440.0, 1440.0, 1440.0]);
+        assert!(brawl.tornados.is_empty());
+        assert_eq!(brawl.turned(Some(2), start + TICK * 5), 0.0);
     }
 
     #[test]

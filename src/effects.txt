@@ -2087,6 +2087,12 @@ wav	1556	effect\ef_beginspell	0
 wav	1560	effect\ef_beginspell	0
 wav	1565	effect\ef_beginspell	0
 wav	1569	effect\REVERBERATION	0	listener
+wav	1286	effect\EF_BeginSpell	0
+wav	1286	effect\EF_BeginSpell	0
+wav	1286	effect\EF_BeginSpell	0
+wav	1286	effect\EF_BeginSpell	0
+wav	1365	effect\T_회오리차기	80
+wav	1409	effect\LG_CANNONSPEAR	0	listener
 wav	914	effect\G스포어익스플로젼	0
 wav	916	effect\EF_FireWall	0	listener
 wav	917	effect\EF_FireWall	0	listener
@@ -4299,6 +4305,7 @@ struck	2270	caster	780
 struck	2270	caster	794
 struck	2271	target	786
 struck	2272	caster	781
+struck	2307	caster	1409
 struck	2309	caster	905
 struck	2310	caster	906
 struck	2312	caster	907
@@ -5260,6 +5267,8 @@ length	932	100
 length	1545	300
 length	1568	300
 length	1569	150
+length	1365	50
+length	1409	300
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
 skillwav	10	effect\ef_sight	0
 skillwav	8005	effect\h_castling	0

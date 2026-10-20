@@ -2220,6 +2220,12 @@ const PRIME_CHARGE: u32 = 882;
 const DRAGON_RAYS: u32 = 885;
 const CHI_BURST: u32 = 886;
 const MOON_SPIN: u32 = 890;
+/// Severe Rainstorm's cast ribbons (`prims::songs`).
+const RAINSTORM_CAST: u32 = 1286;
+/// Cart Tornado's spin of its caster (`prims::brawl`).
+const CART_TORNADO: u32 = 1365;
+/// Cannon Spear's pale blue lines (`prims::brawl`).
+const CANNON_LINES: u32 = 1409;
 /// Sound of Destruction's red music notes (`prims::guard`).
 const SOUND_NOTES: u32 = 869;
 /// Dead Hill Here's Geographers, Poem of Netherworld's note, Randomize Spell's frames and Dance with Warg's Wargs (`prims::crowds`).
@@ -2482,8 +2488,9 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 51] = [
+pub const AIMED: [u32; 52] = [
     EF_TETRA,
+    CANNON_LINES,
     STIN,
     CROSS_LINES,
     ESWHOO_DISCS,
@@ -2739,6 +2746,16 @@ impl Effects {
         }
         // Shadow Form's cast aura shows with no sound; the sound comes with the skill packet.
         if id == SHADOW_CAST {
+            return;
+        }
+        // Severe Rainstorm's cast: two rings of music-note ribbons round the caster for the cast.
+        if id == RAINSTORM_CAST {
+            for path in songs::MUSIC {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            self.play_sounds(table, id, at, now);
+            let ticks = cast_ms / crate::prims::TICK.as_millis() as u32;
+            self.prims.songs.rain(unit, ticks, self.min, now);
             return;
         }
         // The Sura casts: bubble cones over two blue squares.
@@ -3058,6 +3075,7 @@ impl Effects {
                 self.prims.holes.reverb(at, now);
             }
             (MOON_SPIN, Target::Unit(unit)) => self.prims.brawl.moon_spin(unit, now),
+            (CART_TORNADO, Target::Unit(unit)) => self.prims.brawl.caster_spin(unit, now),
             (TIGER_CANNON_FX, _) => {
                 self.textures.entry(sniper::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sniper::RAY, true).ok());
                 self.prims.monk.tiger_cannon(at, now, self.min, |n| pick(0, n.saturating_sub(1)));
@@ -4235,6 +4253,11 @@ impl Effects {
                 self.play_quakes(table, id, now);
                 self.prims.brawl.spear_lines(from, to, now, |n| pick(0, n.saturating_sub(1)));
                 self.prims.guard.spear(caster, now);
+            }
+            CANNON_LINES => {
+                self.textures.entry(brawl::GOLD_STRIP.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::GOLD_STRIP, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.brawl.cannon_lines(from, to, now, |n| pick(0, n.saturating_sub(1)));
             }
             GREAT_ECHO_V => {
                 self.textures.entry(spears::LINE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, spears::LINE, true).ok());
@@ -7563,6 +7586,24 @@ mod tests {
         let ice = aura(JACK_CAST);
         assert_eq!(ice.bands(0).len(), 4);
         assert_eq!([turning(0, 100, 60).alpha, turning(0, 100, 61).alpha, turning(0, 100, 99).alpha], [180.0, 175.0, 0.0]);
+    }
+
+    #[test]
+    fn severe_rainstorm_cart_tornado_and_cannon_spear_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Severe Rainstorm's cast: four begin-spell sounds at tick 0, one per prim.
+        assert_eq!(table.cast_aura(2418, 0), Some(RAINSTORM_CAST));
+        assert_eq!(sounds(RAINSTORM_CAST), [("effect\\EF_BeginSpell", 0, false); 4]);
+        // Cart Tornado: 50 ticks on its caster, the sound at 80 ms.
+        assert_eq!(table.lengths[&CART_TORNADO], 50);
+        assert!(table.used(2476).unwrap().contains(&(Who::Caster, CART_TORNADO)));
+        assert_eq!(sounds(CART_TORNADO), [("effect\\T_회오리차기", 80, false)]);
+        // Cannon Spear: the lines from the caster at the target at each damage packet, the sound at the listener.
+        assert_eq!(table.lengths[&CANNON_LINES], 300);
+        assert!(AIMED.contains(&CANNON_LINES) && !aimed_at_centre(CANNON_LINES));
+        assert!(table.struck(2307).unwrap().contains(&(Who::Caster, CANNON_LINES)));
+        assert_eq!(sounds(CANNON_LINES), [("effect\\LG_CANNONSPEAR", 0, true)]);
     }
 
     #[test]
