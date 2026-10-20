@@ -12,7 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, burst, first, ground, huujin, knight, monk, sage, shards, sight, songs, star, stone, tanji, throw, walls, waterball,
+    balls, blitz, bolts, boomerang, burst, first, ground, huujin, knight, monk, sage, shards, sight, songs, star, stone, tanji, throw, transcend, walls,
+    waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1765,6 +1766,14 @@ const STEAL_COIN: u32 = 274;
 /// cones of bubbles (`prims::songs`, `prims::monk`).
 /// Ganbantein's crescents (`prims::walls`), Spiral Pierce's cones, Soul Breaker's slashes, Pressure's cross and Martyr's Reckoning's rays
 /// (`prims::knight`).
+/// Gospel's cross, Soul Drain's and Indulge's sparks, the colours they and Magic Crasher give a body, Soul Change's tube
+/// (`prims::transcend`).
+const GOSPEL: u32 = 370;
+const SOUL_DRAIN: u32 = 378;
+const DRAIN_TARGET: u32 = 379;
+const MAGIC_CRASHER: u32 = 380;
+const INDULGE: u32 = 383;
+const LINE_LINK: u32 = 384;
 const GANBANTEIN_FX: u32 = 223;
 const SPIRAL_PIERCE: u32 = 339;
 const SOUL_BREAKER: u32 = 361;
@@ -1809,7 +1818,9 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 21] = [
+pub const AIMED: [u32; 23] = [
+    SOUL_DRAIN,
+    LINE_LINK,
     SOUL_BREAKER,
     PANG_VOICE,
     WINK_OF_CHARM,
@@ -2057,6 +2068,17 @@ impl Effects {
         if let (RIBBONS, Target::Unit(unit)) = (id, target) {
             self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
             self.prims.walls.ribbons(unit, now);
+        }
+        // Soul Drain's target turns blue, Magic Crasher flickers its target, Indulge's sparks loop out and back.
+        match (id, target) {
+            (DRAIN_TARGET, Target::Unit(unit)) => self.prims.transcend.drain_target(unit, now),
+            (MAGIC_CRASHER, Target::Unit(unit)) => self.prims.transcend.crasher(unit, now, |n| pick(0, n.saturating_sub(1))),
+            (INDULGE, Target::Unit(unit)) => {
+                self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
+                self.prims.indulge(at, now, |n| pick(0, n.saturating_sub(1)));
+                self.prims.transcend.indulge(unit, now);
+            }
+            _ => {}
         }
         // Ganbantein's crescents over the cell, Spiral Pierce's cones, Pressure's cross and Martyr's Reckoning's rays, made in code.
         match (id, target) {
@@ -2404,7 +2426,10 @@ impl Effects {
         self.unit_kinds.insert(id, kind);
         if let Some(&effect) = table.units.get(&kind) {
             // Volcano's, Deluge's, Violent Gale's and Land Protector's cells keep their loops, drawn in code.
-            if matches!(effect, MAGNUS | SANCTUARY) {
+            if effect == GOSPEL {
+                self.textures.entry(transcend::CROSS.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, transcend::CROSS, false).ok());
+                self.prims.transcend.keep_gospel(id, at, now, |n| pick(0, n.saturating_sub(1)));
+            } else if matches!(effect, MAGNUS | SANCTUARY) {
                 // Magnus' and Sanctuary's glowing boxes stand over each cell with their unit.
                 let look = if effect == MAGNUS { ground::RING_RED } else { ground::ALPHA_DOWN };
                 self.textures.entry(look.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, look, true).ok());
@@ -2586,6 +2611,16 @@ impl Effects {
                 self.textures.entry(first::THUNDER_CENTER.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, first::THUNDER_CENTER, true).ok());
                 self.prims.monk.investigate(caster, to, now, |n| pick(0, n.saturating_sub(1)));
             }
+            SOUL_DRAIN => {
+                self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
+                self.prims.soul_drain(from, to, now, |n| pick(0, n.saturating_sub(1)));
+                self.prims.transcend.drain_caster(caster, now);
+            }
+            LINE_LINK => {
+                self.textures.entry(transcend::TUBE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, transcend::TUBE, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.transcend.link(caster, target, own, now);
+            }
             SOUL_BREAKER => {
                 self.textures.entry(knight::PURPLE_SLASH.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, knight::PURPLE_SLASH, true).ok());
                 self.play_sounds(table, id, from, now);
@@ -2640,6 +2675,7 @@ impl Effects {
         self.prims.spheres.advance(now, position_of(None), |n| pick(0, n.saturating_sub(1)));
         self.prims.huujin.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.knight.advance(now, &position_of);
+        self.prims.transcend.advance(now, &position_of);
         self.prims.monk.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for (file, at) in self.prims.throws.advance(now, &position_of) {
             self.sounds.push((now, file, at));
@@ -2874,12 +2910,18 @@ impl Effects {
     /// The colour an effect gives `unit`'s body at `now` (Berserk Pitcher's red).
     pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
         let flashing = mix_tints(self.prims.walls.body_tint(unit, now), self.prims.ground.body_tint(unit, now));
-        mix_tints(flashing, self.prims.songs.body_tint(unit, now))
+        let flashing = mix_tints(flashing, self.prims.songs.body_tint(unit, now));
+        mix_tints(flashing, self.prims.transcend.body_tint(unit, now))
     }
 
     /// The body flags and colour an effect gives `unit` now (Full Protection's strobe).
     pub fn body_glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
-        self.prims.ground.glow(unit, now).or_else(|| self.prims.songs.glow(unit, now)).or_else(|| self.prims.knight.glow(unit, now))
+        self.prims
+            .ground
+            .glow(unit, now)
+            .or_else(|| self.prims.songs.glow(unit, now))
+            .or_else(|| self.prims.knight.glow(unit, now))
+            .or_else(|| self.prims.transcend.glow(unit, now))
     }
 
     /// A cast cut off: Twilight Alchemy's icons go.
@@ -3051,6 +3093,13 @@ impl Effects {
             .chain(sage)
             .chain(burst_rings)
             .chain(other_walls)
+            .chain(
+                self.prims
+                    .transcend
+                    .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .chain(
                 self.prims
                     .knight
@@ -3268,10 +3317,10 @@ impl Effects {
         // Soul Strike's ghosts, each copy of a trail a little fainter.
         for (path, layers, red) in [(crate::prims::GHOST_SPRITE, &self.ghost, false), (crate::prims::RED_GHOST_SPRITE, &self.red_ghost, true)] {
             let Some(Some(sprite)) = self.sprites.get(path) else { continue };
-            for (at, alpha, scale, turn, _) in self.prims.ghosts().into_iter().filter(|ghost| ghost.4 == red) {
+            for ghost in self.prims.ghosts().into_iter().filter(|ghost| ghost.red == red) {
                 for &(key, position, size, layer_angle) in layers {
-                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle + turn, uv).0.map(|value| value * scale));
-                    quads.push((sprite.texture(key), at, corners, [1.0, 1.0, 1.0, alpha], false, false));
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle + ghost.turn, uv).0.map(|value| value * ghost.scale));
+                    quads.push((sprite.texture(key), ghost.at, corners, [ghost.tint[0], ghost.tint[1], ghost.tint[2], ghost.alpha], false, false));
                 }
             }
         }
@@ -3320,6 +3369,12 @@ impl Effects {
                         let corners = [corner(-half, -half), corner(half, -half), corner(half, half), corner(-half, half)];
                         quads.push((texture, at, corners, [red, green, blue, alpha / 255.0], true, true));
                     }
+                }
+            }
+            // Gospel's cross over its cell: a square facing the camera, added on.
+            if let Some(Some(texture)) = self.textures.get(transcend::CROSS) {
+                for cross in self.prims.transcend.crosses(now, self.dim) {
+                    quads.push((texture, cross.at, cross.corners, [1.0, 1.0, 1.0, cross.alpha / 255.0], true, false));
                 }
             }
             // Pressure's cross and its ghosts: additive squares facing the camera.
@@ -4711,5 +4766,27 @@ mod tests {
         // Concentration tints the body #FFFFA0, drawn as it is.
         assert_eq!(crate::actor::status_body(369), Some((0, Some([0xFF, 0xFF, 0xA0]))));
         assert_eq!(table.status(379), &[744][..]);
+    }
+
+    #[test]
+    fn gospel_soul_drain_magic_crasher_magic_power_indulge_and_soul_change_play_in_code() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Gospel makes no sound itself and shows with its unit; Soul Drain's sparks are aimed, its target turns blue.
+        assert!(!table.sounds.contains_key(&370) && table.units[&179] == 370 && table.units_once.contains(&179));
+        assert_eq!((table.used(364), table.used(373)), (Some(&[(Who::Caster, 378), (Who::Target, 379)][..]), Some(&[(Who::Caster, 383)][..])));
+        assert!(AIMED.contains(&378) && AIMED.contains(&384));
+        assert!(!table.floaters.contains_key(&378) && !table.floaters.contains_key(&383));
+        // Magic Crasher: the sound at 400 ms, the shake at 480 ms for 650; also from Soul Burn's use.
+        assert_eq!(sounds(380), [("effect\\매직 크래쉬", 400, false)]);
+        assert_eq!(table.quakes[&380], [(Duration::from_millis(480), QUAKE_LONG)]);
+        assert!(table.used(375).unwrap().contains(&(Who::Target, 380)) && table.used(375).unwrap().contains(&(Who::Target, 406)));
+        // Magic Power is a status only; its skill's sound is heard at the listener when used.
+        assert!(table.used(366).is_none() && !table.sprites.contains_key(&382));
+        assert!(table.status(113).contains(&382));
+        assert_eq!((table.skill_sounds[&366][0].file.as_str(), table.skill_sounds[&366][0].listener), ("effect\\마법력 증폭", true));
+        // Soul Change's tube from the caster, the target's own effect.
+        assert_eq!(table.used(374), Some(&[(Who::Caster, 384), (Who::Target, 385)][..]));
+        assert_eq!(sounds(384), [("effect\\소울 체인지", 0, false)]);
     }
 }

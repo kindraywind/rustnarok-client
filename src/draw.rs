@@ -887,6 +887,18 @@ impl App {
                 }
                 Owner::Item(_) | Owner::SkillUnit(_) => None,
             };
+            // Magic Power flickers a player's weapon: it is drawn once more, added on, on every other drawn frame.
+            let owner_actor = match owner {
+                Owner::Player => Some(&game.player),
+                Owner::Unit(id) => game.units.get(id),
+                Owner::Item(_) | Owner::SkillUnit(_) => None,
+            };
+            let is_player = owner_actor.is_some_and(|actor| actor.kind == PLAYER);
+            let flicker_copy = owner_actor.filter(|_| is_player && glow.is_some_and(|(flags, _)| flags & actor::GLOW_FLICKER != 0)).is_some_and(|actor| {
+                let was = actor.flicker.get();
+                actor.flicker.set(!was);
+                !was
+            });
             for (index, &(key, position, size, angle)) in placements.iter().enumerate() {
                 let texture = sprites.texture(key);
                 let layer = sprite_layer(index, player, flat);
@@ -905,10 +917,14 @@ impl App {
                     billboards.push((texture, *feet, position, size, tint, angle, layer));
                     continue;
                 };
-                let (part, copies) = actor::glow_copies(flags, body_tint, sprites.part_group(key), breath, spread, grow_unit);
+                let group = sprites.part_group(key);
+                let (part, copies) = actor::glow_copies(flags, body_tint, group, breath, spread, grow_unit, is_player);
                 let corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|uv| world::sprite_corner(position, size, angle, uv).0);
                 let times = |color: [f32; 4]| std::array::from_fn(|channel| tint[channel] * color[channel]);
                 glows.extend(copies.iter().map(|copy| (texture, *feet, corners, times(copy.color), copy.additive, copy.grow)));
+                if flicker_copy && group == actor::PartGroup::Weapon {
+                    glows.push((texture, *feet, corners, times([1.0; 4]), true, 0.0));
+                }
                 if part.additive {
                     glows.push((texture, *feet, corners, times(part.color), true, 0.0));
                 } else {

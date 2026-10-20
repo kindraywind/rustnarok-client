@@ -1312,8 +1312,6 @@ part	328	3D	file=effect/asura6.tga;alphaMax=1;attachedEntity=true;duration=1200;
 part	328	3D	file=effect/asura6.tga;alphaMax=1;attachedEntity=true;duration=400;fadeOut=true;sizeStart=120;sizeEnd=200;posx=6.0;posy=0;posz=4;overlay=true;red=0.1;green=0.1;blue=0.1;delayStart=1700
 part	331	3D	duplicate=12;file=effect/pok1.tga;delay=500;timeBetweenDupli=10;alphaMax=0.8;fadeOut=true;fadeIn=true;zIndex=1;size=30;sizeRand=20;red=0.9;green=1;blue=0.9;blendMode=2;poszStartRand=1.5;poszStartRandMiddle=2;poszEndRandMiddle=5;poszEndRand=1;sparkling=true;sparkNumberRand=3,6;posxRand=0.6;posyRand=0.6;attachedEntity=true
 part	332	3D	duplicate=12;file=effect/pok1.tga;delay=500;timeBetweenDupli=10;alphaMax=0.8;fadeOut=true;fadeIn=true;zIndex=1;size=30;sizeRand=20;red=0.9;green=0.9;blue=1;blendMode=2;poszStartRand=1.5;poszStartRandMiddle=2;poszEndRandMiddle=5;poszEndRand=1;sparkling=true;sparkNumberRand=3,6;posxRand=0.6;posyRand=0.6;attachedEntity=true
-part	378	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;fromSrc=true;toSrc=true;rotateToTarget=true;red=0.8;green=0.8;blue=1.0;sizeStart=160.0;sizeEnd=190.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
-part	383	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;fromSrc=true;toSrc=true;rotateToTarget=true;red=0.7;green=1.0;blue=0.7;sizeStart=140.0;sizeEnd=170.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
 part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=-1;posxEnd=-5;posyStart=0;posyEnd=0;rotateWithCamera=true;angle=0
 part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=-0.7;posxEnd=-3.53;posyStart=-0.7;posyEnd=-3.53;rotateWithCamera=true;angle=-45
 part	409	3D	file=effect/purpleslash.tga;alphaMax=0.6;duration=500;fadeOut=true;zIndex=10;sizeStart=100;sizeEnd=200;posxStart=0;posxEnd=0;posyStart=-1;posyEnd=-5;rotateWithCamera=true;angle=-90
@@ -1532,7 +1530,6 @@ spr	215	smoke	1	-
 spr	302	데몬스트레이션	0	delayFrame=64;scale=1.2;alpha=200;firstFrame=1;repeat=true;yOffset=-7
 spr	363	vallentine	1	-
 spr	373	poisonhit	1	-
-spr	382	한복천사	1	head=true
 spr	453	스톱	1	-
 spr	509	05vallentine	1	-
 spr	519	fast	1	-
@@ -1595,7 +1592,7 @@ func	220	quake	288	200
 func	266	quake	0	200
 func	303	quake	132	650
 func	365	quake	528	650
-func	380	quake	300	650
+func	380	quake	480	650
 func	387	quake	300	650
 func	512	quake	132	650
 func	537	quake	200	650
@@ -1874,11 +1871,10 @@ wav	223	effect\EF_FireWall	0	listener
 wav	367	effect\오라 블레이드	0
 wav	368	effect\버서크	0
 wav	369	effect\knight_twohandquicken	0
-wav	370	effect\가스펠	0
 wav	371	levelup	0
 wav	376	effect\맹호경파산	0
 wav	377	effect\mon_폭기	0
-wav	380	effect\매직 크래쉬	0
+wav	380	effect\매직 크래쉬	400
 wav	384	effect\소울 체인지	0
 wav	386	effect\hunter_detecting	0
 wav	387	effect\hunter_blitzbeat	0
@@ -4464,11 +4460,11 @@ used	361	target	375
 used	691	target	375
 used	364	caster	378
 used	364	target	379
-used	366	target	382
 used	373	caster	383
 used	374	caster	384
 used	374	target	385
 used	375	target	406
+used	375	target	380
 used	378	caster	493
 used	380	caster	386
 used	383	caster	389
@@ -5054,3 +5050,4 @@ skillquake	472	0	200
 skillwav	320	effect\석양의 어쌔신	0	listener
 skillwav	329	effect\행운의	0	listener
 skillwav	330	effect\당신을 위한 서비스	0	listener
+skillwav	366	effect\마법력 증폭	0	listener
