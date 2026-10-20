@@ -85,6 +85,8 @@ pub struct Fin {
     pub inner: f32,
     pub length: f32,
     pub turn: f32,
+    /// Kaizel's second mode: it grows by 2 and 0.4 and starts at 1.5 up.
+    kaizel: bool,
 }
 
 struct Fins {
@@ -179,13 +181,32 @@ impl Line {
 impl Fin {
     /// The fin of prim turn `prim` and element `k`.
     fn new(prim: f32, k: u32) -> Self {
-        Self { age: 0, alpha: 0, height: 0.0, inner: 1.0, length: 2.0, turn: 90.0 * k as f32 + prim }
+        Self { age: 0, alpha: 0, height: 0.0, inner: 1.0, length: 2.0, turn: 90.0 * k as f32 + prim, kaizel: false }
+    }
+
+    /// Kaizel's fin: 1.5 up to start, in the second mode.
+    fn kaizel(prim: f32, k: u32) -> Self {
+        Self { height: 1.5, kaizel: true, ..Self::new(prim, k) }
     }
 
     /// One tick: it flies out, grows 0.2 up to 2, brightens for 5 ticks and fades once its inner edge passes 10.
     pub fn step(&mut self) {
         self.age += 1;
         self.inner += 1.0;
+        if self.kaizel {
+            // Kaizel's: the outer edge goes twice as fast, up to 4, brightening for 7 ticks.
+            if self.inner > 10.0 {
+                self.alpha -= 2;
+            }
+            self.length += 2.0;
+            if self.height < 4.0 {
+                self.height += 0.4;
+            }
+            if self.age <= 7 {
+                self.alpha += 5;
+            }
+            return;
+        }
         self.length += 1.0;
         if self.height < 2.0 {
             self.height += 0.2;
@@ -229,6 +250,12 @@ impl Kicks {
     pub fn stop(&mut self, unit: Option<u32>, now: Instant) {
         let fins = [0.0, 45.0].iter().flat_map(|&prim| (0..4).map(move |k| Fin::new(prim, k))).collect();
         self.fins.push(Fins { unit, start: now, fins, done: 0 });
+    }
+
+    /// Kaizel's eight fins on `unit`, shooting out 15 ticks after `now`.
+    pub fn kaizel(&mut self, unit: Option<u32>, now: Instant) {
+        let fins = [0.0, 45.0].iter().flat_map(|&prim| (0..4).map(move |k| Fin::kaizel(prim, k))).collect();
+        self.fins.push(Fins { unit, start: now + super::TICK * 15, fins, done: 0 });
     }
 
     /// Makes the lines whose ticks have come (the target's place then from `position_of`), runs everything a tick at a time and drops
@@ -555,6 +582,44 @@ mod tests {
         assert!(kicks.fin_meshes(|_| None).is_empty());
         kicks.advance(start + TICK * 101, |_| Some(feet), |_| 0);
         assert!(kicks.fins.is_empty());
+    }
+
+    #[test]
+    fn kaizel_shoots_eight_longer_fins_from_tick_15() {
+        let start = Instant::now();
+        let feet = [10.0, 1.0, 20.0];
+        let mut kicks = Kicks::default();
+        kicks.kaizel(Some(1), start);
+        let fins = &kicks.fins[0].fins;
+        assert_eq!(fins.len(), 8);
+        let mut turns: Vec<f32> = fins.iter().map(|fin| fin.turn).collect();
+        turns.sort_by(f32::total_cmp);
+        assert_eq!(turns, [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]);
+        assert!(fins.iter().all(|fin| fin.height == 1.5 && fin.inner == 1.0 && fin.length == 2.0 && fin.alpha == 0));
+        // Nothing is drawn before tick 15.
+        kicks.advance(start + TICK * 14, |_| Some(feet), |_| 0);
+        assert!(kicks.fin_meshes(|_| Some(feet)).is_empty());
+        // r at n = 1, 10, 26: 2, 11, 27; s at n = 1, 26: 4, 54; h at n = 1, 6, 7, 8: 1.9, 3.9, 4.3, 4.3;
+        // alpha at n = 1, 7, 8, 9, 10, 11, 26, 27: 5, 35, 35, 35, 33, 31, 1, -1.
+        let mut fin = Fin::kaizel(0.0, 0);
+        let mut seen = Vec::new();
+        for _ in 1..=27 {
+            fin.step();
+            seen.push((fin.inner, fin.length, fin.height, fin.alpha));
+        }
+        let at = |n: usize| seen[n - 1];
+        assert_eq!([1, 10, 26].map(|n| at(n).0), [2.0, 11.0, 27.0]);
+        assert_eq!([1, 26].map(|n| at(n).1), [4.0, 54.0]);
+        assert!([1, 6, 7, 8].iter().zip([1.9, 3.9, 4.3, 4.3]).all(|(&n, want)| near(at(n).2, want)));
+        assert_eq!([1, 7, 8, 9, 10, 11, 26, 27].map(|n| at(n).3), [5, 35, 35, 35, 33, 31, 1, -1]);
+        // Three passes at turn - 1, turn, turn + 1 with alphas a/3, a, a/3 at n = 7 (the tick e = 21).
+        kicks.advance(start + TICK * 21, |_| Some(feet), |_| 0);
+        let walls = kicks.fin_meshes(|_| Some(feet));
+        assert!(walls[0].additive && walls[0].texture == FIN && walls[0].vertices.len() == 8 * 3 * 6);
+        let alphas: Vec<f32> = (0..3).map(|pass| (walls[0].vertices[pass * 6].tint[3] * 255.0).round()).collect();
+        assert_eq!(alphas, [11.0, 35.0, 11.0]);
+        // It follows the target.
+        assert!(kicks.fin_meshes(|_| None).is_empty());
     }
 
     #[test]

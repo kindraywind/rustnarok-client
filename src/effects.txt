@@ -173,7 +173,6 @@ str	603	firehit%d	-	1	1	3
 str	608	cook_suc	-	1
 str	609	cook_fail	-	1
 str	612	itempokjuk	-	1
-str	618	firehit	-	1	1	3
 str	619	freeze	-	1	1	3
 str	622	setsudan	-	1
 str	635	fire dragon	-	0
@@ -1463,7 +1462,7 @@ spr	578	item_curse	1	-
 spr	579	item_zzz	1	-
 spr	580	item_rain	1	-
 spr	583	m_ef01	1	-
-spr	584	m_ef02	1	-
+spr	584	m_ef02	1	delayFrame=64;firstFrame=1;onTop=true
 spr	585	m_ef03	1	-
 spr	586	m_ef04	1	-
 spr	587	m_ef05	1	-
@@ -1870,6 +1869,8 @@ wav	507	effect\mapae	0
 wav	508	effect\itempokjuk	0
 wav	518	effect\wizard_fire_pillar_b	480
 wav	519	effect\fast	0
+wav	572	effect\T_따듯한마법	160
+wav	584	effect\풀버스터	80
 wav	520	effect\cru_shield boomerang	0
 wav	522	effect\wizard_earthspike	0	listener
 wav	523	effect\priest_slowpoison	0
@@ -1917,7 +1918,10 @@ wav	613	effect\닌자_던지기	0
 wav	614	effect\닌자_던지기	0
 wav	615	effect\닌자_던지기	0
 wav	616	effect\닌자_던지기	0
-wav	618	effect\ef_firearrow%d	0	1	3
+wav	618	effect\EF_FireArrow%d	192	1	3
+wav	618	effect\EF_FireArrow%d	208	1	3
+wav	618	effect\EF_FireArrow%d	224	1	3
+wav	618	effect\EF_FireArrow%d	240	1	3
 wav	619	effect\ef_icearrow%d	0	1	3
 wav	621	effect\풍인	0
 wav	622	effect\ef_thunderstorm	0
@@ -4551,6 +4555,9 @@ used	426	caster	446
 used	428	caster	418
 used	429	caster	418
 used	430	caster	418
+used	428	caster	572
+used	429	caster	572
+used	430	caster	572
 used	431	caster	488
 used	432	caster	488
 used	433	caster	488
@@ -5178,6 +5185,10 @@ length	503	500
 length	506	100
 length	542	200
 length	544	99999999
+length	572	300
+length	584	100
+length	590	200
+length	618	300
 length	547	200
 length	549	60
 length	553	200

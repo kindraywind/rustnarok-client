@@ -229,6 +229,8 @@ struct Rays {
     rays: Vec<Ray>,
     /// The Dragon Combo's: thinner and bluer wedges drawn over everything, and no body change.
     dragon: bool,
+    /// Kouenka's: Rage Burst's wedges, and no body change.
+    plain: bool,
 }
 
 /// A ray's alpha at its age a: 10 a tick to 100, held one more tick, then 3 less a tick.
@@ -558,7 +560,13 @@ impl Brawl {
                 rays.push(Ray { plane: rand(360) as f32, angle: 90 * k + 22 * i });
             }
         }
-        self.rays.push(Rays { unit, start: now, rays, dragon });
+        self.rays.push(Rays { unit, start: now, rays, dragon, plain: false });
+    }
+
+    /// Kouenka's 8 rays (two planes of four) on `unit`, each plane's turn from `rand(n)`.
+    pub fn petal_rays(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let rays = (0..2).flat_map(|i| (0..4).map(move |k| (i, k))).map(|(i, k)| Ray { plane: rand(360) as f32, angle: 90 * k + 22 * i }).collect();
+        self.rays.push(Rays { unit, start: now, rays, dragon: false, plain: true });
     }
 
     /// Windmill's tornado and wisps where the caster stands (`at`), and its spin, on `unit`.
@@ -808,7 +816,7 @@ impl Brawl {
         let added = self
             .rays
             .iter()
-            .filter(|rays| rays.unit == unit && !rays.dragon)
+            .filter(|rays| rays.unit == unit && !rays.dragon && !rays.plain)
             .any(|rays| passes(rays.start, now).checked_sub(1).is_some_and(|t| (5..=35).contains(&t)));
         let spread = self.spreads.iter().filter(|spread| spread.unit == unit).find_map(|spread| {
             let t = passes(spread.start, now).checked_sub(1).filter(|t| (spread.first..=spread.last).contains(t))?;
@@ -1353,6 +1361,33 @@ mod tests {
         // Dark Illusion's pale lines are unchanged.
         brawl.lines([0.0; 3], [40.0, 0.0, 0.0], start, |_| 0);
         assert!(brawl.lines[1].strips.iter().all(|strip| strip.growth == 0.0 && strip.speed == 1.5));
+    }
+
+    #[test]
+    fn kouenka_shoots_eight_rays_and_leaves_the_body_alone() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        let mut turns = 0;
+        brawl.petal_rays(Some(1), start, |n| {
+            assert_eq!(n, 360);
+            turns += 1;
+            0
+        });
+        assert_eq!(turns, 8);
+        let rays = &brawl.rays[0].rays;
+        assert_eq!(rays.iter().map(|ray| ray.angle).collect::<Vec<_>>(), [0, 90, 180, 270, 22, 112, 202, 292]);
+        // The same wedges as Rage Burst's (blue ±1°, yellow ±2°, added on), 8 × 2 × 3 corners, 12 up from the feet, and no body change.
+        let walls = brawl.meshes(start, |_| Some([0.0, 1.0, 0.0]));
+        let wall = walls.iter().find(|wall| wall.texture == RAY).unwrap();
+        assert!(wall.additive && wall.vertices.len() == 8 * 2 * 3);
+        assert_eq!(wall.vertices[2].position[1], 13.0);
+        assert_eq!(wall.vertices[0].tint[..3], [0.0, 0.0, 250.0 / 255.0]);
+        assert_eq!(wall.vertices[3].tint[..3], [250.0 / 255.0, 250.0 / 255.0, 0.0]);
+        assert!((0..40).all(|tick| brawl.glow(Some(1), start + TICK * tick).is_none()));
+        // It follows the target and ends with the 44th age.
+        assert!(brawl.meshes(start, |_| None).is_empty());
+        brawl.advance(start + TICK * 46, |_| 0);
+        assert!(brawl.rays.is_empty());
     }
 
     #[test]
