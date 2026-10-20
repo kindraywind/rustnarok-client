@@ -551,6 +551,8 @@ fn restart_early(effect: u32, kind: u32) -> u32 {
     match kind {
         228 | 230..=233 | 235 | 240..=244 | 258 => 1,
         220 | 221 => 7,
+        // Kaensin's and Ground Drift's cells start the next copy a tick before this one ends.
+        189..=194 => 1,
         _ if effect == 95 => 20,
         _ => 8,
     }
@@ -615,6 +617,8 @@ impl Animation {
         let flag = |name: &str| part.parameters.get(name).is_some_and(|value| value == "true");
         let rise = if flag("head") { -100.0 } else { 0.0 };
         let repeat = flag("repeat") || (lasting && !flag("hold"));
+        // `delayStart`: made late, nothing shows before.
+        let start = start + Duration::from_secs_f32(number("delayStart").unwrap_or(0.0).max(0.0) / 1000.0);
         Self {
             sprite: format!("data\\sprite\\이팩트\\{}", part.file),
             start,
@@ -1989,16 +1993,20 @@ fn bearing_between(from: Vector, to: Vector) -> i32 {
     crate::prims::tanji::bearing(from[0] - to[0], from[2] - to[2])
 }
 
-/// Full Buster's action from the camera's longitude and the bearing from the target to the caster: 2 for 180 to 269, 3 for 90 to
-/// 179, 0 for 0 to 89 and 1 for 270 to 359 of their sum.
+/// Which quarter of the circle the camera's longitude plus the bearing from the target to the caster falls in (0 to 3).
+fn blast_quarter(longitude: i32, heading: i32) -> usize {
+    (longitude + heading).rem_euclid(360) as usize / 90
+}
+
+/// Full Buster's action: 0 for a sum of 0 to 89, 3 for 90 to 179, 2 for 180 to 269 and 1 for 270 to 359.
 // ponytail: the screen direction of these four diagonals is not checked against the game.
 pub fn full_buster_action(longitude: i32, heading: i32) -> usize {
-    match (longitude + heading).rem_euclid(360) {
-        180..=269 => 2,
-        90..=179 => 3,
-        0..=89 => 0,
-        _ => 1,
-    }
+    [0, 3, 2, 1][blast_quarter(longitude, heading)]
+}
+
+/// Spread Attack's action for the same sum: 0, 6, 4 and 2.
+pub fn spread_attack_action(longitude: i32, heading: i32) -> usize {
+    [0, 6, 4, 2][blast_quarter(longitude, heading)]
 }
 
 /// Whether the server sends this effect (ZC_NOTIFY_EFFECT2) with no target, so it flies from its unit at the map's
@@ -2179,6 +2187,9 @@ const ESTUN_MOVER: u32 = 555;
 /// The warmth's sparkles, Full Buster's blast, Kaizel's fins and Kouenka's petals and rays.
 const WARM_SPARKLES: u32 = 572;
 const FULL_BUSTER: u32 = 584;
+/// Spread Attack's blast, aimed at the target; Granitic Armor's, Kyomu's and Gensou's grey tint.
+const SPREAD_ATTACK: u32 = 645;
+const GREY_BODY: u32 = 963;
 const KAIZEL_FINS: u32 = 590;
 const KOUENKA: u32 = 618;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
@@ -2347,13 +2358,14 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 46] = [
+pub const AIMED: [u32; 47] = [
     STIN,
     PIERCING_LINES,
     KAMAITACHI,
     ESMA_DISCS,
     ESTUN_MOVER,
     FULL_BUSTER,
+    SPREAD_ATTACK,
     HIT_LINE_COUNTER,
     PINPOINT_FX,
     ELBOW_LINES,
@@ -3127,6 +3139,7 @@ impl Effects {
             (QUAKE_BODY, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 0, 34),
             (SKY_NET_SHAKE, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 31, 50),
             (RED_HIT, Target::Unit(unit)) => self.prims.brawl.red(unit, now),
+            (GREY_BODY, Target::Status(unit, _)) => self.prims.guard.grey(unit),
             (BLUE_HIT, Target::Unit(unit)) => self.prims.brawl.blue_hit(unit, now),
             (ESMA_FROST, Target::Unit(unit)) => {
                 self.textures.entry(linker::FROST.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, linker::FROST, false).ok());
@@ -3872,10 +3885,11 @@ impl Effects {
                 self.textures.entry(kicks::LINE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, kicks::LINE, true).ok());
                 self.prims.kicks.hit(kicks::Kind::Counter, (target != own).then_some(target), Some(from), to, now);
             }
-            FULL_BUSTER => {
+            FULL_BUSTER | SPREAD_ATTACK => {
                 // The blast flares toward the target's side of the screen: one of the sprite's four diagonals, chosen once.
                 self.play(gpu, grf, table, id, Target::Unit(caster), from, now);
-                let action = full_buster_action(self.yaw.to_degrees().floor() as i32, bearing_between(from, to));
+                let (longitude, heading) = (self.yaw.to_degrees().floor() as i32, bearing_between(from, to));
+                let action = if id == SPREAD_ATTACK { spread_attack_action(longitude, heading) } else { full_buster_action(longitude, heading) };
                 for animation in self.animations.iter_mut().filter(|animation| animation.effect == id && animation.start == now) {
                     animation.action = Some(action);
                 }
@@ -4282,6 +4296,10 @@ impl Effects {
             let frame_ms = animation.frame_ms.unwrap_or_else(|| sprite.index_ms(index).unwrap_or(100.0) / frames);
             // Played once from a later frame, it ends after the frames it shows.
             let pass = (frames - animation.first.min(frames - 1.0)) * frame_ms.max(1.0);
+            if now < animation.start {
+                animation.placed.clear();
+                return true;
+            }
             let elapsed = now.saturating_duration_since(animation.start).as_secs_f32() * 1000.0;
             if animation.end.is_some_and(|end| now >= end) || (!animation.repeat && !animation.hold && elapsed >= pass) {
                 return false;
@@ -4422,6 +4440,10 @@ impl Effects {
         self.prims.songs.forget_status(unit, status);
         self.prims.transcend.forget_status(unit, status);
         self.prims.brawl.forget_status(unit, status);
+        // Granitic Armor, Kyomu or Gensou went off (or comes on again: its new copy follows at once).
+        if matches!(status, 606 | 655 | 659) {
+            self.prims.guard.ungrey(unit, Instant::now());
+        }
         self.prims.waves.forget_status(unit, status);
         self.prims.chi.forget_status(unit, status);
         // Running's status takes its start away, and ends with it.
@@ -7741,5 +7763,58 @@ mod tests {
         brawl.swing(Some(1), start);
         let g = |tick: u32| brawl.glow(Some(1), start + crate::prims::TICK * tick).map(|(flags, _)| flags >> crate::actor::PARAM_SHIFT);
         assert_eq!([13, 14, 49, 50].map(g), [None, Some(0), Some(35), None]);
+    }
+
+    #[test]
+    fn the_gunslingers_sprites_ground_drifts_spark_and_the_grey_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Each: the effect, ticks a frame, the sprite's frame count, the ages to read the frame at, the frames, and the end age.
+        type Row = (u32, f32, f32, [u32; 4], [usize; 4]);
+        let rows: [Row; 6] = [
+            (637, 4.0, 24.0, [0, 3, 4, 91], [1, 1, 2, 23]),
+            (643, 4.0, 20.0, [0, 3, 4, 75], [1, 1, 2, 19]),
+            (644, 2.0, 21.0, [0, 1, 2, 39], [1, 1, 2, 20]),
+            (645, 4.0, 12.0, [0, 3, 4, 43], [1, 1, 2, 11]),
+            (647, 2.0, 15.0, [0, 1, 2, 27], [1, 1, 2, 14]),
+            (648, 2.0, 15.0, [0, 1, 2, 27], [1, 1, 2, 14]),
+        ];
+        for (effect, ticks, frames, ages, want) in rows {
+            let animation = Animation::new(&table.sprites[&effect][0], effect, Instant::now(), Anchor::Unit(Some(1)), false);
+            assert!(animation.over && !animation.repeat && animation.first == 1.0 && animation.scale == 1.0 && animation.offset == [0.0, 0.0], "{effect}");
+            assert_eq!(animation.frame_ms, Some(16.0 * ticks), "{effect}");
+            let frame = |age: u32| (animation_progress(16.0 * age as f32, 16.0 * ticks, frames, 1.0, false) * frames) as usize;
+            assert_eq!(ages.map(frame), want, "{effect}");
+            // It ends after the frames it shows: (count − 1) × ticks.
+            assert_eq!((frames - 1.0) * ticks, (ages[3] + 1) as f32, "{effect}");
+        }
+        // Triple Action is made 30 ticks late.
+        let triple = Animation::new(&table.sprites[&648][0], 648, Instant::now(), Anchor::Unit(Some(1)), false);
+        assert_eq!(((triple.start - Instant::now()).as_secs_f32() * 1000.0).round(), 480.0);
+        // The rows hold: where they play, their sounds and lengths.
+        assert!(table.used(516).unwrap().contains(&(Who::Caster, 637)) && table.used(2565).unwrap().contains(&(Who::Caster, 637)));
+        for (skill, who, effect) in
+            [(515, Who::Target, 643), (507, Who::Target, 644), (512, Who::Target, 647), (502, Who::Target, 648), (520, Who::Caster, 645)]
+        {
+            assert!(table.struck(skill).unwrap().contains(&(who, effect)), "{skill}");
+        }
+        assert_eq!(sounds(637), [("effect\\데스페라도", 160, false)]);
+        assert_eq!(sounds(643), [("effect\\래피드샤워", 320, false)]);
+        assert_eq!(sounds(644), [("effect\\매지컬블릿", 0, false)]);
+        assert_eq!(sounds(648), [("effect\\트리플액션", 400, true)]);
+        assert!(!table.sounds.contains_key(&645) && !table.sounds.contains_key(&647));
+        assert_eq!([637, 643, 644, 645, 647, 648].map(|id| table.lengths[&id]), [200, 100, 100, 100, 100, 100]);
+        // Spread Attack is aimed; its action for the sums 0, 89, 90, 179, 180, 269, 270, 359.
+        assert!(AIMED.contains(&SPREAD_ATTACK));
+        assert_eq!([0, 89, 90, 179, 180, 269, 270, 359].map(|d| spread_attack_action(0, d)), [0, 0, 6, 6, 4, 4, 2, 2]);
+        // Ground Drift's wind: one frame of action 0 looped, 1 up, depth tested; the next copy a tick early.
+        let spark = Animation::new(&table.sprites[&638][0], 638, Instant::now(), Anchor::Lasting(1, [0.0; 3]), true);
+        assert!(spark.repeat && !spark.over && spark.action == Some(0) && spark.offset == [0.0, -7.0]);
+        assert_eq!(table.lengths[&638], 23);
+        assert_eq!(restart_ticks(638, 190, 23), 22);
+        assert!((189..=194).all(|kind| restart_ticks(0, kind, 100) == 99) && restart_ticks(0, 195, 100) == 92);
+        // The grey: the three statuses play it, once each.
+        assert!([606, 655, 659].iter().all(|&status| table.status(status).contains(&GREY_BODY)));
+        assert_eq!(table.lengths[&GREY_BODY], 99_999);
     }
 }
