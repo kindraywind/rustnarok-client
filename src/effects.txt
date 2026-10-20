@@ -1887,7 +1887,11 @@ wav	534	effect\priest_slowpoison	0
 wav	535	effect\priest_slowpoison	0
 wav	536	effect\priest_slowpoison	0
 wav	547	effect\T_바람마법	160
-wav	553	effect\t_날라차기	0
+wav	553	effect\T_날라차기	80	listener
+wav	553	effect\T_날라차기	320	listener
+wav	553	effect\T_날라차기	560	listener
+wav	553	effect\T_날라차기	800	listener
+wav	553	effect\T_날라차기	1040	listener
 wav	555	effect\t_에너지방출	0
 wav	565	effect\h_moonlight_1	0
 wav	566	effect\h_moonlight_2	0
@@ -2500,6 +2504,7 @@ hit	2600	180	-1
 hit	2602	180	-1
 hit	467	549	-1
 hit	468	549	-1
+hit	2332	549	550
 hit	2022	1567	-1
 hit	2202	1591	1592
 hit	2307	-1	1411
@@ -4205,6 +4210,7 @@ struck	468	target	429
 struck	469	target	425
 struck	469	caster	553
 struck	469	target	431
+struck	469	target	554
 struck	480	target	520
 struck	485	target	518
 struck	501	target	548
@@ -5173,6 +5179,10 @@ length	506	100
 length	542	200
 length	544	99999999
 length	547	200
+length	549	60
+length	553	200
+length	554	200
+length	555	200
 length	675	200
 length	850	100
 length	932	100
