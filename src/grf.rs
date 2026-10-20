@@ -107,6 +107,12 @@ impl Grf {
         std::fs::read(file)
     }
 
+    /// Whether a file is there (in the archive or the data folder), by its client path.
+    pub fn contains(&self, path: &str) -> bool {
+        let path = normalize(path);
+        self.overlay.contains_key(&path) || self.entries.contains_key(&path)
+    }
+
     /// Reads a file by its client path, e.g. `data\texture\...`; case and slash direction don't matter.
     pub fn read(&self, path: &str) -> io::Result<Vec<u8>> {
         if let Some(file) = self.overlay.get(&normalize(path)) {

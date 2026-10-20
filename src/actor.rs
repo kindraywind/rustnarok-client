@@ -466,6 +466,38 @@ pub fn left_weapon(look: &Look, tables: &LookTables) -> bool {
     !shield_id(look.left) && tables.item_views.get(&look.left).is_some_and(|&view| view > 0)
 }
 
+/// One weapon's sprite and glow files (no extension) for drawn job `job`, by what `exists` finds (an .act there):
+/// the item's own name first (a Doram's always under 인간족, so never found), else its type's name, remapped for some
+/// jobs; the glow likewise, its own name's first. Neither for the cases that skip the type's name.
+pub fn weapon_files(
+    item: u32,
+    job: u16,
+    sex: &str,
+    doram: bool,
+    names: &JobSprites,
+    tables: &LookTables,
+    exists: impl Fn(&str) -> bool,
+) -> (Option<String>, Option<String>) {
+    let race = if doram { "도람족" } else { "인간족" };
+    let class = tables.class_num(item);
+    let own = tables.weapon_name(class);
+    let first = names.weapon_path("인간족", sex, own).filter(|path| !doram && exists(path));
+    let knuckle_on_priest = class == 12 && matches!(job, 8 | 4009 | 4031 | 4057 | 4063 | 4099 | 4256);
+    if class == 0 || shield_id(item) || item == 1599 || knuckle_on_priest {
+        return (first, None);
+    }
+    let kind = match (job, class) {
+        (2 | 9 | 16 | 4003 | 4010 | 4017 | 4025 | 4032 | 4039, 5) => 10,
+        (6 | 4007 | 4029, 6..=8) => 2,
+        (17 | 4018 | 4040, 6) => 1,
+        (12 | 17 | 4013 | 4018 | 4035 | 4040 | 4059 | 4065 | 4072 | 4079 | 4101 | 4108 | 4254, 7 | 8) => 2,
+        (_, class) => class,
+    };
+    let second = names.weapon_path(race, sex, tables.weapon_name(tables.weapon_types.get(&kind).copied().unwrap_or(kind)));
+    let glow = [names.weapon_path(race, sex, own), second.clone()].into_iter().flatten().map(|path| format!("{path}_검광")).find(|path| exists(path));
+    (first.or(second.filter(|path| exists(path))), glow)
+}
+
 /// A dual-wielding player's weapon name ending (`_단검_단검`) and whether it has a glow; None for a type without a
 /// name (no other name is tried).
 pub fn dual_weapon<'a>(look: &Look, job: u16, tables: &'a LookTables) -> Option<(&'a str, bool)> {
@@ -729,14 +761,9 @@ impl SpriteSet {
                 Some((load(path, None, Part::Weapon), glow))
             })
         } else {
-            (look.weapon > 0)
-                .then(|| {
-                    let view = tables.view(look.weapon);
-                    let name = tables.weapons.get(&view).cloned().unwrap_or_else(|| format!("_{view}"));
-                    let path = names.weapon_path(race, sex, &name)?;
-                    Some((load(path.clone(), None, Part::Weapon), load(format!("{path}_검광"), None, Part::WeaponGlow)))
-                })
-                .flatten()
+            let (weapon, glow) = weapon_files(look.weapon, job, sex, is_doram(look.job), &names, tables, |path| grf.contains(&format!("{path}.act")));
+            (look.weapon > 0 && (weapon.is_some() || glow.is_some()))
+                .then(|| (weapon.and_then(|path| load(path, None, Part::Weapon)), glow.and_then(|path| load(path, None, Part::WeaponGlow))))
         };
         // The four classic shields have names; newer ones are named by their view ID.
         let shield = (look.shield > 0).then(|| {
@@ -3045,6 +3072,75 @@ impl Actor {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn weapons_fall_back_to_their_types_file() {
+        let tables = LookTables {
+            headgears: HashMap::new(),
+            weapons: [
+                (1, "_단검"),
+                (2, "_검"),
+                (3, "_양손검"),
+                (6, "_도끼"),
+                (8, "_클럽"),
+                (10, "_롯드"),
+                (11, "_활"),
+                (12, "_너클"),
+                (31, "_1207"),
+                (48, "_1116"),
+                (62, "_1504"),
+                (73, "_1710"),
+                (76, "_1718"),
+                (100, "_1617"),
+            ]
+            .into_iter()
+            .map(|(index, name)| (index, name.to_owned()))
+            .collect(),
+            weapon_types: HashMap::from([(31, 1), (48, 3), (62, 8), (73, 11), (76, 11), (100, 10)]),
+            robes: HashMap::new(),
+            item_views: HashMap::from([(1201, 31), (1116, 48), (1504, 62), (1701, 73), (1718, 76), (1617, 100), (1301, 6), (1801, 12), (1599, 4), (1550, 50)]),
+            layers: None,
+        };
+        let files = [
+            "인간족\\궁수\\궁수_여_1710",
+            "인간족\\궁수\\궁수_여_활",
+            "인간족\\도둑\\도둑_남_검",
+            "인간족\\로그\\로그_남_도끼",
+            "도람족\\summoner\\summoner_여_1617",
+            "도람족\\summoner\\summoner_여_롯드",
+            "인간족\\슈라\\슈라_남_클럽",
+            "인간족\\길로틴크로스\\길로틴크로스_남_단검",
+            "인간족\\기사\\기사_남_1116",
+            "인간족\\기사\\기사_남_양손검_검광",
+            "인간족\\프리스트\\프리스트_남_클럽",
+        ]
+        .map(|file| format!("data\\sprite\\{file}"));
+        let asked = std::cell::RefCell::new(Vec::new());
+        let pick = |item: u32, job: u16, sex: &str| {
+            let names = job_sprites(job).unwrap();
+            weapon_files(item, job, sex, is_doram(job), &names, &tables, |path| {
+                asked.borrow_mut().push(path.to_owned());
+                files.iter().any(|file| file == path)
+            })
+        };
+        let file = |name: &str| Some(format!("data\\sprite\\{name}"));
+        assert_eq!(pick(1701, 3, "여"), (file("인간족\\궁수\\궁수_여_1710"), None));
+        assert_eq!(pick(1718, 3, "여"), (file("인간족\\궁수\\궁수_여_활"), None));
+        assert_eq!(pick(1301, 6, "남"), (file("인간족\\도둑\\도둑_남_검"), None));
+        assert_eq!(pick(1301, 17, "남"), (file("인간족\\로그\\로그_남_도끼"), None));
+        // A Doram's own file is never found; its type's is.
+        assert_eq!(pick(1617, 4218, "여"), (file("도람족\\summoner\\summoner_여_롯드"), None));
+        assert_eq!(pick(1504, 4070, "남"), (file("인간족\\슈라\\슈라_남_클럽"), None));
+        assert_eq!(pick(1201, 4059, "남"), (file("인간족\\길로틴크로스\\길로틴크로스_남_단검"), None));
+        assert_eq!(pick(1116, 7, "남"), (file("인간족\\기사\\기사_남_1116"), file("인간족\\기사\\기사_남_양손검_검광")));
+        // Angra Manyu and a knuckle on a Priest don't fall back.
+        assert_eq!(pick(1599, 7, "남"), (None, None));
+        assert_eq!(pick(1801, 8, "남"), (None, None));
+        // A look with no name asks for no `_<number>` file.
+        asked.borrow_mut().clear();
+        assert_eq!(pick(1550, 7, "남"), (None, None));
+        assert!(asked.borrow().iter().all(|path| !path.contains("_50")), "{:?}", asked.borrow());
+    }
 
     #[test]
     fn players_swing_with_action_10_or_11() {
