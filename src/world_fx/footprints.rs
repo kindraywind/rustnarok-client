@@ -1,13 +1,15 @@
 //! Footprint hats: the hat effect packet's numbers that leave prints on the ground instead of playing an STR on the
-//! unit, and class 2411, the picture footprints of hat effect 226.
+//! unit, class 2411, the picture footprints of hat effect 226, and class 2412, the STR footprints of the other hats.
 
-use super::{Assets, Class, FLAGS_TRANSLUCENT, Face, Fx, Launch, Quad, Seen, WorldFx, aim_turn, exact_uv};
+use std::sync::OnceLock;
+
+use super::{Assets, Class, FLAGS_TRANSLUCENT, Face, Fx, Launch, Quad, Seen, StrPart, WorldFx, aim_turn, exact_uv};
 use crate::world::Vector;
 use crate::world_str::Scene;
 
 /// The class of hat effect 226: left and right pictures.
 pub const PICTURES: u32 = 2411;
-/// The class of the STR footprint hats (a later issue draws it).
+/// The class of the STR footprint hats.
 pub const STRS: u32 = 2412;
 
 /// The hat effect numbers whose class is `STRS`.
@@ -44,6 +46,7 @@ pub fn hats(fx: &mut WorldFx, owner: Option<Option<u32>>, on: bool, hats: &[u16]
 /// Registers the footprint classes.
 pub fn register(fx: &mut WorldFx) {
     fx.register(PICTURES, || Box::new(Pictures::default()));
+    fx.register(STRS, || Box::new(Stamps::default()));
 }
 
 const LEFT: &str = "data\\texture\\effect\\footprint0.png";
@@ -64,6 +67,13 @@ fn alpha_at(age: u32) -> f32 {
 /// The age (ticks) a print is removed at.
 fn gone(age: u32) -> bool {
     age as f32 >= 60.0 * DURATION + 25.0
+}
+
+/// The screen angle (degrees, `aim_turn`) of the step on the ground from `from` to `to`.
+fn screen_turn(from: Vector, to: Vector, scene: &Scene) -> f32 {
+    let step = [to[0] - from[0], 0.0, to[2] - from[2]];
+    let screen = |axis: Vector| axis.iter().zip(step).map(|(a, b)| a * b).sum::<f32>();
+    aim_turn([0.0; 2], [screen(scene.right), -screen(scene.up)])
 }
 
 struct Print {
@@ -94,11 +104,9 @@ impl Pictures {
         quad.flags = FLAGS_TRANSLUCENT;
         quad.scale = SCALE;
         quad.alpha = ALPHA.round() as i32;
-        let step = [at[0] - last[0], 0.0, at[2] - last[2]];
-        // The step's screen direction (y down), once; the picture's top edge turns to it.
-        let screen = |axis: Vector| axis.iter().zip(step).map(|(a, b)| a * b).sum::<f32>();
+        // The step's screen direction, once; the picture's top edge turns to it.
         // ponytail: the picture's own orientation and the sign of the turn are unchecked against the game: flip if a walk shows them backward.
-        let heading = aim_turn([0.0; 2], [screen(scene.right), -screen(scene.up)]) + 90.0;
+        let heading = screen_turn(last, at, scene) + 90.0;
         let (sin, cos) = (heading + scene.longitude).to_radians().sin_cos();
         quad.place(at, [cos, 0.0, -sin], [sin, 0.0, cos]);
         for corner in &mut quad.corners {
@@ -145,6 +153,154 @@ impl Class for Pictures {
     }
 }
 
+/// One row of footprints.txt: how a hat's stamps look.
+struct Row {
+    hat: u32,
+    bottom: Option<String>,
+    top: Option<String>,
+    bottom_scale: f32,
+    top_scale: f32,
+    top_height: f32,
+    /// The squared ground distance a step must pass to stamp.
+    stride: f32,
+    /// The units to the side of the path.
+    gap: f32,
+    /// The bottom STR turns to follow the step.
+    adjust: bool,
+}
+
+fn rows() -> &'static [Row] {
+    static ROWS: OnceLock<Vec<Row>> = OnceLock::new();
+    ROWS.get_or_init(|| {
+        let file = |field: &str| (field != "-").then(|| field.trim_end_matches(".str").to_owned());
+        include_str!("../footprints.txt")
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.is_empty())
+            .map(|line| {
+                let field: Vec<&str> = line.split('\t').collect();
+                Row {
+                    hat: field[0].parse().unwrap(),
+                    bottom: file(field[1]),
+                    top: file(field[2]),
+                    bottom_scale: field[3].parse().unwrap(),
+                    top_scale: field[4].parse().unwrap(),
+                    top_height: field[5].parse().unwrap(),
+                    stride: field[6].parse().unwrap(),
+                    gap: field[7].parse().unwrap(),
+                    adjust: field[8] == "1",
+                }
+            })
+            .collect()
+    })
+}
+
+fn row_of(hat: u32) -> Option<&'static Row> {
+    rows().iter().find(|row| row.hat == hat)
+}
+
+/// The top STR sits a hair nearer the camera than the bottom one (the view's depth).
+const TOP_BIAS: f32 = 3.5e-5;
+
+/// One of a stamp's STRs.
+struct Piece {
+    part: StrPart,
+    /// Lying on the terrain (the bottom) instead of facing the camera (the top).
+    flat: bool,
+    over: bool,
+}
+
+/// A stamp: its STRs, played once where it was made.
+struct Stamp {
+    pieces: Vec<Piece>,
+}
+
+impl Stamp {
+    /// A stamp for the step from `last` to `at`, on the side the toggle says.
+    fn new(row: &Row, left: bool, last: Vector, at: Vector, scene: &Scene, assets: &mut dyn Assets) -> Self {
+        let step = [at[0] - last[0], at[2] - last[2]];
+        let length = step[0].hypot(step[1]);
+        let direction = if length == 0.0 { [0.0; 2] } else { [step[0] / length, step[1] / length] };
+        // The side of the path, to either side by the toggle.
+        let side = [direction[1], -direction[0]];
+        let sign = if left { 1.0 } else { -1.0 };
+        let (x, z) = (at[0] + side[0] * row.gap * sign, at[2] + side[1] * row.gap * sign);
+        let point = [x, (scene.ground)(x, z), z];
+        let mut pieces = Vec::new();
+        if let Some(file) = &row.bottom {
+            let mut part = StrPart::new(file, false, assets);
+            part.point = point;
+            part.controls.scale = row.bottom_scale;
+            part.controls.turn = if row.adjust { screen_turn(last, point, scene) + 90.0 } else { 0.0 };
+            pieces.push(Piece { part, flat: true, over: false });
+        }
+        if let Some(file) = &row.top {
+            let mut part = StrPart::new(file, false, assets);
+            part.world = true;
+            part.point = [x, point[1] + row.top_height, z];
+            part.bias = TOP_BIAS;
+            part.controls.scale = row.top_scale;
+            pieces.push(Piece { part, flat: false, over: false });
+        }
+        let mut stamp = Self { pieces };
+        stamp.step();
+        stamp
+    }
+
+    /// One STR step of each piece that is still playing; false once all are over.
+    fn step(&mut self) -> bool {
+        for piece in self.pieces.iter_mut().filter(|piece| !piece.over) {
+            piece.over = !piece.part.step();
+        }
+        self.pieces.iter().any(|piece| !piece.over)
+    }
+}
+
+/// The STR footprints of one unit: a stamp every stride, on alternating sides of its path.
+#[derive(Default)]
+struct Stamps {
+    row: Option<&'static Row>,
+    last: Option<Vector>,
+    /// The next stamp is on the left.
+    left: bool,
+    stamps: Vec<Stamp>,
+}
+
+impl Class for Stamps {
+    fn begin(&mut self, fx: &mut Fx, _: &mut dyn Assets) {
+        fx.single = true;
+        self.left = true;
+        self.row = row_of(fx.tag);
+    }
+
+    fn update(&mut self, fx: &mut Fx, scene: &Scene, assets: &mut dyn Assets) {
+        self.stamps.retain_mut(Stamp::step);
+        let Some(row) = self.row else { return };
+        let at = fx.position;
+        let last = *self.last.get_or_insert(at);
+        let (dx, dz) = (at[0] - last[0], at[2] - last[2]);
+        if dx * dx + dz * dz > row.stride {
+            self.stamps.push(Stamp::new(row, self.left, last, at, scene, assets));
+            self.left = !self.left;
+            self.last = Some(at);
+        }
+    }
+
+    fn draw<'a>(&'a self, _: &Fx, seen: &Seen, out: &mut Vec<Face<'a>>) {
+        for piece in self.stamps.iter().flat_map(|stamp| &stamp.pieces).filter(|piece| !piece.over) {
+            if piece.flat {
+                piece.part.flat_faces(&seen.eye, seen.ground, out);
+            } else {
+                piece.part.faces(&seen.eye, out);
+            }
+        }
+    }
+
+    /// Ends with its unit, taking its stamps.
+    fn alive(&self, fx: &Fx, scene: &Scene) -> bool {
+        fx.owned(scene)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::Eye;
@@ -152,6 +308,7 @@ mod tests {
     use crate::actor::Placed;
     use crate::effects::Loaded;
     use crate::world_str::Fired;
+    use rustnarok_client::effect::{Key, Layer, Str};
     use std::rc::Rc;
 
     struct Fake;
@@ -171,10 +328,7 @@ mod tests {
     const UNIT: u32 = 7;
 
     fn registry() -> WorldFx {
-        let mut fx = WorldFx::default();
-        // The STR class has no object yet; a stand-in shows what the table launches.
-        fx.register(STRS, || Box::new(Pictures::default()));
-        fx
+        WorldFx::default()
     }
 
     /// One tick with the unit at `at` and a ground that is `slope` high per unit of x.
@@ -193,7 +347,7 @@ mod tests {
     fn pictures(fx: &WorldFx) -> Vec<(String, f32)> {
         let shows = |_: u32| true;
         let hidden = |_: Option<u32>| false;
-        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0 };
+        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 };
         fx.faces(&seen)
             .iter()
             .map(|face| {
@@ -300,7 +454,7 @@ mod tests {
         tick(&mut fx, Some([30.0, 0.0, 20.0]), &eye, 30.0, 0.5);
         let shows = |_: u32| true;
         let hidden = |_: Option<u32>| false;
-        let seen = Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0 };
+        let seen = Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 };
         let faces = fx.faces(&seen);
         assert_eq!(faces.len(), 1);
         // Each corner is on the ground under it (x · slope) + 2, the square 5 from the unit's place at its middle.
@@ -323,7 +477,7 @@ mod tests {
                 tick(&mut fx, Some(at), &eye, longitude, 0.0);
                 let shows = |_: u32| true;
                 let hidden = |_: Option<u32>| false;
-                let seen = Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0 };
+                let seen = Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 };
                 let faces = fx.faces(&seen);
                 let [v0, v1] = [faces[0].vertices[0].position, faces[0].vertices[1].position];
                 let top = [(v0[0] + v1[0]) / 2.0 - at[0], (v0[2] + v1[2]) / 2.0 - at[2]];
@@ -364,7 +518,182 @@ mod tests {
         walk(&mut fx, [10.0, 0.0, 0.0]);
         let shows = |_: u32| true;
         let hidden = |unit: Option<u32>| unit == Some(UNIT);
-        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0 };
+        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 };
         assert!(fx.faces(&seen).is_empty());
+    }
+
+    /// What the STR footprints load: one STR (layer 0 and one layer 100 × 50 px, centred 20 px right and 10 px above (320,
+    /// 240), 11 frames) for every file the test lists; any other file is missing.
+    struct StrFake(Vec<String>);
+
+    impl StrFake {
+        fn all() -> Self {
+            Self(rows().iter().flat_map(|row| [&row.bottom, &row.top]).flatten().cloned().collect())
+        }
+    }
+
+    fn key(frame: i32) -> Key {
+        Key {
+            frame,
+            kind: 0,
+            position: [340.0, 230.0],
+            corners: [-50.0, 50.0, 50.0, -50.0, -25.0, -25.0, 25.0, 25.0],
+            texture: 0.0,
+            texture_motion: 0,
+            delay: 0.0,
+            angle: 0.0,
+            color: [1.0; 4],
+            source_blend: 5,
+            destination_blend: 2,
+        }
+    }
+
+    impl Assets for StrFake {
+        fn texture(&mut self, _: &str) -> Option<[f32; 2]> {
+            Some([32.0; 2])
+        }
+        fn str(&mut self, file: &str) -> Option<Rc<Loaded>> {
+            if !self.0.iter().any(|known| known == file) {
+                return None;
+            }
+            let layer = || Layer { textures: vec!["a.bmp".into()], keys: vec![key(0), key(10)] };
+            Some(Rc::new(Loaded { animation: Str { fps: 60, frames: 10, layers: vec![layer(), layer()] }, textures: vec![Vec::new(); 2] }))
+        }
+        fn sprite(&mut self, _: &str, _: usize, _: usize) -> Option<(usize, Vec<Placed>)> {
+            None
+        }
+    }
+
+    fn scene<'a>(
+        feet: &'a dyn Fn(Option<u32>) -> Option<Vector>,
+        body: &'a dyn Fn(Option<u32>) -> Option<crate::world_str::Body>,
+        eye: &Eye,
+        ground: &'a dyn Fn(f32, f32) -> f32,
+    ) -> Scene<'a> {
+        Scene { player: [0.0; 3], feet, body, longitude: 0.0, right: eye.right, up: eye.up, ground }
+    }
+
+    /// The faces of an object's STR footprints after one tick with the unit at `at`.
+    fn stamped(fx: &mut WorldFx, at: Vector, assets: &mut StrFake) -> usize {
+        let feet = |unit: Option<u32>| if unit == Some(UNIT) { Some(at) } else { Some([0.0; 3]) };
+        let body = |_: Option<u32>| None;
+        let eye = Eye::at(45.0, 0.0);
+        fx.tick(&scene(&feet, &body, &eye, &|_, _| 0.0), assets);
+        let shows = |_: u32| true;
+        let hidden = |_: Option<u32>| false;
+        fx.faces(&Seen { eye, shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 }).len()
+    }
+
+    #[test]
+    fn the_data_file_has_the_24_rows() {
+        let rows = rows();
+        assert_eq!(rows.len(), 24);
+        assert!(rows.windows(2).all(|pair| pair[0].hat < pair[1].hat));
+        assert_eq!(rows.iter().map(|row| row.hat as u16).collect::<Vec<_>>(), STR_HATS);
+        let row = |hat| row_of(hat).unwrap();
+        assert_eq!((row(227).top_height, row(227).bottom_scale, row(227).top_scale), (9.0, 0.05, 0.05));
+        assert_eq!((row(240).stride, row(240).top_scale, row(240).adjust), (35.0, 0.0, true));
+        for hat in [259, 260, 261] {
+            assert!(row(hat).bottom.is_none() && row(hat).top.is_some() && row(hat).top_height == 1.0, "{hat}");
+        }
+        let adjusted: Vec<u32> = rows.iter().filter(|row| row.adjust).map(|row| row.hat).collect();
+        assert_eq!(adjusted, [240, 245, 246, 264, 271, 272, 273, 285]);
+        assert_eq!((row(228).bottom_scale, row(228).top_scale), (0.06, 0.15));
+        // The file names are given without .str, which the loader adds.
+        assert_eq!(row(227).bottom.as_deref(), Some("footprint\\bottom_crack"));
+    }
+
+    #[test]
+    fn a_stamp_alternates_sides_of_the_path() {
+        let row = row_of(230).unwrap();
+        let (feet, body, eye) = (|_: Option<u32>| None, |_: Option<u32>| None, Eye::at(45.0, 0.0));
+        let scene = scene(&feet, &body, &eye, &|_, _| 0.0);
+        let mut assets = StrFake::all();
+        let (last, at) = ([0.0; 3], [8.0, 0.0, 0.0]);
+        // A step along +x has the side (0, 0, -1): the left stamp is at z - gap, the right one at z + gap.
+        let left = Stamp::new(row, true, last, at, &scene, &mut assets);
+        let right = Stamp::new(row, false, last, at, &scene, &mut assets);
+        assert_eq!(left.pieces.len(), 2);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(near(left.pieces[0].part.point[2], -row.gap) && near(right.pieces[0].part.point[2], row.gap));
+        assert!(near(left.pieces[0].part.point[0], 8.0));
+    }
+
+    #[test]
+    fn the_parts_of_a_stamp() {
+        let (feet, body, eye) = (|_: Option<u32>| None, |_: Option<u32>| None, Eye::at(45.0, 0.0));
+        let slope = |x: f32, _: f32| x * 0.5;
+        let scene = scene(&feet, &body, &eye, &slope);
+        let mut assets = StrFake::all();
+        let (last, at) = ([0.0; 3], [8.0, 0.0, 0.0]);
+        // Only a top, or both.
+        assert_eq!(Stamp::new(row_of(259).unwrap(), true, last, at, &scene, &mut assets).pieces.len(), 1);
+        let both = Stamp::new(row_of(227).unwrap(), true, last, at, &scene, &mut assets);
+        assert_eq!(both.pieces.len(), 2);
+        // The top stands its height over the ground at P; the bottom lies on it.
+        let (bottom, top) = (&both.pieces[0], &both.pieces[1]);
+        assert!(bottom.flat && !top.flat && top.part.world && !bottom.part.world);
+        assert!((top.part.point[1] - (8.0 * 0.5 + 9.0)).abs() < 1e-4 && (bottom.part.point[1] - 4.0).abs() < 1e-4);
+        assert_eq!((bottom.part.controls.scale, top.part.controls.scale), (0.05, 0.05));
+        assert!(top.part.bias > 0.0 && bottom.part.bias == 0.0);
+        // The bottom's turn: 0 without adjust, the step's screen angle + 90 with it.
+        assert_eq!(bottom.part.controls.turn, 0.0);
+        let adjusted = Stamp::new(row_of(240).unwrap(), true, last, at, &scene, &mut assets);
+        let point = adjusted.pieces[0].part.point;
+        assert!((adjusted.pieces[0].part.controls.turn - (screen_turn(last, point, &scene) + 90.0)).abs() < 1e-4);
+        // A stamp is freed when both its STRs are over (11 frames); a missing STR ends its part at once.
+        let mut stamp = both;
+        let mut steps = 0;
+        while stamp.step() {
+            steps += 1;
+            assert!(steps < 100);
+        }
+        assert!(stamp.pieces.iter().all(|piece| piece.over) && steps > 5);
+        let mut nothing = Stamp::new(row_of(227).unwrap(), true, last, at, &scene, &mut StrFake(Vec::new()));
+        assert!(nothing.pieces.iter().all(|piece| piece.over) && !nothing.step());
+    }
+
+    #[test]
+    fn the_stride_belongs_to_the_row() {
+        let mut assets = StrFake::all();
+        for (hat, stride) in [(230u16, 50.0f32), (240, 35.0)] {
+            let mut fx = registry();
+            hats(&mut fx, Some(Some(UNIT)), true, &[hat], &mut assets);
+            assert_eq!(stamped(&mut fx, [0.0; 3], &mut assets), 0);
+            // A hair under the stride: none; a hair over: one, with its two STRs.
+            assert_eq!(stamped(&mut fx, [(stride - 0.1).sqrt(), 0.0, 0.0], &mut assets), 0, "{hat}");
+            let faces = stamped(&mut fx, [(stride + 0.1).sqrt(), 0.0, 0.0], &mut assets);
+            assert_eq!(faces, 2, "{hat}");
+            // `last` moved with the stamp: another small step makes no second one.
+            assert_eq!(stamped(&mut fx, [(stride + 0.1).sqrt() + 1.0, 0.0, 0.0], &mut assets), 2, "{hat}");
+        }
+    }
+
+    #[test]
+    fn hats_with_no_files_launch_and_stamp_without_drawing() {
+        // 257, 258, 280 and 283 are not in the game data: their STRs load as missing.
+        let mut assets = StrFake(Vec::new());
+        let mut fx = registry();
+        hats(&mut fx, Some(Some(UNIT)), true, &[257, 258, 280, 283], &mut assets);
+        assert_eq!(fx.iter().count(), 1);
+        stamped(&mut fx, [0.0; 3], &mut assets);
+        assert_eq!(stamped(&mut fx, [10.0, 0.0, 0.0], &mut assets), 0);
+        assert_eq!(fx.iter().count(), 1);
+        hats(&mut fx, Some(Some(UNIT)), false, &[257], &mut assets);
+        assert!(fx.is_empty());
+    }
+
+    #[test]
+    fn stamps_do_not_follow_the_unit_and_go_with_it() {
+        let mut assets = StrFake::all();
+        let mut fx = registry();
+        hats(&mut fx, Some(Some(UNIT)), true, &[230], &mut assets);
+        stamped(&mut fx, [0.0; 3], &mut assets);
+        assert_eq!(stamped(&mut fx, [8.0, 0.0, 0.0], &mut assets), 2);
+        let feet = |_: Option<u32>| None;
+        let body = |_: Option<u32>| None;
+        let eye = Eye::at(45.0, 0.0);
+        fx.tick(&scene(&feet, &body, &eye, &|_, _| 0.0), &mut assets);
+        assert!(fx.is_empty());
     }
 }

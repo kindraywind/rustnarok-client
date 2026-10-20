@@ -547,6 +547,42 @@ impl StrPart {
     }
 }
 
+impl StrPart {
+    /// Its layers' faces lying on the ground: the 3-D draw's layers, colours, alphas and mirrors, with each corner placed in
+    /// the ground's plane (the STR's x along the camera's right on the ground, its up along the viewing direction on the
+    /// ground, `scale` units per STR px, turned by the controls' turn about the vertical) and set `FLAT_LIFT` over the
+    /// ground under it, so the print follows the terrain.
+    // ponytail: the handedness of the flat frame and the turn's sign are unchecked: look at one walk.
+    pub fn flat_faces<'a>(&'a self, eye: &Eye, ground: &dyn Fn(f32, f32) -> f32, out: &mut Vec<Face<'a>>) {
+        let (Some(loaded), Some(frame)) = (&self.loaded, self.shown) else { return };
+        let controls = Controls { offset: [0.0; 2], ..self.controls };
+        let (right, forward) = (eye.ground_right(), eye.ground_forward());
+        for (index, layer) in loaded.animation.layers.iter().enumerate().skip(1) {
+            let Some(state) = layer.state(frame as f32) else { continue };
+            let corner = |corner: usize| {
+                let [x, y] = str_corner(state.position, [state.corners[corner], state.corners[4 + corner]], state.angle);
+                let [x, y] = world_str::transform([x, y], &controls);
+                let mut at = add(self.point, add(scaled(right, x), scaled(forward, -y)));
+                at[1] = ground(at[0], at[2]) + FLAT_LIFT;
+                at
+            };
+            let corners = [corner(0), corner(1), corner(3), corner(2)];
+            let mut tint = state.color;
+            tint[3] = (tint[3] * 255.0 * self.controls.alpha).trunc() / 255.0;
+            let uv = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+            out.push(Face {
+                texture: Tex::Str(loaded, index, state.texture),
+                vertices: triangles(corners, uv, tint),
+                additive: state.additive,
+                flags: FLAGS_EFFECT,
+            });
+        }
+    }
+}
+
+/// A flat STR lies this far over the ground under each corner.
+pub const FLAT_LIFT: f32 = 2.0;
+
 /// What objects load: textures (their image size), STR files, sprite frames.
 pub trait Assets {
     fn texture(&mut self, path: &str) -> Option<[f32; 2]>;
@@ -618,6 +654,8 @@ pub struct Seen<'a> {
     pub hidden: &'a dyn Fn(Option<u32>) -> bool,
     /// A unit's size factor.
     pub size: &'a dyn Fn(Option<u32>) -> f32,
+    /// The ground's height (world y) under a world x and z.
+    pub ground: &'a dyn Fn(f32, f32) -> f32,
 }
 
 /// One kind of world object.
@@ -895,7 +933,7 @@ mod tests {
     }
 
     fn seen<'a>(shows: &'a dyn Fn(u32) -> bool, hidden: &'a dyn Fn(Option<u32>) -> bool) -> Seen<'a> {
-        Seen { eye: Eye::at(45.0, 0.0), shows, hidden, size: &|_| 1.0 }
+        Seen { eye: Eye::at(45.0, 0.0), shows, hidden, size: &|_| 1.0, ground: &|_, _| 0.0 }
     }
 
     #[test]
@@ -1290,5 +1328,38 @@ mod tests {
         let moved_v3 = sub(faces[0].vertices[5].position, [10.0, 0.0, 10.0]);
         assert!(close((dot(moved, eye.right) + dot(moved_v3, eye.right)) / 2.0, -2.4));
         assert!(close(faces[0].vertices[0].tint[3], 127.0 / 255.0));
+    }
+
+    #[test]
+    fn the_ground_str_draw() {
+        let eye = Eye::at(45.0, 0.0);
+        let mut part = part(true);
+        let at = [10.0, 0.0, 10.0];
+        part.point = at;
+        part.controls.scale = 0.12;
+        let slope = |x: f32, _: f32| x * 0.5;
+        let mut faces = Vec::new();
+        part.flat_faces(&eye, &slope, &mut faces);
+        let face = &faces[0];
+        assert_eq!(face.flags, FLAGS_EFFECT);
+        // Every corner is the ground's height + 2.
+        for vertex in &face.vertices {
+            assert!(close(vertex.position[1], vertex.position[0] * 0.5 + 2.0));
+        }
+        let (right, forward) = (eye.ground_right(), eye.ground_forward());
+        let local = |faces: &[Face], corner: usize| {
+            let moved = sub(faces[0].vertices[corner].position, at);
+            [dot(moved, right), dot(moved, forward)]
+        };
+        // Vertices 0, 1, 2 are v0, v1, v2; vertex 5 is v3: a 12 × 6 layer, 2.4 right and 1.2 along the view from P.
+        let [v0, v1, v2, v3] = [local(&faces, 0), local(&faces, 1), local(&faces, 2), local(&faces, 5)];
+        assert!(close(v1[0] - v0[0], 12.0) && close((v0[1] - v2[1]).abs(), 6.0));
+        assert!(close((v0[0] + v3[0]) / 2.0, 2.4) && close((v0[1] + v3[1]) / 2.0, 1.2));
+        // A turn of 90 degrees turns it about the vertical: the centre goes from (2.4, 1.2) to (1.2, -2.4).
+        part.controls.turn = 90.0;
+        let mut turned = Vec::new();
+        part.flat_faces(&eye, &slope, &mut turned);
+        let [v0, v3] = [local(&turned, 0), local(&turned, 5)];
+        assert!(close((v0[0] + v3[0]) / 2.0, 1.2) && close((v0[1] + v3[1]) / 2.0, -2.4));
     }
 }

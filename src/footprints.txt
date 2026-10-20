@@ -1,0 +1,29 @@
+# The STR footprint hats (class 2412 of world_fx/footprints.rs), one row per hat effect number, tab-separated:
+#   hat  bottom STR  top STR  bottom scale  top scale  top height  stride  gap  adjust
+# The STRs are under data\texture\effect\ (a - is none); a scale is units per STR px; the top height is units above the
+# print; the stride is compared with the squared distance a step must pass; the gap is the units to the side of the path;
+# adjust 1 turns the bottom STR to follow the step. The files of 257, 258, 280 and 283 are not in the game data.
+227	footprint\bottom_crack.str	footprint\top_fire.str	0.05	0.05	9	50	2	0
+228	footprint_purplestar\footprint_bottom_purplestar\footprint_bottom_purple.str	footprint_purplestar\footprint_purplestar\footprint_purple.str	0.06	0.15	0	50	2	0
+229	footprint_yellowstar\footprint_bottom_yellowstar\footprint_bottom_yellow.str	footprint_yellowstar\footprint_yellowstar\footprint_yellow.str	0.06	0.15	0	50	2	0
+230	footprint_redstar\footprint_bottom_redstar\footprint_bottom_red.str	footprint_redstar\footprint_redstar\footprint_red.str	0.06	0.15	0	50	2	0
+240	footprint_DogFoot\footprint_bottom_DogFoot\footprint_shibasays.str	footprint\top_fire.str	0.1	0.0	0	35	2	1
+244	footprint_dumpling\footprint_bottom_dumpling\footprint_dumpling_bottom.str	footprint_dumpling\footprint_dumpling\footprint_dumpling.str	0.04	0.11	0	50	2	0
+245	footprint_panda\footprint_panda_bottom_basic\footprint_bottom_panda_basic.str	footprint_panda\footprint_panda\footprint_panda.str	0.04	0.11	0	50	2	1
+246	footprint_panda\footprint_panda_bottom_color\footprint_panda_bottom_color.str	footprint_panda\footprint_panda\footprint_panda.str	0.04	0.11	0	50	2	1
+257	footprint_blossom\footprint_blossom_bottom\footprint_blossom_bottom.str	footprint_blossom\footprint_blossom\footprint_blossom.str	0.04	0.11	0	50	2	0
+258	-	footprint_bud\footprint_bud\footprint_bud.str	0.04	0.11	0	50	2	0
+259	-	footprint_butterfly\footprint_butterfly_blue\footprint_butterfly_blue.str	0.04	0.11	1	50	2	0
+260	-	footprint_butterfly\footprint_butterfly_purple\footprint_butterfly_purple.str	0.04	0.11	1	50	2	0
+261	-	footprint_butterfly\footprint_butterfly_yellow\footprint_butterfly_yellow.str	0.04	0.11	1	50	2	0
+263	footprint_victory2025\footprint_victory2025_bottom\footprint_victory_bottom.str	footprint_victory2025\footprint_victory.str	0.06	0.15	0	50	2	0
+264	footprint_dragon_face_2d\footprint_dragon_face_2d_bottom\fp_dragon_face_basic_bottom_pink.str	footprint_dragon_face_2d\footprint_dragon_face_2d\fp_dragon_face_basic_pink.str	0.06	0.15	0	50	2	1
+265	footprint_dragon_face_3d\footprint_dragon_face_3d_bottom\fp_dragon_face_3d_bottom.str	footprint_dragon_face_3d\footprint_dragon_face_3d\fp_dragon_face_3d.str	0.04	0.11	0	50	2	0
+271	footprint_divine\footprint_divine_bottom\footprint_divine_bottom.str	footprint_divine\footprint_divine\footprint_divine.str	0.04	0.11	0	50	2	1
+272	footprint_nyar_blue\footprint_nyar_blue_bottom\footprint_nyar_blue_bottom.str	footprint_nyar_blue\footprint_nyar_blue\footprint_nyar_blue.str	0.04	0.11	0	50	2	1
+273	footprint_nyar_purple\footprint_nyar_purple_bottom\footprint_nyar_purple_bottom.str	footprint_nyar_purple\footprint_nyar_purple\footprint_nyar_purple.str	0.04	0.11	0	50	2	1
+280	-	footprint_feather\footprint_feather\footprint_feather.str	0.04	0.11	0	50	2	0
+283	footprint_basic_bottom\footprint_basic_bottom.str	footprint_basic\footprint_basic.str	0.05	0.05	0	50	2	0
+285	footprint_divine_blue\footprint_divine_blue_bottom\footprint_divine_blue_bottom.str	footprint_divine_blue\footprint_divine_blue\footprint_divine_blue.str	0.04	0.11	0	50	2	1
+286	footprint_bluestar\footprint_bottom_bluestar\footprint_bottom_blue.str	footprint_bluestar\footprint_bluestar\footprint_blue.str	0.06	0.15	0	50	2	0
+287	footprint_phoenix\footprint_bottom_phoenix\footprint_bottom_phoenix.str	footprint_phoenix\footprint_phoenix\footprint_phoenix.str	0.04	0.11	0	50	2	0
