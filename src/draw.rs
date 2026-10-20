@@ -2836,6 +2836,7 @@ impl App {
             shows: &effects_shown,
             hidden: &hidden,
             size: &size,
+            ground: &ground_at,
         };
         game.effects.advance_world(gpu, grf, now, &scene, &fx_seen);
         // The Sight option (bit 0x1) keeps a flame circling its unit.
