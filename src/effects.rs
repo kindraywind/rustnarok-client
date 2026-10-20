@@ -2423,7 +2423,7 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 47] = [
+pub const AIMED: [u32; 48] = [
     STIN,
     CROSS_LINES,
     PIERCING_LINES,
