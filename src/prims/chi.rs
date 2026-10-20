@@ -175,27 +175,33 @@ impl Column {
 
     /// The square tube round the column's line from its foot `foot` to `up` above it: `angle` turns its corners, `rho` is its
     /// radius and `steps` splits the picture across the four sides (the whole picture on each when None).
-    fn tube(foot: Vector, up: f32, angle: f32, rho: f32, tint: [f32; 4], steps: Option<f32>) -> Vec<MeshVertex> {
-        let corner = |s: u32, up: f32| {
-            let (sin, cos) = ((90.0 * s as f32 + angle) % 360.0).to_radians().sin_cos();
-            [foot[0] + rho * cos, foot[1] + up, foot[2] + rho * sin]
-        };
-        let mut vertices = Vec::with_capacity(24);
-        for s in 1..=4 {
-            let (u0, u1) = match steps {
-                Some(count) => ((s - 1) as f32 / count, s as f32 / count),
-                None => (0.0, 1.0),
-            };
-            let [a, b, c, d] = [
-                MeshVertex { position: corner(s - 1, 0.0), uv: [u0, 1.0], tint },
-                MeshVertex { position: corner(s, 0.0), uv: [u1, 1.0], tint },
-                MeshVertex { position: corner(s, up), uv: [u1, 0.0], tint },
-                MeshVertex { position: corner(s - 1, up), uv: [u0, 0.0], tint },
-            ];
-            vertices.extend([a, b, c, a, c, d]);
-        }
-        vertices
+    pub fn tube(foot: Vector, up: f32, angle: f32, rho: f32, tint: [f32; 4], steps: Option<f32>) -> Vec<MeshVertex> {
+        tube(foot, up, angle, rho, tint, steps)
     }
+}
+
+/// The square tube round the column's line from its foot `foot` to `up` above it: `angle` turns its corners, `rho` is its
+/// radius and `steps` splits the picture across the four sides (the whole picture on each when None).
+pub fn tube(foot: Vector, up: f32, angle: f32, rho: f32, tint: [f32; 4], steps: Option<f32>) -> Vec<MeshVertex> {
+    let corner = |s: u32, up: f32| {
+        let (sin, cos) = ((90.0 * s as f32 + angle) % 360.0).to_radians().sin_cos();
+        [foot[0] + rho * cos, foot[1] + up, foot[2] + rho * sin]
+    };
+    let mut vertices = Vec::with_capacity(24);
+    for s in 1..=4 {
+        let (u0, u1) = match steps {
+            Some(count) => ((s - 1) as f32 / count, s as f32 / count),
+            None => (0.0, 1.0),
+        };
+        let [a, b, c, d] = [
+            MeshVertex { position: corner(s - 1, 0.0), uv: [u0, 1.0], tint },
+            MeshVertex { position: corner(s, 0.0), uv: [u1, 1.0], tint },
+            MeshVertex { position: corner(s, up), uv: [u1, 0.0], tint },
+            MeshVertex { position: corner(s - 1, up), uv: [u0, 0.0], tint },
+        ];
+        vertices.extend([a, b, c, a, c, d]);
+    }
+    vertices
 }
 
 impl Chi {
