@@ -38,6 +38,53 @@ pub fn unescape(text: &str) -> String {
     text.replace("\\r", "\r").replace("\\n", "\n").replace("\\\"", "\"")
 }
 
+/// The game's font tags in NPC text as the `^RRGGBB` codes the layout already reads: `<FONT COLOR=RRGGBB>` sets the
+/// colour (any spacing round the `=`, six hex digits or the tag's colour is ignored), `</FONT>` goes back to the
+/// enclosing tag's or black, and `<B>`, `<I>` and their closers (and a `SIZE`) are read but not drawn. Any other `<` is text.
+// ponytail: bold, italic and size aren't drawn (the text renderer has one face); a `^RRGGBB` between tags isn't
+// tracked, so `</FONT>` restores the enclosing tag's colour, as the game's own stack does.
+pub fn font_tags(text: &str) -> String {
+    fn code([red, green, blue]: [u8; 3]) -> String {
+        format!("^{red:02X}{green:02X}{blue:02X}")
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut stack: Vec<[u8; 3]> = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('<') {
+        out.push_str(&rest[..open]);
+        rest = &rest[open..];
+        let Some(close) = rest.find('>') else { break };
+        let body = rest[1..close].to_ascii_uppercase();
+        let current = stack.last().copied().unwrap_or([0; 3]);
+        if body.starts_with("FONT") {
+            let color = body.find("COLOR").and_then(|at| hex_color(&body[at..]));
+            if color.is_some() || body.contains("SIZE") {
+                let color = color.unwrap_or(current);
+                stack.push(color);
+                out.push_str(&code(color));
+            }
+        } else if body == "/FONT" {
+            if stack.pop().is_some() {
+                out.push_str(&code(stack.last().copied().unwrap_or([0; 3])));
+            }
+        } else if !matches!(body.as_str(), "B" | "/B" | "I" | "/I") {
+            out.push('<');
+            rest = &rest[1..];
+            continue;
+        }
+        rest = &rest[close + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// What follows the `=` in `COLOR = 2ECCFA`: the first six characters after any spaces, all hex digits.
+fn hex_color(from: &str) -> Option<[u8; 3]> {
+    let value: String = from.split_once('=')?.1.trim_start().chars().take_while(|character| !character.is_whitespace()).take(6).collect();
+    let value = u32::from_str_radix(&value, 16).ok().filter(|_| value.len() == 6)?;
+    Some([(value >> 16) as u8, (value >> 8) as u8, value as u8])
+}
+
 /// How far text this tall can scroll: past a panel this tall.
 fn scroll_range(text_height: f32, panel_height: f32) -> f32 {
     (text_height - panel_height).max(0.0)
@@ -280,5 +327,18 @@ mod tests {
     #[test]
     fn reads_the_servers_escapes() {
         assert_eq!(unescape(r#"one\ntwo \"three\""#), "one\ntwo \"three\"");
+    }
+
+    #[test]
+    fn turns_font_tags_into_colour_codes() {
+        // A vending machine's line, as a script writes it (spaces round the `=`).
+        assert_eq!(
+            font_tags("<font color = 2ECCFA>Clean</font> through your <font color = DF0101>cramped</font> stomach with <i>refreshing</i> <b>Soda</b>!"),
+            "^2ECCFAClean^000000 through your ^DF0101cramped^000000 stomach with refreshing Soda!"
+        );
+        // Nested tags go back to the enclosing one's colour; a closer with nothing open is dropped.
+        assert_eq!(font_tags("<FONT COLOR=FF0000>a<FONT COLOR=00ff00>b</FONT>c</FONT></FONT>d"), "^FF0000a^00FF00b^FF0000c^000000d");
+        // A size alone keeps the colour; a bad colour is ignored; other angle brackets stay text.
+        assert_eq!(font_tags("<FONT SIZE=14>x</FONT> <font color=red>y</font> a < b <ITEM>i</ITEM> c > d"), "^000000x^000000 y a < b <ITEM>i</ITEM> c > d");
     }
 }
