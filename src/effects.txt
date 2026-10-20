@@ -2077,6 +2077,7 @@ wav	918	effect\EF_FireWall	0	listener
 wav	921	effect\S스펠피스트	0	listener
 wav	923	effect\S포이즌버스터	0	listener
 wav	931	effect\S포이즌버스터	0	listener
+wav	969	effect\안식의자장가	0	listener
 wav	1044	effect\rk_luxanima	0
 wav	1132	effect\mon_금강불괴	0
 wav	1195	effect\EF_BeginSpell	0

@@ -23,6 +23,7 @@ pub mod knight;
 pub mod mechanic;
 pub mod monk;
 pub mod napalm;
+pub mod notes;
 pub mod painter;
 pub mod radar;
 pub mod sage;
@@ -191,6 +192,7 @@ pub struct Prims {
     pub cells: cells::Cells,
     pub souls: souls::Souls,
     pub radar: radar::Radar,
+    pub notes: notes::Notes,
 }
 
 /// COLDHIT's shard and smoke textures.
