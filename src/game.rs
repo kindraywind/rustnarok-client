@@ -1416,6 +1416,10 @@ impl Game {
         if shown.contains(&actor::STRIKING) {
             actor.strike(on && actor.look.is_some());
         }
+        // Kagemusya leaves a grey copy behind it every tick.
+        if shown.contains(&actor::KAGEMUSYA) {
+            actor.shadow(on);
+        }
         if actor::CURSED_CIRCLE.contains(&status) {
             actor.cursed = on;
         }
@@ -1424,7 +1428,8 @@ impl Game {
         let at = self.world.cell_position(actor.cell.map(|value| value as f32));
         let monster = actor::is_monster_job(job);
         if let Some(gpu) = gpu.filter(|_| on) {
-            for &effect in shown.iter().filter(|&&effect| effect != actor::AFTERIMAGE && effect != actor::STRIKING && effect != actor::HALLUCINATION_WALK) {
+            for &effect in shown.iter().filter(|&&effect| !matches!(effect, actor::AFTERIMAGE | actor::STRIKING | actor::HALLUCINATION_WALK | actor::KAGEMUSYA))
+            {
                 // Manhole's body is for the other units only; a monster in the hole only sounds.
                 if effect == effects::MANHOLE_BODY && monster {
                     self.effects.sound_of(table, effect, at, Instant::now());

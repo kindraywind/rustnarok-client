@@ -1900,6 +1900,7 @@ wav	567	effect\h_moonlight_3	0
 wav	579	_snore	0
 wav	587	dragon_breath	0
 wav	590	effect\priest_resurrection	0
+wav	1224	effect\mon_침투경	80
 wav	604	effect\ef_hit6	0
 wav	599	effect\EF_BeginSpell	80
 wav	602	effect\ef_hit6	320
@@ -5195,6 +5196,10 @@ length	503	500
 length	506	100
 length	542	200
 length	544	99999999
+length	1003	99999999
+length	1004	99999999
+length	1224	50
+length	1420	99999999
 length	623	300
 length	624	200
 length	627	300

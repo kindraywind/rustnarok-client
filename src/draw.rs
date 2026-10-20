@@ -943,8 +943,11 @@ impl App {
                 !was
             });
             // A swinging head and gear (a player's only) run round their circles.
-            let swing = glow.filter(|(flags, _)| is_player && flags & actor::GLOW_SWING != 0).map(|(flags, _)| flags >> actor::PARAM_SHIFT);
+            let spinning = glow.filter(|(flags, _)| flags & actor::GLOW_SWING != 0).map(|(flags, _)| flags >> actor::PARAM_SHIFT);
+            let swing = spinning.filter(|_| is_player);
             for (index, &(key, position, size, angle)) in placements.iter().enumerate() {
+                // The swing turns every layer once round (a monster's too).
+                let angle = spinning.map_or(angle, actor::swing_spin);
                 let position = match swing {
                     Some(n) => actor::swing_offset(n, sprites.swing_reach(key), position),
                     None => position,
