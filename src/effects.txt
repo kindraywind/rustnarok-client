@@ -1831,6 +1831,7 @@ wav	439	effect\G스포어익스플로젼	0	listener
 wav	440	effect\아숨프티오	0
 wav	444	effect\t_효과음1	0
 wav	445	effect\t_회피2	0
+wav	450	effect\cru_grand cross	0
 wav	451	effect\ef_soulstrike	0
 wav	454	effect\ef_beginspell	0
 wav	456	effect\mon_폭기	0
@@ -5119,8 +5120,12 @@ length	175	100
 length	176	100
 length	177	100
 length	178	100
+length	179	100
 length	341	9999
 length	408	200
+length	450	999
+length	455	1500
+length	675	200
 length	850	100
 length	932	100
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
@@ -5134,6 +5139,7 @@ skillquake	472	0	200
 skillwav	320	effect\석양의 어쌔신	0	listener
 skillwav	329	effect\행운의	0	listener
 skillwav	330	effect\당신을 위한 서비스	0	listener
+skillwav	349	effect\mon_폭기	0	listener
 skillwav	366	effect\마법력 증폭	0	listener
 skillwav	482	effect\마법력 증폭	0	listener
 skillwav	2480	effect\S바큠익스트림	0	listener

@@ -174,6 +174,7 @@ pub fn sheet_texture(effect: u32) -> &'static str {
         175 => "data\\texture\\effect\\ring_yellow.tga",
         176 => "data\\texture\\effect\\ring_jadu.tga",
         177 => "data\\texture\\effect\\ring_brown.tga",
+        179 => "data\\texture\\effect\\ring_purple.tga",
         _ => "data\\texture\\effect\\ring_white.tga",
     }
 }
@@ -708,5 +709,14 @@ mod tests {
         // The textures by id.
         let names: Vec<&str> = (172..=178).map(|id| sheet_texture(id).rsplit('\\').next().unwrap()).collect();
         assert_eq!(names, ["ring_black.tga", "ring_red.tga", "ring_blue.tga", "ring_yellow.tga", "ring_jadu.tga", "ring_brown.tga", "ring_white.tga"]);
+    }
+
+    #[test]
+    fn change_poison_raises_a_violet_sheet() {
+        assert!(sheet_texture(179).ends_with("ring_purple.tga"));
+        let start = Instant::now();
+        let mut cells = Cells::default();
+        cells.sheet(179, [0.0; 3], start);
+        assert!(cells.meshes(start)[0].texture.ends_with("ring_purple.tga"));
     }
 }
