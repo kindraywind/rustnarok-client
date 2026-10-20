@@ -257,7 +257,9 @@ const INSERT_CARD: usize = 522;
 const CARD_DONE: usize = 493;
 const CARD_FAILED: usize = 494;
 /// The refine window's lines: nothing to refine with; the results (done, broken, lowered, failed).
-const CANT_REFINE: usize = 2970;
+/// The mail and bank windows shut when the refine window opens.
+const REFINE_CLOSED_MAIL: usize = 2991;
+const REFINE_CLOSED_BANK: usize = 3013;
 const REFINE_RESULTS: [(usize, [u8; 3]); 4] = [(2971, CHAT_ITEM), (3246, CHAT_ERROR), (1537, CHAT_ERROR), (2972, CHAT_ERROR)];
 /// Results for refines done without the refine window (ZC_ACK_ITEMREFINING): success, failed, lowered.
 const UPGRADE_SUCCESS: usize = 498;
@@ -1336,6 +1338,8 @@ struct Game {
     /// The deal under way; someone asking for one (name, character ID, level); whom we asked.
     trade: Option<trade::Trade>,
     refine: Option<refine::Refine>,
+    /// Double clicks on the refine window's item slot.
+    refine_clicks: window::Clicks,
     /// The grade enchant window.
     grade: Option<grade::GradeEnchant>,
     /// Laphine synthesis and upgrade, open until their close packet or a map change.

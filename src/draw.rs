@@ -2315,7 +2315,23 @@ impl App {
             );
         }
         if let Some(window) = &game.refine {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.refine, icons, items, &game.inventory.items, messages, font, pointer);
+            let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+            let names = (card_names, &game.char_names);
+            window.draw(
+                shop_layer.window(),
+                &mut tooltip,
+                &assets.chrome,
+                &assets.refine,
+                icons,
+                items,
+                &game.inventory.items,
+                messages,
+                names,
+                font,
+                pointer,
+                control::now(),
+                zeny,
+            );
         }
         if let Some(window) = &game.reform {
             window.draw(shop_layer.window(), &assets.chrome, &assets.reform, icons, items, &game.inventory.items, messages, font, pointer);

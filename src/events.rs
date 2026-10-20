@@ -428,6 +428,7 @@ impl App {
                     item_skill: None,
                     trade: None,
                     refine: None,
+                    refine_clicks: window::Clicks::default(),
                     grade: None,
                     synthesis: None,
                     upgrade: None,
@@ -1053,8 +1054,22 @@ impl App {
             }
             // The refine window opens with the inventory beside it.
             MapEvent::RefineOpen => {
-                game.refine = Some(refine::Refine::new());
+                let window = refine::Refine::new(crate::screen(), control::now());
+                // Opening shuts an open mail window and bank window, each with a red line.
+                if game.mail.list.frame.open || game.mail.compose.is_some() || game.mail.letter.is_some() {
+                    game.mail.list.frame.open = false;
+                    game.mail.compose = None;
+                    game.mail.letter = None;
+                    game.chat_line(self.messages.get(REFINE_CLOSED_MAIL).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+                if game.bank.take().is_some() {
+                    let _ = game.session.close_bank(game.account_id);
+                    game.chat_line(self.messages.get(REFINE_CLOSED_BANK).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+                // The inventory goes right beside it, its bottom on the window's.
                 game.inventory.frame.open = true;
+                game.inventory.frame.position = window.inventory_place(game.inventory.height());
+                game.refine = Some(window);
                 game.raise(Panel::Inventory);
             }
             // Kind 8 is grade enchanting and opens the inventory beside it. Kind 1 is the stylist.
@@ -1199,10 +1214,13 @@ impl App {
                 game.enchant = None;
             }
             MapEvent::RefineMaterials { index, blessings, materials } => {
-                if materials.is_empty() {
-                    game.chat_line(self.messages.get(CANT_REFINE).cloned().unwrap_or_default(), CHAT_ERROR);
-                } else if let Some(window) = &mut game.refine {
-                    window.listed(index, blessings, materials);
+                // Nothing to refine it with: a timed notice in the window, which stays as it was.
+                if let Some(window) = &mut game.refine {
+                    if materials.is_empty() {
+                        window.say(refine::CANT_REFINE, true, Some(control::now()));
+                    } else {
+                        window.listed(index, blessings, materials, control::now());
+                    }
                 }
             }
             // Any refine (the window, Upgrade Weapon, @refine): the item's new level; a broken one leaves the window.
@@ -1213,6 +1231,7 @@ impl App {
                     item.refine = refine as u8;
                 }
                 if let Some(window) = &mut game.refine {
+                    window.answered();
                     if result == 1 {
                         window.clear();
                     }
