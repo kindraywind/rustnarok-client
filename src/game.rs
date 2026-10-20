@@ -1274,6 +1274,22 @@ impl Game {
         }
     }
 
+    /// Cannon Spear's damage packet from `source` (`Effects::cannon_spear`): its blade points the way it faces on the
+    /// screen, after its swing.
+    pub(crate) fn cannon_spear(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, source: u32) {
+        let key = (source != self.account_id).then_some(source);
+        let Some(actor) = (match key {
+            None => Some(&self.player),
+            Some(id) => self.units.get(&id),
+        }) else {
+            return;
+        };
+        let phi = effects::cannon_phi(self.camera.yaw.to_degrees(), actor.rot);
+        let delay = effects::cannon_delay_ms(actor.sprites.as_ref().map_or(4.0, actor::SpriteSet::current_delay));
+        let at = self.world.cell_position(actor.cell.map(|value| value as f32));
+        self.effects.cannon_spear(gpu, grf, table, key, at, phi, delay);
+    }
+
     /// Cold Slower (791): three prims of four snowflakes thrown from caster's feet toward `aim`.
     pub(crate) fn cold_slower(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, source: u32, aim: world::Vector) {
         let key = (source != self.account_id).then_some(source);

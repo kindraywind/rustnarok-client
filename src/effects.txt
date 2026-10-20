@@ -20,6 +20,7 @@
 # ground <skill> <ground|caster> <effect>: what a ground skill (ZC_NOTIFY_GROUNDSKILL) shows at its cell or on its caster
 # trap <skill unit type> <effect>: what a trap shows at its cell when it goes off (its look turning into 0x8c)
 # status <EFST id> <effect id>: what a status (ZC_MSG_STATE_CHANGE*) plays again and again on its unit while it's on
+# minid <effect id> <effect id under /mineffect>: with /mineffect on, starting the first starts the second instead
 str	10	maemor	-	1
 str	13	safetywall	-	0
 str	23	stonecurse	-	1
@@ -5281,6 +5282,15 @@ length	1568	300
 length	1569	150
 length	1365	50
 length	1409	300
+minid	1400	1511
+minid	1401	1512
+minid	1402	1513
+minid	1403	1514
+minid	1404	1515
+minid	1405	1516
+minid	1406	1517
+minid	1407	1518
+minid	1408	1519
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
 skillwav	10	effect\ef_sight	0
 skillwav	8005	effect\h_castling	0
