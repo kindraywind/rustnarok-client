@@ -93,6 +93,8 @@ enum Flicker {
     Outlined([u8; 3], u32),
     /// Detonator's lilac flush (ticks 10 to 33).
     Concentration,
+    /// Deadly Infect's black and white blink: white on the odd ticks, black on the even, ticks 6 to 60.
+    Blink,
 }
 
 /// Chase Walk's cast turning its caster.
@@ -166,6 +168,7 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
             (10..=50).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) })
         }
         Flicker::Outlined(rgb, last) => (e <= last).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb)) } else { (GLOW_OUTLINE, Some([255; 3])) }),
+        Flicker::Blink => (6..=60).contains(&e).then_some((0, Some(if even { [0; 3] } else { [255; 3] }))),
         Flicker::Concentration => (10..=33).contains(&e).then_some((if even { GLOW_ADDITIVE } else { 0 }, Some(LILAC))),
         Flicker::Pierce(length) => {
             (e < length.min(141)).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])) } else { (GLOW_OUTLINE, Some([255; 3])) })
@@ -329,6 +332,11 @@ impl Guard {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0x9B, 0x9B, 0xFF], 60) });
     }
 
+    /// Deadly Infect's black and white blink of `unit`.
+    pub fn blink(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Blink });
+    }
+
     /// Detonator's lilac flush of `unit`.
     pub fn concentration(&mut self, unit: Option<u32>, now: Instant) {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Concentration });
@@ -429,6 +437,7 @@ impl Guard {
                 Flicker::Strobe(rgb, _, last) if e > last => fade_back(rgb, e - last),
                 Flicker::Outlined(rgb, last) if e > last => fade_back(rgb, e - last),
                 Flicker::Concentration if e > 33 => fade_back(LILAC, e - 33),
+                Flicker::Blink if e > 60 => fade_back([0; 3], e - 60),
                 _ => None,
             }
         })
@@ -675,5 +684,19 @@ mod tests {
         let mut plain = Guard::default();
         plain.preserve(Some(1), 0.0, start);
         assert!(plain.meshes(start, |_| Some([0.0; 3])).iter().all(|wall| wall.texture == TILE));
+    }
+
+    #[test]
+    fn deadly_infect_blinks_the_caster_black_and_white() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.blink(Some(1), start);
+        let glow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        // White on the odd ticks 6 to 60 would be 7, 9 …: black on the even ones, no flag; nothing on 5 and 61.
+        assert!(glow(5).is_none() && glow(61).is_none());
+        assert_eq!((glow(6), glow(7)), (Some((0, Some([0; 3]))), Some((0, Some([255; 3])))));
+        assert_eq!(glow(60), Some((0, Some([0; 3]))));
+        // It fades back to white by 8 a channel a tick.
+        assert_eq!(guard.body_tint(Some(1), start + TICK * 61), Some([8; 3]));
     }
 }

@@ -19,6 +19,21 @@ const FIRE_BALL_LIFE: u32 = 20;
 const FIRE_BALL_RISE: f32 = 15.0;
 /// The lead ball as it is, the three after it gold and fainter: color and alpha (0–255).
 const FIRE_BALL_LOOKS: [[f32; 4]; 4] = [[255.0, 255.0, 255.0, 254.0], [246.0, 199.0, 76.0, 180.0], [246.0, 199.0, 76.0, 130.0], [246.0, 199.0, 76.0, 80.0]];
+/// Boost Knuckle's fists (under data\sprite\이팩트\): four, made on ticks 0, 2, 4 and 6, the last three white ghosts of alpha 60, 40, 20.
+pub const FIST_SPRITE: &str = "data\\sprite\\이팩트\\남_로켓트펀치";
+const FIST_TICKS: [u32; 4] = [0, 2, 4, 6];
+const FIST_GHOSTS: [Option<f32>; 4] = [None, Some(60.0), Some(40.0), Some(20.0)];
+
+/// The fist sprite's action for d, the camera's turn plus the direction back to the caster, in whole degrees.
+pub fn fist_action(d: i32) -> usize {
+    match d.rem_euclid(360) {
+        180..=269 => 4,
+        90..=179 => 6,
+        0..=89 => 0,
+        _ => 2,
+    }
+}
+
 /// Release's twelve spheres: three groups of four, made on ticks 0 to 3, 6 to 9 and 12 to 15, aimed 0, −5 and +5 degrees off, in
 /// lilac, green and pink.
 const RELEASE_STARTS: [u32; 3] = [0, 6, 12];
@@ -150,6 +165,29 @@ struct Orb {
     gone: bool,
 }
 
+/// One of Boost Knuckle's fists: its flight, which of the sprite's actions it shows, how faint a ghost it is, and whether it got there.
+struct Fist {
+    flight: Flight,
+    action: usize,
+    ghost: Option<f32>,
+    gone: bool,
+}
+
+/// A fist to draw: where, which action and frame, and a ghost's alpha (0–255) if it is one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FistDraw {
+    pub at: Vector,
+    pub action: usize,
+    pub frame: usize,
+    pub ghost: Option<f32>,
+}
+
+/// A Boost Knuckle letting its fists out toward `to`, the sprite's action chosen from `action`.
+struct FistThrow {
+    launch: FireBall,
+    action: usize,
+}
+
 /// Fire Balls, their balls in flight, and Jupitel Thunder's balls (the game's prim kind 15, a core and a ball
 /// moving together).
 #[derive(Default)]
@@ -161,6 +199,8 @@ pub struct Balls {
     spears: Vec<Ball>,
     releases: Vec<FireBall>,
     orbs: Vec<Orb>,
+    throws: Vec<FistThrow>,
+    fists: Vec<Fist>,
 }
 
 impl Balls {
@@ -173,6 +213,22 @@ impl Balls {
     /// Release from `from` at `to` from `now`: twelve spheres in three colours, four ticks' worth a group.
     pub fn release(&mut self, from: Vector, to: Vector, now: Instant) {
         self.releases.push(FireBall { start: now, ticks: 0, from, to });
+    }
+
+    /// Boost Knuckle from `from` at `to` from `now`, the camera turned `longitude` whole degrees: four fists.
+    pub fn boost_knuckle(&mut self, from: Vector, to: Vector, longitude: i32, now: Instant) {
+        let toward = (from[2] - to[2]).atan2(from[0] - to[0]).to_degrees().trunc() as i32;
+        let launch = FireBall { start: now, ticks: 0, from, to };
+        self.throws.push(FistThrow { launch, action: fist_action(longitude + toward) });
+    }
+
+    /// The fists showing now.
+    pub fn fist_draws(&self) -> Vec<FistDraw> {
+        self.fists
+            .iter()
+            .filter(|fist| fist.flight.ticks > 0)
+            .map(|fist| FistDraw { at: fist.flight.at(), action: fist.action, frame: fist.flight.ticks as usize % 4, ghost: fist.ghost })
+            .collect()
     }
 
     /// Jupitel Thunder from `from` at `to` from `now`: one ball, over the target 20 ticks (320 ms) later.
@@ -214,6 +270,24 @@ impl Balls {
             launch.ticks = launch.ticks.max(due);
         }
         self.releases.retain(|launch| launch.ticks <= RELEASE_STARTS[2] + 3);
+        for throw in &mut self.throws {
+            let launch = &mut throw.launch;
+            let due = passes(launch.start, now);
+            for age in launch.ticks..due {
+                let Some(index) = FIST_TICKS.iter().position(|&tick| tick == age) else { continue };
+                let flight = Flight::skewed(launch.start + TICK * age, launch.from, FIRE_BALL_RISE, launch.to, FIRE_BALL_LIFE);
+                self.fists.push(Fist { flight, action: throw.action, ghost: FIST_GHOSTS[index], gone: false });
+            }
+            launch.ticks = launch.ticks.max(due);
+        }
+        self.throws.retain(|throw| throw.launch.ticks <= FIST_TICKS[3]);
+        for fist in &mut self.fists {
+            while !fist.gone && fist.flight.ticks < passes(fist.flight.born, now).min(FIRE_BALL_LIFE) {
+                fist.flight.go();
+                fist.gone = fist.flight.near();
+            }
+        }
+        self.fists.retain(|fist| !fist.gone && passes(fist.flight.born, now) <= FIRE_BALL_LIFE);
         for orb in &mut self.orbs {
             while !orb.gone && orb.flight.ticks < passes(orb.flight.born, now).min(FIRE_BALL_LIFE) {
                 orb.flight.go();
@@ -468,5 +542,30 @@ mod tests {
         assert!(far.orbs.iter().all(|orb| orb.tint[0] != 155.0 / 255.0 || orb.tint[2] != 1.0 || orb.tint[1] != 155.0 / 255.0));
         let green = far.orbs.iter().find(|orb| orb.tint == [155.0 / 255.0, 1.0, 155.0 / 255.0]).unwrap();
         assert!(!green.gone && green.flight.ticks == FIRE_BALL_LIFE);
+    }
+
+    #[test]
+    fn boost_knuckle_flies_a_fist_with_three_fading_ghosts() {
+        let start = Instant::now();
+        let mut balls = Balls::default();
+        // The caster at +x of the aim 40 off, the camera at 0: the direction back to the caster is 0.
+        balls.boost_knuckle([40.0, 0.0, 0.0], [0.0; 3], 0, start);
+        let made = |balls: &mut Balls, tick: u32| {
+            balls.advance(start + TICK * tick);
+            balls.fists.len()
+        };
+        // Four fists on ticks 0, 2, 4, 6 and none on 8; the first as it is, the others ghosts of alpha 60, 40, 20.
+        assert_eq!([0, 1, 2, 4, 6, 7].map(|tick| made(&mut balls, tick)), [1, 1, 2, 3, 4, 4]);
+        assert_eq!(balls.fists.iter().map(|fist| fist.ghost).collect::<Vec<_>>(), [None, Some(60.0), Some(40.0), Some(20.0)]);
+        // The action for d = 200, 100, 40, 300: 4, 6, 0, 2; a fist's frame after tick n is n mod 4.
+        assert_eq!([200, 100, 40, 300].map(fist_action), [4, 6, 0, 2]);
+        assert_eq!(balls.fists[0].action, 0);
+        let draws = balls.fist_draws();
+        assert_eq!(draws[0].frame, balls.fists[0].flight.ticks as usize % 4);
+        // At 40 away the lead fist ends within 3 of the aim and is no longer drawn; all are gone by the end of their 20 ticks.
+        balls.advance(start + TICK * 19);
+        assert!(balls.fists.iter().all(|fist| fist.ghost.is_some()));
+        balls.advance(start + TICK * 40);
+        assert!(balls.fists.is_empty() && balls.throws.is_empty());
     }
 }

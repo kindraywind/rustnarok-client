@@ -55,6 +55,8 @@ pub const SIDE_SLIDE: u32 = 778;
 /// Infrared Scan's red ring and Analyze's green one: Detecting's, tinted; the green follows its unit.
 pub const RED_RING: u32 = 780;
 pub const GREEN_RING: u32 = 786;
+/// Deadly Infect's dark ring: Hovering's, in near black on the ground.
+pub const DARK_RING: u32 = 812;
 pub const ENCHANT_POISON: u32 = 125;
 /// Enchant Deadly Poison: the same sparkles round the caster's tick-0 place, 40 of them, those after tick 80 never drawn.
 pub const ENCHANT_DEADLY_POISON: u32 = 493;
@@ -85,6 +87,7 @@ pub fn makes(effect: u32) -> bool {
             | SIDE_SLIDE
             | RED_RING
             | GREEN_RING
+            | DARK_RING
             | ENCHANT_POISON
             | ENCHANT_DEADLY_POISON
     )
@@ -104,7 +107,7 @@ fn length(effect: u32) -> u32 {
         ADRENALINE_RUSH => 300,
         FLASHER_FX => 250,
         REMOVE_TRAP => 70,
-        DETECTING | SIDE_SLIDE | RED_RING | ENCHANT_POISON => 250,
+        DETECTING | SIDE_SLIDE | RED_RING | DARK_RING | ENCHANT_POISON => 250,
         GREEN_RING => 100,
         ENCHANT_DEADLY_POISON => 120,
         _ => 50,
@@ -277,7 +280,7 @@ impl First {
                     }
                 }
             }
-            DETECTING | SIDE_SLIDE | RED_RING | GREEN_RING => seed(0, 0.0, [0.0; 4]),
+            DETECTING | SIDE_SLIDE | RED_RING | GREEN_RING | DARK_RING => seed(0, 0.0, [0.0; 4]),
             ENCHANT_POISON => {
                 // A sparkle every 5 ticks: yaw, distance, speed, size.
                 for born in (0..=245).step_by(5) {
@@ -397,6 +400,7 @@ impl First {
                     | DETECTING
                     | SIDE_SLIDE
                     | RED_RING
+                    | DARK_RING
                     | ENCHANT_POISON
                     | ENCHANT_DEADLY_POISON
             ),
@@ -552,6 +556,11 @@ impl First {
                 DETECTING => {
                     if let Some(a) = Self::age(effect, now, 0, 57) {
                         meshes.push((FASHASHA, ring_square(at, detecting_half(a), burst::alpha(a, 254.0, 0.0, 254.0, 40, 57), [1.0; 3])));
+                    }
+                }
+                DARK_RING => {
+                    if let Some(a) = Self::age(effect, now, 0, 57) {
+                        meshes.push((FASHASHA, ring_square(at, ring_half(a, 10), burst::alpha(a, 254.0, 0.0, 254.0, 30, 57), [10.0 / 255.0; 3])));
                     }
                 }
                 SIDE_SLIDE => {
@@ -1460,5 +1469,17 @@ mod tests {
         assert!(moved[0].1[0].position[0] > 40.0);
         assert_eq!(moved[0].1[0].tint[..3], [210.0 / 255.0, 250.0 / 255.0, 210.0 / 255.0]);
         assert!(makes(RED_RING) && makes(GREEN_RING));
+    }
+
+    #[test]
+    fn deadly_infect_rings_the_ground_dark() {
+        let (first, start) = effect_at(DARK_RING, |_| 0, false);
+        // Hovering's ring in #0A0A0A: W after age 9, 10, 56 20.893, 20.996, 29.353; alpha 254 to 29, 244 at 30, 0 at 56.
+        let mesh = |e: u32| first.meshes(tick(start, e), |_| None);
+        let vertex = |e: u32| mesh(e)[0].1[0];
+        assert!(near(ring_half(9, 10), 20.893) && near(ring_half(56, 10), 29.353));
+        assert_eq!(vertex(0).tint[..3], [10.0 / 255.0; 3]);
+        assert_eq!([29, 30, 56].map(|e| (vertex(e).tint[3] * 255.0).trunc()), [254.0, 244.0, 0.0]);
+        assert!((0..57).all(|e| mesh(e).len() == 1) && mesh(57).is_empty());
     }
 }
