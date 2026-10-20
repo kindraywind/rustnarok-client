@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, circle, crowds, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter, sage, shafts,
-    shards, sight, sniper, songs, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
+    balls, blitz, bolts, boomerang, brawl, burst, chi, circle, crowds, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter, sage,
+    shafts, shards, sight, sniper, songs, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1874,6 +1874,11 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Exceed Break's needles, the Dragon Combo's rays, the Sura's chi burst and Moon Slasher's spin (`prims::chi`, `prims::brawl`).
+const PRIME_CHARGE: u32 = 882;
+const DRAGON_RAYS: u32 = 885;
+const CHI_BURST: u32 = 886;
+const MOON_SPIN: u32 = 890;
 /// Sound of Destruction's red music notes (`prims::guard`).
 const SOUND_NOTES: u32 = 869;
 /// Dead Hill Here's Geographers, Poem of Netherworld's note, Randomize Spell's frames and Dance with Warg's Wargs (`prims::crowds`).
@@ -2161,6 +2166,14 @@ impl Effects {
             self.prims.songs.twilight(id, cast_ms / crate::prims::TICK.as_millis() as u32, now, |n| pick(0, n.saturating_sub(1)));
             return;
         }
+        // Exceed Break's cast: 160 needles converge on the caster for the cast (500 ticks when there is no cast time).
+        if id == PRIME_CHARGE {
+            self.textures.entry(chi::NEEDLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, chi::NEEDLE, true).ok());
+            self.play_sounds(table, id, at, now);
+            let ticks = cast_ms / crate::prims::TICK.as_millis() as u32;
+            self.prims.chi.charge(unit, if ticks == 0 { 500 } else { ticks }, now, |n| pick(0, n.saturating_sub(1)));
+            return;
+        }
         // Shadow Form's cast aura shows with no sound; the sound comes with the skill packet.
         if id == SHADOW_CAST {
             return;
@@ -2415,6 +2428,17 @@ impl Effects {
                 self.prims.songs.swing_dance(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
             (HARMONIZE, Target::Unit(unit)) => self.prims.spears.emitter(unit, now),
+            (DRAGON_RAYS, Target::Unit(unit)) => {
+                self.textures.entry(brawl::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::RAY, true).ok());
+                self.prims.brawl.dragon_rays(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (CHI_BURST, Target::Unit(unit)) => {
+                self.textures.entry(walls::RING_BLUE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_BLUE, true).ok());
+                self.prims.walls.chi_burst(unit, now);
+                self.prims.guard.chi_burst(unit, now);
+                self.prims.brawl.chi_spread(unit, now);
+            }
+            (MOON_SPIN, Target::Unit(unit)) => self.prims.brawl.moon_spin(unit, now),
             (SOUND_NOTES, _) => {
                 for path in guard::NOTES {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
@@ -3323,6 +3347,7 @@ impl Effects {
         self.prims.brawl.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.mechanic.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.waves.advance(now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.chi.advance(now);
         // Harmonize's lights (effect 850) have no look yet: what the emitters launch is let go.
         self.prims.spears.advance(now);
         let _ = self.prims.spears.take_launched();
@@ -3661,7 +3686,7 @@ impl Effects {
             meshes.extend(
                 self.prims
                     .brawl
-                    .top_meshes(now)
+                    .top_meshes(now, &position_of)
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             );
@@ -3870,6 +3895,13 @@ impl Effects {
             )
             .chain(
                 self.prims.spears.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
+                self.prims
+                    .chi
+                    .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
             .chain(
                 self.prims
@@ -6087,5 +6119,33 @@ mod tests {
                 ("effect\\복호격", 496, false)
             ]
         );
+    }
+
+    #[test]
+    fn exceed_break_the_dragon_combo_the_chi_burst_and_moon_slasher_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Exceed Break's cast, its sound at tick 10.
+        assert_eq!(table.cast_aura(2316, 12), Some(PRIME_CHARGE));
+        assert_eq!(sounds(PRIME_CHARGE), [("effect\\LG_EXEEDBREAK", 160, false)]);
+        // The Dragon Combo's rays: no rings, the sound at tick 5, on the damage packets and the ground one.
+        assert!(!table.rings.contains_key(&DRAGON_RAYS));
+        assert_eq!(sounds(DRAGON_RAYS), [("effect\\mon_맹룡과강", 80, false)]);
+        for skill in [2320, 2326, 2344] {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Caster, DRAGON_RAYS)), "{skill}");
+        }
+        assert!(table.ground(2518).unwrap().contains(&(Who::Caster, DRAGON_RAYS)) && table.ground(2518).unwrap().contains(&(Who::Caster, CHI_BURST)));
+        // The chi burst's extra launches, including the Sorcerer's ground skills (Psychic Wave keeps its own cell effect).
+        for skill in [2320, 2327, 2332] {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Caster, CHI_BURST)), "{skill}");
+        }
+        assert!(table.used(2337).unwrap().contains(&(Who::Caster, CHI_BURST)));
+        for skill in [2446, 2449, 2450] {
+            assert!(table.ground(skill).unwrap().contains(&(Who::Caster, CHI_BURST)), "{skill}");
+        }
+        assert!(table.ground(2449).unwrap().contains(&(Who::Ground, 922)));
+        assert!(!table.sounds.contains_key(&CHI_BURST));
+        // Moon Slasher and Sky Net Blow turn the caster.
+        assert!(table.struck(2320).unwrap().contains(&(Who::Caster, MOON_SPIN)) && table.struck(2327).unwrap().contains(&(Who::Caster, MOON_SPIN)));
     }
 }

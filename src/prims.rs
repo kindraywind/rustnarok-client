@@ -9,6 +9,7 @@ pub mod bolts;
 pub mod boomerang;
 pub mod brawl;
 pub mod burst;
+pub mod chi;
 pub mod circle;
 pub mod crowds;
 pub mod dancer;
@@ -183,6 +184,7 @@ pub struct Prims {
     pub waves: waves::Waves,
     pub spears: spears::Spears,
     pub crowds: crowds::Crowds,
+    pub chi: chi::Chi,
 }
 
 /// COLDHIT's shard and smoke textures.
