@@ -1,14 +1,13 @@
-//! The magic square under a ground skill being cast: (area + 2) cells wide on the target cell, turning and pulsing
-//! for the cast time.
+//! The magic square under a ground skill being cast: (area + 2) cells wide on the target cell, turning and glowing
+//! brighter and fainter for the cast time. It keeps its size.
 
 use std::time::{Duration, Instant};
 
 /// Skill id to its area's radius per level (rathena's skill_db.yml).
 const AREAS: &str = include_str!("ground_areas.txt");
-/// ponytail: how fast it turns (radians a second), and how much and how fast it pulses.
-const TURN: f32 = std::f32::consts::FRAC_PI_2;
-const PULSE: f32 = 0.05;
-const PULSE_HZ: f32 = 1.0;
+/// It turns 0.5/N radians a rendered frame, N its width in cells.
+// ponytail: at 60 frames a second, so a wide square turns slower.
+const FRAMES_PER_SECOND: f32 = 60.0;
 
 /// The radius of a ground skill's area at `level`, or at its level 10 (or last) when the level isn't known.
 pub fn radius(skill: u16, level: Option<u16>) -> Option<u16> {
@@ -40,18 +39,19 @@ impl Square {
         now.saturating_duration_since(self.start) < self.length
     }
 
-    /// Its turn (radians) and size (times its width) at `now`.
+    /// Its turn θ (radians) and alpha (0–1) at `now`: 128 + 40·sin θ out of 255 while sin θ ≥ 0, else 128 (the game's
+    /// unsigned conversion of a negative sum).
     pub fn pose(&self, now: Instant) -> (f32, f32) {
-        let seconds = now.saturating_duration_since(self.start).as_secs_f32();
-        (seconds * TURN, 1.0 + PULSE * (seconds * PULSE_HZ * std::f32::consts::TAU).sin())
+        let frames = now.saturating_duration_since(self.start).as_secs_f32() * FRAMES_PER_SECOND;
+        let angle = frames * 0.5 / self.width;
+        (angle, (128.0 + 40.0 * angle.sin().max(0.0)) / 255.0)
     }
 
     /// Triangles over the square in cell coordinates (fractional cells, the target cell's middle at its own
     /// coordinates), each corner with its texture coordinate: a grid of `steps` × `steps` so it can follow the ground.
     pub fn triangles(&self, now: Instant, steps: usize) -> Vec<([f32; 2], [f32; 2])> {
-        let (angle, scale) = self.pose(now);
-        let (sin, cos) = angle.sin_cos();
-        let half = self.width * scale / 2.0;
+        let (sin, cos) = self.pose(now).0.sin_cos();
+        let half = self.width / 2.0;
         let corner = |column: usize, row: usize| {
             let uv = [column as f32 / steps as f32, row as f32 / steps as f32];
             let local = [(uv[0] * 2.0 - 1.0) * half, (uv[1] * 2.0 - 1.0) * half];
@@ -93,8 +93,15 @@ mod tests {
         assert_eq!(triangles.len(), 2 * 2 * 6);
         assert_eq!(triangles[0], ([94.5, 44.5], [0.0, 0.0]));
         assert_eq!(triangles.last(), Some(&([105.5, 55.5], [1.0, 1.0])));
-        // A quarter second later it has turned and grown.
-        let (angle, scale) = square.pose(start + Duration::from_millis(250));
-        assert!(angle > 0.3 && scale > 1.0);
+        // A second later (60 frames) it has turned 60·0.5/11 radians, and it glows at 128 + 40·sin θ.
+        let (angle, alpha) = square.pose(start + Duration::from_secs(1));
+        assert!((angle - 30.0 / 11.0).abs() < 1e-4);
+        assert!((alpha * 255.0 - (128.0 + 40.0 * angle.sin())).abs() < 1e-3);
+        // Its size never changes: the corners stay 5.5·√2 cells from the middle.
+        let far = square.triangles(start + Duration::from_millis(1234), 1).iter().map(|(at, _)| f32::hypot(at[0] - 100.0, at[1] - 50.0)).fold(0.0, f32::max);
+        assert!((far - 5.5 * std::f32::consts::SQRT_2).abs() < 1e-3);
+        // With sin θ below zero it stays at 128.
+        let (angle, alpha) = square.pose(start + Duration::from_secs_f32(8.0 * 11.0 / 60.0));
+        assert!(angle.sin() < 0.0 && (alpha * 255.0 - 128.0).abs() < 1e-3);
     }
 }
