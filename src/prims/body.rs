@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use super::passes;
-use crate::actor::{GLOW_DROP, GLOW_SOUL, GLOW_STACK, GLOW_WHITE, PARAM_SHIFT, Placed};
+use crate::actor::{GLOW_BLUE, GLOW_DROP, GLOW_RED, GLOW_SOUL, GLOW_STACK, GLOW_WHITE, PARAM_SHIFT, Placed, copies_alpha};
 
 /// What changes a unit's body, and how long it lasts in ticks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +25,10 @@ pub enum Change {
     Stack,
     /// High Jump and Lope: the character drops in from the sky, spinning.
     Drop,
+    /// Kaupe and Kaite: a blue glow that rises quickly and fades over 2.4 s.
+    BlueGlow,
+    /// The Star Gladiator's warmth: a red glow that rises over 1.4 s and settles.
+    RedGlow,
 }
 
 impl Change {
@@ -33,7 +37,8 @@ impl Change {
             Change::Squash => 50,
             Change::Hop | Change::Flash => 100,
             Change::Shrink => 99_999,
-            Change::Soul | Change::Stack => 99_999_999,
+            Change::Soul | Change::Stack | Change::RedGlow => 99_999_999,
+            Change::BlueGlow => 200,
             Change::Drop => 35,
         }
     }
@@ -86,6 +91,11 @@ pub fn soul_alpha(e: u32) -> u32 {
     e.min(200)
 }
 
+/// The red glow's counter at the tick e: e / 8 up to 200, then 25.
+pub fn red_counter(e: u32) -> u32 {
+    if e <= 200 { e / 8 } else { 25 }
+}
+
 /// Spirit Link's counter at the tick e: 50 more than the tick up to 149, then 199.
 pub fn stack_counter(e: u32) -> u32 {
     if e < 150 { e + 50 } else { 199 }
@@ -111,7 +121,7 @@ impl Bodies {
     /// `change` starts on `unit` (None = the player).
     pub fn start(&mut self, change: Change, unit: Option<u32>, now: Instant) {
         // A new Soul Link or landing replaces the old one on the unit.
-        if matches!(change, Change::Soul | Change::Drop) {
+        if matches!(change, Change::Soul | Change::Drop | Change::RedGlow) {
             self.active.retain(|each| !(each.unit == unit && each.change == change));
         }
         self.active.push(Active { unit, change, start: now });
@@ -149,8 +159,21 @@ impl Bodies {
         if let Some(e) = self.tick(unit, Change::Soul, now) {
             return Some((GLOW_SOUL | soul_alpha(e) << PARAM_SHIFT, None));
         }
-        let e = self.tick(unit, Change::Stack, now)?;
-        Some((GLOW_STACK | stack_counter(e) << PARAM_SHIFT, None))
+        if let Some(e) = self.tick(unit, Change::Stack, now) {
+            return Some((GLOW_STACK | stack_counter(e) << PARAM_SHIFT, None));
+        }
+        if let Some(e) = self.tick(unit, Change::BlueGlow, now).filter(|&e| e <= 150) {
+            return Some((GLOW_BLUE | (copies_alpha(e / 3) as u32) << PARAM_SHIFT, None));
+        }
+        let e = self.tick(unit, Change::RedGlow, now)?;
+        Some((GLOW_RED | (copies_alpha(red_counter(e)) as u32) << PARAM_SHIFT, None))
+    }
+
+    /// The warmth's red glow ends with its status.
+    pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
+        if matches!(status, 165..=167 | 232 | 660) {
+            self.active.retain(|each| !(each.unit == unit && each.change == Change::RedGlow));
+        }
     }
 
     /// Squashes or lifts the layers `placed` of `unit` (their `[x, y]` offsets and sizes in sprite pixels, y down): a squash moves each
@@ -300,5 +323,31 @@ mod tests {
         assert_eq!(landing.glow(None, start + TICK * 12), Some((GLOW_DROP | 2 << PARAM_SHIFT, None)));
         landing.advance(start + TICK * 46);
         assert!(landing.active.is_empty() && landing.glow(None, start + TICK * 46).is_none());
+    }
+
+    #[test]
+    fn kaupe_glows_blue_and_the_warmth_glows_red() {
+        let start = Instant::now();
+        let mut bodies = Bodies::default();
+        bodies.start(Change::BlueGlow, Some(1), start);
+        bodies.start(Change::RedGlow, Some(2), start);
+        let blue = |tick: u32| bodies.glow(Some(1), start + TICK * tick).map(|(flags, _)| (flags & 0xFFFFFF, flags >> PARAM_SHIFT));
+        // f = e / 3; alpha at e = 0, 3, 30, 33, 60, 150: 0, 15, 150, 160, 160, 5; nothing from 151 (the effect runs to 200).
+        assert_eq!([0, 3, 30, 33, 60, 150].map(|e| blue(e).unwrap().1), [0, 15, 150, 160, 160, 5]);
+        assert_eq!(blue(0).unwrap().0, GLOW_BLUE);
+        assert!(blue(151).is_none() && blue(200).is_none());
+        // The warmth's counter f = e / 8 to 200, 25 after; alpha at f = 0, 10, 11, 20, 21, 25: 0, 150, 160, 160, 150, 130.
+        assert_eq!([0, 8, 200, 201, 1000].map(red_counter), [0, 1, 25, 25, 25]);
+        let red = |bodies: &Bodies, tick: u32| bodies.glow(Some(2), start + TICK * tick).map(|(flags, _)| (flags & 0xFFFFFF, flags >> PARAM_SHIFT));
+        assert_eq!([0, 80, 88, 160, 168, 400].map(|e| red(&bodies, e).unwrap().1), [0, 150, 160, 160, 150, 130]);
+        assert_eq!(red(&bodies, 10).unwrap().0, GLOW_RED);
+        // It stays for as long as the status does, a new one replaces it, and the status going takes it away.
+        assert!(red(&bodies, 100_000).is_some());
+        bodies.start(Change::RedGlow, Some(2), start + TICK * 50);
+        assert_eq!(bodies.active.iter().filter(|each| each.change == Change::RedGlow).count(), 1);
+        bodies.forget_status(Some(2), 14);
+        assert!(red(&bodies, 100).is_some());
+        bodies.forget_status(Some(2), 166);
+        assert!(bodies.glow(Some(2), start + TICK * 100).is_none());
     }
 }

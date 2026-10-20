@@ -583,6 +583,22 @@ impl Walls {
         self.pulses.push(Pulse { unit, start: now, streaks });
     }
 
+    /// AGI up's 26 faint white streaks on `unit`, thinner and longer than Acceleration's, each one's choices from `rand(n)`.
+    pub fn agility(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let streaks = (0..=50)
+            .step_by(2)
+            .map(|born| {
+                let yaw = rand(360) as f32;
+                let distance = (2 + rand(7)) as f32;
+                let speed = (20 + rand(50)) as f32 / 100.0;
+                let half = (20 + rand(100)) as f32 / 10.0;
+                let width = 0.1 + 0.1 * rand(4) as f32;
+                Streak { style: &PULSE_STREAKS, width, born, yaw, distance, speed, half }
+            })
+            .collect();
+        self.pulses.push(Pulse { unit, start: now, streaks });
+    }
+
     /// A Berserk Pitcher's effect on `unit` (None = the player): its 24 streaks drawn now from `rand(n)` (0 to n − 1).
     pub fn berserk(&mut self, unit: Option<u32>, now: Instant, look: &'static BerserkLook, mut rand: impl FnMut(u32) -> u32) {
         // One streak every 4 ticks from 16 to 108: yaw, distance, speed, half-length.
@@ -1271,5 +1287,29 @@ mod tests {
         let all = walls.meshes(start, |_| Some([0.0; 3]));
         assert_eq!(all.len(), 3 * (4 + 6));
         assert_eq!(all.iter().filter(|wall| wall.texture == RING_YELLOW || wall.texture == RING_WHITE).count(), 4 + 6);
+    }
+
+    #[test]
+    fn agi_up_raises_white_hairlines() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        let mut draws = Vec::new();
+        walls.agility(Some(1), start, |n| {
+            draws.push(n);
+            0
+        });
+        // 26 streaks on e = 0, 2 … 50, five draws each: R(360), R(7), R(50), R(100), R(4).
+        let streaks = &walls.pulses[0].streaks;
+        assert_eq!((streaks.len(), streaks[0].born, streaks[25].born), (26, 0, 50));
+        assert_eq!(draws[..5], [360, 7, 50, 100, 4]);
+        // Every draw 0: d 2, speed 0.20, half-length 2.0, half-width 0.1; the largest: speed 0.69, 11.9, 0.4.
+        assert!(streaks.iter().all(|streak| streak.distance == 2.0 && streak.speed == 0.20 && streak.half == 2.0 && (streak.width - 0.1).abs() < 1e-6));
+        let mut high = Walls::default();
+        high.agility(None, start, |n| n - 1);
+        let streak = &high.pulses[0].streaks[0];
+        assert!((streak.speed - 0.69).abs() < 1e-6 && (streak.half - 11.9).abs() < 1e-4 && (streak.width - 0.4).abs() < 1e-6 && streak.distance == 8.0);
+        // Alpha at p = 0, 19, 29, 30, 49 is the same as Acceleration's: 3, 60, 60, 57, 0; none made after tick 50.
+        let alpha = |p: u32| burst::alpha(p, 0.0, PULSE_STREAKS.rate, PULSE_STREAKS.max, PULSE_STREAKS.fade, PULSE_STREAKS.life);
+        assert_eq!([0, 19, 29, 30, 49].map(alpha), [3.0, 60.0, 60.0, 57.0, 0.0]);
     }
 }

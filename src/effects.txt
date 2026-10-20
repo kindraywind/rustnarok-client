@@ -1422,7 +1422,6 @@ ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.45
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.52;topSize=2.52;height=2.1;alphaMax=32;blendMode=2;rotateWithCamera=true;angleY=10;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=26.6;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=79.8;duration=20000;attachedEntity=true
-ring	454	alphaMax=0.8;animation=2;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=900;fade=true;green=1;height=4;red=1;rotate=true;textureName=ring_black;topSize=5;wav=effect/ef_beginspell
 ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=4.5;height=-4;duration=800
 ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=2.5;height=-4;duration=800
 ring	628	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
@@ -1838,7 +1837,7 @@ wav	445	effect\t_회피2	0
 wav	450	effect\cru_grand cross	0
 wav	451	effect\ef_soulstrike	0
 wav	454	effect\ef_beginspell	0
-wav	456	effect\mon_폭기	0
+wav	456	effect\EF_IncAgility	0
 wav	457	effect\t_날라차기	80
 wav	464	effect\REVERBERATION	0
 wav	466	effect\T_돌려차기	80
@@ -4564,6 +4563,7 @@ used	462	target	543
 used	463	target	543
 used	464	target	542
 used	465	target	419
+used	465	target	542
 used	470	target	420
 used	471	target	427
 used	472	target	254
@@ -5158,7 +5158,12 @@ length	431	200
 length	442	9999
 length	444	100
 length	450	999
+length	454	60
 length	455	1500
+length	456	100
+length	461	100
+length	542	200
+length	544	99999999
 length	675	200
 length	850	100
 length	932	100

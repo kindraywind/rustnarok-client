@@ -1100,7 +1100,21 @@ pub fn circle_ignores(status: u16, on: bool, value: i64) -> bool {
 pub fn is_cast_aura(effect: u32) -> bool {
     matches!(
         effect,
-        12 | 54..=59 | TETRA_CASTING | SHADOW_CAST | BUBBLE_CAST | COUPLE_CASTING | BLUE_CASTING | GREEN_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923
+        12 | 54
+            ..=59
+                | TETRA_CASTING
+                | SHADOW_CAST
+                | DARK_CASTING
+                | BUBBLE_CAST
+                | COUPLE_CASTING
+                | BLUE_CASTING
+                | GREEN_CASTING
+                | 1872
+                | 1876
+                | 1902
+                | 1910
+                | 1918
+                | 1923
     )
 }
 
@@ -1124,6 +1138,7 @@ pub fn is_banded(effect: u32) -> bool {
                 | TETRA_CASTING
                 | GREEN_CASTING
                 | SHADOW_CAST
+                | DARK_CASTING
                 | BUBBLE_CAST
                 | 1872
                 | 1876
@@ -1180,8 +1195,10 @@ const ARRIVAL_BANDS: [[f32; 3]; 4] = [[3.7, 30.0, 90.0], [3.4, 30.0, 90.0], [3.6
 fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
     (cast_ms / 16).max(if effect == BUBBLE_CAST {
         100
-    } else if matches!(effect, 12 | 58 | TETRA_CASTING | SHADOW_CAST | COUPLE_CASTING | BLUE_CASTING | GREEN_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
-    {
+    } else if matches!(
+        effect,
+        12 | 58 | TETRA_CASTING | SHADOW_CAST | DARK_CASTING | COUPLE_CASTING | BLUE_CASTING | GREEN_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923
+    ) {
         56
     } else {
         70
@@ -1208,7 +1225,7 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         314 => ("ring_purple", [0x64, 0x64, 0xFF], true),
         344 => ("ring_blue", [0x64, 0x64, 0xFF], true),
         58 | TETRA_CASTING => ("ring_white", [0xFF, 0xFF, 0xFF], true),
-        SHADOW_CAST => ("ring_black", [0x32, 0x32, 0x32], false),
+        SHADOW_CAST | DARK_CASTING => ("ring_black", [0x32, 0x32, 0x32], false),
         BUBBLE_CAST => ("ring_white", [0xFF, 0xFF, 0xFF], true),
         COUPLE_CASTING => ("ring_red", [0xFF, 0x59, 0xB6], true),
         BLUE_CASTING => ("ring_blue", [0x64, 0x64, 0xFF], true),
@@ -1355,7 +1372,21 @@ fn arrival_bands(age: u32) -> [Band; 4] {
 fn is_bloom(effect: u32) -> bool {
     matches!(
         effect,
-        12 | 58 | 367 | TETRA_CASTING | SHADOW_CAST | BUBBLE_CAST | COUPLE_CASTING | BLUE_CASTING | GREEN_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923
+        12 | 58
+            | 367
+            | TETRA_CASTING
+            | SHADOW_CAST
+            | DARK_CASTING
+            | BUBBLE_CAST
+            | COUPLE_CASTING
+            | BLUE_CASTING
+            | GREEN_CASTING
+            | 1872
+            | 1876
+            | 1902
+            | 1910
+            | 1918
+            | 1923
     )
 }
 
@@ -2089,6 +2120,13 @@ const RUN_STOP: u32 = 444;
 /// Running's status (133) and how long a footprint lives.
 const RUN_STATUS_EFST: u16 = 133;
 const FOOTPRINT_TICKS: u32 = 333;
+/// The Soul Reaper's dark cast, AGI up, Seven Wind and the blue and red body glows (`aura_look`, `prims::walls`, `prims::brawl`,
+/// `prims::body`).
+const DARK_CASTING: u32 = 454;
+const AGI_UP: u32 = 456;
+const SEVEN_WIND: u32 = 461;
+const BLUE_BODY: u32 = 542;
+const RED_LIGHT_BODY: u32 = 544;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
 /// Resurrection's rings and the Call Partner portal's warp (`prims::portal`).
@@ -2724,6 +2762,22 @@ impl Effects {
                 self.prims.painter.paint(unit, at, now);
             }
             (DEADLY_INFECT, Target::Unit(unit)) => self.prims.guard.blink(unit, now),
+            (DARK_CASTING, Target::Unit(unit)) => {
+                // A start other than a cast shows the aura for 60 ticks.
+                self.play_aura(gpu, grf, unit, DARK_CASTING, 960, now);
+            }
+            (AGI_UP, Target::Unit(unit) | Target::Status(unit, _)) => {
+                self.textures.entry(walls::STREAK.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::STREAK, true).ok());
+                self.prims.walls.agility(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (SEVEN_WIND, Target::Unit(unit)) => {
+                for path in [brawl::STORM, brawl::CLOUD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.brawl.seven_wind(unit, at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (BLUE_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::BlueGlow, unit, now),
+            (RED_LIGHT_BODY, Target::Unit(unit) | Target::Status(unit, _)) => self.prims.bodies.start(body::Change::RedGlow, unit, now),
             (SHADOW_CAST, Target::Unit(unit)) => {
                 // The skill packet's aura: 60 ticks, with the sound at the listener.
                 self.play_aura(gpu, grf, unit, SHADOW_CAST, 960, now);
@@ -4184,6 +4238,7 @@ impl Effects {
         if status == RUN_STATUS_EFST {
             self.prims.kicks.status(unit, false);
         }
+        self.prims.bodies.forget_status(unit, status);
         if status == 330 {
             self.prims.circles.forget(unit);
         }
@@ -7276,5 +7331,29 @@ mod tests {
         assert!(!table.sounds.contains_key(&RUN_START));
         // The footprints (447 and 448) have no rows of their own.
         assert!(!table.lengths.contains_key(&447) && !table.parts.contains_key(&448));
+    }
+
+    #[test]
+    fn the_dark_cast_agi_up_seven_wind_and_the_body_glows_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        // 454: a banded cast aura like 826's in dark grey, blended; 56 ticks for a 500 ms cast, 125 for 2000 ms; no stand-in ring.
+        assert!(is_cast_aura(DARK_CASTING) && is_banded(DARK_CASTING) && is_bloom(DARK_CASTING));
+        assert_eq!(aura_look(DARK_CASTING), ("ring_black", [0x32; 3], false));
+        assert_eq!((aura_ticks(DARK_CASTING, 500), aura_ticks(DARK_CASTING, 2000)), (56, 125));
+        for skill in [2600, 2601, 2602, 2603, 2604, 2606, 2610] {
+            assert_eq!(table.cast_aura(skill, 12), Some(DARK_CASTING), "{skill}");
+        }
+        assert!(!table.rings.contains_key(&DARK_CASTING));
+        assert_eq!(sounds(DARK_CASTING), [("effect\\ef_beginspell", 0)]);
+        // 456: its own sound, 100 ticks.
+        assert_eq!(sounds(AGI_UP), [("effect\\EF_IncAgility", 0)]);
+        assert_eq!((table.lengths[&AGI_UP], table.lengths[&SEVEN_WIND]), (100, 100));
+        assert!(table.used(425).unwrap().contains(&(Who::Caster, SEVEN_WIND)) && !table.sounds.contains_key(&SEVEN_WIND));
+        // 542 for Kaupe and Kaite (beside Kaite's own body); 544 for the warmth statuses.
+        assert!(table.used(464).unwrap().contains(&(Who::Target, BLUE_BODY)) && table.used(465).unwrap().contains(&(Who::Target, BLUE_BODY)));
+        assert!(table.used(465).unwrap().contains(&(Who::Target, 419)));
+        assert!([165, 166, 167, 232, 660].iter().all(|&status| table.status(status).contains(&RED_LIGHT_BODY)));
+        assert_eq!((table.lengths[&BLUE_BODY], table.lengths[&RED_LIGHT_BODY]), (200, 99_999_999));
     }
 }
