@@ -287,6 +287,15 @@ impl Shortcuts {
         &self.bindings
     }
 
+    /// The chord that fires `slot` (0-based) of hotbar `bar` (1 or 2), if one is bound.
+    pub fn hotbar_key(&self, bar: u8, slot: usize) -> Option<String> {
+        let slot = u8::try_from(slot).ok()?;
+        self.bindings()
+            .iter()
+            .find(|binding| binding.action == (Action::Hotbar { bar, slot }) && binding.key.is_some())
+            .and_then(|binding| Some(chord(binding.key?, binding.modifier)))
+    }
+
     /// Action name to the chord, for the control socket. Unbound rows are left out.
     pub fn labels(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();
@@ -1337,5 +1346,13 @@ mod tests {
         assert_eq!(fire(&shortcuts, &queue, true, false, false, false, false), Some(Action::Equipment));
         let f11 = Key::Named(NamedKey::F11);
         assert_eq!(fire(&shortcuts, &f11, false, false, false, false, true), Some(Action::CloseWindows));
+    }
+
+    #[test]
+    fn names_the_key_of_a_hotbar_slot() {
+        let shortcuts = Shortcuts::builtin();
+        assert_eq!(shortcuts.hotbar_key(1, 0).as_deref(), Some("F1"));
+        assert_eq!(shortcuts.hotbar_key(1, 8).as_deref(), Some("F9"));
+        assert_eq!(shortcuts.hotbar_key(1, 400), None);
     }
 }
