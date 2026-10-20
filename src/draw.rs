@@ -2737,6 +2737,10 @@ impl App {
             None => Some(player_feet),
             Some(id) => feet_of.get(&id).copied(),
         };
+        // The Sight option (bit 0x1) keeps a flame circling its unit.
+        let sights: Vec<_> =
+            std::iter::once((None, game.player.option & 1 != 0)).chain(game.units.iter().map(|(&id, actor)| (Some(id), actor.option & 1 != 0))).collect();
+        game.effects.watch_sight(sights, now);
         game.effects.rises = rises;
         game.effects.facings = facings;
         game.effects.aim_arrows(now, feet_of_unit);
