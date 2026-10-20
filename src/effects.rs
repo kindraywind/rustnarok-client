@@ -549,7 +549,7 @@ fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
 /// How many ticks before its length a ground unit's effect starts again.
 fn restart_early(effect: u32, kind: u32) -> u32 {
     match kind {
-        228 | 230..=233 | 235 | 240..=244 | 258 => 1,
+        228 | 230..=233 | 235 | 239..=244 | 258 => 1,
         220 | 221 => 7,
         // Kaensin's and Ground Drift's cells start the next copy a tick before this one ends.
         189..=194 => 1,
@@ -1104,7 +1104,7 @@ pub fn circle_ignores(status: u16, on: bool, value: i64) -> bool {
 pub fn is_cast_aura(effect: u32) -> bool {
     matches!(
         effect,
-        12 | 54
+        12 | HOMUN_CASTING | 54
             ..=59
                 | TETRA_CASTING
                 | SHADOW_CAST
@@ -1126,7 +1126,7 @@ pub fn is_cast_aura(effect: u32) -> bool {
 pub fn is_banded(effect: u32) -> bool {
     matches!(
         effect,
-        12 | 54
+        12 | HOMUN_CASTING | 54
             ..=59
                 | 304
                 | 312
@@ -1204,6 +1204,8 @@ fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
         12 | 58 | TETRA_CASTING | SHADOW_CAST | DARK_CASTING | COUPLE_CASTING | BLUE_CASTING | GREEN_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923
     ) {
         56
+    } else if effect == HOMUN_CASTING {
+        60
     } else {
         70
     })
@@ -1229,6 +1231,7 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         314 => ("ring_purple", [0x64, 0x64, 0xFF], true),
         344 => ("ring_blue", [0x64, 0x64, 0xFF], true),
         58 | TETRA_CASTING => ("ring_white", [0xFF, 0xFF, 0xFF], true),
+        HOMUN_CASTING => ("ring_red", [0xFF, 0x59, 0xB6], true),
         SHADOW_CAST | DARK_CASTING => ("ring_black", [0x32, 0x32, 0x32], false),
         BUBBLE_CAST => ("ring_white", [0xFF, 0xFF, 0xFF], true),
         COUPLE_CASTING => ("ring_red", [0xFF, 0x59, 0xB6], true),
@@ -1376,7 +1379,8 @@ fn arrival_bands(age: u32) -> [Band; 4] {
 fn is_bloom(effect: u32) -> bool {
     matches!(
         effect,
-        12 | 58
+        12 | HOMUN_CASTING
+            | 58
             | 367
             | TETRA_CASTING
             | SHADOW_CAST
@@ -2009,6 +2013,15 @@ pub fn spread_attack_action(longitude: i32, heading: i32) -> usize {
     [0, 6, 4, 2][blast_quarter(longitude, heading)]
 }
 
+/// Moonlight's slash by the packet's hit count: one (565), two (566) or three or more (567).
+pub fn moonlight_effect(hits: u16) -> u32 {
+    match hits {
+        0 | 1 => 565,
+        2 => 566,
+        _ => 567,
+    }
+}
+
 /// Whether the server sends this effect (ZC_NOTIFY_EFFECT2) with no target, so it flies from its unit at the map's
 /// centre: Fire Ball's and Frost Diver's.
 pub fn aimed_at_centre(effect: u32) -> bool {
@@ -2173,6 +2186,12 @@ const RUN_STATUS_EFST: u16 = 133;
 const DARK_CASTING: u32 = 454;
 const AGI_UP: u32 = 456;
 const SEVEN_WIND: u32 = 461;
+/// Circle of Fire's dome, Hurricane Rage's and Zephyr's funnels, the Filir's pink bloom and Moonlight's slashes (by hit count).
+const CIRCLE_GUARD: u32 = 336;
+const HURRICANE_RAGE: u32 = 460;
+const ZEPHYR: u32 = 465;
+pub const HOMUN_CASTING: u32 = 564;
+pub const MOONLIGHT_SKILL: u16 = 8009;
 const BLUE_BODY: u32 = 542;
 const RED_LIGHT_BODY: u32 = 544;
 /// Comfort's cones, Soul Link's mote and letters and Stin's blade (`prims::soul`).
@@ -2852,6 +2871,25 @@ impl Effects {
             (AGI_UP, Target::Unit(unit) | Target::Status(unit, _)) => {
                 self.textures.entry(walls::STREAK.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::STREAK, true).ok());
                 self.prims.walls.agility(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (CIRCLE_GUARD, Target::Unit(unit)) => {
+                for path in [guard::GUARD_K, guard::GUARD_K2] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
+                self.prims.guard.circle_of_fire(unit, facing, now);
+            }
+            (HURRICANE_RAGE, Target::Unit(unit)) => {
+                for path in [brawl::STORM, brawl::CLOUD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.brawl.hurricane(unit, at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (ZEPHYR, Target::Lasting(id)) => {
+                for path in [brawl::STORM, brawl::CLOUD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.brawl.zephyr(id, at, now, |n| pick(0, n.saturating_sub(1)));
             }
             (SEVEN_WIND, Target::Unit(unit)) => {
                 for path in [brawl::STORM, brawl::CLOUD] {
@@ -7472,7 +7510,8 @@ mod tests {
         assert_eq!(copies(&mut one, &[120]), [0]);
         // Rows: no skill-line copy, the puff stays where it was made, and Power of Gaia restarts a tick before its length.
         assert!(table.skill(8020, "effectId").is_empty() && !table.parts[&959][0].attached && table.lengths[&959] == 60);
-        assert_eq!((restart_ticks(1088, 240, 2000), restart_ticks(0, 239, 2000), restart_ticks(0, 9, 2000)), (1999, 1992, 1992));
+        // (Zephyr's cell, type 239, restarts a tick early too.)
+        assert_eq!((restart_ticks(1088, 240, 2000), restart_ticks(0, 239, 2000), restart_ticks(0, 9, 2000)), (1999, 1999, 1992));
     }
 
     #[test]
@@ -7816,5 +7855,45 @@ mod tests {
         // The grey: the three statuses play it, once each.
         assert!([606, 655, 659].iter().all(|&status| table.status(status).contains(&GREY_BODY)));
         assert_eq!(table.lengths[&GREY_BODY], 99_999);
+    }
+
+    #[test]
+    fn circle_of_fire_the_funnels_the_pink_bloom_moonlight_and_castling_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        // 336: the struck row stays, the three stand-in rings are gone.
+        assert!(table.struck(8401).unwrap().contains(&(Who::Target, CIRCLE_GUARD)) && !table.rings.contains_key(&CIRCLE_GUARD));
+        assert_eq!(sounds(CIRCLE_GUARD), [("effect\\kyrie_guard", 0)]);
+        // 460 on Hurricane Rage's target at 80 ms; 465 on Zephyr's cell, starting again every 999 ticks.
+        assert!(table.struck(8435).unwrap().contains(&(Who::Target, HURRICANE_RAGE)));
+        assert_eq!(sounds(HURRICANE_RAGE), [("ice_titan_attack", 80)]);
+        assert_eq!(table.units[&239], ZEPHYR);
+        assert_eq!((restart_ticks(ZEPHYR, 239, 1000), restart_ticks(0, 238, 100), restart_ticks(0, 245, 100)), (999, 92, 92));
+        assert_eq!([CIRCLE_GUARD, HURRICANE_RAGE, ZEPHYR].map(|id| table.lengths[&id]), [200, 100, 1000]);
+        // 564: a pink bloom of ring_red for 60 ticks on both of the Filir's skills, two sets of four bands starting at alpha 0.
+        assert!(table.used(8010).unwrap().contains(&(Who::Caster, HOMUN_CASTING)) && table.used(8011).unwrap().contains(&(Who::Caster, HOMUN_CASTING)));
+        assert!(is_cast_aura(HOMUN_CASTING) && is_banded(HOMUN_CASTING) && is_bloom(HOMUN_CASTING));
+        assert_eq!(aura_look(HOMUN_CASTING), ("ring_red", [0xFF, 0x59, 0xB6], true));
+        assert_eq!((aura_ticks(HOMUN_CASTING, 0), table.lengths[&HOMUN_CASTING]), (60, 60));
+        assert_eq!(sounds(HOMUN_CASTING), [("effect\\ef_beginspell", 0)]);
+        // Band k begins 5k ticks late with nothing drawn at first; its first tick is alpha 10.
+        for band in 0..4 {
+            assert!(bloom(0, band, 60, 5 * band as u32).is_none() && bloom(1, band, 60, 5 * band as u32).is_none());
+            let first = bloom(0, band, 60, 5 * band as u32 + 1).unwrap();
+            assert_eq!(first.alpha, 10.0);
+        }
+        // Moonlight's slashes by the hit count 1, 2, 3, 4, 10.
+        assert_eq!([1, 2, 3, 4, 10].map(moonlight_effect), [565, 566, 567, 567, 567]);
+        assert!(table.struck(8012).unwrap().contains(&(Who::Target, 567)));
+        assert!(table.parts.contains_key(&565) && table.parts.contains_key(&566) && table.parts.contains_key(&567));
+        // 570: two ticks a frame from frame 1, once, over everything, one sound a use.
+        let castling = Animation::new(&table.sprites[&570][0], 570, Instant::now(), Anchor::Unit(Some(1)), false);
+        assert!(castling.over && !castling.repeat && castling.frame_ms == Some(32.0) && castling.first == 1.0);
+        let frame = |age: u32| (animation_progress(16.0 * age as f32, 32.0, 13.0, 1.0, false) * 13.0) as usize;
+        assert_eq!([0, 1, 2, 23].map(frame), [1, 1, 2, 12]);
+        assert!(table.used(8005).unwrap().contains(&(Who::Caster, 570)) && table.used(8005).unwrap().contains(&(Who::Target, 570)));
+        assert!(!table.sounds.contains_key(&570));
+        assert_eq!(table.skill_sounds[&8005].iter().map(|sound| sound.file.as_str()).collect::<Vec<_>>(), ["effect\\h_castling"]);
+        assert_eq!(table.lengths[&570], 100);
     }
 }
