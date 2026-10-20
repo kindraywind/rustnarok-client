@@ -45,6 +45,7 @@ const CURTAIN_RGB: [f32; 3] = [100.0 / 255.0, 100.0 / 255.0, 1.0];
 /// from its 200, how fast the radius grows, the lean's start and floor, the turn a tick, and the ticks they are drawn.
 pub struct RibbonLook {
     texture: &'static str,
+    peak: f32,
     height: f32,
     fall: f32,
     grow: f32,
@@ -56,11 +57,34 @@ pub struct RibbonLook {
 }
 
 /// Steel Body's: yellow, 25 high, drawn on ticks 0 to 109 (alpha 0 at age 110), even with /effect off.
-pub const STEEL_BODY_RIBBONS: RibbonLook =
-    RibbonLook { texture: RING_YELLOW, height: 25.0, fall: 2.0, grow: 0.1, lean_from: 80.0, lean_floor: 30.0, turn: 3.0, ticks: 110, forced: true };
+pub const STEEL_BODY_RIBBONS: RibbonLook = RibbonLook {
+    texture: RING_YELLOW,
+    peak: 200.0,
+    height: 25.0,
+    fall: 2.0,
+    grow: 0.1,
+    lean_from: 80.0,
+    lean_floor: 30.0,
+    turn: 3.0,
+    ticks: 110,
+    forced: true,
+};
 /// Ganbantein's: white, 15 high, quicker, drawn on ticks 0 to 33.
 pub const GANBANTEIN: RibbonLook =
-    RibbonLook { texture: RING_WHITE, height: 15.0, fall: 8.0, grow: 0.3, lean_from: 70.0, lean_floor: 40.0, turn: 5.0, ticks: 34, forced: false };
+    RibbonLook { texture: RING_WHITE, peak: 200.0, height: 15.0, fall: 8.0, grow: 0.3, lean_from: 70.0, lean_floor: 40.0, turn: 5.0, ticks: 34, forced: false };
+/// Storm Blast's: yellow, half as bright, 25 high, drawn on ages 1 to 59.
+pub const STORM_BLAST: RibbonLook = RibbonLook {
+    texture: RING_YELLOW,
+    peak: 100.0,
+    height: 25.0,
+    fall: 2.0,
+    grow: 0.3,
+    lean_from: 80.0,
+    lean_floor: 40.0,
+    turn: 5.0,
+    ticks: 59,
+    forced: false,
+};
 /// Grand Cross's four arcs: where from the caster's spot and the turn they start at.
 const ARCS: [([f32; 2], f32); 4] = [([23.0, 23.0], 180.0), ([23.0, -23.0], 90.0), ([-23.0, -23.0], 0.0), ([-23.0, 23.0], 270.0)];
 /// The arcs are drawn on ages 1…98, the bars on 1…89.
@@ -249,7 +273,7 @@ impl Streak {
 
 /// A ribbon's alpha at age t: 20 a tick to 200, then `fall` less a tick.
 pub fn ribbon_alpha(look: &RibbonLook, t: u32) -> f32 {
-    if t <= 10 { 20.0 * t as f32 } else { (200.0 - look.fall * (t - 10) as f32).max(0.0) }
+    if t <= 10 { look.peak / 10.0 * t as f32 } else { (look.peak - look.fall * (t - 10) as f32).max(0.0) }
 }
 
 /// Band k's radius, lean and turn at age t.
@@ -448,6 +472,11 @@ impl Walls {
     /// Four spinning crescent ribbons on `unit` (Steel Body, Explosion Spirits, the SL_SKA skill, a Durian).
     pub fn ribbons(&mut self, unit: Option<u32>, now: Instant) {
         self.ribbons.push(Ribbons { look: &STEEL_BODY_RIBBONS, unit, at: None, start: now });
+    }
+
+    /// Storm Blast's four yellow crescents on `unit`.
+    pub fn storm_blast(&mut self, unit: Option<u32>, now: Instant) {
+        self.ribbons.push(Ribbons { look: &STORM_BLAST, unit, at: None, start: now });
     }
 
     /// Ganbantein's four white crescents over the cell `at`.
@@ -900,5 +929,24 @@ mod tests {
         assert!(at(34).is_empty());
         walls.advance(start + TICK * 36, |_| 0);
         assert!(walls.ribbons.is_empty());
+    }
+
+    #[test]
+    fn storm_blast_ribbons_are_half_as_bright_and_open_quicker() {
+        let look = &STORM_BLAST;
+        // Alpha at t = 1, 10, 11, 59, 60: 10, 100, 98, 2, 0.
+        assert_eq!([1, 10, 11, 59, 60].map(|t| ribbon_alpha(look, t)), [10.0, 100.0, 98.0, 2.0, 0.0]);
+        // Band 3 at t = 10 is 7 out; the lean is 79, 40 and 40 at t = 1, 40, 60; the turn is 90k + 5t.
+        assert!(near(ribbon_shape(look, 3, 10).0, 7.0));
+        assert_eq!([1, 40, 60].map(|t| ribbon_shape(look, 0, t).1), [79.0, 40.0, 40.0]);
+        assert!(near(ribbon_shape(look, 1, 4).2, 110.0));
+        // Four bands on ages 1 to 59, following the unit; the Steel Body ribbons keep their 200.
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        walls.storm_blast(Some(3), start);
+        assert_eq!(walls.meshes(start, |_| Some([0.0; 3])).len(), 4);
+        assert_eq!(walls.meshes(start + TICK * 58, |_| Some([0.0; 3])).len(), 4);
+        assert!(walls.meshes(start + TICK * 59, |_| Some([0.0; 3])).is_empty());
+        assert_eq!(ribbon_alpha(&STEEL_BODY_RIBBONS, 10), 200.0);
     }
 }

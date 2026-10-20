@@ -162,38 +162,43 @@ pub fn arc_quads(e: u32) -> usize {
     (span / step).ceil() as usize - 1
 }
 
+/// A cloudy arc ribbon 1 unit tall, `span` degrees round `at` from `turn`, `radius` out at `height`, leaning out `lean`; past the
+/// 21st point the quads fan out from the 20th.
+pub fn arc_ribbon(at: Vector, height: f32, turn: f32, radius: f32, lean: f32, span: f32, alpha: f32) -> Vec<MeshVertex> {
+    let step = (span / 21.0).floor();
+    let points = (span / step).ceil() as usize;
+    let tint = [1.0, 1.0, 1.0, alpha / 255.0];
+    let (lean_sin, lean_cos) = lean.to_radians().sin_cos();
+    let base = |i: usize| {
+        let (sin, cos) = ((turn + i as f32 * step) % 360.0).to_radians().sin_cos();
+        (
+            [at[0] + radius * cos, at[1] + height, at[2] + radius * sin],
+            [at[0] + (lean_cos + radius) * cos, at[1] + height + lean_sin, at[2] + (lean_cos + radius) * sin],
+        )
+    };
+    let mut vertices = Vec::new();
+    for i in 1..points {
+        // Only 21 points exist: from the 21st on a quad runs from point 19 to point i, with the last quad's u.
+        let (first, j) = if i >= 21 { (19, 19) } else { (i - 1, i - 1) };
+        let ((foot0, top0), (foot1, top1)) = (base(first), base(i));
+        let u = [j as f32 / 21.0, (j + 1) as f32 / 21.0];
+        let [a, b, c, d] = [
+            MeshVertex { position: foot0, uv: [u[0], 1.0], tint },
+            MeshVertex { position: foot1, uv: [u[1], 1.0], tint },
+            MeshVertex { position: top1, uv: [u[1], 0.0], tint },
+            MeshVertex { position: top0, uv: [u[0], 0.0], tint },
+        ];
+        vertices.extend([a, b, c, a, c, d]);
+    }
+    vertices
+}
+
 impl Band {
-    /// A band at its age e: its ribbon, 1 unit tall, leaning out; past the 21st point the quads fan out from the 20th.
+    /// A band at its age e: its ribbon.
     fn walls(&self, at: Vector, e: u32) -> Vec<MeshVertex> {
-        let span = arc_span(e);
-        let step = (span / 21.0).floor();
-        let points = (span / step).ceil() as usize;
         let turn = (self.turn + 5.0 * e as f32) % 360.0;
         let radius = if e <= 20 { self.radius } else { self.radius + 0.1 * (e - 20) as f32 };
-        let tint = [1.0, 1.0, 1.0, arc_alpha(e) / 255.0];
-        let (lean_sin, lean_cos) = self.lean.to_radians().sin_cos();
-        let base = |i: usize| {
-            let (sin, cos) = ((turn + i as f32 * step) % 360.0).to_radians().sin_cos();
-            (
-                [at[0] + radius * cos, at[1] + self.height, at[2] + radius * sin],
-                [at[0] + (lean_cos + radius) * cos, at[1] + self.height + lean_sin, at[2] + (lean_cos + radius) * sin],
-            )
-        };
-        let mut vertices = Vec::new();
-        for i in 1..points {
-            // Only 21 points exist: from the 21st on a quad runs from point 19 to point i, with the last quad's u.
-            let (first, j) = if i >= 21 { (19, 19) } else { (i - 1, i - 1) };
-            let ((foot0, top0), (foot1, top1)) = (base(first), base(i));
-            let u = [j as f32 / 21.0, (j + 1) as f32 / 21.0];
-            let [a, b, c, d] = [
-                MeshVertex { position: foot0, uv: [u[0], 1.0], tint },
-                MeshVertex { position: foot1, uv: [u[1], 1.0], tint },
-                MeshVertex { position: top1, uv: [u[1], 0.0], tint },
-                MeshVertex { position: top0, uv: [u[0], 0.0], tint },
-            ];
-            vertices.extend([a, b, c, a, c, d]);
-        }
-        vertices
+        arc_ribbon(at, self.height, turn, radius, self.lean, arc_span(e), arc_alpha(e))
     }
 }
 

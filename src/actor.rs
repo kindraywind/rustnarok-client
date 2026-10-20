@@ -2172,6 +2172,8 @@ pub const GLOW_WEAPON: u32 = 0x2;
 pub const GLOW_FLICKER: u32 = 0x4;
 pub const GLOW_OUTLINE: u32 = 0x8;
 pub const GLOW_REFLECT: u32 = 0x200;
+/// Sound of Destruction's: four copies slide out of every part; the age n (0 to 69) of the effect's 30th tick on is in the upper half.
+pub const GLOW_SPREAD: u32 = 0x1000;
 
 /// The body flags and colour a status's looping effect gives its unit: Berserk red, Marionette pink with the outline,
 /// Assumptio's outline, Kaite's copies, Aura Blade's weapon.
@@ -2207,6 +2209,8 @@ pub struct GlowCopy {
     pub additive: bool,
     pub color: [f32; 4],
     pub grow: f32,
+    /// How many screen pixels it is moved right and down.
+    pub offset: [f32; 2],
 }
 
 /// How a part is drawn under the body flags `flags` and colour `tint`: its own copy (added on, or blended at its own
@@ -2216,24 +2220,35 @@ pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: 
     let color = tint.map_or([1.0; 4], |[red, green, blue]| [f32::from(red) / 255.0, f32::from(green) / 255.0, f32::from(blue) / 255.0, 1.0]);
     let body = group == PartGroup::Body;
     let additive = (body && flags & GLOW_ADDITIVE != 0) || (group == PartGroup::Weapon && flags & GLOW_WEAPON != 0);
-    let mut part = GlowCopy { additive, color, grow: 0.0 };
+    let mut part = GlowCopy { additive, color, grow: 0.0, offset: [0.0; 2] };
     let mut copies = Vec::new();
     if body && flags & GLOW_OUTLINE != 0 {
         let sin = breath.to_radians().sin();
         if player {
-            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 100.0 / 255.0], grow: (3.0 + sin) * unit });
-            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 120.0 / 255.0], grow: (5.0 + 2.0 * sin) * unit });
+            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 100.0 / 255.0], grow: (3.0 + sin) * unit, offset: [0.0; 2] });
+            copies.push(GlowCopy { additive: true, color: [1.0, 1.0, 1.0, 120.0 / 255.0], grow: (5.0 + 2.0 * sin) * unit, offset: [0.0; 2] });
         } else {
             // A monster or an NPC gets one copy in its own colour.
-            copies.push(GlowCopy { additive: true, color: [1.0; 4], grow: (1.5 * sin + 5.0) * unit });
+            copies.push(GlowCopy { additive: true, color: [1.0; 4], grow: (1.5 * sin + 5.0) * unit, offset: [0.0; 2] });
         }
     }
     if flags & GLOW_REFLECT != 0 && !part.additive {
         for k in [5.0, 10.0, 15.0, 20.0] {
             let s = (spread + k) % 20.0;
-            copies.push(GlowCopy { additive: false, color: [1.0, 1.0, 1.0, (100.0 - 5.0 * s) / 255.0], grow: s * unit });
+            copies.push(GlowCopy { additive: false, color: [1.0, 1.0, 1.0, (100.0 - 5.0 * s) / 255.0], grow: s * unit, offset: [0.0; 2] });
         }
         part.color = [1.0, 1.0, 1.0, 150.0 / 255.0];
+    }
+    // Four white copies of every part slide right, left, down and up, fainter as they go.
+    if flags & GLOW_SPREAD != 0 {
+        let n = (flags >> 16) as f32;
+        let alpha = 5.0 * (30.0 - n);
+        let away = 4.0 * n * unit;
+        if alpha > 0.0 {
+            for offset in [[away, 0.0], [-away, 0.0], [0.0, away], [0.0, -away]] {
+                copies.push(GlowCopy { additive: false, color: [1.0, 1.0, 1.0, alpha / 255.0], grow: 0.0, offset });
+            }
+        }
     }
     (part, copies)
 }
