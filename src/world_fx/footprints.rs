@@ -175,6 +175,7 @@ fn rows() -> &'static [Row] {
         let file = |field: &str| (field != "-").then(|| field.trim_end_matches(".str").to_owned());
         include_str!("../footprints.txt")
             .lines()
+            .map(str::trim_end)
             .filter(|line| !line.starts_with('#') && !line.is_empty())
             .map(|line| {
                 let field: Vec<&str> = line.split('\t').collect();
