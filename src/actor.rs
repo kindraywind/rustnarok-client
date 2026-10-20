@@ -2165,6 +2165,11 @@ pub struct Actor {
     blur_age: u32,
     blur_due: bool,
     snap_left: u32,
+    /// Striking (445): on for a player, the ticks it has run, whether a copy is due, and the colour its override gives it.
+    striking: bool,
+    strike_age: u32,
+    strike_due: bool,
+    strike_tint: Option<[u8; 3]>,
     /// What statuses do to how its own parts are drawn: by status, the body flags and colour (`status_body`).
     glows: Vec<(u16, u32, Option<[u8; 3]>)>,
     pub ghosts: Vec<Ghost>,
@@ -2176,6 +2181,8 @@ pub struct Actor {
 
 /// The effect that leaves copies of a unit behind it while a status is on (the quickens, Overthrust...).
 pub const AFTERIMAGE: u32 = 166;
+/// Striking's copies (EFST 445): a frozen copy every 5th tick, whatever the player does.
+pub const STRIKING: u32 = 925;
 
 /// How a status has its unit's own parts drawn: the body, head and headgears added on; the weapon added on; two grown
 /// added-on copies of the body, head and headgears (Assumptio); four growing copies of every part, the part itself at
@@ -2338,6 +2345,22 @@ pub struct Ghost {
     pub feet: [f32; 3],
     pub placed: Vec<Placed>,
     pub tint: [u8; 3],
+    /// Striking's: 239 less 16 a tick, not Make Blur's 172 less 8.
+    pub striking: bool,
+}
+
+impl Ghost {
+    /// How see-through the copy is drawn `now`, out of 255.
+    pub fn alpha(&self, now: Instant) -> f32 {
+        let age = now.saturating_duration_since(self.left);
+        if self.striking { strike_alpha(age) } else { ghost_alpha(age) }
+    }
+}
+
+/// How see-through one of Striking's copies left `age` ago is drawn: 255 less 16 a tick, drawn from 239 and gone at 0; out of 255.
+pub fn strike_alpha(age: Duration) -> f32 {
+    let ticks = (age.as_millis() / 16) as f32;
+    (255.0 - 16.0 * (ticks + 1.0)).max(0.0) / 255.0
 }
 
 /// How see-through a copy left `age` ago is drawn: 180 less 8 a tick, drawn from 172 and gone once it reaches 0; out of 255.
@@ -2420,6 +2443,10 @@ impl Actor {
             blur_age: 0,
             blur_due: false,
             snap_left: 0,
+            striking: false,
+            strike_age: 0,
+            strike_due: false,
+            strike_tint: None,
             glows: Vec::new(),
             ghosts: Vec::new(),
             cursed: false,
@@ -2461,6 +2488,20 @@ impl Actor {
         }
     }
 
+    /// Striking (445) comes on or goes off a player: a copy every 5th tick from its start, whatever the unit does.
+    pub fn strike(&mut self, on: bool) {
+        self.striking = on;
+        self.strike_age = 0;
+        self.strike_due = false;
+    }
+
+    /// The colour Striking draws the unit and its copies in, from the colour an effect overrides its body with (c = (o + 250) / 2 a
+    /// channel): none without an override or the status. It is set every tick.
+    pub fn strike_colour(&mut self, over: Option<[u8; 3]>) -> Option<[u8; 3]> {
+        self.strike_tint = over.filter(|_| self.striking).map(|over| over.map(|channel| ((u16::from(channel) + 250) / 2) as u8));
+        self.strike_tint
+    }
+
     /// Snap, Fallen Angel or All in the Sky slides the unit: it blurs for 100 ticks.
     pub fn snap(&mut self) {
         self.snap_left = SNAP_TICKS;
@@ -2480,6 +2521,10 @@ impl Actor {
         let whole = (now.saturating_duration_since(*clock).as_millis() / 16).min(200) as u32;
         *clock += Duration::from_millis(u64::from(whole) * 16);
         for _ in 0..whole {
+            if self.striking {
+                self.strike_due |= self.strike_age.is_multiple_of(5);
+                self.strike_age += 1;
+            }
             if self.blurs.is_empty() && self.snap_left == 0 {
                 self.blur_age = 0;
                 self.blur_colour = self.blur_colour.map(|channel| channel.saturating_add(BLUR_DRIFT));
@@ -2507,10 +2552,14 @@ impl Actor {
 
     /// Leaves a copy of the frame drawn at `feet` when one is due (`step_blur`), tinted the blur's colour; old copies go.
     pub fn leave_ghost(&mut self, now: Instant, feet: [f32; 3], placed: &[Placed]) {
-        self.ghosts.retain(|ghost| ghost_alpha(now.saturating_duration_since(ghost.left)) > 0.0);
+        self.ghosts.retain(|ghost| ghost.alpha(now) > 0.0);
         if self.blur_due && !placed.is_empty() {
             self.blur_due = false;
-            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint: self.blur_colour });
+            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint: self.blur_colour, striking: false });
+        }
+        if self.strike_due && !placed.is_empty() {
+            self.strike_due = false;
+            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint: self.strike_tint.unwrap_or([255; 3]), striking: true });
         }
     }
 
@@ -4356,5 +4405,50 @@ mod tests {
         actor.blur(358, false);
         actor.step_blur(tick(23), || false);
         assert_eq!(actor.body_tint(), Some([233, 233, 255]));
+    }
+
+    #[test]
+    fn striking_leaves_a_white_copy_every_five_ticks_whatever_the_player_does() {
+        let start = Instant::now();
+        let tick = |ticks: u64| start + Duration::from_millis(16 * ticks);
+        // Alpha 239, 223 … 15 on ticks 0, 1 … 14, gone on the 15th.
+        let alpha = |ticks: u64| strike_alpha(Duration::from_millis(16 * ticks + 8)) * 255.0;
+        assert_eq!([alpha(0), alpha(1), alpha(14), alpha(15)], [239.0, 223.0, 15.0, 0.0]);
+        let mut actor = Actor::new("Sorcerer".into(), None, [0, 0], 0, 150);
+        let placed: Vec<Placed> = vec![((0, 0, 0, [255; 4], 0), [0.0; 2], [1.0; 2], 0.0)];
+        actor.step_blur(tick(0), || false);
+        // Standing still: a copy at ages 0, 5, 10.
+        actor.strike(true);
+        for (at, due) in [(1, true), (2, false), (5, false), (6, true), (11, true)] {
+            actor.step_blur(tick(at), || false);
+            assert_eq!(actor.strike_due, due, "tick {at}");
+            actor.leave_ghost(tick(at), [at as f32; 3], &placed);
+        }
+        assert_eq!(actor.ghosts.iter().map(|ghost| ghost.feet[0]).collect::<Vec<_>>(), [1.0, 6.0, 11.0]);
+        assert!(actor.ghosts.iter().all(|ghost| ghost.striking && ghost.tint == [255; 3]));
+        // The status coming on again starts over: one effect, age 0, a copy due.
+        actor.strike(true);
+        actor.strike(true);
+        actor.step_blur(tick(12), || false);
+        assert!(actor.strike_due && actor.strike_age == 1);
+        // The copies fade out: 239 at once, gone on the 15th tick.
+        assert!((actor.ghosts[0].alpha(tick(1)) * 255.0 - 239.0).abs() < 0.01);
+        actor.leave_ghost(tick(11 + 15), [9.0; 3], &placed);
+        assert!(actor.ghosts.iter().all(|ghost| ghost.feet[0] != 1.0), "the oldest is gone");
+        // Off: no more copies, and the colour goes.
+        actor.strike(false);
+        actor.step_blur(tick(40), || false);
+        assert!(!actor.strike_due && actor.strike_colour(Some([100, 0, 50])).is_none());
+        // An override gives the unit and its copies c = (o + 250) / 2 a channel; none without one.
+        actor.strike(true);
+        assert_eq!(actor.strike_colour(Some([100, 0, 50])), Some([175, 125, 150]));
+        assert_eq!(actor.strike_colour(None), None);
+        actor.strike_colour(Some([100, 0, 50]));
+        actor.step_blur(tick(41), || false);
+        actor.leave_ghost(tick(41), [5.0; 3], &placed);
+        assert_eq!(actor.ghosts.last().unwrap().tint, [175, 125, 150]);
+        // Make Blur's own copies keep their numbers.
+        assert!(!Ghost { left: start, feet: [0.0; 3], placed: Vec::new(), tint: [255; 3], striking: false }.alpha(tick(0)).is_nan());
+        assert_eq!(STRIKING, 925);
     }
 }

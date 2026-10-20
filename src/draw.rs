@@ -482,6 +482,7 @@ impl App {
         }
         game.player.step_blur(now, || crate::effects::pick(0, 13) == 0);
         let player_tint = effects::mix_tints(game.player.body_tint(), game.effects.body_tint(None, now));
+        let player_tint = game.player.strike_colour(game.effects.body_tint(None, now)).or(player_tint);
         let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
         // Our own character in Hiding shows its shadow alone (a frame with no sprite); cloaked, chase-walking or
         // GM-hidden, nothing. We are never drawn as a silhouette.
@@ -587,6 +588,7 @@ impl App {
             // A silhouette multiplies the sprite's RGB by 0 and keeps its alpha. It casts no shadow.
             actor.step_blur(now, || crate::effects::pick(0, 13) == 0);
             let tint = if silhouette { Some([0, 0, 0]) } else { effects::mix_tints(actor.body_tint(), game.effects.body_tint(Some(id), now)) };
+            let tint = if silhouette { tint } else { actor.strike_colour(game.effects.body_tint(Some(id), now)).or(tint) };
             let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
             if let Some(sprites) = &mut actor.sprites {
                 sprites.set_tint(tint);
@@ -976,7 +978,7 @@ impl App {
             let Some(sprites) = actor.sprites.as_ref() else { continue };
             let (player, flat) = stand_of(&owner);
             for ghost in &actor.ghosts {
-                let alpha = actor::ghost_alpha(now.saturating_duration_since(ghost.left));
+                let alpha = ghost.alpha(now);
                 let [red, green, blue] = ghost.tint.map(|channel| f32::from(channel) / 255.0);
                 let tint = lit_tint([red, green, blue, alpha], game.world.sprite_light(ghost.feet));
                 billboards.extend(ghost.placed.iter().enumerate().filter_map(|(index, (key, position, size, angle))| {

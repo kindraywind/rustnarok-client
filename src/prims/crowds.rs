@@ -59,6 +59,8 @@ pub struct CrowdDraw {
     pub action: usize,
     pub steps: u32,
     pub alpha: f32,
+    /// The colour multiplied into the sprite (white for the crowds, the Insignias' for the Ifrits).
+    pub tint: [f32; 3],
 }
 
 struct Note {
@@ -251,6 +253,7 @@ impl Crowds {
                         action: planted.action,
                         steps: (n - 1) / planted.per_frame,
                         alpha,
+                        tint: [1.0; 3],
                     });
                 }
             }
