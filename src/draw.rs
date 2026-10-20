@@ -863,8 +863,11 @@ impl App {
         for (owner, feet, placements) in &frames {
             let sprites = sprites_of(owner).unwrap();
             let tint = match owner {
-                Owner::Player => [1.0, 1.0, 1.0, game.effects.cloak_alpha(None, now)],
-                Owner::Unit(id) => [1.0, 1.0, 1.0, game.units.get(id).map_or(1.0, |actor| actor.alpha(now)).min(game.effects.cloak_alpha(Some(*id), now))],
+                Owner::Player => game.effects.cloak_tint(None, now),
+                Owner::Unit(id) => {
+                    let cloak = game.effects.cloak_tint(Some(*id), now);
+                    [cloak[0], cloak[1], cloak[2], game.units.get(id).map_or(1.0, |actor| actor.alpha(now)).min(cloak[3])]
+                }
                 Owner::Item(id) if game.ground.get(id).is_some_and(|item| item_glints(now.saturating_duration_since(item.seen).as_secs_f32() / 0.024)) => {
                     [1.0, 1.0, 0.0, 1.0]
                 }

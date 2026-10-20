@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, circle, dancer, first, ground, guard, huujin, knight, mechanic, monk, sage, shafts, shards, sight, sniper,
-    songs, spray, star, stone, tanji, throw, transcend, walls, waterball,
+    balls, blitz, bolts, boomerang, brawl, burst, circle, dancer, first, ground, guard, huujin, knight, mechanic, monk, painter, sage, shafts, shards, sight,
+    sniper, songs, spray, star, stone, tanji, throw, transcend, walls, waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1002,12 +1002,12 @@ pub fn circle_ignores(status: u16, on: bool, value: i64) -> bool {
 
 /// A cast's aura: one a caster has at a time.
 pub fn is_cast_aura(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59 | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    matches!(effect, 12 | 54..=59 | TETRA_CASTING | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
 }
 
 /// The effects made of bands.
 pub fn is_banded(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 315 | 320 | 325 | 342 | 344 | 367 | 441 | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 315 | 320 | 325 | 342 | 344 | 367 | 441 | TETRA_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
 }
 
 /// How long a band effect lasts, in ticks: Heal and the arrival 100, the teleport and logout 200, Aura Blade's bloom 60.
@@ -1054,7 +1054,20 @@ const ARRIVAL_BANDS: [[f32; 3]; 4] = [[3.7, 30.0, 90.0], [3.4, 30.0, 90.0], [3.6
 
 /// How long a cast's aura lasts: the cast time in 16 ms ticks, at least 56 for 12 and 58 and 70 for the rest.
 fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
-    (cast_ms / 16).max(if matches!(effect, 12 | 58 | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) { 56 } else { 70 })
+    (cast_ms / 16).max(if matches!(effect, 12 | 58 | TETRA_CASTING | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) {
+        56
+    } else {
+        70
+    })
+}
+
+/// A band effect's colour at its age: its own, but for Tetra Vortex's cast, which cycles blue, red, green and pale yellow, 25 ticks
+/// each, by the aura's age (the first band's tick + 1).
+fn aura_colour(effect: u32, age: u32) -> [u8; 3] {
+    if effect != TETRA_CASTING {
+        return aura_look(effect).1;
+    }
+    [[0x64, 0x64, 0xFF], [0xFF, 0x64, 0x64], [0x64, 0xFF, 0x64], [0xFF, 0xFF, 0xAA]][((age + 1) % 100 / 25) as usize]
 }
 
 /// A band effect's texture, colour and whether it adds on.
@@ -1067,7 +1080,7 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         304 => ("Magic_Violet", [0x64, 0x64, 0xFF], true),
         314 => ("ring_purple", [0x64, 0x64, 0xFF], true),
         344 => ("ring_blue", [0x64, 0x64, 0xFF], true),
-        58 => ("ring_white", [0xFF, 0xFF, 0xFF], true),
+        58 | TETRA_CASTING => ("ring_white", [0xFF, 0xFF, 0xFF], true),
         COUPLE_CASTING => ("ring_red", [0xFF, 0x59, 0xB6], true),
         BLUE_CASTING => ("ring_blue", [0x64, 0x64, 0xFF], true),
         54 => ("ring_blue", [0xC3, 0xC3, 0xFF], false),
@@ -1210,7 +1223,7 @@ fn arrival_bands(age: u32) -> [Band; 4] {
 
 /// The auras made of two sets of blooming bands.
 fn is_bloom(effect: u32) -> bool {
-    matches!(effect, 12 | 58 | 367 | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    matches!(effect, 12 | 58 | 367 | TETRA_CASTING | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
 }
 
 impl Banded {
@@ -1498,6 +1511,8 @@ pub struct Effects {
     water_frames: HashMap<u32, Vec<Placed>>,
     /// The claw slash's layers by action and frame.
     claw_frames: HashMap<(&'static str, usize, usize), Vec<Placed>>,
+    /// Boost Knuckle's fist by action, frame and whether it is a plain white ghost.
+    fist_frames: HashMap<(usize, usize, bool), Vec<Placed>>,
     /// Sight Rasher's sprites' frames, plain white, by sprite and frame.
     sight_frames: HashMap<(&'static str, usize), Vec<Placed>>,
     /// Dark Strike's red ghost sprite's layers.
@@ -1825,6 +1840,13 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Tetra Vortex's cast, Boost Knuckle's fists, Shadow Form's silhouette, Body Painting's strokes, Deadly Infect's blink and the
+/// Masquerade debuffs' hairlines.
+const TETRA_CASTING: u32 = 805;
+const BOOST_KNUCKLE: u32 = 806;
+const SHADOW_FORM: u32 = 809;
+const BODY_PAINT: u32 = 811;
+const DEADLY_INFECT: u32 = 812;
 /// Magnetic Field's arcs, Neutral Barrier's dome and cells, Stealth Field's cells, Repair's spanners, Analyze's mark and Venom
 /// Impress' icon (`prims::mechanic`, `prims::guard`, `prims::sparkle`, `prims::circle`).
 const MAGNETIC_FIELD: u32 = 781;
@@ -1944,7 +1966,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 30] = [
+pub const AIMED: [u32; 31] = [
+    BOOST_KNUCKLE,
     RELEASE,
     SPEAR_FLASH,
     BLOOD_DRAIN,
@@ -2063,6 +2086,10 @@ impl Effects {
             self.play_sounds(table, id, at, now);
             self.prims.songs.twilight(id, cast_ms / crate::prims::TICK.as_millis() as u32, now, |n| pick(0, n.saturating_sub(1)));
             return;
+        }
+        // Tetra Vortex's cast also flickers the caster in a fresh colour each tick.
+        if id == TETRA_CASTING {
+            self.prims.brawl.tetra(unit, aura_ticks(id, cast_ms), now);
         }
         if id != BASH {
             return self.play(gpu, grf, table, id, Target::Unit(unit), at, now);
@@ -2275,6 +2302,16 @@ impl Effects {
                 self.prims.shafts.play(at, now);
             }
             (CLOAKING, Target::Status(unit, _)) => self.prims.brawl.cloak(unit, now),
+            (SHADOW_FORM, Target::Status(unit, _)) => self.prims.brawl.shadow(unit, now),
+            (BODY_PAINT, Target::Unit(unit)) => {
+                self.textures.entry(painter::STICK.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, painter::STICK, true).ok());
+                self.prims.painter.paint(unit, at, now);
+            }
+            (DEADLY_INFECT, Target::Unit(unit)) => self.prims.guard.blink(unit, now),
+            (813..=815, Target::Unit(unit)) => {
+                self.textures.entry(songs::STREAK_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, songs::STREAK_TEXTURE, true).ok());
+                self.prims.songs.hairlines(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
             (MAGNETIC_FIELD, Target::Unit(unit)) => {
                 self.textures.entry(mechanic::ELEC.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, mechanic::ELEC, true).ok());
                 self.prims.mechanic.magnetic_field(unit, now);
@@ -3034,6 +3071,11 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.waterballs.throw(from, to, now);
             }
+            BOOST_KNUCKLE => {
+                self.sprites.entry(balls::FIST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, balls::FIST_SPRITE));
+                self.play_sounds(table, id, from, now);
+                self.prims.balls.boost_knuckle(from, to, self.yaw.to_degrees().floor() as i32, now);
+            }
             RELEASE => {
                 self.sprites.entry(balls::FIRE_BALL_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, balls::FIRE_BALL_SPRITE));
                 self.play_sounds(table, id, from, now);
@@ -3129,6 +3171,16 @@ impl Effects {
                 let frames = sprite.frames(0).max(1);
                 let layers = sprite.frame_plain(gpu, 0, Timing::Span((drawn.frame as f32 + 0.5) / frames as f32));
                 self.sight_frames.insert((drawn.sprite, drawn.frame), layers);
+            }
+        }
+        for draw in self.prims.balls.fist_draws() {
+            if let Some(Some(sprite)) = self.sprites.get_mut(balls::FIST_SPRITE) {
+                let frames = sprite.frames(draw.action).max(1);
+                let timing = Timing::Span((draw.frame as f32 + 0.5) / frames as f32);
+                let ghost = draw.ghost.is_some();
+                self.fist_frames
+                    .entry((draw.action, draw.frame, ghost))
+                    .or_insert_with(|| if ghost { sprite.frame_plain(gpu, draw.action, timing) } else { sprite.frame_at(gpu, draw.action, 0, timing) });
             }
         }
         for draw in self.prims.monk.claws(now) {
@@ -3308,7 +3360,7 @@ impl Effects {
         if status == VENOM_STATUS {
             self.prims.circles.forget_venom(unit);
         }
-        if matches!(status, 360 | 379 | 1301) {
+        if matches!(status, 360 | 379 | 1301 | 394) {
             self.prims.brawl.uncloak(unit, Instant::now());
         }
         let on = |anchor: Anchor| matches!(anchor, Anchor::Status(each, kind) if each == unit && kind == status);
@@ -3340,6 +3392,7 @@ impl Effects {
         let flashing = mix_tints(self.prims.walls.body_tint(unit, now), self.prims.ground.body_tint(unit, now));
         let flashing = mix_tints(flashing, self.prims.guard.body_tint(unit, now));
         let flashing = mix_tints(flashing, self.prims.sniper.body_tint(unit, now));
+        let flashing = mix_tints(flashing, self.prims.brawl.body_tint(unit, now));
         let flashing = mix_tints(flashing, self.prims.songs.body_tint(unit, now));
         mix_tints(flashing, self.prims.transcend.body_tint(unit, now))
     }
@@ -3369,8 +3422,8 @@ impl Effects {
     }
 
     /// How opaque an effect draws `unit` now (Camouflage's translucence), 0 to 1.
-    pub fn cloak_alpha(&self, unit: Option<u32>, now: Instant) -> f32 {
-        self.prims.brawl.cloak_alpha(unit, now).unwrap_or(1.0)
+    pub fn cloak_tint(&self, unit: Option<u32>, now: Instant) -> [f32; 4] {
+        self.prims.brawl.cloak_tint(unit, now).unwrap_or([1.0; 4])
     }
 
     /// Whether `unit`'s parts shake now (Close Confine's).
@@ -3443,8 +3496,8 @@ impl Effects {
         });
         let auras = self.auras.iter().filter(|aura| aura.start <= now && self.shows(aura.effect)).flat_map(|aura| {
             let age = (now.duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) as u32;
-            let (_, color, additive) = aura_look(aura.effect);
-            let color = color.map(|value| f32::from(value) / 255.0);
+            let (_, _, additive) = aura_look(aura.effect);
+            let color = aura_colour(aura.effect, age).map(|value| f32::from(value) / 255.0);
             let at = aura.anchor.place(&position_of);
             (0..aura_sets(aura.effect)).filter_map(move |set| {
                 let at = at?;
@@ -3780,6 +3833,8 @@ impl Effects {
                 quads.push((texture, at, [corner(0), corner(1), corner(2), corner(3)], state.color, state.additive, true));
             }
         }
+        // Body Painting's strokes, over everything.
+        quads.extend(self.prims.painter.quads(now, STR_RISE, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         // Venom Impress' icon is force-drawn, over everything.
         quads.extend(self.prims.circles.venom_quads(now, STR_RISE, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         // The effects made in code are none of them force-drawn.
@@ -3830,6 +3885,16 @@ impl Effects {
                 for &(key, position, size, layer_angle) in self.sight_frames.get(&(drawn.sprite, drawn.frame)).into_iter().flatten() {
                     let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * drawn.scale));
                     quads.push((sprite.texture(key), drawn.at, corners, [1.0, 1.0, 1.0, drawn.alpha.trunc().clamp(0.0, 255.0) / 255.0], false, false));
+                }
+            }
+            // Boost Knuckle's fists: the first as the sprite colours it, the three after it white ghosts.
+            if let Some(Some(sprite)) = self.sprites.get(balls::FIST_SPRITE) {
+                for draw in self.prims.balls.fist_draws() {
+                    let tint = [1.0, 1.0, 1.0, draw.ghost.map_or(1.0, |alpha| alpha / 255.0)];
+                    for &(key, position, size, layer_angle) in self.fist_frames.get(&(draw.action, draw.frame, draw.ghost.is_some())).into_iter().flatten() {
+                        let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0);
+                        quads.push((sprite.texture(key), draw.at, corners, tint, false, false));
+                    }
                 }
             }
             // The claw slash: white at alpha 200, 2.5 times as big, over everything. `STR_RISE` is taken off again.
@@ -5587,5 +5652,34 @@ mod tests {
         assert_eq!((table.units[&226], table.units[&227]), (BARRIER_CELL, STEALTH_CELL));
         assert!(table.units_once.contains(&226) && table.units_once.contains(&227));
         assert!(table.status(328).contains(&VENOM_ICON) && VENOM_STATUS == 328);
+    }
+
+    #[test]
+    fn tetra_vortex_boost_knuckle_shadow_form_body_painting_deadly_infect_and_the_debuffs_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // The cast's colour by the aura's age α = 1, 24, 25, 49, 50, 74, 75, 99, 100 (the age + 1).
+        let colour = |alpha: u32| aura_colour(TETRA_CASTING, alpha - 1);
+        let (blue, red, green, yellow) = ([0x64, 0x64, 0xFF], [0xFF, 0x64, 0x64], [0x64, 0xFF, 0x64], [0xFF, 0xFF, 0xAA]);
+        assert_eq!([1, 24, 25, 49, 50, 74, 75, 99, 100].map(colour), [blue, blue, red, red, green, green, yellow, yellow, blue]);
+        assert_eq!(aura_colour(58, 40), [255; 3]);
+        // A cast of 1 000 ms lasts 62 ticks and one of 400 ms 56; one at a time, like the others.
+        assert_eq!((aura_ticks(TETRA_CASTING, 1000), aura_ticks(TETRA_CASTING, 400)), (62, 56));
+        assert!(is_cast_aura(TETRA_CASTING) && is_banded(TETRA_CASTING) && table.cast_aura(2217, 12) == Some(TETRA_CASTING));
+        assert_eq!(sounds(TETRA_CASTING), [("effect\\EF_BeginSpell", 0, true)]);
+        // Boost Knuckle: launched on the caster at the target, its sound at the listener.
+        assert!(AIMED.contains(&BOOST_KNUCKLE) && table.struck(2256).unwrap().contains(&(Who::Caster, BOOST_KNUCKLE)));
+        assert_eq!(sounds(BOOST_KNUCKLE), [("effect\\맹호경파산", 0, true)]);
+        // Shadow Form on its status with the cloaking sound; Body Painting's sound at the listener; Deadly Infect's too.
+        assert!(table.status(394).contains(&SHADOW_FORM));
+        assert_eq!(sounds(SHADOW_FORM), [("effect\\assasin_cloaking", 0, false)]);
+        assert_eq!(sounds(BODY_PAINT), [("effect\\bodypaint", 0, true)]);
+        assert!(table.used(2289).unwrap().contains(&(Who::Caster, BODY_PAINT)) && table.used(2291).unwrap().contains(&(Who::Caster, DEADLY_INFECT)));
+        assert_eq!(sounds(DEADLY_INFECT), [("effect\\deadlyinfect", 0, true)]);
+        // The three debuffs' sounds at the listener, on the targets they already have.
+        for (effect, skill, file) in [(813, 2292, "effect\\enervation"), (814, 2293, "effect\\groomy"), (815, 2294, "effect\\ignorance")] {
+            assert_eq!(sounds(effect), [(file, 0, true)]);
+            assert!(table.used(skill).unwrap().contains(&(Who::Target, effect)));
+        }
     }
 }

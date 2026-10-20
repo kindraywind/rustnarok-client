@@ -19,6 +19,7 @@ pub mod knight;
 pub mod mechanic;
 pub mod monk;
 pub mod napalm;
+pub mod painter;
 pub mod sage;
 pub mod shafts;
 pub mod shards;
@@ -173,6 +174,7 @@ pub struct Prims {
     pub shafts: shafts::Shafts,
     pub circles: circle::Circles,
     pub mechanic: mechanic::Mechanic,
+    pub painter: painter::Painter,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -677,6 +679,7 @@ impl Prims {
         self.blues.retain(|blues| blues.alive(now));
         self.shafts.advance(now);
         self.circles.advance(now);
+        self.painter.advance(now);
         self.blitzes.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
     }
 

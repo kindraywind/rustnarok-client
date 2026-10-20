@@ -110,6 +110,8 @@ struct Streak {
 
 /// Adaptation's (848) and Eternal Chaos' (864) violet flicker and streaks on a unit; `status` is the one it stands for.
 struct Dance {
+    /// Whether the unit flickers violet (Adaptation's and Eternal Chaos'); the debuffs' hairlines do not.
+    glows: bool,
     unit: Option<u32>,
     status: Option<u16>,
     start: Instant,
@@ -351,7 +353,18 @@ impl Songs {
                 streaks.push(Streak { born, yaw, distance, half, rgb, falling: true });
             }
         }
-        self.dances.push(Dance { unit, status, start: now, streaks });
+        self.dances.push(Dance { glows: true, unit, status, start: now, streaks });
+    }
+
+    /// The Masquerade debuffs' falling hairlines round `unit`: Eternal Chaos' falling streaks alone, no flicker.
+    pub fn hairlines(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let mut streaks = Vec::new();
+        for born in (0..DANCE_TICKS).step_by(2) {
+            let (yaw, distance, half) = (rand(360) as f32, 3.0 + rand(7) as f32, (rand(60) + 30) as f32 / 10.0);
+            let rgb = [0, 1, 2].map(|_| if rand(3) == 0 { 1.0 } else { 140.0 / 255.0 });
+            streaks.push(Streak { born, yaw, distance, half, rgb, falling: true });
+        }
+        self.dances.push(Dance { glows: false, unit, status: None, start: now, streaks });
     }
 
     /// A status that went off or came on again takes its dances with it.
@@ -400,13 +413,17 @@ impl Songs {
     /// The body flags and colour Shrink gives `unit` at `now`.
     pub fn glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
         let shrinking = self.shrinks.iter().filter(|body| body.unit == unit).find_map(|body| shrink_glow(passes(body.start, now).checked_sub(1)?));
-        shrinking.or_else(|| self.dances.iter().filter(|dance| dance.unit == unit).find_map(|dance| dance_glow(passes(dance.start, now).checked_sub(1)?)))
+        shrinking.or_else(|| {
+            self.dances.iter().filter(|dance| dance.unit == unit && dance.glows).find_map(|dance| dance_glow(passes(dance.start, now).checked_sub(1)?))
+        })
     }
 
     /// The colour Close Confine gives `unit`'s body at `now`.
     pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
         let blinking = self.confines.iter().filter(|body| body.unit == unit).find_map(|body| confine_tint(passes(body.start, now).checked_sub(1)?));
-        blinking.or_else(|| self.dances.iter().filter(|dance| dance.unit == unit).find_map(|dance| dance_tint(passes(dance.start, now).checked_sub(1)?)))
+        blinking.or_else(|| {
+            self.dances.iter().filter(|dance| dance.unit == unit && dance.glows).find_map(|dance| dance_tint(passes(dance.start, now).checked_sub(1)?))
+        })
     }
 
     /// Whether `unit`'s parts shake now: Close Confine's, from tick 21 to 59.
@@ -667,5 +684,23 @@ mod tests {
         assert_eq!(songs.dances.len(), 1, "another status");
         songs.advance(start + TICK * 101, None, |_, _| 0.0, |_| 0);
         assert!(songs.dances.is_empty());
+    }
+
+    #[test]
+    fn the_masquerade_debuffs_let_26_hairlines_fall_without_a_flicker() {
+        let start = Instant::now();
+        let mut songs = Songs::default();
+        songs.hairlines(Some(1), start, |_| 0);
+        let streaks = &songs.dances[0].streaks;
+        // One falling streak on every even tick to 98, 26 of them seen (made by tick 50); every draw 0: colour 255, 3 units off.
+        assert_eq!(streaks.len(), 50);
+        assert!(streaks.iter().all(|streak| streak.falling && streak.rgb == [1.0; 3] && streak.distance == 3.0));
+        assert_eq!(streaks.iter().filter(|streak| streak.born <= STREAKS_SEEN).count(), 26);
+        // 20 up at its start; alpha at k = 0, 19, 29, 30, 48, 49: 10, 200, 200, 190, 10, 0.
+        assert_eq!([0, 19, 29, 30, 48, 49].map(|k| burst::alpha(k, 0.0, 10.0, 200.0, 30, STREAK_LIFE)), [10.0, 200.0, 200.0, 190.0, 10.0, 0.0]);
+        assert!(songs.meshes(start, |_| Some([0.0; 3])).iter().all(|wall| wall.texture == STREAK_TEXTURE));
+        assert!((streak_travel(0) - 0.015).abs() < 1e-6);
+        // No violet flicker, unlike the dances.
+        assert!(songs.glow(Some(1), start + TICK * 20).is_none() && songs.body_tint(Some(1), start + TICK * 95).is_none());
     }
 }

@@ -355,6 +355,16 @@ struct Cloak {
     unit: Option<u32>,
     start: Instant,
     ended: Option<Instant>,
+    /// Shadow Form's: black as well, its colour climbing back too.
+    black: bool,
+}
+
+/// Tetra Vortex's cast: a fresh colour for the caster each tick for the cast, added on two ticks in five.
+struct Tetra {
+    unit: Option<u32>,
+    start: Instant,
+    length: u32,
+    colours: Vec<[u8; 3]>,
 }
 
 /// A unit whose parts shake on ticks `first` to `last` (458, 550).
@@ -394,6 +404,7 @@ pub struct Brawl {
     blues: Vec<Blue>,
     reds: Vec<Marked>,
     cloaks: Vec<Cloak>,
+    tetras: Vec<Tetra>,
 }
 
 impl Brawl {
@@ -462,7 +473,19 @@ impl Brawl {
     /// A status of Camouflage's on `unit` (replacing the last).
     pub fn cloak(&mut self, unit: Option<u32>, now: Instant) {
         self.cloaks.retain(|cloak| cloak.unit != unit);
-        self.cloaks.push(Cloak { unit, start: now, ended: None });
+        self.cloaks.push(Cloak { unit, start: now, ended: None, black: false });
+    }
+
+    /// Shadow Form's status on `unit`: a faint black silhouette (replacing the last).
+    pub fn shadow(&mut self, unit: Option<u32>, now: Instant) {
+        self.cloaks.retain(|cloak| cloak.unit != unit);
+        self.cloaks.push(Cloak { unit, start: now, ended: None, black: true });
+    }
+
+    /// Tetra Vortex's cast on `unit` for `length` ticks, replacing the last.
+    pub fn tetra(&mut self, unit: Option<u32>, length: u32, now: Instant) {
+        self.tetras.retain(|tetra| tetra.unit != unit);
+        self.tetras.push(Tetra { unit, start: now, length, colours: Vec::new() });
     }
 
     /// Camouflage's status went off `unit`.
@@ -473,11 +496,31 @@ impl Brawl {
     }
 
     /// How opaque `unit` is drawn now (0 to 1) under Camouflage: 50 / 255, climbing back by 8 / 255 a tick once it is over.
+    #[cfg(test)]
     pub fn cloak_alpha(&self, unit: Option<u32>, now: Instant) -> Option<f32> {
+        self.cloak_tint(unit, now).map(|tint| tint[3])
+    }
+
+    /// What `unit`'s parts are multiplied by under Camouflage or Shadow Form: white or black at alpha 50 / 255, both climbing back
+    /// by 8 / 255 a tick once it is over.
+    pub fn cloak_tint(&self, unit: Option<u32>, now: Instant) -> Option<[f32; 4]> {
         self.cloaks.iter().filter(|cloak| cloak.unit == unit).find_map(|cloak| {
             passes(cloak.start, now).checked_sub(1)?;
-            let alpha = 50 + cloak.ended.map_or(0, |ended| 8 * passes(ended, now));
-            (alpha < 255).then_some(alpha as f32 / 255.0)
+            let climbed = cloak.ended.map_or(0, |ended| 8 * passes(ended, now));
+            let alpha = 50 + climbed;
+            let rgb = if cloak.black { climbed.min(255) as f32 / 255.0 } else { 1.0 };
+            (alpha < 255).then_some([rgb, rgb, rgb, alpha as f32 / 255.0])
+        })
+    }
+
+    /// The colour a finished Tetra Vortex cast left on `unit`, fading back to white by 8 a channel a tick.
+    pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
+        self.tetras.iter().filter(|tetra| tetra.unit == unit).find_map(|tetra| {
+            let e = passes(tetra.start, now).checked_sub(1)?;
+            let after = e.checked_sub(tetra.length.saturating_sub(1)).filter(|&after| after > 0)?;
+            let from = tetra.colours.last().copied()?;
+            let tint = from.map(|channel| (u16::from(channel) + (8 * after) as u16).min(255) as u8);
+            (tint != [255; 3]).then_some(tint)
         })
     }
 
@@ -554,6 +597,15 @@ impl Brawl {
                 tornado.turns.push(turn + 3.0 + rand(3) as f32);
             }
         }
+        for tetra in &mut self.tetras {
+            let due = passes(tetra.start, now).min(tetra.length) as usize;
+            while tetra.colours.len() < due {
+                // The first draw is the blue, the second the green, the third the red.
+                let (blue, green, red) = (rand(256) as u8, rand(256) as u8, rand(256) as u8);
+                tetra.colours.push([red, green, blue]);
+            }
+        }
+        self.tetras.retain(|tetra| passes(tetra.start, now) <= tetra.length + 33);
         self.flares.retain(|flares| passes(flares.start, now) <= 30);
         self.hops.retain(|hops| passes(hops.start, now) <= 100);
         self.rays.retain(|rays| passes(rays.start, now) <= RAY_LAST + 1);
@@ -601,9 +653,18 @@ impl Brawl {
             let t = passes(red.start, now).checked_sub(1).filter(|&t| t <= 16)?;
             Some(crate::actor::GLOW_RED | (crate::actor::copies_alpha(3 * t) as u32) << crate::actor::PARAM_SHIFT)
         });
-        match (added, spread.or(swing).or(blue).or(red)) {
-            (false, None) => None,
-            (added, extra) => Some((if added { crate::actor::GLOW_ADDITIVE } else { 0 } | extra.unwrap_or(0), None)),
+        // Tetra Vortex's cast: its colour each tick, added on when the tick's number mod 5 is 0 or 1.
+        let tetra = self.tetras.iter().filter(|tetra| tetra.unit == unit).find_map(|tetra| {
+            let e = passes(tetra.start, now).checked_sub(1).filter(|&e| e < tetra.length)?;
+            let colour = tetra.colours.get(e as usize).or(tetra.colours.last()).copied()?;
+            Some((if e % 5 <= 1 { crate::actor::GLOW_ADDITIVE } else { 0 }, colour))
+        });
+        match (added, spread.or(swing).or(blue).or(red), tetra) {
+            (false, None, None) => None,
+            (added, extra, tetra) => {
+                let flags = if added { crate::actor::GLOW_ADDITIVE } else { 0 } | extra.unwrap_or(0) | tetra.map_or(0, |(flags, _)| flags);
+                Some((flags, tetra.map(|(_, colour)| colour)))
+            }
         }
     }
 
@@ -986,5 +1047,38 @@ mod tests {
         cloak.cloak(Some(4), start);
         cloak.forget(4);
         assert!(cloak.cloaks.is_empty());
+    }
+
+    #[test]
+    fn tetra_vortex_flickers_a_fresh_colour_and_shadow_form_goes_black() {
+        use crate::actor::GLOW_ADDITIVE;
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.tetra(Some(1), 56, start);
+        // The three draws go to blue, green, red: 1, 2, 3 make the colour (3, 2, 1).
+        let mut draws = [1, 2, 3].into_iter().cycle();
+        for tick in 0..60 {
+            brawl.advance(start + TICK * tick, |_| draws.next().unwrap());
+        }
+        assert_eq!(brawl.tetras[0].colours[0], [3, 2, 1]);
+        // Added on when the tick mod 5 is 0 or 1; the colour every tick; nothing after the cast.
+        let glow = |tick: u32| brawl.glow(Some(1), start + TICK * tick);
+        assert_eq!(glow(0), Some((GLOW_ADDITIVE, Some([3, 2, 1]))));
+        assert_eq!(glow(1).unwrap().0, GLOW_ADDITIVE);
+        assert_eq!(
+            (glow(2).unwrap().0, glow(4).unwrap().0, glow(5).unwrap().0, glow(6).unwrap().0, glow(7).unwrap().0),
+            (0, 0, GLOW_ADDITIVE, GLOW_ADDITIVE, 0)
+        );
+        assert!(glow(55).is_some() && glow(56).is_none());
+        // The last colour fades back to white by 8 a channel a tick.
+        let last = brawl.tetras[0].colours[55];
+        assert_eq!(brawl.body_tint(Some(1), start + TICK * 56), Some(last.map(|channel| channel + 8)));
+        // Shadow Form: black at alpha 50 / 255, both climbing back by 8 a tick once it is over.
+        let mut shadow = Brawl::default();
+        shadow.shadow(Some(2), start);
+        assert_eq!(shadow.cloak_tint(Some(2), start + TICK * 3), Some([0.0, 0.0, 0.0, 50.0 / 255.0]));
+        shadow.uncloak(Some(2), start + TICK * 10);
+        assert_eq!(shadow.cloak_tint(Some(2), start + TICK * 10), Some([8.0 / 255.0, 8.0 / 255.0, 8.0 / 255.0, 58.0 / 255.0]));
+        assert_eq!(shadow.cloak_tint(Some(2), start + TICK * 36), None);
     }
 }

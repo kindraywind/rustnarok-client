@@ -2030,7 +2030,14 @@ wav	799	effect\wl_stasis	0
 wav	802	effect\wl_whiteimprison	0
 wav	803	effect\wl_recognizedspell	0
 wav	804	effect\wl_tetravortex	0
-wav	811	effect\bodypaint	0
+wav	805	effect\EF_BeginSpell	0	listener
+wav	806	effect\맹호경파산	0	listener
+wav	809	effect\assasin_cloaking	0
+wav	811	effect\bodypaint	0	listener
+wav	812	effect\deadlyinfect	0	listener
+wav	813	effect\enervation	0	listener
+wav	814	effect\groomy	0	listener
+wav	815	effect\ignorance	0	listener
 wav	816	effect\laziness	0
 wav	822	effect\dimension	0
 wav	823	effect\manhole	0
