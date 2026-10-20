@@ -939,6 +939,20 @@ impl App {
                     continue;
                 };
                 let group = sprites.part_group(key);
+                // Manhole: a player sinks, its body and gear turning into a faint grey ghost, its head and headgears as they are.
+                if is_player && flags & actor::GLOW_MANHOLE != 0 {
+                    let drop = 60.0 * grow_unit;
+                    let lowered = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|uv| {
+                        let [x, y] = world::sprite_corner(position, size, angle, uv).0;
+                        [x, y + drop]
+                    });
+                    if sprites.manhole_ghost(key) {
+                        glows.push((texture, *feet, lowered, [55.0 / 255.0, 55.0 / 255.0, 55.0 / 255.0, 30.0 / 255.0], true, 0.0));
+                    } else {
+                        glows.push((texture, *feet, lowered, tint, false, 0.0));
+                    }
+                    continue;
+                }
                 let (part, copies) = actor::glow_copies(flags, body_tint, group, breath, spread, grow_unit, is_player);
                 let corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|uv| world::sprite_corner(position, size, angle, uv).0);
                 let times = |color: [f32; 4]| std::array::from_fn(|channel| tint[channel] * color[channel]);

@@ -14,6 +14,7 @@ pub mod dancer;
 pub mod first;
 pub mod ground;
 pub mod guard;
+pub mod holes;
 pub mod huujin;
 pub mod knight;
 pub mod mechanic;
@@ -175,6 +176,7 @@ pub struct Prims {
     pub circles: circle::Circles,
     pub mechanic: mechanic::Mechanic,
     pub painter: painter::Painter,
+    pub holes: holes::Holes,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -600,6 +602,8 @@ impl Prims {
         self.circles.forget(Some(unit));
         self.circles.forget_venom(Some(unit));
         self.mechanic.forget(unit);
+        self.holes.forget(unit);
+        self.shafts.forget(unit);
     }
 
     /// The camera-facing squares for effect 793 at `now`.
@@ -680,6 +684,7 @@ impl Prims {
         self.shafts.advance(now);
         self.circles.advance(now);
         self.painter.advance(now);
+        self.holes.advance(now);
         self.blitzes.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
     }
 

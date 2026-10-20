@@ -1388,9 +1388,16 @@ impl Game {
             actor.cursed = on;
         }
         actor.glow(status, shown, on);
+        let job = actor.job;
         let at = self.world.cell_position(actor.cell.map(|value| value as f32));
+        let monster = actor::is_monster_job(job);
         if let Some(gpu) = gpu.filter(|_| on) {
             for &effect in shown.iter().filter(|&&effect| effect != actor::AFTERIMAGE) {
+                // Manhole's body is for the other units only; a monster in the hole only sounds.
+                if effect == effects::MANHOLE_BODY && monster {
+                    self.effects.sound_of(table, effect, at, Instant::now());
+                    continue;
+                }
                 self.effects.play(gpu, grf, table, effect, effects::Target::Status(key, status), at, Instant::now());
             }
         }

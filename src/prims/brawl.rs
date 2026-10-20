@@ -405,6 +405,7 @@ pub struct Brawl {
     reds: Vec<Marked>,
     cloaks: Vec<Cloak>,
     tetras: Vec<Tetra>,
+    manholes: Vec<Option<u32>>,
 }
 
 impl Brawl {
@@ -468,6 +469,7 @@ impl Brawl {
     pub fn forget(&mut self, id: u32) {
         self.tornados.retain(|tornado| tornado.kept != Some(id));
         self.cloaks.retain(|cloak| cloak.unit != Some(id));
+        self.manholes.retain(|unit| *unit != Some(id));
     }
 
     /// A status of Camouflage's on `unit` (replacing the last).
@@ -480,6 +482,19 @@ impl Brawl {
     pub fn shadow(&mut self, unit: Option<u32>, now: Instant) {
         self.cloaks.retain(|cloak| cloak.unit != unit);
         self.cloaks.push(Cloak { unit, start: now, ended: None, black: true });
+    }
+
+    /// Manhole's status on `unit`: it sinks and turns to a ghost until the status goes (one to a unit).
+    pub fn manhole(&mut self, unit: Option<u32>) {
+        self.manholes.retain(|each| *each != unit);
+        self.manholes.push(unit);
+    }
+
+    /// A status of `unit`'s went off: Manhole's body with it.
+    pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
+        if status == 422 {
+            self.manholes.retain(|each| *each != unit);
+        }
     }
 
     /// Tetra Vortex's cast on `unit` for `length` ticks, replacing the last.
@@ -659,10 +674,14 @@ impl Brawl {
             let colour = tetra.colours.get(e as usize).or(tetra.colours.last()).copied()?;
             Some((if e % 5 <= 1 { crate::actor::GLOW_ADDITIVE } else { 0 }, colour))
         });
+        let manhole = self.manholes.contains(&unit);
         match (added, spread.or(swing).or(blue).or(red), tetra) {
-            (false, None, None) => None,
+            (false, None, None) if !manhole => None,
             (added, extra, tetra) => {
-                let flags = if added { crate::actor::GLOW_ADDITIVE } else { 0 } | extra.unwrap_or(0) | tetra.map_or(0, |(flags, _)| flags);
+                let flags = if added { crate::actor::GLOW_ADDITIVE } else { 0 }
+                    | extra.unwrap_or(0)
+                    | tetra.map_or(0, |(flags, _)| flags)
+                    | if manhole { crate::actor::GLOW_MANHOLE } else { 0 };
                 Some((flags, tetra.map(|(_, colour)| colour)))
             }
         }
@@ -1080,5 +1099,23 @@ mod tests {
         shadow.uncloak(Some(2), start + TICK * 10);
         assert_eq!(shadow.cloak_tint(Some(2), start + TICK * 10), Some([8.0 / 255.0, 8.0 / 255.0, 8.0 / 255.0, 58.0 / 255.0]));
         assert_eq!(shadow.cloak_tint(Some(2), start + TICK * 36), None);
+    }
+
+    #[test]
+    fn manhole_sinks_a_unit_until_its_status_goes() {
+        let mut brawl = Brawl::default();
+        let start = Instant::now();
+        brawl.manhole(Some(1));
+        brawl.manhole(Some(1));
+        assert_eq!(brawl.manholes.len(), 1);
+        assert_eq!(brawl.glow(Some(1), start), Some((crate::actor::GLOW_MANHOLE, None)));
+        assert!(brawl.glow(Some(2), start).is_none());
+        brawl.forget_status(Some(1), 421);
+        assert!(brawl.glow(Some(1), start).is_some());
+        brawl.forget_status(Some(1), 422);
+        assert!(brawl.glow(Some(1), start).is_none());
+        brawl.manhole(None);
+        brawl.forget(3);
+        assert!(brawl.glow(None, start).is_some());
     }
 }

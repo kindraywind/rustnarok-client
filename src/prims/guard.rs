@@ -26,6 +26,17 @@ pub const WEAPONS: [&str; 8] = [
     "data\\texture\\유저인터페이스\\item\\드래곤슬레이어.bmp",
     "data\\texture\\유저인터페이스\\item\\배틀액스.bmp",
 ];
+/// Strip Accessory's eight icons, one a prim.
+pub const ACCESSORIES: [&str; 8] = [
+    "data\\texture\\유저인터페이스\\item\\갈색반지.bmp",
+    "data\\texture\\유저인터페이스\\item\\금반지.bmp",
+    "data\\texture\\유저인터페이스\\item\\금방울.bmp",
+    "data\\texture\\유저인터페이스\\item\\꽃반지.bmp",
+    "data\\texture\\유저인터페이스\\item\\낡은펜던트.bmp",
+    "data\\texture\\유저인터페이스\\item\\눈구슬반지.bmp",
+    "data\\texture\\유저인터페이스\\item\\상자.bmp",
+    "data\\texture\\유저인터페이스\\item\\수제초콜렛.bmp",
+];
 /// Detonator's flush (#9B9BFF).
 const LILAC: [u8; 3] = [0x9B, 0x9B, 0xFF];
 pub const TILE: &str = "data\\texture\\effect\\a01.bmp";
@@ -59,12 +70,16 @@ struct Piece {
     azimuth: f32,
     elevation: f32,
     spin: f32,
+    /// Strip Accessory's: the turn of the upright plane it flies in.
+    turn: f32,
 }
 
 struct Strip {
     at: Vector,
     start: Instant,
     pieces: Vec<Piece>,
+    /// Strip Accessory's: upright squares in turning vertical planes, seen through the ground, not squares facing the camera.
+    upright: bool,
 }
 
 /// Preserve's dome round the caster.
@@ -268,26 +283,31 @@ impl Guard {
     /// Full Strip's pieces flying out from the target's feet `at`: 8 prims of 4, alternating shield and sword; each piece's
     /// choices from `rand(n)` in the order the game draws them (its wait, azimuth, elevation, spin, and one that is not used).
     pub fn strip(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.burst(at, now, |prim| if prim % 2 == 0 { (SHIELD, 5.0) } else { (SWORD, 9.0) }, rand);
+        self.burst(at, now, false, |prim| if prim % 2 == 0 { (SHIELD, 5.0) } else { (SWORD, 9.0) }, rand);
+    }
+
+    /// Strip Accessory's 32 red icons in upright planes, eight prims of four, their fifth draw each the plane's turn.
+    pub fn accessory(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.burst(at, now, true, |prim| (ACCESSORIES[prim], if prim == 6 { 4.0 } else { 5.0 }), rand);
     }
 
     /// Weapon Crush's 32 weapon icons, four of each of eight, the same way, all with a half-diagonal of 5.
     pub fn weapon_crush(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
-        self.burst(at, now, |prim| (WEAPONS[prim], 5.0), rand);
+        self.burst(at, now, false, |prim| (WEAPONS[prim], 5.0), rand);
     }
 
-    fn burst(&mut self, at: Vector, now: Instant, icon_of: impl Fn(usize) -> (&'static str, f32), mut rand: impl FnMut(u32) -> u32) {
+    fn burst(&mut self, at: Vector, now: Instant, upright: bool, icon_of: impl Fn(usize) -> (&'static str, f32), mut rand: impl FnMut(u32) -> u32) {
         let mut pieces = Vec::with_capacity(STRIP_ELEMENTS);
         for prim in 0..8 {
             for _ in 0..4 {
                 let wait = -18 - rand(30) as i32;
                 let (azimuth, elevation, spin) = (rand(360) as f32, rand(360) as f32, rand(360) as f32);
-                let _ = rand(360);
+                let turn = rand(360) as f32;
                 let (icon, half) = icon_of(prim);
-                pieces.push(Piece { half, icon, wait, azimuth, elevation, spin });
+                pieces.push(Piece { half, icon, wait, azimuth, elevation, spin, turn });
             }
         }
-        self.strips.push(Strip { at, start: now, pieces });
+        self.strips.push(Strip { at, start: now, pieces, upright });
     }
 
     /// Preserve's dome on `unit`, facing `facing` degrees.
@@ -405,7 +425,7 @@ impl Guard {
     /// Full Strip's pieces at `now`: where, spin, half-diagonal and alpha.
     pub fn pieces(&self, now: Instant) -> Vec<Piece3> {
         let mut pieces = Vec::new();
-        for strip in &self.strips {
+        for strip in self.strips.iter().filter(|strip| !strip.upright) {
             let Some(t) = passes(strip.start, now).checked_sub(1) else { continue };
             for piece in &strip.pieces {
                 let n = piece.wait + t as i32 + 1;
@@ -421,6 +441,41 @@ impl Guard {
             }
         }
         pieces
+    }
+
+    /// Strip Accessory's upright icons at `now`, added on in #FA6464 and drawn over everything with no depth test: a wall each icon.
+    pub fn upright_pieces(&self, now: Instant) -> Vec<Wall> {
+        let mut walls: Vec<Wall> = Vec::new();
+        for strip in self.strips.iter().filter(|strip| strip.upright) {
+            let Some(t) = passes(strip.start, now).checked_sub(1) else { continue };
+            for piece in &strip.pieces {
+                let n = piece.wait + t as i32 + 1;
+                if !(1..=60).contains(&n) {
+                    continue;
+                }
+                let radius = 12.0 + n as f32;
+                let (az_sin, az_cos) = piece.azimuth.to_radians().sin_cos();
+                let (el_sin, el_cos) = piece.elevation.to_radians().sin_cos();
+                let centre = [strip.at[0] + radius * el_cos * az_cos, strip.at[1] + radius * el_sin, strip.at[2] + radius * el_cos * az_sin];
+                let (turn_sin, turn_cos) = ((piece.turn + 5.0 * (t + 1) as f32) % 360.0).to_radians().sin_cos();
+                let tint = [STRIP_TINT[0], STRIP_TINT[1], STRIP_TINT[2], coin_alpha(n as u32).trunc().clamp(0.0, 255.0) / 255.0];
+                let corner = |j: usize, uv: [f32; 2]| {
+                    let (sin, cos) = ((piece.spin + 90.0 * j as f32) % 360.0).to_radians().sin_cos();
+                    MeshVertex {
+                        position: [centre[0] + piece.half * cos * turn_cos, centre[1] - piece.half * sin, centre[2] + piece.half * cos * turn_sin],
+                        uv,
+                        tint,
+                    }
+                };
+                let [a, b, c, d] = [corner(0, [0.0, 1.0]), corner(1, [1.0, 1.0]), corner(2, [1.0, 0.0]), corner(3, [0.0, 0.0])];
+                let vertices = [a, b, c, a, c, d];
+                match walls.iter_mut().find(|wall| wall.texture == piece.icon) {
+                    Some(wall) => wall.vertices.extend(vertices),
+                    None => walls.push(Wall { texture: piece.icon, vertices: vertices.to_vec(), additive: true, forced: false }),
+                }
+            }
+        }
+        walls
     }
 
     /// The body flags and colour an effect gives `unit` at `now`.
@@ -698,5 +753,35 @@ mod tests {
         assert_eq!(glow(60), Some((0, Some([0; 3]))));
         // It fades back to white by 8 a channel a tick.
         assert_eq!(guard.body_tint(Some(1), start + TICK * 61), Some([8; 3]));
+    }
+
+    #[test]
+    fn strip_accessory_bursts_32_icons_in_upright_planes() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.accessory([5.0, 1.0, 5.0], start, |_| 0);
+        let pieces = &guard.strips[0].pieces;
+        // 8 prims of 4: f 5.0 but 4.0 for the seventh, the icons in the issue's order; not squares facing the camera.
+        assert_eq!(pieces.len(), 32);
+        assert!(pieces.iter().enumerate().all(|(index, piece)| piece.icon == ACCESSORIES[index / 4] && piece.half == if index / 4 == 6 { 4.0 } else { 5.0 }));
+        assert!(ACCESSORIES[0].ends_with("갈색반지.bmp") && ACCESSORIES[7].ends_with("수제초콜렛.bmp"));
+        assert!(guard.pieces(start + TICK * 30).is_empty());
+        // Shown for ages 1 to 60: with every draw 0 on ticks 18 to 77; one wall an icon.
+        assert!(guard.upright_pieces(start + TICK * 17).is_empty());
+        let walls = guard.upright_pieces(start + TICK * 18);
+        assert_eq!(walls.len(), 8);
+        assert!(walls.iter().all(|wall| wall.additive && wall.vertices.len() == 4 * 6));
+        assert!(!guard.upright_pieces(start + TICK * 77).is_empty() && guard.upright_pieces(start + TICK * 78).is_empty());
+        // Alpha at n = 1, 10, 11, 25, 26, 60, 61: 25, 250, 250, 250, 243, 5, 0. r = 12 + n: 13 and 72.
+        assert_eq!([1, 10, 11, 25, 26, 60, 61].map(coin_alpha), [25.0, 250.0, 250.0, 250.0, 243.0, 5.0, 0.0]);
+        assert_eq!((walls[0].vertices[0].tint[3] * 255.0).round(), 25.0);
+        // With σ = 0 … the plane turns 5° a tick from tick 1 (σ = 5 · (t + 1)): corner offsets at b = 0 are along the plane (5, 0).
+        let first = |tick: u32| guard.upright_pieces(start + TICK * tick)[0].vertices[0].position;
+        let centre = [5.0 + 13.0, 1.0, 5.0];
+        assert!((first(18)[1] - centre[1]).abs() < 1e-4);
+        let (sin, cos) = (5.0 * 19.0_f32).to_radians().sin_cos();
+        assert!((first(18)[0] - (centre[0] + 5.0 * cos)).abs() < 1e-3 && (first(18)[2] - (centre[2] + 5.0 * sin)).abs() < 1e-3);
+        guard.advance(start + TICK * 301);
+        assert!(guard.strips.is_empty());
     }
 }
