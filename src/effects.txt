@@ -1772,8 +1772,8 @@ wav	144	effect\knight_brandish_spear	0
 wav	150	_enemy_hit_normal1	0
 wav	151	effect\knight_spear_boomerang	0
 wav	153	effect\ac_concentration	0
-wav	154	effect\bs_refinesuccess	0
-wav	155	effect\bs_refinefailed	0
+wav	154	effect\bs_refinesuccess	240
+wav	155	effect\bs_refinefailed	80
 wav	170	effect\ef_magnumbreak	112
 wav	170	effect\ef_magnumbreak	320
 wav	183	effect\ef_hit2	0
