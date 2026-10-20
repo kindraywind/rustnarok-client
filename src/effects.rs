@@ -944,6 +944,23 @@ struct Banded {
 const COUPLE_CASTING: u32 = 342;
 const BLUE_CASTING: u32 = 441;
 
+/// A world offset from a point as pixels from its projection: the camera turned `yaw` radians and tipped `pitch` degrees, 7 pixels
+/// a unit.
+// ponytail: an orthographic view of the offset, not the frame's perspective.
+fn screen_offset(offset: Vector, yaw: f32, pitch: f32) -> [f32; 2] {
+    let (sin, cos) = yaw.sin_cos();
+    let across = offset[0] * cos + offset[2] * sin;
+    let deep = -offset[0] * sin + offset[2] * cos;
+    let (tip_sin, tip_cos) = pitch.to_radians().sin_cos();
+    [across * PIXELS_PER_UNIT, (deep * tip_sin - offset[1] * tip_cos) * PIXELS_PER_UNIT]
+}
+
+/// Whether a status's circle ignores a packet: Song of Mana's (439) and Wug Dance's (441) run out their 400 ticks when the
+/// status goes off, and start again only for an on-packet whose value is exactly 1.
+pub fn circle_ignores(status: u16, on: bool, value: i64) -> bool {
+    matches!(status, 439 | 441) && (!on || value != 1)
+}
+
 /// A cast's aura: one a caster has at a time.
 pub fn is_cast_aura(effect: u32) -> bool {
     matches!(effect, 12 | 54..=59 | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
@@ -2818,7 +2835,7 @@ impl Effects {
 
     /// Shapes drawn over everything, with no depth test: Blessing's glow lying flat under the feet, and the songs' puffs.
     pub fn top_meshes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<EffectMesh<'_>> {
-        let mut meshes = self.puff_meshes(now, &position_of);
+        let mut meshes = Vec::new();
         // Magnum Break's rings lie over the units and the ground.
         if !self.only_forced {
             let rings = self.prims.first.top_meshes(now);
@@ -2844,30 +2861,6 @@ impl Effects {
         });
         meshes.extend(glows);
         meshes
-    }
-
-    /// The songs' puffs: upright squares turned by their yaws, 10 above the feet, added on.
-    fn puff_meshes(&self, now: Instant, position_of: &impl Fn(Option<u32>) -> Option<Vector>) -> Vec<EffectMesh<'_>> {
-        let Some(Some(texture)) = self.textures.get(PUFF_TEXTURE).filter(|_| !self.only_forced) else { return Vec::new() };
-        let mut triangles = Vec::new();
-        for prim in self.status_prims.iter().filter(|prim| prim.start <= now) {
-            let PrimKind::Puffs(variant) = prim.kind else { continue };
-            let age = str_frame(now.duration_since(prim.start));
-            let Some(at) = prim.anchor.place(position_of).filter(|_| age < PUFF_TICKS) else { continue };
-            for (puff, &first) in PUFF_STARTS.iter().enumerate() {
-                let Some((r, alpha, pulse, yaw)) = puff_at(prim.seed, puff as u32, i64::from(age) - i64::from(first)) else { continue };
-                let half = r * (0.9 + 0.1 * pulse.to_radians().sin()) / 2.0;
-                let [red, green, blue] = puff_color(variant, puff).map(|value| f32::from(value) / 255.0);
-                let tint = [red, green, blue, alpha / 255.0];
-                let (sin, cos) = yaw.to_radians().sin_cos();
-                let corner =
-                    |across: f32, up: f32, uv: [f32; 2]| MeshVertex { position: [at[0] + across * cos, at[1] + 10.0 + up, at[2] + across * sin], uv, tint };
-                let [a, b, c, d] =
-                    [corner(-half, half, [0.0, 0.0]), corner(half, half, [1.0, 0.0]), corner(half, -half, [1.0, 1.0]), corner(-half, -half, [0.0, 1.0])];
-                triangles.extend([a, b, c, a, c, d]);
-            }
-        }
-        if triangles.is_empty() { Vec::new() } else { vec![(texture, triangles, true)] }
     }
 
     /// The effect shapes showing now: cylinders and models.
@@ -3232,6 +3225,28 @@ impl Effects {
                         [x * draw.scale, y * draw.scale + STR_RISE]
                     });
                     quads.push((sprite.texture(key), draw.at, corners, [1.0, 1.0, 1.0, draw.alpha / 255.0], false, true));
+                }
+            }
+            // The songs' puffs: upright squares turned by their yaws, 10 above the feet, added on and drawn over everything with
+            // no depth, their corners projected to the screen.
+            if let Some(Some(texture)) = self.textures.get(PUFF_TEXTURE) {
+                for prim in self.status_prims.iter().filter(|prim| prim.start <= now) {
+                    let PrimKind::Puffs(variant) = prim.kind else { continue };
+                    let age = str_frame(now.duration_since(prim.start));
+                    let Some(at) = prim.anchor.place(&position_of).filter(|_| age < PUFF_TICKS) else { continue };
+                    for (puff, &first) in PUFF_STARTS.iter().enumerate() {
+                        let Some((r, alpha, pulse, yaw)) = puff_at(prim.seed, puff as u32, i64::from(age) - i64::from(first)) else { continue };
+                        let half = r * (0.9 + 0.1 * pulse.to_radians().sin()) / 2.0;
+                        let [red, green, blue] = puff_color(variant, puff).map(|value| f32::from(value) / 255.0);
+                        let (sin, cos) = yaw.to_radians().sin_cos();
+                        let corner = |across: f32, up: f32| {
+                            let [x, y] = screen_offset([across * cos, 10.0 + up, across * sin], self.yaw, self.pitch);
+                            [x, y + STR_RISE]
+                        };
+                        // Texture coordinates (0, 0), (1, 0), (1, 1), (0, 1) on the corners a, b, c, d: the quad's order is d, c, b, a.
+                        let corners = [corner(-half, -half), corner(half, -half), corner(half, half), corner(-half, half)];
+                        quads.push((texture, at, corners, [red, green, blue, alpha / 255.0], true, true));
+                    }
                 }
             }
             // Twilight Alchemy's icons: additive squares facing the camera, the picture in the top left three quarters.
@@ -4566,5 +4581,24 @@ mod tests {
         assert_eq!((table.used(304), table.used(5068)), (Some(&[(Who::Caster, 848)][..]), Some(&[(Who::Caster, 848)][..])));
         assert!([79, 82, 448].iter().all(|status| table.status(*status).contains(&864)));
         assert!(!table.sounds.contains_key(&848) && !table.sounds.contains_key(&864));
+    }
+
+    #[test]
+    fn song_circles_draw_over_everything_and_two_keep_after_they_end() {
+        let table = Table::load();
+        // The squares live 400 ticks and are drawn as quads over everything, their corners projected 7 pixels a unit.
+        assert_eq!(PUFF_TICKS, 400);
+        let near = |got: [f32; 2], want: [f32; 2]| (got[0] - want[0]).abs() < 0.01 && (got[1] - want[1]).abs() < 0.01;
+        assert!(near(screen_offset([5.0, 0.0, 0.0], 0.0, 0.0), [35.0, 0.0]));
+        assert!(near(screen_offset([0.0, 10.0, 0.0], 0.0, 0.0), [0.0, -70.0]), "up is up the screen");
+        assert!(near(screen_offset([0.0, 10.0, 0.0], 0.0, 90.0), [0.0, 0.0]) && near(screen_offset([0.0, 0.0, 5.0], 0.0, 90.0), [0.0, 35.0]));
+        // Song of Mana (439) and Wug Dance (441) ignore the off packet and an on-packet whose value isn't 1; the others don't.
+        assert!(circle_ignores(439, false, 1) && circle_ignores(441, false, 0) && circle_ignores(439, true, 2) && circle_ignores(441, true, 0));
+        assert!(!circle_ignores(439, true, 1) && !circle_ignores(441, true, 1));
+        assert!(!circle_ignores(70, false, 0) && !circle_ignores(865, true, 5) && !circle_ignores(73, false, 1));
+        // Steel Body's sound belongs to effect 1132, started by its status.
+        assert!(table.status(87).contains(&254) && table.status(87).contains(&1132) && table.status(235).contains(&1132));
+        assert_eq!(table.sounds[&1132].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\mon_금강불괴", 0)]);
+        assert!(!table.sounds.contains_key(&254));
     }
 }

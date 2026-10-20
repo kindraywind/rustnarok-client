@@ -1361,13 +1361,18 @@ impl Game {
 
     /// Starts or stops what a status keeps showing on its unit (the player's own works too): its looping effects, the
     /// copies left behind it (the quickens' afterimage) and Cursed Circle's dark body.
-    pub(crate) fn status_loop(&mut self, gpu: Option<&Gpu>, grf: &Grf, table: &effects::Table, unit: u32, status: u16, on: bool) {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn status_loop(&mut self, gpu: Option<&Gpu>, grf: &Grf, table: &effects::Table, unit: u32, status: u16, on: bool, value: i64) {
         let key = (unit != self.account_id).then_some(unit);
         self.scene.note(key.is_none(), status, on);
         // Deep Blind is the player's overlay. A repeat while it shows does not start the fade again.
         if key.is_none() && status == effects::DEEP_BLIND {
             self.deep_blind = on;
             self.note_blind(control::now());
+        }
+        // Song of Mana's and Wug Dance's circle runs out its ticks when the status goes off.
+        if effects::circle_ignores(status, on, value) {
+            return;
         }
         let shown = table.status(status);
         self.effects.forget_status(key, status);

@@ -1812,7 +1812,6 @@ wav	245	effect\cru_holy cross	0	listener
 wav	249	effect\cru_shield boomerang	0
 wav	250	effect\knight_twohandquicken	0
 wav	253	effect\흡기	0
-wav	254	effect\mon_금강불괴	0
 wav	255	_enemy_hit_wind1	160
 wav	256	_enemy_hit_wind1	160
 wav	257	_enemy_hit_wind1	160
@@ -2060,6 +2059,7 @@ wav	1910	effect\ef_beginspell	0
 wav	1918	effect\ef_beginspell	0
 wav	1923	effect\ef_beginspell	0
 wav	914	effect\G스포어익스플로젼	0
+wav	1132	effect\mon_금강불괴	0
 hit	1	0	-1
 hit	2	0	-1
 hit	3	0	-1
