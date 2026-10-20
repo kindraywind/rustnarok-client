@@ -453,6 +453,60 @@ pub struct Assets {
     selection: Texture,
     /// Battle mode's icon: the line open, closed.
     mode_icon: [Texture; 2],
+    d4: D4,
+}
+
+/// The Diablo IV look's pieces: a shade fading out to the right and up, a bronze hairline fading the same way, the input
+/// bar as a dark plate with sunken boxes and bronze buttons, and plain colours.
+struct D4 {
+    shade: Texture,
+    line: Texture,
+    input: Texture,
+    light: Texture,
+    bronze: Texture,
+    ink: Texture,
+}
+
+impl D4 {
+    fn new(gpu: &Gpu) -> Self {
+        use crate::diablo::{BRONZE, BRONZE_LIGHT, paint, rgba, scale, smooth};
+        let texture = |image| gpu.texture(&image, true);
+        let solid = |color: [f32; 3]| gpu.solid([color[0], color[1], color[2], 1.0].map(|value| (value * 255.0) as u8));
+        Self {
+            shade: texture(paint([300.0, 150.0], |x, y| {
+                rgba([0.02, 0.015, 0.015], (1.0 - smooth(0.5, 1.0, x / 300.0)) * smooth(0.0, 0.25, y / 150.0) * (1.0 - smooth(0.88, 1.0, y / 150.0)) * 0.82)
+            })),
+            line: texture(paint([300.0, 1.0], |x, _| rgba(BRONZE, (1.0 - smooth(0.35, 1.0, x / 300.0)) * 0.9))),
+            input: texture(paint([WIDTH, INPUT_HEIGHT], |x, y| {
+                let inside = |(corner, size): ([f32; 2], [f32; 2]), margin: f32| {
+                    (corner[0] - margin..corner[0] + size[0] + margin).contains(&x) && (corner[1] - margin..corner[1] + size[1] + margin).contains(&y)
+                };
+                let fade = 1.0 - smooth(0.6, 1.0, x / WIDTH) * 0.5;
+                let buttons = [(LIST_BUTTON, LIST_BUTTON_SIZE), (SEND_TO_BUTTON, BUTTON_SIZE), (SIZE_BUTTON, BUTTON_SIZE)];
+                if let Some((corner, size)) = buttons.into_iter().find(|&button| inside(button, 0.0)) {
+                    // A small bronze stud, lit from the top.
+                    let edge = (x - corner[0]).min(y - corner[1]).min(corner[0] + size[0] - x).min(corner[1] + size[1] - y);
+                    let lit = 1.0 - (y - corner[1]) / size[1];
+                    return rgba(if edge < 1.0 { scale(BRONZE, 0.5) } else { scale(BRONZE_LIGHT, 0.45 + 0.5 * lit) }, 1.0);
+                }
+                if y < 1.0 {
+                    return rgba(BRONZE, 0.9 * fade);
+                }
+                for field in [NAME_BOX, MESSAGE_BOX] {
+                    if inside(field, 0.0) {
+                        return rgba([0.01, 0.008, 0.008], 0.95);
+                    }
+                    if inside(field, 1.0) {
+                        return rgba(scale(BRONZE, 0.45), 0.95);
+                    }
+                }
+                rgba([0.045, 0.04, 0.038], 0.88 * fade)
+            })),
+            light: gpu.solid([crate::diablo::TEXT[0], crate::diablo::TEXT[1], crate::diablo::TEXT[2], 0xFF]),
+            bronze: solid(BRONZE),
+            ink: gpu.solid([12, 10, 10, 0xF0]),
+        }
+    }
 }
 
 impl Assets {
@@ -484,6 +538,7 @@ impl Assets {
             // ponytail: the selection's colour is a choice.
             selection: gpu.solid([0xA8, 0xC8, 0xF0, 0xFF]),
             mode_icon: [image("chatmode_on"), image("chatmode_off")],
+            d4: D4::new(gpu),
         }
     }
 }
@@ -571,7 +626,7 @@ pub struct Chat {
     /// The tab shown.
     pub tab: usize,
     /// Where the window's bottom left corner is, once moved (else the screen's bottom left).
-    corner: Option<[f32; 2]>,
+    pub corner: Option<[f32; 2]>,
     /// The pointer's offset from the corner while the window is dragged.
     drag: Option<[f32; 2]>,
     /// While the top edge is dragged: the pointer's height and the window's when it started.
@@ -591,6 +646,10 @@ pub struct Chat {
     stale: bool,
     /// What was last kept of the window's place.
     saved: String,
+    /// Drawn in the Diablo IV look (`diablo`): a shade fading into the world instead of the boxed window.
+    pub d4: bool,
+    /// The pointer is over the window: in the Diablo IV look its buttons and scroll thumb show only then.
+    pub hovered: bool,
 }
 
 impl Default for Chat {
@@ -648,6 +707,8 @@ impl Chat {
             mode_icon: None,
             stale: false,
             saved: String::new(),
+            d4: false,
+            hovered: false,
         }
     }
 
@@ -1271,9 +1332,27 @@ impl Chat {
             return link_boxes;
         }
         let at = |local: [f32; 2]| self.at(local);
+        // The Diablo IV look: one shade under the whole window, fading into the world to the right and up.
+        // Without the line, it stops over the empty input bar's place.
+        if self.d4 {
+            let under = if open { 0.0 } else { INPUT_HEIGHT - 6.0 };
+            layer.sprites.push((&assets.d4.shade, at([0.0, -8.0]), [WIDTH, self.height() + 8.0 - under]));
+        }
         if self.step() > 0 {
-            // Tabs: the shown one in the open look.
-            for tab in 0..self.tabs.len() {
+            // Tabs: the shown one in the open look. In the Diablo IV look, words: the shown one gold and underlined.
+            for tab in (0..self.tabs.len()).filter(|_| self.d4) {
+                let [left, top] = at([tab as f32 * TAB_WIDTH, 0.0]);
+                let label = tab_title(tab, messages);
+                let width = font.width(label);
+                let x = (left + (TAB_WIDTH - width) / 2.0).round();
+                let color = if tab == self.tab { crate::diablo::LABEL } else { [175, 165, 150] };
+                layer.texts.push((label.to_owned(), [x + 1.0, top + 2.0], [0, 0, 0]));
+                layer.texts.push((label.to_owned(), [x, top + 1.0], color));
+                if tab == self.tab {
+                    layer.sprites.push((&assets.d4.bronze, [x - 6.0, top + TAB_HEIGHT - 1.0], [width + 12.0, 2.0]));
+                }
+            }
+            for tab in (0..self.tabs.len()).filter(|_| !self.d4) {
                 let [left, top] = at([tab as f32 * TAB_WIDTH, 0.0]);
                 let (fill, border) = if tab == self.tab { (&assets.dark, &assets.white) } else { (&assets.darker, &assets.tab_border) };
                 layer.sprites.push((fill, [left, top + 1.0], [TAB_WIDTH, TAB_HEIGHT - 1.0]));
@@ -1286,7 +1365,8 @@ impl Chat {
                 layer.texts.push((label.to_owned(), [x, top + 1.0], [255; 3]));
             }
             // The row, right to left from the lock. Locking leaves only tab settings and moves the icon.
-            for button in top_row(self.locked) {
+            let bare = self.d4 && !self.hovered;
+            for button in top_row(self.locked).iter().filter(|_| !bare) {
                 let images = match button.hit {
                     Hit::RemoveTab => &assets.remove_tab,
                     Hit::AddTab => &assets.add_tab,
@@ -1306,16 +1386,22 @@ impl Chat {
                 layer.sprites.push((image, at([button.x, 4.0]), image.size));
             }
             let lock = &assets.lock[usize::from(!self.locked)];
-            layer.sprites.push((lock, at(LOCK_AT), lock.size));
+            if !bare {
+                layer.sprites.push((lock, at(LOCK_AT), lock.size));
+            }
 
             // The log: translucent black between white edges, newest line at the bottom.
             let corner = at(LOG_BOX);
             let tabs_end = self.tabs.len() as f32 * TAB_WIDTH;
             let size = [LOG_WIDTH, self.height() - LOG_UNDER];
-            layer.sprites.push((&assets.dark, corner, size));
-            layer.sprites.push((&assets.white, corner, [1.0, size[1]]));
-            layer.sprites.push((&assets.white, [corner[0] + size[0] - 1.0, corner[1]], [1.0, size[1]]));
-            layer.sprites.push((&assets.white, at([tabs_end, LOG_BOX[1]]), [LOG_BOX[0] + size[0] - tabs_end, 1.0]));
+            if self.d4 {
+                layer.sprites.push((&assets.d4.line, at([0.0, LOG_BOX[1] + 1.0]), [WIDTH, 1.0]));
+            } else {
+                layer.sprites.push((&assets.dark, corner, size));
+                layer.sprites.push((&assets.white, corner, [1.0, size[1]]));
+                layer.sprites.push((&assets.white, [corner[0] + size[0] - 1.0, corner[1]], [1.0, size[1]]));
+                layer.sprites.push((&assets.white, at([tabs_end, LOG_BOX[1]]), [LOG_BOX[0] + size[0] - tabs_end, 1.0]));
+            }
             // The rows from the top down, then the scrollbar at the right.
             let (start, end) = self.shown_range();
             for (row, (line, color, ..)) in self.tabs[self.tab].rows[start..end].iter().enumerate() {
@@ -1336,13 +1422,20 @@ impl Chat {
                 }
             }
             let [bar_x, bar_y] = self.scrollbar_corner();
-            layer.sprites.push((&assets.track, at([bar_x, bar_y]), [SCROLLBAR, self.log_height()]));
             let (thumb_top, thumb_height) = self.thumb();
-            layer.sprites.push((&assets.thumb, at([bar_x + 1.0, thumb_top]), [SCROLLBAR - 3.0, thumb_height]));
-            layer.sprites.push((&assets.arrows[0], at([bar_x + 1.0, bar_y]), [ARROW; 2]));
-            layer.sprites.push((&assets.arrows[1], at([bar_x + 1.0, bar_y + self.log_height() - ARROW]), [ARROW; 2]));
-            // The line over the input bar.
-            layer.sprites.push((&assets.frame_line, at([4.0, self.height() - INPUT_HEIGHT]), [592.0, 1.0]));
+            if self.d4 {
+                // Only a thin bronze thumb, under the pointer; the arrows' places still scroll.
+                if !bare {
+                    layer.sprites.push((&assets.d4.bronze, at([bar_x + SCROLLBAR / 2.0 - 1.0, thumb_top]), [2.0, thumb_height]));
+                }
+            } else {
+                layer.sprites.push((&assets.track, at([bar_x, bar_y]), [SCROLLBAR, self.log_height()]));
+                layer.sprites.push((&assets.thumb, at([bar_x + 1.0, thumb_top]), [SCROLLBAR - 3.0, thumb_height]));
+                layer.sprites.push((&assets.arrows[0], at([bar_x + 1.0, bar_y]), [ARROW; 2]));
+                layer.sprites.push((&assets.arrows[1], at([bar_x + 1.0, bar_y + self.log_height() - ARROW]), [ARROW; 2]));
+                // The line over the input bar.
+                layer.sprites.push((&assets.frame_line, at([4.0, self.height() - INPUT_HEIGHT]), [592.0, 1.0]));
+            }
         }
         if !open {
             return link_boxes;
@@ -1351,11 +1444,16 @@ impl Chat {
         // The input bar with what's being typed and the caret.
         let bar = self.height() - INPUT_HEIGHT;
         let in_bar = |offset: [f32; 2]| at([offset[0], bar + offset[1]]);
-        layer.sprites.push((&assets.input, in_bar([0.0, 0.0]), assets.input.size));
-        layer.sprites.push((&assets.list, in_bar(LIST_BUTTON), assets.list.size));
-        for button in [SEND_TO_BUTTON, SIZE_BUTTON] {
-            layer.sprites.push((&assets.base, in_bar(button), assets.base.size));
+        if self.d4 {
+            layer.sprites.push((&assets.d4.input, in_bar([0.0, 0.0]), [WIDTH, INPUT_HEIGHT]));
+        } else {
+            layer.sprites.push((&assets.input, in_bar([0.0, 0.0]), assets.input.size));
+            layer.sprites.push((&assets.list, in_bar(LIST_BUTTON), assets.list.size));
+            for button in [SEND_TO_BUTTON, SIZE_BUTTON] {
+                layer.sprites.push((&assets.base, in_bar(button), assets.base.size));
+            }
         }
+        let ink = if self.d4 { crate::diablo::TEXT } else { [0, 0, 0] };
         let [name_x, text_top] = in_bar([NAME_BOX.0[0], NAME_BOX.0[1] + ((NAME_BOX.1[1] - font.line_height()) / 2.0).round()]);
         let message_x = in_bar(MESSAGE_BOX.0)[0];
         // The box with the caret shows what the input method is composing at the caret, and its selection.
@@ -1367,19 +1465,26 @@ impl Chat {
             layer.sprites.push((&assets.selection, [left, text_top], [font.width(&focused[range]), font.line_height()]));
         }
         let (name, typed) = if self.naming { (shown, self.input.clone()) } else { (self.whisper.clone(), shown) };
-        layer.texts.push((name, [name_x, text_top], [0, 0, 0]));
-        layer.texts.push((typed, [message_x, text_top], [0, 0, 0]));
+        layer.texts.push((name, [name_x, text_top], ink));
+        layer.texts.push((typed, [message_x, text_top], ink));
         if caret {
             let x = focused_x + font.width(&format!("{}{}", &focused[..at], self.preedit));
-            layer.sprites.push((&assets.darker, [x + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
+            let caret = if self.d4 { &assets.d4.light } else { &assets.darker };
+            layer.sprites.push((caret, [x + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
         }
         // ponytail: the list's look (white rows, the picked name blue) is ours.
         if self.list_open {
             for (row, name) in self.list_entries().into_iter().enumerate() {
                 let [x, y, w, h] = self.row_box(row);
                 let picked = !name.is_empty() && name == self.whisper;
-                layer.sprites.push((if picked { &assets.picked } else { &assets.white }, [x, y], [w, h]));
-                layer.texts.push((name.to_owned(), [x + 3.0, y + 2.0], [0, 0, 0]));
+                let row = match (self.d4, picked) {
+                    (true, true) => &assets.d4.bronze,
+                    (true, false) => &assets.d4.ink,
+                    (false, true) => &assets.picked,
+                    (false, false) => &assets.white,
+                };
+                layer.sprites.push((row, [x, y], [w, h]));
+                layer.texts.push((name.to_owned(), [x + 3.0, y + 2.0], ink));
             }
         }
         link_boxes

@@ -347,7 +347,15 @@ fn fog_of(depth: f32) -> f32 {
 }
 
 fn apply_fog(color: vec3<f32>, amount: f32) -> vec3<f32> {
-    return color * (1.0 - amount) + globals.fog_color.rgb * amount;
+    return grade(color * (1.0 - amount) + globals.fog_color.rgb * amount);
+}
+
+// Experiment (diablo.rs): a grim grade over the whole world, less colour, darker and warmer, more contrast. Additive
+// effects skip it and glow against it.
+fn grade(color: vec3<f32>) -> vec3<f32> {
+    let luma = dot(color, vec3(0.299, 0.587, 0.114));
+    let muted = max(mix(vec3(luma), color, 0.5) * vec3(1.0, 0.93, 0.84), vec3(0.0));
+    return clamp(0.6 * pow(muted, vec3(1.12)), vec3(0.0), vec3(1.0));
 }
 
 struct GroundOutput {

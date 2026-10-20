@@ -351,7 +351,12 @@ impl App {
                         equipment
                     },
                     basic_info: BasicInfo::load(screen()),
-                    hotkeys: hotkeys::Hotkeys::default(),
+                    hotkeys: {
+                        let mut hotkeys = hotkeys::Hotkeys::default();
+                        hotkeys.d4 = true;
+                        hotkeys
+                    },
+                    d4: Default::default(),
                     dragging: None,
                     drag_cancelled: false,
                     skills: Vec::new(),
@@ -699,6 +704,15 @@ impl App {
                 if let Scene::Game(game) = &mut self.scene {
                     game.restore_places();
                     game.weather.begin_map();
+                    // The Diablo IV bar takes the basic info window's place (Alt+V still opens it); the chat sits over the
+                    // bar until it's moved.
+                    if diablo::first_map() {
+                        game.basic_info.frame.open = false;
+                    }
+                    game.chat.d4 = true;
+                    if game.chat.corner.is_none() {
+                        game.chat.corner = Some([0.0, 768.0 - diablo::HEIGHT - 2.0]);
+                    }
                 }
                 for event in std::mem::take(&mut self.early_events) {
                     self.map_event(event);

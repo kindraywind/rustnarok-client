@@ -69,6 +69,7 @@ mod clan;
 mod control;
 mod cursor;
 mod cutin;
+mod diablo;
 mod draw;
 mod dressroom;
 mod effects;
@@ -1226,6 +1227,8 @@ struct Game {
     equipment: Equipment,
     basic_info: BasicInfo,
     hotkeys: hotkeys::Hotkeys,
+    /// The Diablo IV bar's orbs and words (`diablo`).
+    d4: diablo::State,
     /// An item or skill being dragged: what, where the drag began, and whether it has moved yet.
     dragging: Option<(Dragged, [f32; 2], bool)>,
     /// A right press let go of the drag: the left button's release does nothing.

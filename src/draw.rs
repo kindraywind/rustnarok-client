@@ -1706,6 +1706,7 @@ impl App {
         game.basic_info.save_if_changed();
         game.chat.save_if_changed();
         game.chat.layout(&|text| font.width(text));
+        game.chat.hovered = game.chat.contains(pointer.0);
         game.chat.mode_icon = game.chat_mode.icon();
         game.chat_links = game.chat.draw(&mut chat_layer, &assets.chat, font, messages, open, caret, &name_of);
         // The input bar buttons' tooltips, over the pointer.
@@ -1738,6 +1739,35 @@ impl App {
         }
         game.basic_info.fourth = basic_info::fourth_job(game.me.job);
         game.basic_info.doram = basic_info::doram(game.me.job);
+        // The Diablo IV bar: docked at the bottom middle, its orbs' liquid at the HP and SP left.
+        let stat = |kind: u16| game.status.get(&kind).copied().unwrap_or(0);
+        let (hp, sp) = ([stat(net::STATUS_HP), stat(net::STATUS_MAX_HP)], [stat(net::STATUS_SP), stat(net::STATUS_MAX_SP)]);
+        let d4_labels: Vec<String> = (0..hotkeys::PER_ROW)
+            .map(|visible| {
+                let slot = game.hotkeys.key_index(visible);
+                let bar = game.hotkeys.tab() as u8 + 1;
+                self.keybinds
+                    .bindings()
+                    .iter()
+                    .find(|binding| binding.action == shortcuts::Action::Hotbar { bar, slot: slot as u8 })
+                    .and_then(|binding| Some(shortcuts::chord(binding.key?, binding.modifier)))
+                    .unwrap_or_default()
+            })
+            .collect();
+        // The monster the top bar names: pointed at, else fought.
+        let pointed = match hovered(&game.hit_boxes, pointer.0, players_first) {
+            Some(Owner::Unit(id)) => Some(id),
+            _ => None,
+        };
+        let monster = |id: &u32| game.units.get(id).is_some_and(|actor| actor.kind == MONSTER && actor.remove_at.is_none());
+        let enemy = pointed.filter(monster).or(game.attack.as_ref().map(|attack| attack.target).filter(monster));
+        if game.hotkeys.d4 {
+            game.hotkeys.dock_d4(screen()[0]);
+            game.d4.update(gpu, [diablo::share(hp), diablo::share(sp)], game.entered.elapsed().as_secs_f32());
+            let words = d4_labels.iter().map(|label| diablo::label_word(label));
+            let names = enemy.map(|id| diablo::name_word(&game.units[&id].name));
+            game.d4.prepare(gpu, words.chain([diablo::number_word(hp), diablo::number_word(sp)]).chain(names).collect());
+        }
         game.banners.current(control::now());
         game.level_ups.seen(level_up::opened(&game.status_window.frame), level_up::opened(&game.skill_window.frame));
         let marks: Vec<_> = game
@@ -1882,7 +1912,15 @@ impl App {
             let icon = icons.get(&popup.icon).and_then(Option::as_ref);
             popup.draw(&mut announce_layer, &assets.chrome, &assets.pickup, icon, font);
         }
-        let mut layers = vec![base, announce_layer, chat_layer];
+        // The Diablo IV look: the screen's edges darkened, the monster pointed at or fought named at the top middle.
+        let mut vignette = Layer::default();
+        if game.hotkeys.d4 {
+            vignette.sprites.push((&assets.hotkeys.d4.vignette, [0.0, 0.0], screen()));
+            if let Some(id) = enemy {
+                diablo::draw_enemy(&mut announce_layer, &assets.hotkeys.d4, &game.d4, font, &game.units[&id].name, game.unit_hp.get(&id).copied());
+            }
+        }
+        let mut layers = vec![vignette, base, announce_layer, chat_layer];
         let mut preview = Some(preview);
         let cooling = skills::Cooling { cooldowns: &game.cooldowns, fan: &assets.fan, now: control::now() };
         // An inventory item being dragged: where it could be worn, for the equipment window's ovals.
@@ -1905,6 +1943,14 @@ impl App {
                     font,
                     pointer.0,
                     &cooling,
+                    Some(diablo::Hud {
+                        state: &game.d4,
+                        hp,
+                        sp,
+                        exp: [stat(net::STATUS_BASE_EXP), stat(net::STATUS_NEXT_BASE_EXP)],
+                        level: stat(net::STATUS_BASE_LEVEL),
+                        labels: d4_labels.clone(),
+                    }),
                 ),
                 Panel::Skills => {
                     game.skill_window.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.skills, icons, font, messages, &sheet, pointer, &cooling)

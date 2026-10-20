@@ -35,6 +35,13 @@ impl Font {
         Self(fonts)
     }
 
+    /// A font from these files (each a fallback for the ones before), for text set apart from the UI's.
+    pub fn from_files(paths: &[&str]) -> Option<Self> {
+        let fonts: Vec<_> =
+            paths.iter().filter_map(|path| fontdue::Font::from_bytes(std::fs::read(path).ok()?, fontdue::FontSettings::default()).ok()).collect();
+        (!fonts.is_empty()).then_some(Self(fonts))
+    }
+
     /// The first font that has the character.
     fn face(&self, character: char) -> &fontdue::Font {
         self.0.iter().find(|font| font.lookup_glyph_index(character) != 0).unwrap_or(&self.0[0])

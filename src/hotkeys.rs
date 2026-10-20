@@ -57,6 +57,7 @@ pub struct Assets {
     grades: [Texture; 4],
     /// The box under the slot the pointer is on.
     hover: Texture,
+    pub d4: crate::diablo::Assets,
 }
 
 impl Assets {
@@ -72,6 +73,7 @@ impl Assets {
             minus: image(format!("{UI}shortcut\\btn_minus_normal.bmp")),
             plus: image(format!("{UI}shortcut\\btn_plus_normal.bmp")),
             grades: [1, 2, 3, 4].map(|grade| image(format!("{UI}grade_enchant\\grade_icon{grade}.bmp"))),
+            d4: crate::diablo::Assets::new(gpu),
         }
     }
 }
@@ -106,6 +108,8 @@ pub struct Hotkeys {
     pub quick: bool,
     /// A slot is used by a double click; a single press only starts a drag.
     pub clicks: window::Clicks,
+    /// Drawn as the Diablo IV style action bar (`diablo`): docked at the bottom middle, one row of sockets.
+    pub d4: bool,
 }
 
 impl Default for Hotkeys {
@@ -121,6 +125,7 @@ impl Default for Hotkeys {
             first: [0; 2],
             quick: false,
             clicks: window::Clicks::default(),
+            d4: false,
         }
     }
 }
@@ -128,6 +133,9 @@ impl Default for Hotkeys {
 impl Hotkeys {
     /// 33 a row plus 10, and 33 more with the quick row.
     pub fn height(&self) -> f32 {
+        if self.d4 {
+            return crate::diablo::HEIGHT;
+        }
         ROW_HEIGHT * (self.rows + usize::from(self.quick)) as f32 + 10.0
     }
 
@@ -138,6 +146,9 @@ impl Hotkeys {
     /// The slots showing: key index and icon corner in the bar, row by row, then the quick row's two.
     // ponytail: the quick slots sit at x 16 and 45 like a row's first two.
     fn shown(&self) -> Vec<(usize, [f32; 2])> {
+        if self.d4 {
+            return (0..PER_ROW).map(|visible| (self.key_index(visible), crate::diablo::icon_corner(visible))).collect();
+        }
         let rows = (0..self.rows * PER_ROW).map(|visible| (self.key_index(visible), slot_corner(visible)));
         let quick = QUICK.into_iter().enumerate().filter(|_| self.quick).map(|(column, index)| (index, slot_corner(self.rows * PER_ROW + column)));
         rows.chain(quick).collect()
@@ -152,6 +163,13 @@ impl Hotkeys {
     /// The slot (row by row) or button under the pointer.
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = self.frame.local(cursor, self.height())?;
+        if self.d4 {
+            let socket = (0..PER_ROW).find(|&n| contains(crate::diablo::socket_corner(n), [crate::diablo::SOCKET; 2], local));
+            return match socket {
+                Some(n) => Some(Hit::Slot(self.key_index(n))),
+                None => crate::diablo::covers(local).then_some(Hit::Window),
+            };
+        }
         let [minus, plus] = self.step_buttons();
         if contains(minus, STEP_BUTTON, local) {
             return Some(Hit::Minus);
@@ -171,6 +189,9 @@ impl Hotkeys {
     /// Whether a press here moves the bar: on its margins (left of the slots, right of them or above them), not on a
     /// slot or a button.
     pub fn grabbed(&self, cursor: [f32; 2]) -> bool {
+        if self.d4 {
+            return false;
+        }
         let Some(local) = self.frame.local(cursor, self.height()) else { return false };
         self.hit(cursor) == Some(Hit::Window) && (local[0] < FIRST_SLOT[0] - 1.0 || local[0] >= MARGIN_RIGHT || local[1] < FIRST_SLOT[1])
     }
@@ -181,7 +202,7 @@ impl Hotkeys {
         let [x, y] = self.frame.position;
         let overlaps = x < other[0] + other[2] && other[0] < x + WIDTH && y < other[1] + other[3] && other[1] < y + self.height();
         let clear = (other[0] + other[2] + CLEARANCE).ceil();
-        if !self.frame.open || self.frame.dragging() || !overlaps || clear + WIDTH > screen_width {
+        if self.d4 || !self.frame.open || self.frame.dragging() || !overlaps || clear + WIDTH > screen_width {
             return false;
         }
         self.frame.position[0] = clear;
@@ -228,8 +249,15 @@ impl Hotkeys {
         self.first
     }
 
+    /// The Diablo IV bar sits at the bottom middle of a screen `width` wide, always open.
+    pub fn dock_d4(&mut self, width: f32) {
+        self.frame.open = true;
+        self.frame.position = crate::diablo::corner(width);
+        self.frame.set_width(crate::diablo::WIDTH);
+    }
+
     /// The key index under a visible slot, once the bar's rotation has turned the rows.
-    fn key_index(&self, visible: usize) -> usize {
+    pub fn key_index(&self, visible: usize) -> usize {
         let row = (self.rotation() + visible / PER_ROW) % ROWS;
         row * PER_ROW + visible % PER_ROW
     }
@@ -258,52 +286,61 @@ impl Hotkeys {
         font: &Font,
         cursor: [f32; 2],
         cooling: &crate::skills::Cooling<'a>,
+        hud: Option<crate::diablo::Hud<'a>>,
     ) {
         if !self.frame.open {
             return;
         }
-        for row in 0..self.rows {
+        let (icon_size, hit_size) = if self.d4 { ([crate::diablo::ICON; 2], [crate::diablo::ICON; 2]) } else { (SLOT, SLOT) };
+        if let Some(hud) = hud.as_ref().filter(|_| self.d4) {
+            crate::diablo::draw(layer, tooltip, &assets.d4, chrome, font, hud, |local| self.frame.at(local), cursor);
+        }
+        for row in (0..self.rows).filter(|_| !self.d4) {
             let top = row as f32 * ROW_HEIGHT;
             layer.sprites.push((&assets.frame, self.frame.at([0.0, top]), assets.frame.size));
             let number = ((self.rotation() + row) % ROWS + 1).to_string();
             layer.texts.push((number, self.frame.at([ROW_NUMBER[0], top + ROW_NUMBER[1]]), ROW_NUMBER_COLOR));
         }
-        if self.quick {
+        if self.quick && !self.d4 {
             layer.sprites.push((&assets.quick_frame, self.frame.at([0.0, self.rows as f32 * ROW_HEIGHT]), assets.quick_frame.size));
         }
-        layer.sprites.push((&assets.switch[usize::from(self.tab)], self.frame.at(SWITCH), SWITCH_SIZE));
-        let [minus, plus] = self.step_buttons();
-        layer.sprites.push((&assets.minus, self.frame.at(minus), STEP_BUTTON));
-        layer.sprites.push((&assets.plus, self.frame.at(plus), STEP_BUTTON));
-        let toggle = if self.quick { &assets.minus } else { &assets.plus };
-        layer.sprites.push((toggle, self.frame.at(self.quick_button()), STEP_BUTTON));
+        if !self.d4 {
+            layer.sprites.push((&assets.switch[usize::from(self.tab)], self.frame.at(SWITCH), SWITCH_SIZE));
+            let [minus, plus] = self.step_buttons();
+            layer.sprites.push((&assets.minus, self.frame.at(minus), STEP_BUTTON));
+            layer.sprites.push((&assets.plus, self.frame.at(plus), STEP_BUTTON));
+            let toggle = if self.quick { &assets.minus } else { &assets.plus };
+            layer.sprites.push((toggle, self.frame.at(self.quick_button()), STEP_BUTTON));
+        }
         for (index, local) in self.shown() {
             let key = self.keys.get(index).and_then(|key| *key);
             let corner = self.frame.at(local);
             // The slot under the pointer: a box under its icon.
             let hover = self.frame.at(hover_corner(local));
-            if contains(hover, SLOT, cursor) {
+            if !self.d4 && contains(hover, SLOT, cursor) {
                 layer.sprites.push((&assets.hover, hover, SLOT));
             }
+            // The tooltip: under a classic slot, over a socket of the bar at the screen's bottom.
+            let tip = if self.d4 { [corner[0], corner[1] - 34.0] } else { [corner[0], corner[1] + SLOT[1] + 2.0] };
             // A skill: its icon, the name on hover.
             if let Some(Hotkey { skill: true, id, count }) = key.as_ref()
                 && let Some(info) = u16::try_from(*id).ok().and_then(|id| skills.get(&id))
             {
                 if let Some(Some(icon)) = icons.get(&crate::skills::icon_path(info)) {
-                    layer.sprites.push((icon, corner, icon.size));
+                    layer.sprites.push((icon, corner, if self.d4 { icon_size } else { icon.size }));
                 }
                 // The level it's used at, bottom right, as an item's amount; a clock while it's blocked.
-                count_text(layer, font, corner, &count.to_string());
-                cooling.draw(layer, *id as u16, corner, [24.0, 24.0]);
-                if contains(corner, SLOT, cursor) {
-                    window::tooltip(tooltip, chrome, font, &format!("{} Lv {count}", info.name), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
+                count_text(layer, font, corner, icon_size, &count.to_string());
+                cooling.draw(layer, *id as u16, corner, icon_size);
+                if contains(corner, hit_size, cursor) {
+                    window::tooltip(tooltip, chrome, font, &format!("{} Lv {count}", info.name), tip, [255; 3]);
                 }
                 continue;
             }
             let Some(Hotkey { skill: false, id, .. }) = key else { continue };
             let Some(info) = items.get(&id) else { continue };
             if let Some(Some(icon)) = icons.get(&inventory::icon_path(info, true)) {
-                layer.sprites.push((icon, corner, icon.size));
+                layer.sprites.push((icon, corner, if self.d4 { icon_size } else { icon.size }));
             }
             // A graded item carries its grade's mark.
             let grade = inventory.iter().find(|item| item.id == id).map_or(0, |item| item.grade);
@@ -312,9 +349,9 @@ impl Hotkeys {
             }
             // How many are carried, bottom right.
             let amount: u32 = inventory.iter().filter(|item| item.id == id && item.worn == 0).map(|item| u32::from(item.amount)).sum();
-            count_text(layer, font, corner, &amount.to_string());
-            if contains(corner, SLOT, cursor) {
-                window::tooltip(tooltip, chrome, font, info.name(true), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
+            count_text(layer, font, corner, icon_size, &amount.to_string());
+            if contains(corner, hit_size, cursor) {
+                window::tooltip(tooltip, chrome, font, info.name(true), tip, [255; 3]);
             }
         }
     }
@@ -323,7 +360,7 @@ impl Hotkeys {
 impl Hotkeys {
     /// The minus and plus buttons on screen (for the test driver): `hotkey_minus`, `hotkey_plus`.
     pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
-        if !self.frame.open {
+        if !self.frame.open || self.d4 {
             return Vec::new();
         }
         let [minus, plus] = self.step_buttons();
@@ -350,6 +387,14 @@ impl Hotkeys {
         if !self.frame.open {
             return Vec::new();
         }
+        if self.d4 {
+            return (0..PER_ROW)
+                .map(|n| {
+                    let corner = self.frame.at(crate::diablo::socket_corner(n));
+                    (self.key_index(n), [corner[0], corner[1], crate::diablo::SOCKET, crate::diablo::SOCKET])
+                })
+                .collect();
+        }
         self.shown()
             .into_iter()
             .map(|(index, local)| {
@@ -360,15 +405,16 @@ impl Hotkeys {
     }
 }
 
-/// Where an amount or level goes: its right edge at the slot's x + 27, its top at the slot's y + 17.
+/// Where an amount or level goes: its right edge at the slot's x + 27, its top at the slot's y + 17 (for a 24 square
+/// icon; as far in from a bigger one's corner).
 // ponytail: the game's 11 px size isn't one of the font's; it's drawn in the usual one.
-fn count_place(corner: [f32; 2], width: f32) -> [f32; 2] {
-    [corner[0] + 27.0 - width, corner[1] + 17.0]
+fn count_place(corner: [f32; 2], width: f32, icon: [f32; 2]) -> [f32; 2] {
+    [corner[0] + icon[0] + 3.0 - width, corner[1] + icon[1] - 7.0]
 }
 
 /// A number at a slot's bottom right: black, outlined in white on four sides.
-fn count_text(layer: &mut Layer<'_>, font: &Font, corner: [f32; 2], text: &str) {
-    let place = count_place(corner, font.width(text));
+fn count_text(layer: &mut Layer<'_>, font: &Font, corner: [f32; 2], icon: [f32; 2], text: &str) {
+    let place = count_place(corner, font.width(text), icon);
     for nudge in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
         layer.texts.push((text.to_owned(), [place[0] + nudge[0], place[1] + nudge[1]], [255; 3]));
     }
@@ -426,7 +472,7 @@ mod tests {
         // Slots: icons at (16 + 29c, 4 + 33r), hit boxes a pixel lower.
         assert_eq!((slot_corner(0), slot_corner(8), slot_corner(9), slot_corner(20)), ([16.0, 4.0], [248.0, 4.0], [16.0, 37.0], [74.0, 70.0]));
         assert_eq!(hover_corner(slot_corner(10)), [45.0, 38.0]);
-        assert_eq!(count_place([16.0, 4.0], 7.0), [36.0, 21.0]);
+        assert_eq!(count_place([16.0, 4.0], 7.0, SLOT), [36.0, 21.0]);
         let mut bar = Hotkeys::default();
         bar.frame.open = true;
         assert_eq!((bar.frame.position, bar.rows, bar.height()), ([230.0, 0.0], 2, 76.0));
