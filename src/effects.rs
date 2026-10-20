@@ -1727,6 +1727,10 @@ const CLOSE_CONFINE: u32 = 602;
 const PANG_VOICE: u32 = 606;
 const WINK_OF_CHARM: u32 = 607;
 const BUBBLE_CONE: u32 = 840;
+/// The coloured cones of the other songs (841 to 845), Adaptation's and Eternal Chaos' flicker and streaks.
+const LAST_BUBBLE_CONE: u32 = 845;
+const ADAPTATION: u32 = 848;
+const ETERNAL_CHAOS: u32 = 864;
 const MAGNUS: u32 = 318;
 const SANCTUARY: u32 = 319;
 const TRIPLE_ATTACK: u32 = 329;
@@ -2009,11 +2013,24 @@ impl Effects {
         match (id, target) {
             (SHRINK, Target::Unit(unit)) => self.prims.songs.shrink(unit, now),
             (CLOSE_CONFINE, Target::Unit(unit)) => self.prims.songs.confine(unit, now),
-            (BUBBLE_CONE, Target::Unit(unit)) => {
+            (BUBBLE_CONE..=LAST_BUBBLE_CONE, Target::Unit(unit)) => {
                 for path in songs::BUBBLES {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
                 }
-                self.prims.songs.cone(unit, 120, now);
+                self.prims.songs.cone(id, unit, 120, now);
+            }
+            // Adaptation on its caster; Eternal Chaos on whoever has the status, a new status-on replacing the old copy.
+            (ADAPTATION | ETERNAL_CHAOS, Target::Unit(_) | Target::Status(..)) => {
+                self.textures.entry(songs::STREAK_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, songs::STREAK_TEXTURE, true).ok());
+                let (unit, status) = match target {
+                    Target::Status(unit, status) => (unit, Some(status)),
+                    Target::Unit(unit) => (unit, None),
+                    _ => (None, None),
+                };
+                if let Some(status) = status {
+                    self.prims.songs.forget_status(unit, status);
+                }
+                self.prims.songs.dance(unit, status, id == ETERNAL_CHAOS, now, |n| pick(0, n.saturating_sub(1)));
             }
             _ => {}
         }
@@ -2748,6 +2765,7 @@ impl Effects {
 
     /// Stops what a status plays on its unit (None = the player).
     pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
+        self.prims.songs.forget_status(unit, status);
         let on = |anchor: Anchor| matches!(anchor, Anchor::Status(each, kind) if each == unit && kind == status);
         self.status_prims.retain(|prim| !on(prim.anchor));
         self.auras.retain(|aura| !on(aura.anchor));
@@ -4529,5 +4547,24 @@ mod tests {
             assert_eq!((table.skill_sounds[&skill][0].file.as_str(), table.skill_sounds[&skill][0].listener), (file, true), "{skill}");
             assert_eq!(table.used(skill).unwrap().last(), Some(&(Who::Caster, 840)));
         }
+    }
+
+    #[test]
+    fn the_song_cones_and_the_dances_play_in_code() {
+        let table = Table::load();
+        // Each song's cone: the colour by id from the use rows; the sound at the unit.
+        for (skill, cone) in [(322, 841), (307, 842), (309, 842), (310, 842), (312, 842), (313, 842), (317, 843), (325, 843), (321, 843)] {
+            assert!(table.used(skill).unwrap().contains(&(Who::Caster, cone)), "{skill}");
+        }
+        for (skill, cone) in [(308, 844), (319, 844), (327, 844), (328, 844), (306, 845), (311, 845)] {
+            assert!(table.used(skill).unwrap().contains(&(Who::Caster, cone)), "{skill}");
+        }
+        for id in 841..=845 {
+            assert_eq!(table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\EF_BeginSpell", 0)], "{id}");
+        }
+        // Adaptation on its caster; Eternal Chaos and Loki's Veil on the units with the status.
+        assert_eq!((table.used(304), table.used(5068)), (Some(&[(Who::Caster, 848)][..]), Some(&[(Who::Caster, 848)][..])));
+        assert!([79, 82, 448].iter().all(|status| table.status(*status).contains(&864)));
+        assert!(!table.sounds.contains_key(&848) && !table.sounds.contains_key(&864));
     }
 }
