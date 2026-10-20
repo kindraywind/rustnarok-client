@@ -2763,9 +2763,10 @@ impl App {
         let scene = world_str::Scene { player: player_feet, feet: &feet_of_unit, body: &body_of, longitude: yaw.to_degrees(), right: view.right, up: view.up };
         game.effects.advance_world(now, &scene);
         // The Sight option (bit 0x1) keeps a flame circling its unit.
-        let sights: Vec<_> =
-            std::iter::once((None, game.player.option & 1 != 0)).chain(game.units.iter().map(|(&id, actor)| (Some(id), actor.option & 1 != 0))).collect();
-        game.effects.watch_sight(sights, now);
+        let sights: Vec<_> = std::iter::once((None, game.player.hide_option & 1 != 0))
+            .chain(game.units.iter().map(|(&id, actor)| (Some(id), actor.hide_option & 1 != 0)))
+            .collect();
+        game.effects.watch_sight(grf, sights, now);
         game.effects.rises = rises;
         game.effects.facings = facings;
         game.effects.aim_arrows(now, feet_of_unit);
