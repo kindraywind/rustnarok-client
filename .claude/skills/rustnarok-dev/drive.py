@@ -110,6 +110,12 @@ def launch(n="", slot="0", binary=None, env_extra=None, quiet=False, tries=3):
         if os.path.exists(SOCK):
             try:
                 state = send({"cmd": "state"})
+                # The login is still on its way: give it a few seconds to land in the game or on a message.
+                for _ in range(20):
+                    if state.get("scene") != "waiting":
+                        break
+                    time.sleep(0.5)
+                    state = send({"cmd": "state"})
                 if state.get("scene") == "message" and "last log-in" in state.get("text", "") and tries > 1:
                     # The server still holds the previous run's session (a verify.sh live test, a client that quit): wait it out.
                     quit_quietly()
@@ -161,7 +167,8 @@ if __name__ == "__main__":
     elif what == "state":
         part = send({"cmd": "state"})
         for key in (args[0].split(".") if args else []):
-            part = part[int(key)] if isinstance(part, list) else part.get(key)
+            # A part the state doesn't have (the game's, on the login screen) prints null.
+            part = part[int(key)] if isinstance(part, list) else part.get(key) if isinstance(part, dict) else None
         print(json.dumps(part, ensure_ascii=False, indent=1))
     elif what == "quit":
         print(send({"cmd": "quit"}))
