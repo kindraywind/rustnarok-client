@@ -16,6 +16,7 @@ pub mod ground;
 pub mod guard;
 pub mod huujin;
 pub mod knight;
+pub mod mechanic;
 pub mod monk;
 pub mod napalm;
 pub mod sage;
@@ -148,7 +149,7 @@ pub struct Prims {
     pub boomerangs: boomerang::Boomerangs,
     pub napalms: Vec<napalm::Napalm>,
     pub sparkles: Vec<sparkle::Hallutime>,
-    pub blues: Vec<sparkle::Blues>,
+    pub blues: Vec<sparkle::Rises>,
     pub blitzes: blitz::Blitzes,
     pub spheres: tanji::Spheres,
     pub huujin: huujin::Huujin,
@@ -171,6 +172,7 @@ pub struct Prims {
     pub brawl: brawl::Brawl,
     pub shafts: shafts::Shafts,
     pub circles: circle::Circles,
+    pub mechanic: mechanic::Mechanic,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -572,7 +574,12 @@ impl Prims {
     /// EF_HALLUTIME (793) round an Escape copy's feet.
     /// Hovering's blue sparkles round `unit` (None = the player).
     pub fn blue_sparkles(&mut self, unit: Option<u32>, now: Instant) {
-        self.blues.push(sparkle::Blues::new(unit, now));
+        self.blues.push(sparkle::Rises::new(&sparkle::BLUE, unit, now));
+    }
+
+    /// Repair's spanners round `unit`.
+    pub fn spanners(&mut self, unit: Option<u32>, now: Instant) {
+        self.blues.push(sparkle::Rises::new(&sparkle::SPANNERS, unit, now));
     }
 
     pub fn sparkle(&mut self, unit: Option<u32>, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
@@ -589,6 +596,8 @@ impl Prims {
         self.guard.forget(unit);
         self.brawl.forget(unit);
         self.circles.forget(Some(unit));
+        self.circles.forget_venom(Some(unit));
+        self.mechanic.forget(unit);
     }
 
     /// The camera-facing squares for effect 793 at `now`.
@@ -667,6 +676,7 @@ impl Prims {
         self.sparkles.retain(|sparkle| sparkle.alive(now));
         self.blues.retain(|blues| blues.alive(now));
         self.shafts.advance(now);
+        self.circles.advance(now);
         self.blitzes.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
     }
 

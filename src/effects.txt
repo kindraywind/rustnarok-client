@@ -2021,6 +2021,11 @@ wav	775	effect\EF_BeginSpell	0
 wav	776	effect\데스페라도	720	listener
 wav	777	effect\EF_IncAgility	0
 wav	779	effect\소울 체인지	0
+wav	780	effect\cru_grand cross	0
+wav	781	effect\MAGNETICFIELD	80
+wav	782	effect\black_maximize_power_sword_bic	0
+wav	782	effect\mon_금강불괴	0	listener
+wav	786	effect\ANALYZE	0
 wav	799	effect\wl_stasis	0
 wav	802	effect\wl_whiteimprison	0
 wav	803	effect\wl_recognizedspell	0

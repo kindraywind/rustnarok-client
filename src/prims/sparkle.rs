@@ -157,9 +157,50 @@ impl Hallutime {
     }
 }
 
-/// Hovering's and Emergency Cool's (EF_HATED 543) blue sparkles: a set of four squares on each of ticks 0, 4 … 80, each rising from
-/// where the unit stood, in #9696FA.
-pub struct Blues {
+/// What tells one rising set of squares from another (kind 59 with other numbers): Hovering's blue sparkles (543) and Repair's
+/// spanners (785).
+pub struct RiseLook {
+    /// How many sets, one every 4 ticks, and how many squares each.
+    sets: u32,
+    per_set: usize,
+    /// Squares whose three draws are thrown away after the others'.
+    unused: usize,
+    /// The half-diagonal 2.0 + 0.1 R(`half`), x and z off the feet by R(`spread`) − `centre`, the rise `rise` + 0.01 R(20) a tick.
+    half: u32,
+    spread: u32,
+    centre: f32,
+    rise: f32,
+    tint: [f32; 3],
+    /// The picture: pok1 with its twinkle, or one of its own, mirrored.
+    picture: Option<&'static str>,
+}
+
+pub const BLUE: RiseLook = RiseLook {
+    sets: 21,
+    per_set: 4,
+    unused: 0,
+    half: 10,
+    spread: 11,
+    centre: 5.0,
+    rise: 0.10,
+    tint: [150.0 / 255.0, 150.0 / 255.0, 250.0 / 255.0],
+    picture: None,
+};
+pub const SPANNER_PICTURE: &str = "data\\texture\\유저인터페이스\\item\\스패너.bmp";
+pub const SPANNERS: RiseLook = RiseLook {
+    sets: 6,
+    per_set: 2,
+    unused: 2,
+    half: 11,
+    spread: 19,
+    centre: 9.0,
+    rise: 0.20,
+    tint: [220.0 / 255.0, 250.0 / 255.0, 220.0 / 255.0],
+    picture: Some(SPANNER_PICTURE),
+};
+
+pub struct Rises {
+    look: &'static RiseLook,
     pub unit: Option<u32>,
     pub start: Instant,
     /// The sets made so far, and where the unit last stood.
@@ -168,10 +209,7 @@ pub struct Blues {
     pub squares: Vec<Rise>,
 }
 
-pub const BLUE_SETS: u32 = 21;
-const BLUE_TINT: [f32; 3] = [150.0 / 255.0, 150.0 / 255.0, 250.0 / 255.0];
-
-/// One blue square: where it starts (6 up), its size and how fast it rises.
+/// One square: where it starts (6 up), its size and how fast it rises.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rise {
     pub k: usize,
@@ -181,9 +219,9 @@ pub struct Rise {
     pub rise: f32,
 }
 
-impl Blues {
-    pub fn new(unit: Option<u32>, start: Instant) -> Self {
-        Self { unit, start, made: 0, last: None, squares: Vec::new() }
+impl Rises {
+    pub fn new(look: &'static RiseLook, unit: Option<u32>, start: Instant) -> Self {
+        Self { look, unit, start, made: 0, last: None, squares: Vec::new() }
     }
 
     fn tick(&self, now: Instant) -> Option<u32> {
@@ -191,25 +229,31 @@ impl Blues {
         Some((age.as_millis() / TICK.as_millis()) as u32)
     }
 
-    /// Whether anything of it is still to show: the last set is gone 54 ticks after tick 80.
+    /// Whether anything of it is still to show: the last set is gone 54 ticks after its own.
     pub fn alive(&self, now: Instant) -> bool {
-        self.tick(now).is_some_and(|tick| tick < 4 * (BLUE_SETS - 1) + 55)
+        self.tick(now).is_some_and(|tick| tick < 4 * (self.look.sets - 1) + 55)
     }
 
     /// Makes the sets whose ticks have come, where `position_of` has the unit's feet then; each square's choices come from `rand(n)`.
     pub fn advance(&mut self, now: Instant, position_of: &impl Fn(Option<u32>) -> Option<Vector>, mut rand: impl FnMut(u32) -> u32) {
         self.last = position_of(self.unit).or(self.last);
         let Some(tick) = self.tick(now) else { return };
-        while self.made < BLUE_SETS && tick >= 4 * self.made {
+        let look = self.look;
+        while self.made < look.sets && tick >= 4 * self.made {
             if let Some(feet) = self.last {
-                for k in 0..SQUARES_PER_WAVE {
-                    let half_diagonal = 2.0 + 0.1 * rand(10) as f32;
-                    let x = feet[0] + rand(11) as f32 - 5.0;
-                    let z = feet[2] + rand(11) as f32 - 5.0;
-                    let rise = 0.10 + 0.01 * rand(20) as f32;
-                    // The game's one more draw, at the square's first tick, is thrown away.
-                    let _ = rand(360);
+                for k in 0..look.per_set {
+                    let half_diagonal = 2.0 + 0.1 * rand(look.half) as f32;
+                    let x = feet[0] + rand(look.spread) as f32 - look.centre;
+                    let z = feet[2] + rand(look.spread) as f32 - look.centre;
+                    let rise = look.rise + 0.01 * rand(20) as f32;
                     self.squares.push(Rise { k, born: 4 * self.made, half_diagonal, at: [x, feet[1] + 6.0, z], rise });
+                }
+                // The squares the game makes and never draws, then the one draw each drawn square throws away at its first tick.
+                for _ in 0..look.unused {
+                    let _ = (rand(look.spread), rand(look.spread), rand(20));
+                }
+                for _ in 0..look.per_set {
+                    let _ = rand(360);
                 }
             }
             self.made += 1;
@@ -226,10 +270,14 @@ impl Blues {
                 continue;
             }
             let alpha = drawn_alpha(n, dim);
-            let Some(texture) = texture_of(texture_at(square.k, n)) else { continue };
+            let path = self.look.picture.unwrap_or_else(|| texture_at(square.k, n));
+            let Some(texture) = texture_of(path) else { continue };
             let place = [square.at[0], square.at[1] + n as f32 * square.rise, square.at[2]];
-            let tint = [BLUE_TINT[0], BLUE_TINT[1], BLUE_TINT[2], alpha as f32 / 255.0];
-            quads.push((texture, place, corners(square.half_diagonal, spin_at(n)), tint, true, false));
+            let tint = [self.look.tint[0], self.look.tint[1], self.look.tint[2], alpha as f32 / 255.0];
+            let [a, b, c, d] = corners(square.half_diagonal, spin_at(n));
+            // A picture of its own is mirrored left to right.
+            let corners = if self.look.picture.is_some() { [b, a, d, c] } else { [a, b, c, d] };
+            quads.push((texture, place, corners, tint, true, false));
         }
         quads
     }
@@ -420,12 +468,12 @@ mod tests {
     fn hovering_lets_blue_sparkles_rise_in_21_sets() {
         let start = Instant::now();
         let feet = [10.0, 5.0, 20.0];
-        let mut blues = Blues::new(Some(1), start);
-        let run = |blues: &mut Blues, tick: u32| blues.advance(start + TICK * tick, &|_| Some(feet), |_| 0);
+        let mut blues = Rises::new(&BLUE, Some(1), start);
+        let run = |blues: &mut Rises, tick: u32| blues.advance(start + TICK * tick, &|_| Some(feet), |_| 0);
         for tick in 0..=82 {
             run(&mut blues, tick);
             // A set of four on ticks 0, 4 … 80 and none between.
-            assert_eq!(blues.squares.len() as u32, 4 * (tick / 4 + 1).min(BLUE_SETS), "tick {tick}");
+            assert_eq!(blues.squares.len() as u32, 4 * (tick / 4 + 1).min(BLUE.sets), "tick {tick}");
         }
         assert_eq!(blues.made, 21);
         // Every draw 0: half-diagonal 2.0, x and z the feet − 5, rise 0.10, 6 up; absolute: the unit moving changes nothing.
@@ -435,5 +483,26 @@ mod tests {
         assert_eq!([2, 10, 11, 54, 55].map(alpha_at), [15, 135, 132, 3, 0]);
         assert_eq!([texture_at(0, 34), texture_at(0, 35), texture_at(0, 36), texture_at(0, 37)], [POK1, POK3, POK3, POK1]);
         assert!(blues.alive(start + TICK * 134) && !blues.alive(start + TICK * 135));
+    }
+
+    #[test]
+    fn repair_pops_spanners_two_at_a_time() {
+        let start = Instant::now();
+        let feet = [10.0, 5.0, 20.0];
+        let mut spanners = Rises::new(&SPANNERS, Some(1), start);
+        for tick in 0..=26 {
+            spanners.advance(start + TICK * tick, &|_| Some(feet), |_| 0);
+            // Two squares on each of ticks 0, 4 … 20 and none on 24.
+            assert_eq!(spanners.squares.len() as u32, 2 * (tick / 4 + 1).min(6), "tick {tick}");
+        }
+        assert_eq!(spanners.made, 6);
+        // Every draw 0: half-diagonal 2.0, x and z = feet − 9, rise 0.20, 6 up.
+        let first = spanners.squares[0];
+        assert_eq!((first.half_diagonal, first.at, first.rise), (2.0, [1.0, 11.0, 11.0], 0.20));
+        // The picture is the spanner, mirrored; added on in #DCFADC; alpha at ages 2, 10, 11, 54, 55: 15, 135, 132, 3, 0 (half drawn).
+        assert_eq!([2, 10, 11, 54, 55].map(alpha_at), [15, 135, 132, 3, 0]);
+        assert_eq!(SPANNERS.picture, Some(SPANNER_PICTURE));
+        assert_eq!(SPANNERS.tint, [220.0 / 255.0, 250.0 / 255.0, 220.0 / 255.0]);
+        assert!(spanners.alive(start + TICK * 74) && !spanners.alive(start + TICK * 75));
     }
 }
