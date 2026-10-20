@@ -2170,6 +2170,11 @@ pub struct Actor {
     strike_age: u32,
     strike_due: bool,
     strike_tint: Option<[u8; 3]>,
+    /// Escape: the run, the aims copies are due at, where the unit was drawn last and the effects its copies started.
+    escape: Option<Escape>,
+    escape_due: Vec<[f32; 3]>,
+    last_feet: Option<[f32; 3]>,
+    launches: Vec<(u32, [f32; 3])>,
     /// What statuses do to how its own parts are drawn: by status, the body flags and colour (`status_body`).
     glows: Vec<(u16, u32, Option<[u8; 3]>)>,
     pub ghosts: Vec<Ghost>,
@@ -2345,16 +2350,50 @@ pub struct Ghost {
     pub feet: [f32; 3],
     pub placed: Vec<Placed>,
     pub tint: [u8; 3],
-    /// Striking's: 239 less 16 a tick, not Make Blur's 172 less 8.
-    pub striking: bool,
+    /// Which fade it has.
+    pub kind: GhostKind,
+    /// Escape's copy has started effect 793 on itself.
+    launched: bool,
+}
+
+/// What leaves a copy: Make Blur (172 less 8 a tick), Striking (239 less 16) or Escape (180, held, then 8 less every 4th tick).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GhostKind {
+    Blur,
+    Striking,
+    Escape,
 }
 
 impl Ghost {
-    /// How see-through the copy is drawn `now`, out of 255.
+    /// How see-through the copy is drawn `now`, out of 1.
     pub fn alpha(&self, now: Instant) -> f32 {
         let age = now.saturating_duration_since(self.left);
-        if self.striking { strike_alpha(age) } else { ghost_alpha(age) }
+        match self.kind {
+            GhostKind::Blur => ghost_alpha(age),
+            GhostKind::Striking => strike_alpha(age),
+            GhostKind::Escape => escape_alpha(1 + (age.as_millis() / 16) as u32) / 255.0,
+        }
     }
+}
+
+/// One of Escape's copies at its age n: 180 while n is 107 or less, then 8 less at n = 108, 112 … 192 (4 there), gone from 193; out
+/// of 255.
+pub fn escape_alpha(n: u32) -> f32 {
+    match n {
+        0..=107 => 180.0,
+        108..=192 => (180 - 8 * ((n - 108) / 4 + 1)) as f32,
+        _ => 0.0,
+    }
+}
+
+/// Escape's tint and copies (#C8C800), its aim moving halfway to the unit each tick, and the tick it started effect 793 on a copy.
+const ESCAPE_TINT: [u8; 3] = [200, 200, 0];
+const ESCAPE_LAUNCH: u32 = 110;
+pub const ESCAPE_AFTER: u32 = 793;
+
+struct Escape {
+    e: u32,
+    aim: Option<[f32; 3]>,
 }
 
 /// How see-through one of Striking's copies left `age` ago is drawn: 255 less 16 a tick, drawn from 239 and gone at 0; out of 255.
@@ -2447,6 +2486,10 @@ impl Actor {
             strike_age: 0,
             strike_due: false,
             strike_tint: None,
+            escape: None,
+            escape_due: Vec::new(),
+            last_feet: None,
+            launches: Vec::new(),
             glows: Vec::new(),
             ghosts: Vec::new(),
             cursed: false,
@@ -2502,6 +2545,19 @@ impl Actor {
         self.strike_tint
     }
 
+    /// Escape (5010) is used: the unit is tinted yellow for 20 ticks and a copy is left at the aim every 5th, the aim closing on the
+    /// unit. A second use while one runs does nothing.
+    pub fn escape(&mut self) {
+        if self.escape.is_none() {
+            self.escape = Some(Escape { e: 0, aim: self.last_feet });
+        }
+    }
+
+    /// The effects Escape's copies started since this was last asked: the effect and where.
+    pub fn take_launches(&mut self) -> Vec<(u32, [f32; 3])> {
+        std::mem::take(&mut self.launches)
+    }
+
     /// Snap, Fallen Angel or All in the Sky slides the unit: it blurs for 100 ticks.
     pub fn snap(&mut self) {
         self.snap_left = SNAP_TICKS;
@@ -2524,6 +2580,27 @@ impl Actor {
             if self.striking {
                 self.strike_due |= self.strike_age.is_multiple_of(5);
                 self.strike_age += 1;
+            }
+            if let Some(run) = &mut self.escape {
+                self.blur_colour = ESCAPE_TINT;
+                run.aim = run.aim.or(self.last_feet);
+                if let Some(aim) = &mut run.aim {
+                    if run.e.is_multiple_of(5) {
+                        self.escape_due.push(*aim);
+                    }
+                    // The aim moves halfway to the unit; a unit that has not moved leaves it where it is.
+                    if let Some(feet) = self.last_feet {
+                        let toward = std::array::from_fn::<f32, 3, _>(|axis| feet[axis] - aim[axis]);
+                        if toward.iter().map(|value| value * value).sum::<f32>() > 0.0 {
+                            *aim = std::array::from_fn(|axis| aim[axis] + toward[axis] / 2.0);
+                        }
+                    }
+                }
+                run.e += 1;
+                if run.e >= 20 {
+                    self.escape = None;
+                }
+                continue;
             }
             if self.blurs.is_empty() && self.snap_left == 0 {
                 self.blur_age = 0;
@@ -2552,14 +2629,27 @@ impl Actor {
 
     /// Leaves a copy of the frame drawn at `feet` when one is due (`step_blur`), tinted the blur's colour; old copies go.
     pub fn leave_ghost(&mut self, now: Instant, feet: [f32; 3], placed: &[Placed]) {
+        self.last_feet = Some(feet);
         self.ghosts.retain(|ghost| ghost.alpha(now) > 0.0);
         if self.blur_due && !placed.is_empty() {
             self.blur_due = false;
-            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint: self.blur_colour, striking: false });
+            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint: self.blur_colour, kind: GhostKind::Blur, launched: false });
         }
         if self.strike_due && !placed.is_empty() {
             self.strike_due = false;
-            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint: self.strike_tint.unwrap_or([255; 3]), striking: true });
+            let tint = self.strike_tint.unwrap_or([255; 3]);
+            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint, kind: GhostKind::Striking, launched: false });
+        }
+        for aim in std::mem::take(&mut self.escape_due) {
+            if !placed.is_empty() {
+                self.ghosts.push(Ghost { left: now, feet: aim, placed: placed.to_vec(), tint: ESCAPE_TINT, kind: GhostKind::Escape, launched: false });
+            }
+        }
+        for ghost in self.ghosts.iter_mut().filter(|ghost| ghost.kind == GhostKind::Escape && !ghost.launched) {
+            if 1 + (now.saturating_duration_since(ghost.left).as_millis() / 16) as u32 >= ESCAPE_LAUNCH {
+                ghost.launched = true;
+                self.launches.push((ESCAPE_AFTER, ghost.feet));
+            }
         }
     }
 
@@ -4425,7 +4515,7 @@ mod tests {
             actor.leave_ghost(tick(at), [at as f32; 3], &placed);
         }
         assert_eq!(actor.ghosts.iter().map(|ghost| ghost.feet[0]).collect::<Vec<_>>(), [1.0, 6.0, 11.0]);
-        assert!(actor.ghosts.iter().all(|ghost| ghost.striking && ghost.tint == [255; 3]));
+        assert!(actor.ghosts.iter().all(|ghost| ghost.kind == GhostKind::Striking && ghost.tint == [255; 3]));
         // The status coming on again starts over: one effect, age 0, a copy due.
         actor.strike(true);
         actor.strike(true);
@@ -4448,7 +4538,64 @@ mod tests {
         actor.leave_ghost(tick(41), [5.0; 3], &placed);
         assert_eq!(actor.ghosts.last().unwrap().tint, [175, 125, 150]);
         // Make Blur's own copies keep their numbers.
-        assert!(!Ghost { left: start, feet: [0.0; 3], placed: Vec::new(), tint: [255; 3], striking: false }.alpha(tick(0)).is_nan());
+        assert!(!Ghost { left: start, feet: [0.0; 3], placed: Vec::new(), tint: [255; 3], kind: GhostKind::Blur, launched: false }.alpha(tick(0)).is_nan());
         assert_eq!(STRIKING, 925);
+    }
+
+    #[test]
+    fn escape_tints_the_unit_and_leaves_four_copies_closing_on_it() {
+        let start = Instant::now();
+        let tick = |ticks: u64| start + Duration::from_millis(16 * ticks);
+        // A copy's alpha at n = 107, 108, 111, 112, 192, 193: 180, 172, 172, 164, 4, gone.
+        assert_eq!([107, 108, 111, 112, 192, 193].map(escape_alpha), [180.0, 172.0, 172.0, 164.0, 4.0, 0.0]);
+        let mut actor = Actor::new("Shadow Chaser".into(), None, [0, 0], 0, 150);
+        let placed: Vec<Placed> = vec![((0, 0, 0, [255; 4], 0), [0.0; 2], [1.0; 2], 0.0)];
+        actor.step_blur(tick(0), || false);
+        actor.leave_ghost(tick(0), [16.0, 0.0, 0.0], &placed);
+        actor.escape();
+        actor.escape();
+        // The source stands at 16 from the aim (the first copy is at the use's place); the aim halves the distance each tick.
+        let mut copies = Vec::new();
+        for t in 1..=24 {
+            actor.last_feet = Some([0.0; 3]);
+            actor.step_blur(tick(t), || false);
+            let before = actor.ghosts.len();
+            actor.leave_ghost(tick(t), [0.0; 3], &placed);
+            if actor.ghosts.len() > before {
+                copies.push(t);
+            }
+            if t == 1 {
+                assert_eq!(actor.body_tint(), Some([200, 200, 0]));
+            }
+        }
+        // Copies on e = 0, 5, 10, 15 only (one escape, though used twice).
+        assert_eq!(copies, [1, 6, 11, 16]);
+        let at: Vec<f32> = actor.ghosts.iter().map(|ghost| ghost.feet[0]).collect();
+        assert_eq!(at[0], 16.0, "the first is at the aim's start");
+        assert!((at[1] - 16.0 / 32.0).abs() < 1e-3, "after five halvings: 0.5, then 0.0156 …");
+        assert!(at.iter().all(|value| value.is_finite()));
+        assert!(actor.ghosts.iter().all(|ghost| ghost.kind == GhostKind::Escape && ghost.tint == [200, 200, 0]));
+        // The tint stays through e = 19 and climbs back 8 a channel a tick, the blue from 0: white 32 ticks on.
+        actor.step_blur(tick(26), || false);
+        assert!(actor.body_tint().is_some());
+        actor.step_blur(tick(26 + 31), || false);
+        assert_eq!(actor.body_tint(), None);
+        // Effect 793 starts on a copy at its n = 110.
+        let mut late = Actor::new("Shadow Chaser".into(), None, [0, 0], 0, 150);
+        late.step_blur(tick(0), || false);
+        late.leave_ghost(tick(0), [5.0; 3], &placed);
+        late.escape();
+        late.step_blur(tick(1), || false);
+        late.leave_ghost(tick(1), [5.0; 3], &placed);
+        assert!(late.ghosts.len() == 1 && late.take_launches().is_empty());
+        late.leave_ghost(tick(1 + 108), [5.0; 3], &placed);
+        assert!(late.take_launches().is_empty(), "n = 109");
+        late.leave_ghost(tick(1 + 109), [5.0; 3], &placed);
+        assert_eq!(late.take_launches(), [(ESCAPE_AFTER, [5.0; 3])]);
+        late.leave_ghost(tick(1 + 120), [5.0; 3], &placed);
+        assert!(late.take_launches().is_empty(), "only once");
+        // Gone from n = 193.
+        late.leave_ghost(tick(1 + 192), [5.0; 3], &placed);
+        assert!(late.ghosts.is_empty());
     }
 }

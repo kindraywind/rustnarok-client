@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, notes,
-    painter, sage, shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
+    balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, knight, mechanic, monk,
+    notes, painter, sage, shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -28,7 +28,12 @@ pub const STR_RISE: f32 = 80.0;
 
 /// How many pixels above the feet an effect's STR is anchored: 80, but for Shield Charge's anchor, which sits on the feet.
 pub fn str_rise(effect: u32) -> f32 {
-    if effect == SHIELD_CHARGE { 0.0 } else { STR_RISE }
+    match effect {
+        SHIELD_CHARGE => 0.0,
+        // Offertorium's ring: the file itself puts it at head height.
+        OFFERTORIUM_RING => 5.0,
+        _ => STR_RISE,
+    }
 }
 
 /// One STR part of an effect.
@@ -484,6 +489,10 @@ fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
     // Shockwave's waves start again every 75 ticks.
     if effect == 145 {
         return 75;
+    }
+    // Offertorium's ring runs its 121 ticks and starts again.
+    if effect == OFFERTORIUM_RING {
+        return 121;
     }
     // Electric Walk's wave runs its 29 frames and one more tick.
     if effect == 926 {
@@ -1964,6 +1973,10 @@ const ARRULLO_FX: u32 = 931;
 const ELEMENTAL_ACTION: u32 = 934;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
+/// King's Grace's emblems, Offertorium's ring and Escape's tint and copies (`prims::emblems`, `actor`).
+const KINGS_GRACE: u32 = 1051;
+const OFFERTORIUM_RING: u32 = 1057;
+pub const ESCAPE_FX: u32 = 1081;
 const GREAT_ECHO_V: u32 = 863;
 /// Sonic Wave's crescents and Duple Light's orbs (`prims::waves`).
 const SONIC_WAVE: u32 = 832;
@@ -3193,6 +3206,10 @@ impl Effects {
                 } else {
                     self.prims.cells.ring(effect, id, cells::insignia_tint(kind), at, now);
                 }
+            } else if effect == KINGS_GRACE {
+                // King's Grace's four emblems stand round the cell with their unit.
+                self.textures.entry(emblems::EMBLEM.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, emblems::EMBLEM, false).ok());
+                self.prims.emblems.keep(id, at, now);
             } else if matches!(effect, FIRE_PILLAR | VENOM_DUST) {
                 // The Fire Pillar's funnels and Venom Dust's puffs stand with their unit, drawn in code.
                 self.textures.entry(walls::MAGIC_RED.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::MAGIC_RED, true).ok());
@@ -3535,6 +3552,7 @@ impl Effects {
         }
         self.prims.souls.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.notes.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        self.prims.emblems.advance(now);
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -4364,6 +4382,10 @@ impl Effects {
         quads.extend(self.prims.boomerangs.quads(self.textures.get(boomerang::SHIELD).and_then(Option::as_ref)));
         if !self.only_forced {
             quads.extend(self.prims.spheres.quads(self.textures.get(tanji::SPHERE).and_then(Option::as_ref)));
+            // King's Grace's emblems: the glow added on, then the emblem, both facing the camera.
+            if let Some(Some(texture)) = self.textures.get(emblems::EMBLEM) {
+                quads.extend(self.prims.emblems.draws(now).into_iter().map(|draw| (texture, draw.at, draw.corners, draw.tint, draw.additive, false)));
+            }
             // Lullaby Deep Sleep's notes, over everything (`STR_RISE` is taken off again).
             quads.extend(self.prims.notes.quads(|path| self.textures.get(path).and_then(Option::as_ref), STR_RISE));
             // Sight Rasher's sprites and their shadows, white with their alpha.
@@ -6538,5 +6560,19 @@ mod tests {
             [("effect\\안식의자장가", 0, true)]
         );
         assert!(table.used(2422).unwrap().contains(&(Who::Target, LULLABY)) && !table.parts.contains_key(&LULLABY));
+    }
+
+    #[test]
+    fn kings_grace_offertoriums_ring_and_escape_have_their_rows() {
+        let table = Table::load();
+        assert_eq!(table.units[&258], KINGS_GRACE);
+        assert!(!table.sounds.contains_key(&KINGS_GRACE));
+        // Offertorium's ring sits 5 up, the others 80, and starts again every 121 ticks.
+        assert_eq!((str_rise(OFFERTORIUM_RING), str_rise(1043), str_rise(220)), (5.0, 80.0, 80.0));
+        assert_eq!(restart_ticks(OFFERTORIUM_RING, 0, 121), 121);
+        assert_eq!(table.status(716), &[OFFERTORIUM_RING]);
+        // Escape on the source of its use, with no sound and no line of its own for 793.
+        assert!(table.used(5010).unwrap().contains(&(Who::Caster, ESCAPE_FX)) && !table.sounds.contains_key(&ESCAPE_FX));
+        assert!(!table.parts.contains_key(&793) && !table.sounds.contains_key(&793));
     }
 }
