@@ -316,6 +316,11 @@ impl App {
 
         // The map's moving RSM 2 models, posed for now.
         game.world.animate(gpu, now);
+        // What Escape's copies started on themselves since the last frame.
+        let launches: Vec<_> = std::iter::once(&mut game.player).chain(game.units.values_mut()).flat_map(|actor| actor.take_launches()).collect();
+        for (effect, at) in launches {
+            game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, now);
+        }
         game.poll_booking();
         // The map's own effects: those started at its load, then each on its timer while the player is near.
         let near = actor::world_xz(game.player.position(now));
@@ -2737,6 +2742,7 @@ impl App {
         game.effects.dim = game.map.trim_end_matches(".gat") == "ecl_fild01";
         game.effects.pitch = game.camera.pitch.to_degrees();
         game.effects.follow_boomerangs(now, feet_of_unit);
+
         let ground = &game.world.gat;
         game.effects.settle_hits(now, feet_of_unit, |x, z| -ground.height_at([x / world::CELL, z / world::CELL]));
         let (mut effect_quads, mut effect_meshes) = (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit));

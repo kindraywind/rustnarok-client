@@ -3501,6 +3501,11 @@ impl App {
                                 continue;
                             }
                             let unit = if who == effects::Who::Caster { source } else { target };
+                            // Escape's tint and copies are the unit's own look.
+                            if effect == effects::ESCAPE_FX {
+                                game.start_escape(unit);
+                                continue;
+                            }
                             game.play_effect(gpu, grf, table, effect, unit);
                             // A cast aura blooms again with the use (Arrullo's blue one, Change Material's green).
                             if effects::is_cast_aura(effect) {
