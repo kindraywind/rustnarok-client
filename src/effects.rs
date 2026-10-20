@@ -2268,11 +2268,16 @@ impl Effects {
         // An STR world effect that names its file (the hat rows and the launcher-given ones play from their launchers): its own
         // sounds and shakes come with it.
         if table.world(id).is_some_and(|row| matches!(row.file, world_str::Source::Named(_))) {
-            let owner = match target {
-                Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
-                _ => None,
+            let (owner, status) = match target {
+                Target::Unit(unit) => (Some(unit), None),
+                Target::Status(unit, status) => (Some(unit), Some(status)),
+                _ => (None, None),
             };
-            self.launch_world(gpu, grf, table, id, owner, at, false, 0);
+            // A status's copy is one per unit (a status sent again keeps it) and goes when the status goes off.
+            let serial = self.launch_world(gpu, grf, table, id, owner, at, status.is_some(), 0);
+            if let Some(copy) = serial.zip(status).and_then(|(serial, _)| self.worlds.get_mut(serial)) {
+                copy.status = copy.status.or(status);
+            }
             return;
         }
         if id == BASH && self.min {
@@ -3847,6 +3852,7 @@ impl Effects {
 
     /// Stops what a status plays on its unit (None = the player).
     pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
+        self.worlds.remove_status(unit, Some(status));
         self.prims.songs.forget_status(unit, status);
         self.prims.transcend.forget_status(unit, status);
         self.prims.brawl.forget_status(unit, status);
@@ -3872,6 +3878,7 @@ impl Effects {
     }
 
     pub fn forget(&mut self, unit: u32) {
+        self.worlds.remove_status(Some(unit), None);
         self.prims.sage.forget(unit);
         self.prims.stone.forget(unit);
         self.prims.forget(unit);

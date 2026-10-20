@@ -330,6 +330,8 @@ pub struct World {
     pub serial: u32,
     pub id: u32,
     pub owner: Option<Option<u32>>,
+    /// The status (EFST) that started it, if one did: it goes when that status goes off.
+    pub status: Option<u16>,
     row: Row,
     pub loaded: Option<Rc<Loaded>>,
     pub timeline: Timeline,
@@ -510,6 +512,7 @@ impl Worlds {
             serial: self.serial,
             id: launch.id,
             owner: launch.owner,
+            status: None,
             row,
             loaded,
             timeline,
@@ -535,6 +538,11 @@ impl Worlds {
     /// Removes all of an owner's.
     pub fn remove_owner(&mut self, owner: Option<u32>) {
         self.copies.retain(|copy| copy.owner != Some(owner));
+    }
+
+    /// Removes the copies a unit's status started: that status went off, or (`status` None) the unit went.
+    pub fn remove_status(&mut self, unit: Option<u32>, status: Option<u16>) {
+        self.copies.retain(|copy| !(copy.owner == Some(unit) && copy.status.is_some() && (status.is_none() || copy.status == status)));
     }
 
     /// One 16 ms tick for every copy, before the units: (1) the dead go, then each copy runs its steps.
@@ -819,6 +827,27 @@ mod tests {
         assert_eq!(worlds.iter().count(), 2);
         worlds.remove_owner(Some(7));
         assert_eq!(worlds.iter().map(|copy| copy.owner).collect::<Vec<_>>(), vec![Some(Some(8))]);
+    }
+
+    #[test]
+    fn a_status_copy_goes_with_its_status_or_its_unit() {
+        let mut worlds = Worlds::default();
+        let on = |worlds: &mut Worlds, id: u32, unit: Option<u32>, status: u16| {
+            let serial = worlds.launch(&row("loop", Vec::new()), &Launch { unique: true, ..launch(id, Some(unit)) }, |_| None).unwrap();
+            worlds.get_mut(serial).unwrap().status = Some(status);
+        };
+        on(&mut worlds, 1, Some(7), 100);
+        on(&mut worlds, 2, Some(7), 200);
+        on(&mut worlds, 1, None, 100);
+        // Not from a status: stays.
+        worlds.launch(&row("loop", Vec::new()), &launch(3, Some(Some(7))), |_| None);
+        // A status sent again keeps its one copy.
+        on(&mut worlds, 1, Some(7), 100);
+        assert_eq!(worlds.iter().count(), 4);
+        worlds.remove_status(Some(7), Some(100));
+        assert_eq!(worlds.iter().map(|copy| (copy.id, copy.owner)).collect::<Vec<_>>(), [(2, Some(Some(7))), (1, Some(None)), (3, Some(Some(7)))]);
+        worlds.remove_status(Some(7), None);
+        assert_eq!(worlds.iter().map(|copy| (copy.id, copy.owner)).collect::<Vec<_>>(), [(1, Some(None)), (3, Some(Some(7)))]);
     }
 
     #[test]
