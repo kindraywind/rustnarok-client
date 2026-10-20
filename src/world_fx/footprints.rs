@@ -80,6 +80,8 @@ struct Pictures {
     left: bool,
     /// The pictures' texture rectangles, left then right.
     uv: [[f32; 4]; 2],
+    /// A picture could not be loaded: no print is made.
+    missing: bool,
     prints: Vec<Print>,
 }
 
@@ -110,8 +112,10 @@ impl Class for Pictures {
     fn begin(&mut self, fx: &mut Fx, assets: &mut dyn Assets) {
         fx.single = true;
         self.left = true;
-        // Both pictures are needed; one that is missing leaves the prints undrawn.
-        self.uv = [LEFT, RIGHT].map(|path| exact_uv(assets.texture(path).unwrap_or([1.0; 2])));
+        // Both pictures are needed; one that is missing leaves the prints unmade.
+        let sizes = [LEFT, RIGHT].map(|path| assets.texture(path));
+        self.missing = sizes.iter().any(Option::is_none);
+        self.uv = sizes.map(|size| exact_uv(size.unwrap_or([1.0; 2])));
     }
 
     fn update(&mut self, fx: &mut Fx, scene: &Scene, _: &mut dyn Assets) {
@@ -123,7 +127,7 @@ impl Class for Pictures {
         let at = fx.position;
         let last = *self.last.get_or_insert(at);
         let (dx, dz) = (at[0] - last[0], at[2] - last[2]);
-        if dx * dx + dz * dz > STRIDE {
+        if !self.missing && dx * dx + dz * dz > STRIDE {
             let print = self.print(last, at, scene);
             self.prints.push(print);
             self.left = !self.left;

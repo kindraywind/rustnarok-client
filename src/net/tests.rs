@@ -2224,6 +2224,8 @@ fn decodes_hat_effects() {
     let off = [0x3b, 0x0a, 9, 0, 1, 0, 0, 0, 0];
     let Some(MapEvent::HatEffects { id: 1, on: false, effects }) = decode_map_packet(&off) else { panic!() };
     assert!(effects.is_empty());
+    // A packet too short for its fields decodes to nothing.
+    assert!(decode_map_packet(&[0x3b, 0x0a, 8, 0, 1, 0, 0, 0]).is_none());
 }
 
 #[test]
