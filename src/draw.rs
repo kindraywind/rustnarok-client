@@ -272,7 +272,7 @@ impl App {
             sprites.push((&assets.black, position, [1.0, font.line_height() - 2.0]));
         }
         self.cursor_look.set(cursor::Kind::Default);
-        sprites.extend(self.cursor_look.draw(gpu, self.cursor));
+        sprites.extend(self.cursor_look.draw(gpu, font, self.cursor, None));
 
         // With RUSTNAROK_CLIENT_AUTOSTART=<slot> the shot waits for the game; any other value stops at character select.
         let autostart = std::env::var("RUSTNAROK_CLIENT_AUTOSTART").ok();
@@ -322,6 +322,11 @@ impl App {
 
         // The map's moving RSM 2 models, posed for now.
         game.world.animate(gpu, now);
+        // What Escape's copies started on themselves since the last frame.
+        let launches: Vec<_> = std::iter::once(&mut game.player).chain(game.units.values_mut()).flat_map(|actor| actor.take_launches()).collect();
+        for (effect, at) in launches {
+            game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, now);
+        }
         game.poll_booking();
         // The map's own effects: those started at its load, then each on its timer while the player is near.
         let near = actor::world_xz(game.player.position(now));
@@ -1140,26 +1145,27 @@ impl App {
                 }
             }
         }
+        // Each layer of an emotion (the bubble, then the face) steps one nearer than the one under it.
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
                 let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
-                placements.into_iter().map(move |(key, position, size, angle)| {
-                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                placements.into_iter().enumerate().map(move |(layer, (key, position, size, angle))| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT + layer as f32, ..DepthLayer::default() })
                 })
             }));
         }
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(quest_shown.into_iter().flat_map(|(anchor, placements)| {
-                placements.into_iter().map(move |(key, position, size, angle)| {
-                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                placements.into_iter().enumerate().map(move |(layer, (key, position, size, angle))| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT + layer as f32, ..DepthLayer::default() })
                 })
             }));
         }
         if let Some(sprite) = &game.mvp_sprite {
             billboards.extend(mvp_shown.into_iter().flat_map(|(feet, placements)| {
                 let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
-                placements.into_iter().map(move |(key, position, size, angle)| {
-                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                placements.into_iter().enumerate().map(move |(layer, (key, position, size, angle))| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT + layer as f32, ..DepthLayer::default() })
                 })
             }));
         }
@@ -1169,8 +1175,8 @@ impl App {
                 None => game.emotion_sprite.as_ref(),
             };
             if let Some(sprite) = sprite {
-                billboards.extend(placements.into_iter().map(|(key, position, size, angle)| {
-                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                billboards.extend(placements.into_iter().enumerate().map(|(layer, (key, position, size, angle))| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT + layer as f32, ..DepthLayer::default() })
                 }));
             }
         }
@@ -2725,7 +2731,7 @@ impl App {
         let pitcher = game.targeting.is_some_and(|(id, _)| id == POTION_PITCHER);
         game.cursor_at = snap_point(under, aiming_unit, pitcher, game.snaps).unwrap_or(pointer.0);
         cursor_look.press(pointer.1);
-        sprites.extend(cursor_look.draw(gpu, game.cursor_at));
+        sprites.extend(cursor_look.draw(gpu, font, game.cursor_at, game.targeting.map(|(_, level)| level)));
 
         // With /effect off, effects still play on, unseen but for the force-drawn ones, and their sounds are still heard.
         let effects_on = self.graphics.effects_on;
@@ -2755,12 +2761,17 @@ impl App {
         };
         let scene = world_str::Scene { player: player_feet, feet: &feet_of_unit, body: &body_of, longitude: yaw.to_degrees(), right: view.right, up: view.up };
         game.effects.advance_world(now, &scene);
+        // The Sight option (bit 0x1) keeps a flame circling its unit.
+        let sights: Vec<_> =
+            std::iter::once((None, game.player.option & 1 != 0)).chain(game.units.iter().map(|(&id, actor)| (Some(id), actor.option & 1 != 0))).collect();
+        game.effects.watch_sight(sights, now);
         game.effects.rises = rises;
         game.effects.facings = facings;
         game.effects.aim_arrows(now, feet_of_unit);
         game.effects.dim = game.map.trim_end_matches(".gat") == "ecl_fild01";
         game.effects.pitch = game.camera.pitch.to_degrees();
         game.effects.follow_boomerangs(now, feet_of_unit);
+
         let ground = &game.world.gat;
         game.effects.settle_hits(now, feet_of_unit, |x, z| -ground.height_at([x / world::CELL, z / world::CELL]));
         let (mut effect_quads, mut effect_meshes) = (game.effects.quads(now, feet_of_unit), game.effects.meshes(now, feet_of_unit));

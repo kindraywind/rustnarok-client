@@ -276,7 +276,6 @@ skill	5	beginCastEffectId	16
 skill	6	successEffectId	67
 skill	7	effectIdOnCaster	17
 skill	8	effectId	11
-skill	10	effectId	22
 skill	11	hitEffectId	1
 skill	13	hitEffectId	1
 skill	13	beforeHitEffectId	15
@@ -408,6 +407,7 @@ skill	165	effectId	175
 skill	166	effectId	179
 skill	167	effectId	178
 skill	168	effectId	172
+skill	169	effectId	176
 skill	170	effectIdOnCaster	16
 skill	172	effectId	191
 skill	173	effectId	183
@@ -723,10 +723,8 @@ skill	2427	effectIdOnCaster	865
 skill	2428	effectIdOnCaster	867
 skill	2432	effectIdOnCaster	873
 skill	2433	effectIdOnCaster	875
-skill	2444	groundEffectId	926
 skill	2447	effectId	928
 skill	2449	effectId	922
-skill	2452	effectId	929
 skill	2454	beforeHitEffectId	930
 skill	2483	effectId	915
 skill	2490	effectId	919
@@ -1228,8 +1226,6 @@ part	14	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;duration=900;delayLate=2
 part	15	3D	alphaMax=1;attachedEntity=true;blue=1;duration=200;delayLate=250;duplicate=-1;fadeIn=true;fadeOut=true;file=effect/pok3.tga;toSrc=true;green=1;poszEnd=1;poszSmooth=true;poszStartRand=5;poszStartRandMiddle=6;red=1;size=50;timeBetweenDupli=150;wav=effect/ef_soulstrike;zIndex=1
 part	15	3D	duration=250;duplicate=5;timeBetweenDupli=20;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;sizeStart=100.0;sizeEnd=500.0;zOffsetStart=3;arc=4.0;retreat=3.0;soulStrikePattern=true
 part	20	3D	alphaMax=1;attachedEntity=true;blue=1;duration=1000;duplicate=10;fadeIn=true;fadeOut=true;file=effect/pok1.tga;green=0.7;posxRand=1;posyRand=1;poszEnd=5;poszStart=0;red=1;size=100;sizeRand=20;zIndex=1
-part	22	3D	shadowTexture=true;alphaMax=0.5;attachedEntity=true;blendMode=8;duration=12200;duplicate=10;timeBetweenDupli=0;nbOfRotation=10;posx=-2;posz=4;playSprite=true;rotateLate=0.9;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=30;sizeDelta=10
-part	22	3D	spriteName=sight;alphaMax=123;alphaMaxDelta=3;attachedEntity=true;blendMode=8;duration=12200;duplicate=10;timeBetweenDupli=0;nbOfRotation=10;posx=-2;posz=4;playSprite=true;rotateLate=0.9;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=60;sizeDelta=20
 part	33	3D	shadowTexture=true;alphaMax=0.5;attachedEntity=true;blendMode=8;duration=12200;duplicate=8;timeBetweenDupli=0;nbOfRotation=8;posx=-2;rotateLate=0.7;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=0.4;sizeDelta=0.15
 part	33	3D	spriteName=particle2;alphaMax=0.07;alphaMaxDelta=0.07;attachedEntity=true;blendMode=2;red=0;green=1;blue=1;duration=12200;duplicate=10;timeBetweenDupli=0;nbOfRotation=8;posx=-2;posz=2;rotateLate=0.7;rotateLateDelta=-0.1;rotatePosX=3;rotatePosY=3;rotationClockwise=true;size=80;sizeDelta=30
 part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;delayLate=500;duplicate=7;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
@@ -1598,7 +1594,6 @@ wav	17	effect\ef_magnumbreak	0
 wav	18	effect\ef_steal	0
 wav	20	effect\ef_detoxication	0
 wav	21	effect\ef_detoxication	0
-wav	22	effect\ef_sight	0
 wav	24	effect\ef_fireball	0
 wav	25	effect\ef_firewall	0
 wav	26	effect\ef_icearrow%d	0	1	3
@@ -1971,6 +1966,7 @@ wav	781	effect\MAGNETICFIELD	80
 wav	782	effect\black_maximize_power_sword_bic	0
 wav	782	effect\mon_금강불괴	0	listener
 wav	786	effect\ANALYZE	0
+wav	794	effect\INFRAREDSCAN	0	listener
 wav	799	effect\wl_stasis	0
 wav	802	effect\wl_whiteimprison	0
 wav	803	effect\wl_recognizedspell	0
@@ -2038,7 +2034,7 @@ wav	910	effect\LG_INSPIRATION	160
 wav	911	effect\EF_BeginSpell	0
 wav	922	effect\s사이킥웨이브	0
 wav	928	effect\wl_jackfrost	0
-wav	929	effect\s워머	0
+wav	929	effect\s워머	0	listener
 wav	930	effect\프레셔	0
 wav	1042	effect\all_full_throttle	0
 wav	1043	effect\sr_flashcombo	0
@@ -2066,6 +2062,9 @@ wav	917	effect\EF_FireWall	0	listener
 wav	918	effect\EF_FireWall	0	listener
 wav	921	effect\S스펠피스트	0	listener
 wav	923	effect\S포이즌버스터	0	listener
+wav	931	effect\S포이즌버스터	0	listener
+wav	969	effect\안식의자장가	0	listener
+wav	1044	effect\rk_luxanima	0
 wav	1132	effect\mon_금강불괴	0
 wav	1195	effect\EF_BeginSpell	0
 hit	1	0	-1
@@ -4112,6 +4111,8 @@ cast	2223	-1
 cast	2224	-1
 cast	2229	-1
 cast	2464	216
+cast	5478	12
+cast	5478	934
 struck	13	caster	15
 struck	340	caster	451
 struck	14	target	26
@@ -4687,6 +4688,8 @@ used	2433	target	876
 used	2434	target	878
 used	2451	caster	886
 used	2455	target	886
+used	2455	target	441
+used	2455	target	931
 used	2461	caster	934
 used	2476	caster	1365
 used	2480	target	216
@@ -4856,7 +4859,7 @@ unit	208	829
 unit	218	856
 unit	219	1276
 unit	220	920
-unit	221	926	once
+unit	221	926
 unit	222	860
 unit	224	1080
 unit	225	772	once
@@ -5087,6 +5090,7 @@ status	1337	2305
 status	1338	2306
 status	1339	2302
 status	1339	2303
+length	22	270
 length	25	40
 length	568	100
 length	569	60
@@ -5104,9 +5108,17 @@ length	988	100
 length	1020	100
 length	920	40
 length	95	150
+length	172	100
+length	173	100
+length	174	100
+length	175	100
+length	176	100
+length	177	100
+length	178	100
 length	850	100
 length	932	100
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
+skillwav	10	effect\ef_sight	0
 skillwav	268	effect\mon_맹룡과강	0	listener
 skillquake	268	0	200
 skillwav	270	effect\mon_폭기	0	listener

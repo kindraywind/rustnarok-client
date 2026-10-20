@@ -1257,6 +1257,14 @@ impl Game {
         }
     }
 
+    /// Escape is used by `unit`: it is tinted and leaves its copies (`Actor::escape`).
+    pub(crate) fn start_escape(&mut self, unit: u32) {
+        let actor = if unit == self.account_id { Some(&mut self.player) } else { self.units.get_mut(&unit) };
+        if let Some(actor) = actor {
+            actor.escape();
+        }
+    }
+
     /// Plays an effect on a unit from a moment on (a hit when it lands).
     pub(crate) fn play_effect_from(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant) {
         self.play_effect_hits(gpu, grf, table, effect, unit, start, 1);

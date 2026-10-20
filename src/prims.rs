@@ -14,6 +14,7 @@ pub mod chi;
 pub mod circle;
 pub mod crowds;
 pub mod dancer;
+pub mod emblems;
 pub mod first;
 pub mod ground;
 pub mod guard;
@@ -23,7 +24,9 @@ pub mod knight;
 pub mod mechanic;
 pub mod monk;
 pub mod napalm;
+pub mod notes;
 pub mod painter;
+pub mod radar;
 pub mod sage;
 pub mod shafts;
 pub mod shards;
@@ -189,6 +192,9 @@ pub struct Prims {
     pub chi: chi::Chi,
     pub cells: cells::Cells,
     pub souls: souls::Souls,
+    pub radar: radar::Radar,
+    pub notes: notes::Notes,
+    pub emblems: emblems::Emblems,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -610,6 +616,7 @@ impl Prims {
         self.transcend.forget(unit);
         self.dancer.forget(unit);
         self.cells.forget(unit);
+        self.emblems.forget(unit);
         self.souls.forget(unit);
         self.guard.forget(unit);
         self.brawl.forget(unit);

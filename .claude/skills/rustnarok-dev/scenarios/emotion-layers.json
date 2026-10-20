@@ -1,0 +1,99 @@
+{
+  "about": "An emotion over the player's head: the bubble and the face are the sprite's layers and the face shows over the bubble, not blended into it. Three emotions from the list, each shot a moment after it starts.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "key": "Alt+L"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click": [
+        533,
+        249
+      ]
+    },
+    {
+      "wait_for": {
+        "event": "Emotion",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+L"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "shot": "emotion-layers-a",
+      "crop": [
+        440,
+        190,
+        130,
+        100
+      ],
+      "threshold": 5
+    },
+    {
+      "wait": 1800
+    },
+    {
+      "key": "Alt+L"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click": [
+        567,
+        249
+      ]
+    },
+    {
+      "wait_for": {
+        "event": "Emotion",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+L"
+    },
+    {
+      "wait": 250
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "shot": "emotion-layers-b",
+      "crop": [
+        440,
+        190,
+        130,
+        100
+      ],
+      "threshold": 5
+    },
+    {
+      "wait": 1800
+    }
+  ]
+}

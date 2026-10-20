@@ -110,6 +110,8 @@ enum Flicker {
     Memorize,
     /// Pinpoint Attack's weapon, added on while e mod 4 is 0 or 1 (ticks 0 to 299).
     Weapon,
+    /// Elemental Action's body, added on with outline copies in its own colours while e mod 4 is 0 or 1 (ticks 10 to 34).
+    Elemental,
     /// Double Casting's red strobe in a white glow (ticks 10 to 50).
     DoubleCast,
     /// Refresh's and Abundance's green flicker, the poisons' magenta, in outline copies (ticks 0 to 30).
@@ -193,6 +195,7 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
         Flicker::Poison => (e <= 80).then_some(if even { (GLOW_ADDITIVE, Some([0xFF, 0x00, 0xFF])) } else { (0, Some([255; 3])) }),
         Flicker::Strobe(rgb, first, last) => (first..=last).contains(&e).then_some(if even { (GLOW_ADDITIVE, Some(rgb)) } else { (0, Some([255; 3])) }),
         Flicker::Weapon => (e < 300 && e % 4 < 2).then_some((crate::actor::GLOW_WEAPON, None)),
+        Flicker::Elemental => ((10..=34).contains(&e) && e % 4 < 2).then_some((GLOW_OUTLINE | GLOW_ADDITIVE, None)),
         Flicker::Memorize => (10..=35).contains(&e).then_some(if even { (GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])) } else { (0, Some([255; 3])) }),
         Flicker::DoubleCast => {
             (10..=50).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) })
@@ -317,6 +320,11 @@ impl Guard {
     /// Sound of Destruction's 16 red music notes in upright planes: four prims of four, melody_a, melody_b, melody_a, melody_b.
     pub fn notes(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.burst(at, now, true, 4, STRIP_TINT, |prim| (NOTES[prim % 2], 6.0), rand);
+    }
+
+    /// Elemental Action's flicker of `unit`.
+    pub fn elemental(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Elemental });
     }
 
     /// Pinpoint Attack's 32 blue shields and swords in upright planes round the target's feet `at`, shield first, and the caster's
@@ -936,5 +944,19 @@ mod tests {
         assert!(guard.glow(Some(2), start).is_none());
         guard.accessory([0.0; 3], start, |_| 0);
         assert_eq!(guard.upright_pieces(start + TICK * 18).iter().find(|wall| wall.texture == ACCESSORIES[0]).unwrap().vertices[0].tint[..3], STRIP_TINT);
+    }
+
+    #[test]
+    fn elemental_action_flashes_the_body_two_ticks_in_four() {
+        use crate::actor::{GLOW_ADDITIVE, GLOW_OUTLINE};
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.elemental(Some(1), start);
+        let glow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        // Additive with outline copies in its own colours on e = 12, 13, 16, 17 … 32, 33, and not on 10, 11, 14, 15, 34.
+        let on: Vec<u32> = (0..60).filter(|&tick| glow(tick).is_some()).collect();
+        assert_eq!(on, [12, 13, 16, 17, 20, 21, 24, 25, 28, 29, 32, 33]);
+        assert_eq!(glow(12), Some((GLOW_OUTLINE | GLOW_ADDITIVE, None)));
+        assert!(glow(10).is_none() && glow(11).is_none() && glow(14).is_none() && glow(34).is_none());
     }
 }

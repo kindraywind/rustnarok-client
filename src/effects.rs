@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter,
-    sage, shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
+    balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, knight, mechanic, monk,
+    notes, painter, sage, shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -33,7 +33,12 @@ pub const STR_RISE: f32 = 80.0;
 
 /// How many pixels above the feet an effect's STR is anchored: 80, but for Shield Charge's anchor, which sits on the feet.
 pub fn str_rise(effect: u32) -> f32 {
-    if effect == SHIELD_CHARGE { 0.0 } else { STR_RISE }
+    match effect {
+        SHIELD_CHARGE => 0.0,
+        // Offertorium's ring: the file itself puts it at head height.
+        OFFERTORIUM_RING => 5.0,
+        _ => STR_RISE,
+    }
 }
 
 /// One STR part of an effect.
@@ -88,7 +93,7 @@ pub struct Table {
     hits: HashMap<u16, [Option<u32>; 2]>,
     casters: HashMap<u16, Option<u32>>,
     /// The aura of a cast with a cast time, by skill: 12 by element, −1 none, else that effect.
-    casts: HashMap<u16, i32>,
+    casts: HashMap<u16, Vec<i32>>,
     struck: HashMap<u16, Vec<(Who, u32)>>,
     /// Skills without damage, and ground skills (at the cell or on the caster).
     used: HashMap<u16, Vec<(Who, u32)>>,
@@ -174,7 +179,7 @@ impl Table {
             match fields[..] {
                 ["cast", skill, effect] => {
                     if let (Ok(skill), Ok(effect)) = (skill.parse(), effect.parse()) {
-                        table.casts.insert(skill, effect);
+                        table.casts.entry(skill).or_default().push(effect);
                     }
                 }
                 ["str", _, file, folder, attached, ..] => {
@@ -327,13 +332,18 @@ impl Table {
     /// none for −1, else the row's effect; a skill not listed shows Bash's burst (16), the 4th jobs' none.
     // ponytail: the table's own `None` rows show no aura.
     pub fn cast_aura(&self, skill: u16, by_element: u32) -> Option<u32> {
-        match self.casts.get(&skill) {
+        match self.casts.get(&skill).and_then(|rows| rows.first()) {
             Some(-1) => None,
             Some(12) => Some(by_element),
             Some(&effect) => u32::try_from(effect).ok(),
             None if NO_CASTER_EFFECT.iter().any(|range| range.contains(&skill)) => None,
             None => Some(CASTER_EFFECT),
         }
+    }
+
+    /// The effects a cast starts beside its aura: the rows of the skill after the first.
+    pub fn cast_extras(&self, skill: u16) -> Vec<u32> {
+        self.casts.get(&skill).into_iter().flat_map(|rows| rows.iter().skip(1)).filter_map(|&effect| u32::try_from(effect).ok()).collect()
     }
 
     pub fn caster(&self, skill: u16) -> Option<u32> {
@@ -502,6 +512,14 @@ fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
     // Shockwave's waves start again every 75 ticks.
     if effect == 145 {
         return 75;
+    }
+    // Offertorium's ring runs its 121 ticks and starts again.
+    if effect == OFFERTORIUM_RING {
+        return 121;
+    }
+    // Electric Walk's wave runs its 29 frames and one more tick.
+    if effect == 926 {
+        return 30;
     }
     length.saturating_sub(restart_early(effect, kind)).max(1)
 }
@@ -1976,6 +1994,16 @@ const DEMONIC_FIRE: u32 = 916;
 const DEMONIC_FIRE_3: u32 = 918;
 const VACUUM_EXTREME: u32 = 921;
 const POISON_BUSTER_FX: u32 = 923;
+/// Warmer's Imps, Arrullo's spirals and Elemental Action's crescents (`prims::cells`, `prims::spears`, `prims::walls`).
+const WARMER: u32 = 929;
+const ARRULLO_FX: u32 = 931;
+const ELEMENTAL_ACTION: u32 = 934;
+/// Lullaby Deep Sleep's wandering notes (`prims::notes`).
+const LULLABY: u32 = 969;
+/// King's Grace's emblems, Offertorium's ring and Escape's tint and copies (`prims::emblems`, `actor`).
+const KINGS_GRACE: u32 = 1051;
+const OFFERTORIUM_RING: u32 = 1057;
+pub const ESCAPE_FX: u32 = 1081;
 const GREAT_ECHO_V: u32 = 863;
 /// Sonic Wave's crescents and Duple Light's orbs (`prims::waves`).
 const SONIC_WAVE: u32 = 832;
@@ -2005,6 +2033,8 @@ const DEADLY_INFECT: u32 = 812;
 /// Magnetic Field's arcs, Neutral Barrier's dome and cells, Stealth Field's cells, Repair's spanners, Analyze's mark and Venom
 /// Impress' icon (`prims::mechanic`, `prims::guard`, `prims::sparkle`, `prims::circle`).
 const MAGNETIC_FIELD: u32 = 781;
+/// Infrared Scan's two radar rays (`prims::radar`).
+const INFRARED_SCAN: u32 = 794;
 const NEUTRAL_BARRIER: u32 = 782;
 const BARRIER_CELL: u32 = 783;
 const STEALTH_CELL: u32 = 784;
@@ -2646,6 +2676,32 @@ impl Effects {
                 self.textures.entry(chi::NEEDLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, chi::NEEDLE, true).ok());
                 self.prims.chi.buff(id, unit, 500, now, |n| pick(0, n.saturating_sub(1)));
             }
+            (SIGHT, Target::Unit(unit)) => {
+                for path in [sight::SIGHT, sight::SHADOW] {
+                    self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
+                }
+                self.prims.cells.sight(unit, now);
+            }
+            (172..=178, Target::Unit(_) | Target::Ground) => {
+                let path = cells::sheet_texture(id);
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                self.prims.cells.sheet(id, at, now);
+            }
+            (LULLABY, Target::Unit(unit)) => {
+                for (name, path) in notes::TEXTURES {
+                    self.textures.entry(name.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.notes.lullaby(unit, at, now);
+            }
+            (ARRULLO_FX, Target::Unit(unit)) => {
+                self.textures.entry(souls::DOT.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, souls::DOT, true).ok());
+                self.prims.spears.arrullo(unit, now);
+            }
+            (ELEMENTAL_ACTION, Target::Unit(unit)) => {
+                self.textures.entry(walls::RING_WHITE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_WHITE, true).ok());
+                self.prims.walls.elemental_action(unit, now);
+                self.prims.guard.elemental(unit, now);
+            }
             (POISON_BUSTER_FX, Target::Unit(unit)) => {
                 self.sprites.entry(cells::BLAST.to_owned()).or_insert_with(|| SpriteSet::at(grf, cells::BLAST));
                 self.prims.cells.poison_buster(unit, now);
@@ -2687,6 +2743,11 @@ impl Effects {
             (MAGNETIC_FIELD, Target::Unit(unit)) => {
                 self.textures.entry(mechanic::ELEC.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, mechanic::ELEC, true).ok());
                 self.prims.mechanic.magnetic_field(unit, now);
+            }
+            (INFRARED_SCAN, Target::Unit(unit)) => {
+                self.textures.entry(mechanic::ELEC.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, mechanic::ELEC, true).ok());
+                let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
+                self.prims.radar.scan(unit, facing, now, |n| pick(0, n.saturating_sub(1)));
             }
             (NEUTRAL_BARRIER, Target::Unit(unit)) => {
                 for path in [guard::TILE, guard::HOLY_TILE] {
@@ -3252,12 +3313,13 @@ impl Effects {
                 // Poison Smoke's cells throw violet sparkles over everything while their unit stands.
                 self.sprites.entry(first::POISON_STAR.to_owned()).or_insert_with(|| SpriteSet::at(grf, first::POISON_STAR));
                 self.prims.walls.keep_smoke(id, at, now);
-            } else if matches!(effect, WALL_OF_THORNS | VACUUM_EXTREME | DEMONIC_FIRE..=DEMONIC_FIRE_3) {
+            } else if matches!(effect, WALL_OF_THORNS | VACUUM_EXTREME | WARMER | DEMONIC_FIRE..=DEMONIC_FIRE_3) {
                 // Wall of Thorns' tree, Vacuum Extreme's whirlwinds and the Ifrits of Demonic Fire and the Insignias stand with their
                 // unit, a new copy at the end of each length.
                 let path = match effect {
                     WALL_OF_THORNS => cells::ANCIENT_TREE,
                     VACUUM_EXTREME => cells::BREEZE,
+                    WARMER => cells::IMP,
                     _ => cells::IFRIT,
                 };
                 self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
@@ -3268,6 +3330,10 @@ impl Effects {
                 } else {
                     self.prims.cells.ring(effect, id, cells::insignia_tint(kind), at, now);
                 }
+            } else if effect == KINGS_GRACE {
+                // King's Grace's four emblems stand round the cell with their unit.
+                self.textures.entry(emblems::EMBLEM.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, emblems::EMBLEM, false).ok());
+                self.prims.emblems.keep(id, at, now);
             } else if matches!(effect, FIRE_PILLAR | VENOM_DUST) {
                 // The Fire Pillar's funnels and Venom Dust's puffs stand with their unit, drawn in code.
                 self.textures.entry(walls::MAGIC_RED.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::MAGIC_RED, true).ok());
@@ -3602,12 +3668,15 @@ impl Effects {
         self.prims.mechanic.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.waves.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.chi.advance(now);
+        self.prims.radar.advance(now);
         // Harmonize's emitters launch a pair of bands of soft lights (850) on their units each tick.
         self.prims.spears.advance(now);
-        for (unit, offset) in self.prims.spears.take_launched() {
-            self.prims.souls.launch(false, unit, offset, now, |n| pick(0, n.saturating_sub(1)));
+        for (arrullo, unit, offset) in self.prims.spears.take_launched() {
+            self.prims.souls.launch(arrullo, unit, offset, now, |n| pick(0, n.saturating_sub(1)));
         }
         self.prims.souls.advance(now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.notes.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        self.prims.emblems.advance(now);
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -3642,7 +3711,7 @@ impl Effects {
             }
         }
         self.prims.sights.advance(now);
-        for drawn in self.prims.sights.sprites(now) {
+        for drawn in self.prims.sights.sprites(now).into_iter().chain(self.prims.cells.flames(now, |_| Some([0.0; 3]))) {
             if let (Some(Some(sprite)), false) = (self.sprites.get_mut(drawn.sprite), self.sight_frames.contains_key(&(drawn.sprite, drawn.frame))) {
                 let frames = sprite.frames(0).max(1);
                 let layers = sprite.frame_plain(gpu, 0, Timing::Span((drawn.frame as f32 + 0.5) / frames as f32));
@@ -3831,6 +3900,15 @@ impl Effects {
         let on = |anchor: Anchor| matches!(anchor, Anchor::Unit(each) if each == unit);
         self.playing.retain(|playing| !(playing.effect == effect && on(playing.anchor)));
         self.floating.retain(|floating| !(floating.effect == effect && on(floating.anchor)));
+        if effect == SIGHT {
+            self.prims.cells.stop_sight(unit);
+        }
+    }
+
+    /// The units that have the Sight option now (None = the player): each starts its circling flame the moment it has it and every
+    /// 270 ticks while it lasts.
+    pub fn watch_sight(&mut self, units: impl IntoIterator<Item = (Option<u32>, bool)>, now: Instant) {
+        self.prims.cells.watch_sight(units, now);
     }
 
     /// Drops the effects playing on a unit that went away.
@@ -4177,8 +4255,16 @@ impl Effects {
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
             .chain(
+                self.prims
+                    .radar
+                    .meshes(now, &position_of, |n| pick(0, n.saturating_sub(1)))
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
                 self.prims.spears.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
+            .chain(self.prims.cells.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
             .chain(
                 self.prims
                     .chi
@@ -4451,8 +4537,14 @@ impl Effects {
         quads.extend(self.prims.boomerangs.quads(self.textures.get(boomerang::SHIELD).and_then(Option::as_ref)));
         if !self.only_forced {
             quads.extend(self.prims.spheres.quads(self.textures.get(tanji::SPHERE).and_then(Option::as_ref)));
+            // King's Grace's emblems: the glow added on, then the emblem, both facing the camera.
+            if let Some(Some(texture)) = self.textures.get(emblems::EMBLEM) {
+                quads.extend(self.prims.emblems.draws(now).into_iter().map(|draw| (texture, draw.at, draw.corners, draw.tint, draw.additive, false)));
+            }
+            // Lullaby Deep Sleep's notes, over everything (`STR_RISE` is taken off again).
+            quads.extend(self.prims.notes.quads(|path| self.textures.get(path).and_then(Option::as_ref), STR_RISE));
             // Sight Rasher's sprites and their shadows, white with their alpha.
-            for drawn in self.prims.sights.sprites(now) {
+            for drawn in self.prims.sights.sprites(now).into_iter().chain(self.prims.cells.flames(now, &position_of)) {
                 let Some(Some(sprite)) = self.sprites.get(drawn.sprite) else { continue };
                 for &(key, position, size, layer_angle) in self.sight_frames.get(&(drawn.sprite, drawn.frame)).into_iter().flatten() {
                     let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * drawn.scale));
@@ -4927,8 +5019,8 @@ mod tests {
         assert_eq!([5401, 5507, 6001, 6006, 6525, 6606].map(|skill| table.cast_aura(skill, 12)), [None; 6]);
         assert_eq!([5400, 6007, 6607].map(|skill| table.cast_aura(skill, 12)).len(), 3);
         // The table's rows, as the issue lists them: 766 skills and 5 None rows.
-        assert_eq!(table.casts.len(), 772);
-        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 772);
+        assert_eq!(table.casts.len(), 773);
+        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 774);
     }
 
     #[test]
@@ -5069,7 +5161,8 @@ mod tests {
         // The table's lengths and the units that play once.
         let table = Table::load();
         assert_eq!([table.lengths[&25], table.lengths[&95], table.lengths[&920]], [40, 150, 40]);
-        assert!([130, 136, 221].iter().all(|kind| table.units_once.contains(kind)));
+        // (Electric Walk's wave, 221, loops every 30 ticks now.)
+        assert!([130, 136].iter().all(|kind| table.units_once.contains(kind)) && !table.units_once.contains(&221));
     }
 
     #[test]
@@ -6264,6 +6357,15 @@ mod tests {
     }
 
     #[test]
+    fn infrared_scan_has_its_sound_at_the_listener_and_starts_with_its_damage_packet() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        assert_eq!(sounds(INFRARED_SCAN), [("effect\\INFRAREDSCAN", 0, true)]);
+        assert!(table.struck(2270).unwrap().contains(&(Who::Caster, INFRARED_SCAN)));
+        assert!(!force_drawn(INFRARED_SCAN));
+    }
+
+    #[test]
     fn infrared_scan_magnetic_field_neutral_barrier_the_cells_analyze_and_venom_impress_have_their_rows() {
         let table = Table::load();
         let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
@@ -6587,5 +6689,70 @@ mod tests {
             table.struck(2448).unwrap().contains(&(Who::Target, POISON_BUSTER_FX)) && table.struck(742).unwrap().contains(&(Who::Target, POISON_BUSTER_FX))
         );
         assert!(table.status(445).contains(&crate::actor::STRIKING) && !table.sounds.contains_key(&crate::actor::STRIKING));
+    }
+
+    #[test]
+    fn electric_walk_warmer_arrullo_elemental_action_and_lux_anima_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // 926: the wave runs again every 30 ticks while the unit stands, from no `once`, with no skill-line copy.
+        assert_eq!((restart_ticks(926, 221, 29), restart_ticks(926, 221, 100)), (30, 30));
+        assert!(!table.units_once.contains(&221) && table.units[&221] == 926 && table.skill(2444, "groundEffectId").is_empty());
+        // 929: the Imps on Warmer's unit, the sound at the listener, no skill-line copy.
+        assert_eq!(table.units[&228], WARMER);
+        assert_eq!(sounds(WARMER), [("effect\\s워머", 0, true)]);
+        assert!(table.skill(2452, "effectId").is_empty());
+        assert_eq!(restart_ticks(WARMER, 228, 9999), 9998);
+        // 931: Arrullo's use puts the blue aura, 886 and the spirals on its target, with the sound of Poison Buster at the listener.
+        let used = table.used(2455).unwrap();
+        assert!(used.contains(&(Who::Target, 886)) && used.contains(&(Who::Target, BLUE_CASTING)) && used.contains(&(Who::Target, ARRULLO_FX)));
+        assert_eq!(sounds(ARRULLO_FX), [("effect\\S포이즌버스터", 0, true)]);
+        // 934: the use and the cast start of Akumukesu; its cast also keeps the aura 12 and starts the crescents beside it.
+        assert!(table.used(2461).unwrap().contains(&(Who::Caster, ELEMENTAL_ACTION)) && !table.sounds.contains_key(&ELEMENTAL_ACTION));
+        assert_eq!(table.cast_aura(5478, 58), Some(58));
+        assert_eq!(table.cast_extras(5478), [ELEMENTAL_ACTION]);
+        assert!(table.cast_extras(2455).is_empty() && table.cast_extras(1).is_empty());
+        // 1044: Lux Anima's sound with its STR.
+        assert_eq!(sounds(1044), [("effect\\rk_luxanima", 0, false)]);
+        assert!(table.parts.contains_key(&1044) && table.used(5005).unwrap().contains(&(Who::Caster, 1044)));
+    }
+
+    #[test]
+    fn lullaby_deep_sleep_has_its_sound_at_the_listener() {
+        let table = Table::load();
+        assert_eq!(
+            table.sounds[&LULLABY].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>(),
+            [("effect\\안식의자장가", 0, true)]
+        );
+        assert!(table.used(2422).unwrap().contains(&(Who::Target, LULLABY)) && !table.parts.contains_key(&LULLABY));
+    }
+
+    #[test]
+    fn kings_grace_offertoriums_ring_and_escape_have_their_rows() {
+        let table = Table::load();
+        assert_eq!(table.units[&258], KINGS_GRACE);
+        assert!(!table.sounds.contains_key(&KINGS_GRACE));
+        // Offertorium's ring sits 5 up, the others 80, and starts again every 121 ticks.
+        assert_eq!((str_rise(OFFERTORIUM_RING), str_rise(1043), str_rise(220)), (5.0, 80.0, 80.0));
+        assert_eq!(restart_ticks(OFFERTORIUM_RING, 0, 121), 121);
+        assert_eq!(table.status(716), &[OFFERTORIUM_RING]);
+        // Escape on the source of its use, with no sound and no line of its own for 793.
+        assert!(table.used(5010).unwrap().contains(&(Who::Caster, ESCAPE_FX)) && !table.sounds.contains_key(&ESCAPE_FX));
+        assert!(!table.parts.contains_key(&793) && !table.sounds.contains_key(&793));
+    }
+
+    #[test]
+    fn sight_and_the_monsters_element_changes_have_their_rows() {
+        let table = Table::load();
+        // 22 comes from the option and from Wide Sight, not from the Sight skill; its sound belongs to the skill.
+        assert!(table.skill(10, "effectId").is_empty() && !table.parts.contains_key(&SIGHT) && !table.sounds.contains_key(&SIGHT));
+        assert!(table.struck(669).unwrap().contains(&(Who::Caster, SIGHT)));
+        assert_eq!((table.skill_sounds[&10][0].file.as_str(), table.skill_sounds[&10][0].delay_ms), ("effect\\ef_sight", 0));
+        assert_eq!(table.lengths[&SIGHT], 270);
+        // The element changes: the six rows hold and Telekinesis is added; 100 ticks each.
+        for (skill, effect) in [(168, 172), (164, 173), (162, 174), (165, 175), (169, 176), (163, 177), (167, 178)] {
+            assert_eq!(table.skill(skill, "effectId"), [effect], "{skill}");
+        }
+        assert!((172..=178).all(|id| table.lengths[&id] == 100 && !table.sounds.contains_key(&id)));
     }
 }
