@@ -16,10 +16,13 @@ pub const SURA_CIRCLE: &str = "data\\texture\\effect\\cir0002.bmp";
 /// The swirl lies 2 over the ground; a hole lives 29 999 ticks.
 const RISE: f32 = 2.0;
 const LIFE: u32 = 29_999;
-/// A ring triple is seen for prim ages 0 to 135 (Reverberation's, 0 to 141), Reverberation's effect for 150 ticks.
+/// A ring triple is seen for prim ages 0 to 135 (Reverberation's, 0 to 141; Epiclesis', 0 to 149), Reverberation's effect for 150 ticks.
 const RING_AGES: u32 = 136;
 const REVERB_AGES: u32 = 142;
+const EPICLESIS_AGES: u32 = 150;
 const REVERB_LIFE: u32 = 150;
+/// Epiclesis' unit lives 99 999 999 ticks.
+const EPICLESIS_LIFE: u32 = 99_999_999;
 const LEANS: [f32; 3] = [2.0, 3.0, 4.0];
 const TURNS: [f32; 3] = [0.0, 25.0, 50.0];
 
@@ -30,6 +33,8 @@ pub enum Look {
     ChaosPanic,
     Maelstrom,
     BloodyLust,
+    /// Epiclesis' yellow-green ring triples, with no square.
+    Epiclesis,
 }
 
 /// Chaos Panic's pictures (dust01 to dust09) and Bloody Lust's (torch_red01 to torch_red13), one every 4 ticks.
@@ -88,17 +93,27 @@ struct Hole {
     at: Vector,
     start: Instant,
     squares: Vec<Square>,
-    /// The colour of the ring triples thrown every 100 ticks, if it throws any.
-    rings: Option<[f32; 3]>,
+    /// The ring triples thrown every 100 ticks, if it throws any.
+    rings: Option<Rings>,
+    /// How many ticks the hole lives.
+    life: u32,
     /// How many ticks have started a ring triple's check.
     ticks: u32,
+}
+
+/// What a ring triple looks like and how long it is seen: its colour, how its alpha moves and its prim ages.
+#[derive(Clone, Copy)]
+struct Rings {
+    rgb: [f32; 3],
+    pace: Pace,
+    ages: u32,
 }
 
 /// A ring triple made at `start`.
 struct Triple {
     start: Instant,
     at: Vector,
-    rgb: [f32; 3],
+    rings: Rings,
     /// Reverberation's: the moment its effect started, which cuts the triple after 150 ticks.
     reverb: Option<Instant>,
 }
@@ -113,6 +128,7 @@ struct Pace {
 
 const BREATH: Pace = Pace { gain: 4, cap: 40, loss: 5 };
 const REVERB: Pace = Pace { gain: 24, cap: 240, loss: 15 };
+const EPICLESIS: Pace = Pace { gain: 24, cap: 120, loss: 8 };
 
 /// Aura 831's two flat squares on a Sura's feet.
 struct Squares {
@@ -145,13 +161,21 @@ pub fn swirl_half(spin: f32, base: f32) -> f32 {
 
 /// The three bands after the prim's tick `a` (a + 1 ticks run): each starts at its own age (0, −10, −20), grows 0.5 a tick, fades
 /// from radius 7, and starts again until band 0 has run 120 ticks.
+#[cfg(test)]
 pub fn bands(a: u32) -> [Band; 3] {
     paced_bands(a, BREATH)
 }
 
 /// Reverberation's bands: the same, but the alpha gains 24 a tick to 240 and loses 15.
+#[cfg(test)]
 pub fn reverb_bands(a: u32) -> [Band; 3] {
     paced_bands(a, REVERB)
+}
+
+/// Epiclesis' bands: the alpha gains 24 a tick to 120 and loses 8; band 0 ends at prim age 149.
+#[cfg(test)]
+pub fn epiclesis_bands(a: u32) -> [Band; 3] {
+    paced_bands(a, EPICLESIS)
 }
 
 fn paced_bands(a: u32, pace: Pace) -> [Band; 3] {
@@ -199,6 +223,7 @@ pub fn textures(look: &Look, min: bool) -> Vec<&'static str> {
         Look::ChaosPanic => DUST.to_vec(),
         Look::Maelstrom => (0..3).map(|index| maelstrom_path(index, min)).collect(),
         Look::BloodyLust => TORCH.to_vec(),
+        Look::Epiclesis => Vec::new(),
     }
 }
 
@@ -250,16 +275,18 @@ impl Holes {
     /// A ground unit's cell `look` at `at`, standing as skill unit `id`; its random choices from `rand(n)`, `min` is /mineffect.
     pub fn keep(&mut self, id: u32, look: Look, at: Vector, now: Instant, min: bool, mut rand: impl FnMut(u32) -> u32) {
         let blue = [100.0 / 255.0, 100.0 / 255.0, 1.0];
+        let breathing = |rgb: [f32; 3]| Some(Rings { rgb, pace: BREATH, ages: RING_AGES });
+        let mut life = LIFE;
         let (squares, rings) = match look {
             Look::Manhole | Look::DimensionDoor => {
                 let spin = rand(360) as f32;
                 let _ = rand(360);
                 let path = if matches!(look, Look::Manhole) { TWIRL } else { SPHERE };
-                (vec![Square::new(Picture::One(path), 0.0, spin, 12.0, true, 6.0)], Some(blue))
+                (vec![Square::new(Picture::One(path), 0.0, spin, 12.0, true, 6.0)], breathing(blue))
             }
             Look::ChaosPanic => {
                 let spin = rand(360) as f32;
-                (vec![Square::new(Picture::Moving(&DUST), 0.0, spin, 18.0, true, 6.0)], Some([1.0, 1.0, 170.0 / 255.0]))
+                (vec![Square::new(Picture::Moving(&DUST), 0.0, spin, 18.0, true, 6.0)], breathing([1.0, 1.0, 170.0 / 255.0]))
             }
             Look::Maelstrom => {
                 let squares = (0..3)
@@ -272,10 +299,14 @@ impl Holes {
             }
             Look::BloodyLust => {
                 let squares = [0.0, 120.0, 240.0].map(|turn| Square::new(Picture::Moving(&TORCH), turn, rand(360) as f32, 18.0, true, 6.0)).into();
-                (squares, Some([1.0, 100.0 / 255.0, 100.0 / 255.0]))
+                (squares, breathing([1.0, 100.0 / 255.0, 100.0 / 255.0]))
+            }
+            Look::Epiclesis => {
+                life = EPICLESIS_LIFE;
+                (Vec::new(), Some(Rings { rgb: [177.0 / 255.0, 1.0, 58.0 / 255.0], pace: EPICLESIS, ages: EPICLESIS_AGES }))
             }
         };
-        self.holes.push(Hole { id, at, start: now, squares, rings, ticks: 0 });
+        self.holes.push(Hole { id, at, start: now, squares, rings, life, ticks: 0 });
     }
 
     /// Aura 831's two flat squares on `unit` for a cast of `length` ticks.
@@ -287,8 +318,14 @@ impl Holes {
     /// Reverberation's two violet ring triples at `at`, on its ticks 0 and 100.
     pub fn reverb(&mut self, at: Vector, now: Instant) {
         for tick in [0, 100] {
-            self.triples.push(Triple { start: now + TICK * tick, at, rgb: [108.0 / 255.0, 26.0 / 255.0, 1.0], reverb: Some(now) });
+            let rings = Rings { rgb: [108.0 / 255.0, 26.0 / 255.0, 1.0], pace: REVERB, ages: REVERB_AGES };
+            self.triples.push(Triple { start: now + TICK * tick, at, rings, reverb: Some(now) });
         }
+    }
+
+    /// Whether skill unit `id` has a hole standing.
+    pub fn stands(&self, id: u32) -> bool {
+        self.holes.iter().any(|hole| hole.id == id)
     }
 
     pub fn forget(&mut self, id: u32) {
@@ -299,16 +336,16 @@ impl Holes {
     pub fn advance(&mut self, now: Instant) {
         for hole in &mut self.holes {
             while hole.ticks < passes(hole.start, now) {
-                if let (0, Some(rgb)) = (hole.ticks % 100, hole.rings) {
-                    self.triples.push(Triple { start: hole.start + TICK * hole.ticks, at: hole.at, rgb, reverb: None });
+                if let (0, Some(rings)) = (hole.ticks % 100, hole.rings) {
+                    self.triples.push(Triple { start: hole.start + TICK * hole.ticks, at: hole.at, rings, reverb: None });
                 }
                 hole.ticks += 1;
             }
         }
-        self.holes.retain(|hole| passes(hole.start, now) <= LIFE);
+        self.holes.retain(|hole| passes(hole.start, now) <= hole.life);
         self.triples.retain(|triple| match triple.reverb {
             Some(launched) => passes(launched, now) <= REVERB_LIFE,
-            None => passes(triple.start, now) <= RING_AGES,
+            None => passes(triple.start, now) <= triple.rings.ages,
         });
         self.squares.retain(|squares| passes(squares.start, now) <= squares.length);
     }
@@ -335,19 +372,19 @@ impl Holes {
             }
         }
         for triple in &self.triples {
-            let ages = if triple.reverb.is_some() { REVERB_AGES } else { RING_AGES };
-            let Some(a) = passes(triple.start, now).checked_sub(1).filter(|&a| a < ages) else { continue };
+            let Some(a) = passes(triple.start, now).checked_sub(1).filter(|&a| a < triple.rings.ages) else { continue };
             if triple.reverb.is_some_and(|launched| passes(launched, now) > REVERB_LIFE) {
                 continue;
             }
             let base = [triple.at[0], triple.at[1] + RISE, triple.at[2]];
             let mut vertices = Vec::new();
-            for (k, band) in if triple.reverb.is_some() { reverb_bands(a) } else { bands(a) }.iter().enumerate() {
+            for (k, band) in paced_bands(a, triple.rings.pace).iter().enumerate() {
                 if !band.active || band.age <= 0 || band.radius <= 0.0 {
                     continue;
                 }
                 let points: Vec<_> = (0..=20).map(|s| ring_point(base, TURNS[k] + 18.0 * s as f32, band.radius, band.height, LEANS[k])).collect();
-                let tint = [triple.rgb[0], triple.rgb[1], triple.rgb[2], band.alpha as f32 / 255.0];
+                let rgb = triple.rings.rgb;
+                let tint = [rgb[0], rgb[1], rgb[2], band.alpha as f32 / 255.0];
                 vertices.extend(corners_to_vertices(ring_quads(&points, 1.0), tint));
             }
             if !vertices.is_empty() {
@@ -457,6 +494,54 @@ mod tests {
     }
 
     #[test]
+    fn epiclesis_rings_gain_24_a_tick_to_120_lose_8_and_end_by_prim_age_149() {
+        // Band 0 at n = 1, 4, 5, 14, 15, 29, 30: alpha 24, 96, 120, 120, 112, 0, 24 (it restarts at n = 30).
+        let first = |n: u32| epiclesis_bands(n - 1)[0];
+        assert_eq!([1, 4, 5, 14, 15, 29, 30].map(|n| first(n).alpha), [24, 96, 120, 120, 112, 0, 24]);
+        assert_eq!([14, 15, 30].map(|n| first(n).radius), [7.0, 7.5, 0.0]);
+        // Band 1 ends at prim age 129, band 2 at 139, band 0 at 149.
+        assert!(epiclesis_bands(128)[1].active && !epiclesis_bands(129)[1].active);
+        assert!(epiclesis_bands(138)[2].active && !epiclesis_bands(139)[2].active);
+        assert!(epiclesis_bands(148)[0].active && !epiclesis_bands(149)[0].active);
+    }
+
+    #[test]
+    fn epiclesis_throws_a_yellow_green_triple_every_100_ticks_for_as_long_as_its_unit_stands() {
+        let start = Instant::now();
+        let mut holes = Holes::default();
+        holes.keep(7, Look::Epiclesis, [10.0, 1.0, 10.0], start, false, |_| unreachable!());
+        let mut starts = Vec::new();
+        for tick in 0..=205 {
+            holes.advance(start + TICK * tick);
+            for triple in &holes.triples {
+                let at = triple.start;
+                if !starts.contains(&at) {
+                    starts.push(at);
+                }
+            }
+        }
+        // A prim on e = 0, 100, 200 and none between; no square.
+        assert_eq!(starts, [start, start + TICK * 100, start + TICK * 200]);
+        assert!(holes.holes[0].squares.is_empty());
+        // Two prims overlap for 49 ticks of every 100: the first is seen to age 148 (its band 0 ends at 149), the second from tick 100.
+        let mut early = Holes::default();
+        early.keep(7, Look::Epiclesis, [10.0, 1.0, 10.0], start, false, |_| unreachable!());
+        early.advance(start + TICK * 120);
+        let drawn = |tick: u32| early.meshes(start + TICK * tick, |_| None).len();
+        assert_eq!((drawn(99), drawn(100), drawn(148), drawn(149)), (1, 2, 2, 1));
+        // #B1FF3A, added on, white rings.
+        let walls = early.meshes(start + TICK * 12, |_| None);
+        assert!(walls[0].additive && walls[0].texture == RING_WHITE);
+        assert_eq!(walls[0].vertices[0].tint[..3], [177.0 / 255.0, 1.0, 58.0 / 255.0]);
+        // It lives 99 999 999 ticks and is started once: one hole, whatever the time.
+        holes.advance(start + TICK * 3_000_000);
+        assert_eq!(holes.holes.len(), 1);
+        assert!(holes.stands(7) && !holes.stands(8));
+        holes.forget(7);
+        assert!(holes.holes.is_empty() && !holes.stands(7));
+    }
+
+    #[test]
     fn a_hole_turns_a_breathing_swirl_and_throws_ring_triples_every_100_ticks() {
         let start = Instant::now();
         let mut holes = Holes::default();
@@ -510,8 +595,8 @@ mod tests {
         // Rings only for Chaos Panic and Bloody Lust: two prims at e = 0, 100, 200, none between (each lasts 136 ticks), in #FFFFAA and #FF6464.
         assert_eq!((ring_ticks[0], ring_ticks[99], ring_ticks[100], ring_ticks[199], ring_ticks[200]), (2, 2, 4, 2, 4));
         assert!(
-            holes.triples.iter().any(|triple| triple.rgb == [1.0, 1.0, 170.0 / 255.0])
-                && holes.triples.iter().any(|triple| triple.rgb == [1.0, 100.0 / 255.0, 100.0 / 255.0])
+            holes.triples.iter().any(|triple| triple.rings.rgb == [1.0, 1.0, 170.0 / 255.0])
+                && holes.triples.iter().any(|triple| triple.rings.rgb == [1.0, 100.0 / 255.0, 100.0 / 255.0])
         );
         // Maelstrom: three squares in order, half-diagonal 27.0, 25.2, 18.0; the flare breathes (29.7, 12.0, 29.7, 29.4).
         let walls = holes.meshes(start, |_| None);

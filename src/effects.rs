@@ -1144,6 +1144,8 @@ pub fn is_cast_aura(effect: u32) -> bool {
                 | MAELSTROM_CAST
                 | CLEARANCE_CAST
                 | VARETYR_CAST
+                | EARTH_CAST
+                | CART_CAST
                 | 1872
                 | 1876
                 | 1902
@@ -1180,6 +1182,8 @@ pub fn is_banded(effect: u32) -> bool {
                 | MAELSTROM_CAST
                 | CLEARANCE_CAST
                 | VARETYR_CAST
+                | EARTH_CAST
+                | CART_CAST
                 | 1872
                 | 1876
                 | 1902
@@ -1248,6 +1252,7 @@ fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
             | MAELSTROM_CAST
             | CLEARANCE_CAST
             | VARETYR_CAST
+            | CART_CAST
             | 1872
             | 1876
             | 1902
@@ -1297,6 +1302,8 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         MAELSTROM_CAST => ("ring_blue", [0x0A, 0x42, 0x72], true),
         CLEARANCE_CAST => ("ring_white", [0xA4, 0xCD, 0xFE], true),
         VARETYR_CAST => ("ring_yellow", [0x54, 0xA9, 0xCD], true),
+        EARTH_CAST => ("ring_yellow", [0xFF; 3], false),
+        CART_CAST => ("ring_white", [0xF4, 0xBB, 0x7C], true),
         JACK_CAST => ("ring_ice", [0xC3, 0xC3, 0xFF], false),
         54 => ("ring_blue", [0xC3, 0xC3, 0xFF], false),
         55 => ("ring_yellow", [0xFF, 0xAF, 0xAF], true),
@@ -1399,13 +1406,30 @@ fn turning(band: usize, ticks: u32, age: u32) -> Band {
     }
 }
 
-/// A turning arc's top along it: h·sin 9s°, rising with sin(age°) over the first 90 ticks.
-// ponytail: the column stands its full height all along.
-fn turning_height(band: usize, height: f32, age: u32, s: usize) -> f32 {
-    if band == 3 {
-        return height;
-    }
+/// A turning band's top along it (the arcs and the sheet): h·sin 9s°, rising with sin(age°) over the first 90 ticks.
+fn turning_height(_band: usize, height: f32, age: u32, s: usize) -> f32 {
     height * (9.0 * s as f32).to_radians().sin() * (age.min(90) as f32).to_radians().sin()
+}
+
+/// Earth Grave's sheet's rim at its age n (from 1) as a share of its hump: sin n° over the first 90 ticks, then it breathes
+/// between 0.1 and 1.0 with a 360-tick period.
+fn earth_sheet_rim(n: u32) -> f32 {
+    if n <= 90 { (n as f32).to_radians().sin() } else { 0.55 + 0.45 * ((n % 360) as f32).to_radians().sin() }
+}
+
+/// Earth Grave's bands' tops: the crescents' as the other turning auras', the sheet's with its breathing rim.
+fn earth_height(band: usize, height: f32, age: u32, s: usize) -> f32 {
+    if band < 3 { turning_height(band, height, age, s) } else { height * (9.0 * s as f32).to_radians().sin() * earth_sheet_rim(age + 1) }
+}
+
+/// Earth Grave's turning bands, `age` ticks into an aura of `ticks` (its n counts from 1): the other turning auras' arcs and
+/// sheet, fading 5 a tick (the sheet 3) over the last 40 ticks, the sheet's alpha starting at 70, gaining 8 a tick to 100.
+fn earth_turning(band: usize, ticks: u32, age: u32) -> Band {
+    let n = age + 1;
+    let fading = (n + 41).saturating_sub(ticks) as f32;
+    let shape = turning(band, ticks, age);
+    let alpha = if band == 3 { (70.0 + 8.0 * n.min(20) as f32).min(100.0) - 3.0 * fading } else { 180.0 - 5.0 * fading };
+    Band { alpha: alpha.max(0.0), ..shape }
 }
 
 /// A band rising over the first 90 ticks: height × sin(age°).
@@ -1463,6 +1487,7 @@ fn is_bloom(effect: u32) -> bool {
             | MAELSTROM_CAST
             | CLEARANCE_CAST
             | VARETYR_CAST
+            | CART_CAST
             | 1872
             | 1876
             | 1902
@@ -1528,8 +1553,11 @@ impl Banded {
         if is_bloom(self.effect) {
             self.bloom_bands(age).into_iter().map(|(_, band, heights)| (band, heights)).collect()
         } else {
-            // ponytail: earth (56) and poison (59) turn like water, fire and wind.
-            (0..4).map(|band| turning(band, self.ticks, age)).enumerate().map(|(band, shape)| (shape, heights(band, shape.height, turning_height))).collect()
+            // ponytail: earth (56) and poison (59) turn like water, fire and wind; Earth Grave's cast (1664) has its own sheet.
+            let earth = self.effect == EARTH_CAST;
+            let shape_of: fn(usize, u32, u32) -> Band = if earth { earth_turning } else { turning };
+            let wave: fn(usize, f32, u32, usize) -> f32 = if earth { earth_height } else { turning_height };
+            (0..4).map(|band| shape_of(band, self.ticks, age)).enumerate().map(|(band, shape)| (shape, heights(band, shape.height, wave))).collect()
         }
     }
 }
@@ -2219,6 +2247,12 @@ const JACK_CAST: u32 = 1449;
 const MAELSTROM_CAST: u32 = 1556;
 const CLEARANCE_CAST: u32 = 1560;
 const VARETYR_CAST: u32 = 1565;
+/// Epiclesis' ground rings, Soul Ascetic's bubble cones, Earth Grave's crescents and sheet and Cart Boost's cones (`prims::holes`,
+/// `prims::songs`).
+const EPICLESIS_CELL: u32 = 1655;
+const SOUL_CAST: u32 = 1656;
+const EARTH_CAST: u32 = 1664;
+const CART_CAST: u32 = 1677;
 /// Exceed Break's needles, the Dragon Combo's rays, the Sura's chi burst and Moon Slasher's spin (`prims::chi`, `prims::brawl`).
 const PRIME_CHARGE: u32 = 882;
 const DRAGON_RAYS: u32 = 885;
@@ -2771,6 +2805,17 @@ impl Effects {
             self.play_sounds(table, id, at, now);
             self.prims.songs.cone(SURA_CAST, unit, ticks, now);
             self.prims.holes.squares(unit, ticks, now);
+            return;
+        }
+        // Soul Ascetic's and Reverberation's casts: violet bubble cones round the caster for the whole cast.
+        // ponytail: the sound plays at full volume, not 40 %.
+        if id == SOUL_CAST {
+            let ticks = cast_ms / crate::prims::TICK.as_millis() as u32;
+            for path in songs::BUBBLES {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            self.play_sounds(table, id, at, now);
+            self.prims.songs.soul_cone(unit, ticks, self.min, now);
             return;
         }
         // Tetra Vortex's cast also flickers the caster in a fresh colour each tick.
@@ -3850,6 +3895,10 @@ impl Effects {
     /// Shows what a skill's unit on the ground shows (`kind`: rathena's UNT_ number) until `forget(id)`.
     #[allow(clippy::too_many_arguments)]
     pub fn play_unit(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, kind: u32, id: u32, at: Vector, range: u8, now: Instant) {
+        // Epiclesis' rings start once with their unit: a second sight of it leaves them be.
+        if table.units.get(&kind) == Some(&EPICLESIS_CELL) && self.prims.holes.stands(id) {
+            return;
+        }
         // The server tells again of units coming back into sight.
         self.forget(id);
         self.unit_kinds.insert(id, kind);
@@ -3884,11 +3933,13 @@ impl Effects {
                 self.textures.entry(crowds::MELODY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crowds::MELODY, false).ok());
                 self.play_sounds(table, effect, at, now);
                 self.prims.crowds.note(id, at, now, |n| pick(0, n.saturating_sub(1)));
-            } else if matches!(effect, CHAOS_CELL | MAELSTROM_CELL | BLOODY_CELL) {
-                // Chaos Panic's, Maelstrom's and Bloody Lust's cells turn their squares for as long as their unit stands.
+            } else if matches!(effect, CHAOS_CELL | MAELSTROM_CELL | BLOODY_CELL | EPICLESIS_CELL) {
+                // Chaos Panic's, Maelstrom's and Bloody Lust's cells turn their squares, and Epiclesis' cell spreads yellow-green rings,
+                // for as long as their unit stands.
                 let look = match effect {
                     CHAOS_CELL => holes::Look::ChaosPanic,
                     MAELSTROM_CELL => holes::Look::Maelstrom,
+                    EPICLESIS_CELL => holes::Look::Epiclesis,
                     _ => holes::Look::BloodyLust,
                 };
                 for path in holes::textures(&look, self.min).into_iter().chain([walls::RING_WHITE]) {
@@ -5921,8 +5972,8 @@ mod tests {
         assert_eq!([5401, 5507, 6001, 6006, 6525, 6606].map(|skill| table.cast_aura(skill, 12)), [None; 6]);
         assert_eq!([5400, 6007, 6607].map(|skill| table.cast_aura(skill, 12)).len(), 3);
         // The table's rows, as the issue lists them: 766 skills and 5 None rows.
-        assert_eq!(table.casts.len(), 773);
-        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 775);
+        assert_eq!(table.casts.len(), 776);
+        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 781);
     }
 
     #[test]
@@ -7567,6 +7618,70 @@ mod tests {
             table.sounds[&GREEN_CASTING].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>(),
             [("effect\\EF_BeginSpell", 0, false)]
         );
+    }
+
+    #[test]
+    fn epiclesis_soul_ascetic_earth_grave_and_cart_boost_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.to_lowercase(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Epiclesis' unit shows 1655 with no sound; the three casts sound at the caster at tick 0.
+        assert_eq!(table.units[&202], EPICLESIS_CELL);
+        assert!(!table.sounds.contains_key(&EPICLESIS_CELL));
+        for id in [SOUL_CAST, EARTH_CAST, CART_CAST] {
+            assert_eq!(sounds(id), [("effect\\ef_beginspell".to_owned(), 0, false)], "{id}");
+        }
+        // Soul Ascetic's three Shinkiro casts show 1656 and 812; Reverberation's shows 1656 only.
+        for skill in [5493, 5494, 5495] {
+            assert_eq!((table.cast_aura(skill, 12), table.cast_extras(skill)), (Some(SOUL_CAST), vec![812]), "{skill}");
+        }
+        assert_eq!((table.cast_aura(2414, 12), table.cast_extras(2414)), (Some(SOUL_CAST), Vec::new()));
+        assert_eq!((table.cast_aura(2446, 12), table.cast_aura(2478, 12)), (Some(EARTH_CAST), Some(CART_CAST)));
+        // Soul Ascetic's cone is made in code, not a band aura.
+        assert!(!is_cast_aura(SOUL_CAST) && !is_banded(SOUL_CAST));
+    }
+
+    #[test]
+    fn earth_graves_cast_turns_white_crescents_and_a_breathing_sheet() {
+        assert!(is_cast_aura(EARTH_CAST) && is_banded(EARTH_CAST) && !is_bloom(EARTH_CAST));
+        // At least 70 ticks, 100 when started any other way; the look is ring_yellow in white, blended.
+        assert_eq!((aura_ticks(EARTH_CAST, 100), aura_ticks(EARTH_CAST, 2000), banded_ticks(EARTH_CAST)), (70, 125, 100));
+        assert_eq!(aura_look(EARTH_CAST), ("ring_yellow", [0xFF; 3], false));
+        // The crescents: alpha 180 until n = length − 41, 175 at n = length − 40, 0 at n = length − 5 (n = age + 1).
+        let length = 200;
+        let crescent = |n: u32| earth_turning(0, length, n - 1).alpha;
+        assert_eq!([length - 41, length - 40, length - 5].map(crescent), [180.0, 175.0, 0.0]);
+        // They turn 3, 4 and 5° a tick like the other turning auras.
+        assert_eq!([earth_turning(0, length, 10).turn, earth_turning(2, length, 10).turn], [30.0, 230.0]);
+        // The sheet: 70 + 8 a tick to 100 (78, 86, 94, 100 for n = 1 … 4), then 3 less a tick over the last 40: 97 at n = length − 40.
+        let sheet = |n: u32| earth_turning(3, length, n - 1).alpha;
+        assert_eq!([1, 2, 3, 4, 5, 100].map(sheet), [78.0, 86.0, 94.0, 100.0, 100.0, 100.0]);
+        assert_eq!([length - 41, length - 40, length - 8].map(sheet), [100.0, 97.0, 1.0]);
+        assert_eq!([length - 7, length].map(sheet), [0.0, 0.0]);
+        let sheet_shape = earth_turning(3, length, 0);
+        assert_eq!((sheet_shape.arc, sheet_shape.radius, sheet_shape.lean, sheet_shape.height), (360.0, 4.0, 89.0, 250.0));
+        // Its rim: sin n° to n = 90, then 0.55 + 0.45·sin(n mod 360)° between 0.1 and 1.0.
+        let near = |got: f32, want: f32| (got - want).abs() < 1e-4;
+        assert!(near(earth_sheet_rim(45), 45.0_f32.to_radians().sin()) && near(earth_sheet_rim(90), 1.0));
+        assert!(near(earth_sheet_rim(91), 0.55 + 0.45 * 91.0_f32.to_radians().sin()) && near(earth_sheet_rim(270), 0.1));
+        // The hump along the rim is h·sin 9s°: 250 high at s = 10 and nothing at its ends.
+        assert!(near(earth_height(3, 250.0, 89, 10), 250.0) && near(earth_height(3, 250.0, 89, 0), 0.0) && near(earth_height(3, 250.0, 269, 10), 25.0));
+        // Every other turning aura's sheet rises like the crescents: half-way at age 30, the hump from 90.
+        assert!(
+            near(turning_height(3, 250.0, 30, 10), 125.0) && near(turning_height(3, 250.0, 90, 10), 250.0) && near(turning_height(3, 250.0, 200, 10), 250.0)
+        );
+        assert!(near(turning_height(3, 250.0, 200, 5), 250.0 * 45.0_f32.to_radians().sin()));
+    }
+
+    #[test]
+    fn cart_boosts_cast_is_two_sets_of_light_orange_blooming_cones() {
+        assert!(is_cast_aura(CART_CAST) && is_banded(CART_CAST) && is_bloom(CART_CAST));
+        assert_eq!((aura_ticks(CART_CAST, 100), aura_ticks(CART_CAST, 2000)), (56, 125));
+        assert_eq!(aura_look(CART_CAST), ("ring_white", [0xF4, 0xBB, 0x7C], true));
+        let aura =
+            Banded { effect: CART_CAST, anchor: Anchor::Unit(None), start: Instant::now(), ticks: 100, turns: [0.0; 3], extra: [0.0; 2], sparkles: Vec::new() };
+        let bands = aura.bloom_bands(0);
+        assert_eq!(bands.len(), 8);
+        assert_eq!(bands.iter().take(4).map(|(_, band, _)| band.height).collect::<Vec<_>>(), [20.0, 19.0, 18.0, 17.0]);
     }
 
     #[test]
