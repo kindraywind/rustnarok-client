@@ -12,9 +12,9 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, knight, mechanic,
-    monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, souls, spears, sphere, spray, star, stone, tanji, throw, transcend,
-    walls, waterball, waves,
+    balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, kicks, knight,
+    mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, souls, spears, sphere, spray, star, stone, tanji, throw,
+    transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1674,6 +1674,8 @@ pub struct Effects {
     fist_frames: HashMap<(usize, usize, bool), Vec<Placed>>,
     /// The crowds' monsters by sprite, action and frame.
     crowd_frames: HashMap<(&'static str, usize, usize), Vec<Placed>>,
+    /// The footprints Running launched, for effects 447 and 448 when they get a look.
+    pub footprints: Vec<kicks::Footprint>,
     /// The skill units whose effect plays on a grid of points, and the points made and waiting to play.
     areas: Vec<Area>,
     area_queue: Vec<(u32, Vector, Instant)>,
@@ -2077,6 +2079,16 @@ const PRESSED_BODY: u32 = 413;
 const KICKED_BODY: u32 = 415;
 const HIT_BODY: u32 = 417;
 const BABY_BODY: u32 = 420;
+/// The Hit Lines, Running's start and stop (`prims::kicks`).
+const HIT_LINE_TURN: u32 = 429;
+const HIT_LINE_COUNTER: u32 = 430;
+const HIT_LINE_DOWN: u32 = 431;
+const RUN_START: u32 = 442;
+const RUN_STATUS: u32 = 443;
+const RUN_STOP: u32 = 444;
+/// Running's status (133) and how long a footprint lives.
+const RUN_STATUS_EFST: u16 = 133;
+const FOOTPRINT_TICKS: u32 = 333;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
 /// Resurrection's rings and the Call Partner portal's warp (`prims::portal`).
@@ -2236,7 +2248,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 39] = [
+pub const AIMED: [u32; 40] = [
+    HIT_LINE_COUNTER,
     PINPOINT_FX,
     ELBOW_LINES,
     KNUCKLE_LINES,
@@ -2792,6 +2805,22 @@ impl Effects {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
                 self.prims.cells.sheet(id, at, now);
             }
+            (HIT_LINE_TURN | HIT_LINE_DOWN, Target::Unit(unit)) => {
+                self.textures.entry(kicks::LINE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, kicks::LINE, true).ok());
+                let kind = if id == HIT_LINE_TURN { kicks::Kind::Turn } else { kicks::Kind::Down };
+                self.prims.kicks.hit(kind, unit, None, at, now);
+            }
+            (RUN_START, Target::Unit(unit)) => {
+                // Running's start leaves footprints; once its status is on, the use is its stop: eight fins shoot out of the feet.
+                if self.prims.kicks.is_running(unit) {
+                    self.textures.entry(kicks::FIN.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, kicks::FIN, false).ok());
+                    self.play_sounds(table, RUN_STOP, at, now);
+                    self.prims.kicks.stop(unit, now);
+                } else {
+                    self.prims.kicks.run(unit, now);
+                }
+            }
+            (RUN_STATUS, Target::Status(unit, _)) => self.prims.kicks.status(unit, true),
             (BABY_FX, Target::Unit(unit)) => {
                 self.textures.entry(sphere::FIRE_IVY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sphere::FIRE_IVY, false).ok());
                 self.prims.sphere.ribbons(unit, now, |n| pick(0, n.saturating_sub(1)));
@@ -3642,6 +3671,10 @@ impl Effects {
                 }
                 self.prims.balls.fire_ball(from, to, now);
             }
+            HIT_LINE_COUNTER => {
+                self.textures.entry(kicks::LINE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, kicks::LINE, true).ok());
+                self.prims.kicks.hit(kicks::Kind::Counter, (target != own).then_some(target), Some(from), to, now);
+            }
             AXE_THROW => {
                 self.textures.entry(boomerang::AXE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, boomerang::AXE, true).ok());
                 self.play_sounds(table, id, from, now);
@@ -3839,6 +3872,10 @@ impl Effects {
         self.prims.portal.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.sphere.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.petals.advance(now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.kicks.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        let steps = self.prims.kicks.take_footprints();
+        self.footprints.extend(steps);
+        self.footprints.retain(|step| str_frame(now.saturating_duration_since(step.start)) < FOOTPRINT_TICKS);
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -4143,6 +4180,10 @@ impl Effects {
         self.prims.brawl.forget_status(unit, status);
         self.prims.waves.forget_status(unit, status);
         self.prims.chi.forget_status(unit, status);
+        // Running's status takes its start away, and ends with it.
+        if status == RUN_STATUS_EFST {
+            self.prims.kicks.status(unit, false);
+        }
         if status == 330 {
             self.prims.circles.forget(unit);
         }
@@ -4493,6 +4534,16 @@ impl Effects {
                 self.prims
                     .sphere
                     .meshes(now, self.yaw.to_degrees(), &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
+                self.prims.kicks.hit_meshes().into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
+                self.prims
+                    .kicks
+                    .fin_meshes(&position_of)
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
@@ -7199,5 +7250,31 @@ mod tests {
         }
         assert_eq!([SOUL_BODY, SOUL_BODY_MONSTER, LAND_BODY].map(|id| table.lengths[&id]), [99_999_999, 99_999_999, 35]);
         assert!([SOUL_BODY, SOUL_BODY_MONSTER, LAND_BODY].iter().all(|id| !table.sounds.contains_key(id)));
+    }
+
+    #[test]
+    fn the_hit_lines_and_runnings_start_and_stop_have_their_rows() {
+        let table = Table::load();
+        // Turn Kick and Estun: 429; Counter Kick and Flash Kick: 430 aimed from the attacker; Down Kick, Esma and Swhoo: 431.
+        for skill in [417, 2593, 468] {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Target, HIT_LINE_TURN)), "{skill}");
+        }
+        for skill in [419, 2580] {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Target, HIT_LINE_COUNTER)), "{skill}");
+        }
+        for skill in [415, 469, 2604] {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Target, HIT_LINE_DOWN)), "{skill}");
+        }
+        assert!(AIMED.contains(&HIT_LINE_COUNTER) && !AIMED.contains(&HIT_LINE_TURN));
+        assert!([HIT_LINE_TURN, HIT_LINE_COUNTER, HIT_LINE_DOWN].iter().all(|id| table.lengths[id] == 200 && !table.sounds.contains_key(id)));
+        // Running: the use starts 442 (9 999 ticks), the status 133 plays 443 with its bounce sound, the stop 444 has its sound.
+        assert!(table.used(411).unwrap().contains(&(Who::Caster, RUN_START)));
+        assert_eq!((table.lengths[&RUN_START], table.lengths[&RUN_STOP]), (9999, 100));
+        assert!(table.status(133).contains(&RUN_STATUS));
+        assert_eq!(table.sounds[&RUN_STATUS].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\T_벽튕김", 0)]);
+        assert_eq!(table.sounds[&RUN_STOP].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\t_효과음1", 0)]);
+        assert!(!table.sounds.contains_key(&RUN_START));
+        // The footprints (447 and 448) have no rows of their own.
+        assert!(!table.lengths.contains_key(&447) && !table.parts.contains_key(&448));
     }
 }

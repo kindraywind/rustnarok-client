@@ -1832,6 +1832,7 @@ wav	426	effect\복호격	0
 wav	435	effect\T_회오리차기	80
 wav	439	effect\G스포어익스플로젼	0	listener
 wav	440	effect\아숨프티오	0
+wav	443	effect\T_벽튕김	0
 wav	444	effect\t_효과음1	0
 wav	445	effect\t_회피2	0
 wav	450	effect\cru_grand cross	0
@@ -4198,8 +4199,10 @@ struck	421	caster	439
 struck	421	target	458
 struck	467	caster	547
 struck	468	caster	555
+struck	468	target	429
 struck	469	target	425
 struck	469	caster	553
+struck	469	target	431
 struck	480	target	520
 struck	485	target	518
 struck	501	target	548
@@ -4366,6 +4369,7 @@ struck	2336	target	458
 struck	2426	target	466
 struck	2429	target	425
 struck	2604	target	417
+struck	2604	target	431
 used	6	target	67
 used	7	caster	17
 used	8202	caster	17
@@ -5148,6 +5152,11 @@ length	420	99999
 length	424	99999999
 length	427	99999999
 length	446	35
+length	429	200
+length	430	200
+length	431	200
+length	442	9999
+length	444	100
 length	450	999
 length	455	1500
 length	675	200

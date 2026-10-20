@@ -21,6 +21,7 @@ pub mod ground;
 pub mod guard;
 pub mod holes;
 pub mod huujin;
+pub mod kicks;
 pub mod knight;
 pub mod mechanic;
 pub mod monk;
@@ -194,6 +195,7 @@ pub struct Prims {
     pub spears: spears::Spears,
     pub crowds: crowds::Crowds,
     pub chi: chi::Chi,
+    pub kicks: kicks::Kicks,
     pub petals: petals::Petals,
     pub bodies: body::Bodies,
     pub cells: cells::Cells,
