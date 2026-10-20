@@ -670,7 +670,6 @@ skill	2201	effectId	802
 skill	2203	effectId	726
 skill	2204	hitEffectId	28
 skill	2205	effectId	729
-skill	2206	effectId	803
 skill	2209	effectId	799
 skill	2211	effectId	727
 skill	2212	groundEffectId	728
@@ -1537,6 +1536,9 @@ func	666	quake	1120	650
 func	668	quake	0	650
 func	732	quake	0	200
 func	756	quake	288	200
+func	804	quake	0	650
+func	804	quake	640	650
+func	804	quake	1280	650
 func	835	quake	704	650
 func	863	quake	0	650
 func	906	quake	528	650
@@ -1983,7 +1985,12 @@ wav	797	effect\wl_siennaexecrate	0	listener
 wav	799	effect\wl_stasis	0
 wav	802	effect\wl_whiteimprison	0
 wav	803	effect\wl_recognizedspell	0
-wav	804	effect\wl_tetravortex	0
+wav	804	effect\wizard_meteo	0
+wav	804	effect\hunter_blastmine	0
+wav	804	effect\wl_tetravortex	160
+wav	804	effect\wl_tetravortex	320
+wav	804	effect\wl_tetravortex	800
+wav	804	effect\wl_tetravortex	1280
 wav	805	effect\EF_BeginSpell	0	listener
 wav	806	effect\맹호경파산	0	listener
 wav	809	effect\assasin_cloaking	0
@@ -3815,6 +3822,7 @@ cast	2203	12
 cast	2204	1449
 cast	2205	12
 cast	2206	58
+cast	2206	803
 cast	2207	12
 cast	2209	441
 cast	2210	12
@@ -5151,6 +5159,8 @@ length	792	9999
 length	793	100
 length	797	300
 length	801	150
+length	803	500
+length	804	600
 length	959	60
 length	975	40
 length	987	100

@@ -49,6 +49,7 @@ pub mod stone;
 pub mod tanji;
 pub mod throw;
 pub mod transcend;
+pub mod vortex;
 pub mod walls;
 pub mod waterball;
 pub mod waves;
@@ -208,6 +209,7 @@ pub struct Prims {
     pub souls: souls::Souls,
     pub radar: radar::Radar,
     pub notes: notes::Notes,
+    pub vortex: vortex::Vortex,
     pub emblems: emblems::Emblems,
     pub portal: portal::Portal,
     pub sphere: sphere::Sphere,
@@ -732,6 +734,7 @@ impl Prims {
         self.painter.advance(now);
         self.holes.advance(now);
         self.blitzes.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
+        self.vortex.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
     }
 
     /// Every ghost copy to draw: where, how opaque and how big. Down a trail of n copies the i-th older is

@@ -14,7 +14,7 @@ use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, kicks, knight,
     linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, soul, souls, spears, sphere, spray, star, stone, tanji,
-    throw, transcend, walls, waterball, waves, wheels,
+    throw, transcend, vortex, walls, waterball, waves, wheels,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -2029,6 +2029,11 @@ pub const EF_STONERING: u32 = 797;
 /// EF_FROSTDIVER3: Jack Frost's star of dark blue ice spikes.
 pub const EF_FROSTDIVER3: u32 = 801;
 
+/// EF_RECOGNIZED: Recognized Spell's skill icons over the caster.
+pub const EF_RECOGNIZED: u32 = 803;
+/// EF_TETRA: Tetra Vortex's cards and light columns.
+pub const EF_TETRA: u32 = 804;
+
 pub const STAPO_SPRITE: &str = "data\\sprite\\몬스터\\stapo";
 
 /// Stapo's action: 0 if rand == 0, else 7.
@@ -2472,7 +2477,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 48] = [
+pub const AIMED: [u32; 49] = [
+    EF_TETRA,
     STIN,
     CROSS_LINES,
     PIERCING_LINES,
@@ -3218,6 +3224,12 @@ impl Effects {
             }
             (EF_FROSTDIVER3, _) => {
                 self.jack_frost(gpu, grf, at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (EF_RECOGNIZED, Target::Unit(unit)) => {
+                for path in vortex::MG_ICONS.into_iter().chain(vortex::WZ_ICONS) {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.vortex.recognized(unit, now);
             }
             (813..=818, Target::Unit(unit)) => {
                 self.textures.entry(songs::STREAK_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, songs::STREAK_TEXTURE, true).ok());
@@ -4164,6 +4176,15 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.waterballs.throw(from, to, now);
             }
+            EF_TETRA => {
+                for path in vortex::TV_TEXTURES {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
+                }
+                self.textures.entry(vortex::RING_RED.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, vortex::RING_RED, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.play_quakes(table, id, now);
+                self.prims.vortex.tetra(to, now, |n| pick(0, n.saturating_sub(1)));
+            }
             PINPOINT_FX => {
                 for path in [guard::SHIELD, guard::SWORD] {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
@@ -5062,6 +5083,7 @@ impl Effects {
             )
             .chain(self.prims.monk.meshes(now, false).into_iter().filter_map(|(path, vertices)| Some((self.textures.get(path)?.as_ref()?, vertices, true))))
             .chain(self.prims.shards.meshes(now).into_iter().filter_map(|(path, vertices)| Some((self.textures.get(path)?.as_ref()?, vertices, true))))
+            .chain(self.prims.vortex.meshes().into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
             .filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(forced_walls).chain(prims).collect()
     }
@@ -5319,6 +5341,8 @@ impl Effects {
             }
             // Estun's electric sparks, facing the camera.
             quads.extend(self.prims.linker.quads(now, |path| self.textures.get(path).and_then(Option::as_ref)));
+            // Recognized Spell's skill icons and Tetra Vortex's cards, facing the camera.
+            quads.extend(self.prims.vortex.quads(now, self.yaw.to_degrees(), |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
             // Lope's motes and petals, facing the camera.
             quads.extend(self.prims.petals.quads(|path| self.textures.get(path).and_then(Option::as_ref)));
             // Lullaby Deep Sleep's notes, over everything (`STR_RISE` is taken off again).
@@ -5813,7 +5837,7 @@ mod tests {
         assert_eq!([5400, 6007, 6607].map(|skill| table.cast_aura(skill, 12)).len(), 3);
         // The table's rows, as the issue lists them: 766 skills and 5 None rows.
         assert_eq!(table.casts.len(), 773);
-        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 774);
+        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 775);
     }
 
     #[test]
@@ -8206,5 +8230,34 @@ mod tests {
         // Chase Walk's prints are drawn in code: no part rows, 340 ticks.
         assert!(!table.floaters.contains_key(&326) && !table.floaters.contains_key(&327));
         assert_eq!([326, 327].map(|id| table.lengths[&id]), [340, 340]);
+    }
+
+    #[test]
+    fn recognized_spell_and_tetra_vortex_have_their_rows() {
+        let table = Table::load();
+        // 803 Recognized Spell: cast 2206 803 and cast 2206 58 both there and skill 2206 effectId 803 gone.
+        assert_eq!(table.cast_aura(2206, 58), Some(58));
+        assert_eq!(table.cast_extras(2206), [EF_RECOGNIZED]);
+        assert!(table.skill(2206, "effectId").is_empty());
+        assert_eq!(table.lengths[&EF_RECOGNIZED], 500);
+
+        // 804 Tetra Vortex: wav 804 rows at 0 (two) and 160, 320, 800, 1280 ms and none other; func 804 quake at 0, 640, 1280 ms for 650 ms; struck 2218 caster 804 kept.
+        assert_eq!(table.lengths[&EF_TETRA], 600);
+        let wav = table.sounds[&EF_TETRA].iter().map(|s| (s.file.as_str(), s.delay_ms)).collect::<Vec<_>>();
+        assert_eq!(
+            wav,
+            [
+                ("effect\\wizard_meteo", 0),
+                ("effect\\hunter_blastmine", 0),
+                ("effect\\wl_tetravortex", 160),
+                ("effect\\wl_tetravortex", 320),
+                ("effect\\wl_tetravortex", 800),
+                ("effect\\wl_tetravortex", 1280),
+            ]
+        );
+        let quakes = table.quakes[&EF_TETRA].iter().map(|&(delay, len)| (delay.as_millis() as u32, len.as_millis() as u32)).collect::<Vec<_>>();
+        assert_eq!(quakes, [(0, 650), (640, 650), (1280, 650)]);
+        assert!(table.struck(2218).unwrap().contains(&(Who::Caster, EF_TETRA)));
+        assert!(AIMED.contains(&EF_TETRA));
     }
 }
