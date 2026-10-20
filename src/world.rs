@@ -584,6 +584,11 @@ fn sprite_depth(feet: f32, below: f32, [slope, bias, nudge]: [f32; 3]) -> f32 {
     (DEPTH_SCALE * (1.0 - NEAR * (1.0 / z + bias)) - nudge).clamp(0.0, 1.0)
 }
 
+/// A hit number part's draw order (far first): its anchor's depth, nudged.
+fn number_depth(feet: f32, plane: [f32; 3]) -> f32 {
+    sprite_depth(feet, 0.0, plane)
+}
+
 /// An effect's quad: texture, where it plays, its corners' offsets in sprite pixels (top left, top right, bottom right,
 /// bottom left; y down), a color to multiply it by, whether it adds to what's behind instead of covering it, and whether
 /// it's an STR's: `STR_RISE` screen pixels up, drawn last over everything with no depth test.
@@ -1653,17 +1658,9 @@ impl WorldPass for WorldFrame<'_> {
                 [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
             })
             .collect();
-        let number_depths: Vec<f32> = self
-            .numbers
-            .iter()
-            .zip(&number_planes)
-            .map(|(&(_, feet, offset, size, _, angle, _), &plane)| {
-                let Some(base) = view.project(feet) else { return 1.0 };
-                let corners = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]].map(|uv| view.sprite_point(feet, sprite_corner(offset, size, angle, uv).0));
-                let top = corners.iter().flatten().map(|corner| corner[1]).reduce(f32::min).unwrap_or(base[1]);
-                sprite_depth(view.depth_of(feet), (top - base[1]) * SCREEN_HEIGHT, plane)
-            })
-            .collect();
+        // By where each part is anchored, not its top: a critical's burst, scaled up and taller than its digits in the
+        // first frames, would otherwise sort in front of them. Parts of one number share the anchor; the nudge orders them.
+        let number_depths: Vec<f32> = number_planes.iter().zip(self.numbers).map(|(&plane, &(_, feet, ..))| number_depth(view.depth_of(feet), plane)).collect();
         let mut number_order: Vec<usize> = (0..self.numbers.len()).collect();
         number_order.sort_by(|&a, &b| number_depths[b].total_cmp(&number_depths[a]));
         let number_buffer = (!number_vertices.is_empty()).then(|| {
@@ -2587,6 +2584,17 @@ pub fn direction(step: [i32; 2]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_criticals_digits_draw_over_its_burst() {
+        // The burst and its digits share an anchor; the digits' one-step nudge puts them later (nearer) in the order,
+        // however tall the burst is.
+        let at = |nudge: f32| number_depth(400.0, plane(DepthLayer { nudge, ..DepthLayer::default() }, 400.0, 0.8, 300.0));
+        assert!(at(1.0) < at(0.0));
+        // A number nearer the camera still draws after one further away.
+        let plain = plane(DepthLayer::default(), 400.0, 0.8, 300.0);
+        assert!(number_depth(300.0, plain) < number_depth(400.0, plain));
+    }
 
     #[test]
     fn chases_to_range_short_of_the_target() {
