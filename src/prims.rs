@@ -23,6 +23,7 @@ pub mod mechanic;
 pub mod monk;
 pub mod napalm;
 pub mod painter;
+pub mod radar;
 pub mod sage;
 pub mod shafts;
 pub mod shards;
@@ -187,6 +188,7 @@ pub struct Prims {
     pub crowds: crowds::Crowds,
     pub chi: chi::Chi,
     pub souls: souls::Souls,
+    pub radar: radar::Radar,
 }
 
 /// COLDHIT's shard and smoke textures.
