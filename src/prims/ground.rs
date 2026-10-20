@@ -174,6 +174,24 @@ impl Streak {
     }
 }
 
+/// The corners (sprite pixels from the middle, y down) of a square of half-diagonal `half` pixels spun `spin` degrees that shows
+/// a picture in the top-left three quarters of its texture (a 24 × 24 picture padded to 32 × 32): the whole texture drawn a third
+/// bigger and moved so that the picture's centre sits on the middle. In the quad's order of texture coordinates (0, 1), (1, 1),
+/// (1, 0), (0, 0), or, `mirrored`, the order with the corner at `spin` getting (1, 1), (0, 1), (0, 0), (1, 0).
+pub fn padded_square(spin: f32, half: f32, mirrored: bool) -> [[f32; 2]; 4] {
+    let big = half / 0.75;
+    // The corner whose texture coordinate is (1, 1) is at `spin` when mirrored, a quarter turn on otherwise; the picture's
+    // centre is a quarter of the big half-diagonal toward the corner opposite it.
+    let bright = if mirrored { spin } else { spin + 90.0 };
+    let (sin, cos) = bright.to_radians().sin_cos();
+    let shift = [0.25 * big * cos, 0.25 * big * sin];
+    let corner = |j: u32| {
+        let (sin, cos) = (spin + 90.0 * j as f32).to_radians().sin_cos();
+        [shift[0] + big * cos, shift[1] + big * sin]
+    };
+    if mirrored { [corner(1), corner(0), corner(3), corner(2)] } else { [corner(0), corner(1), corner(2), corner(3)] }
+}
+
 /// The potion's height over its cell at tick n (from 1): 80 − 3n to n = 24, then 8.
 pub fn potion_height(n: u32) -> f32 {
     80.0 - 3.0 * n.min(24) as f32
@@ -462,6 +480,29 @@ mod tests {
         assert!(ground.meshes(start + TICK * 15).is_empty() && ground.meshes(start + TICK * 45).is_empty());
         ground.advance(start + TICK * 251);
         assert!(ground.slims.is_empty());
+    }
+
+    #[test]
+    fn a_padded_square_puts_the_picture_on_the_middle() {
+        // Unspun: the whole texture is a third bigger; the middle of its top-left three quarters is on the origin.
+        let near_pair = |got: [f32; 2], want: [f32; 2]| (got[0] - want[0]).abs() < 0.01 && (got[1] - want[1]).abs() < 0.01;
+        let [c0, c1, c2, c3] = padded_square(0.0, 75.0, false);
+        // Half-diagonal 100: corners at 0°, 90°, 180°, 270° from a centre moved 25 toward 90° (down).
+        assert!(near_pair(c0, [100.0, 25.0]) && near_pair(c1, [0.0, 125.0]) && near_pair(c2, [-100.0, 25.0]) && near_pair(c3, [0.0, -75.0]));
+        // The picture's centre, three eighths in from the (0, 0) corner on both axes, lies on the origin: the (0, 0) corner is
+        // c3 (uv 0, 0) and the (1, 1) corner c1; the point 0.375 of the way from c3 to c1 is the origin.
+        let at = [c3[0] + 0.375 * (c1[0] - c3[0]), c3[1] + 0.375 * (c1[1] - c3[1])];
+        assert!(near_pair(at, [0.0, 0.0]), "{at:?}");
+        // Mirrored: the corner at the spin gets (1, 1), listed second; (0, 0) is the fourth, 0.375 of the way to it is the origin.
+        let [m0, m1, m2, m3] = padded_square(0.0, 75.0, true);
+        let at = [m3[0] + 0.375 * (m1[0] - m3[0]), m3[1] + 0.375 * (m1[1] - m3[1])];
+        assert!(
+            near_pair(at, [0.0, 0.0])
+                && near_pair(m1, [125.0, 0.0])
+                && near_pair(m0, [25.0, 100.0])
+                && near_pair(m2, [25.0, -100.0])
+                && near_pair(m3, [-75.0, 0.0])
+        );
     }
 
     #[test]

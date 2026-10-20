@@ -14,6 +14,8 @@ use crate::world::{MeshVertex, Vector};
 pub const LENS: &str = "data\\texture\\effect\\lens1.tga";
 pub const LENS_RAID: &str = "data\\texture\\effect\\lens2.tga";
 pub const CLAW: &str = "data\\sprite\\이팩트\\침투경_";
+pub const FVOICE: &str = "data\\sprite\\이팩트\\fvoice";
+pub const WINK: &str = "data\\sprite\\이팩트\\wink";
 /// Investigate's sparks are 5 prims of 4, Back Stab's 20; lifted 8 units, coloured #8282FA.
 const INVESTIGATE_SPARKS: usize = 20;
 const BACK_STAB_SPARKS: usize = 80;
@@ -60,10 +62,24 @@ const RAID: StreakLook = StreakLook {
     tint: [65.0 / 255.0, 184.0 / 255.0, 240.0 / 255.0],
     over: true,
 };
-/// The claw slash lasts 15 draws, 2 ticks to a frame from frame 1; it is drawn 2.5 times as big, in white at alpha 200.
-const CLAW_TICKS: u32 = 15;
-pub const CLAW_SCALE: f32 = 2.5;
-pub const CLAW_ALPHA: f32 = 200.0;
+
+/// What tells one sprite at a target from another: the claw slash is drawn 2.5 times as big in white at alpha 200 for 15 ticks, 2
+/// ticks a frame, turned and mirrored; Pang Voice's ring and Wink of Charm's heart are as they are, 6 ticks a frame for 99, and
+/// show frame 0 after their last.
+pub struct SpriteLook {
+    pub sprite: &'static str,
+    pub scale: f32,
+    pub alpha: f32,
+    per_frame: u32,
+    /// The last frame that counts up; after it frame 0 shows.
+    last: usize,
+    life: u32,
+    turned: bool,
+}
+
+const SLASH: SpriteLook = SpriteLook { sprite: CLAW, scale: 2.5, alpha: 200.0, per_frame: 2, last: usize::MAX, life: 15, turned: true };
+const PANG_VOICE: SpriteLook = SpriteLook { sprite: FVOICE, scale: 1.0, alpha: 255.0, per_frame: 6, last: 11, life: 99, turned: false };
+const WINK_OF_CHARM: SpriteLook = SpriteLook { sprite: WINK, scale: 1.0, alpha: 255.0, per_frame: 6, last: 5, life: 99, turned: false };
 
 struct Spark {
     counter: i32,
@@ -97,6 +113,7 @@ struct Starburst {
 
 /// A claw slash at the target's feet: which of the sprite's 4 actions, and when it started.
 pub struct Claw {
+    look: &'static SpriteLook,
     pub at: Vector,
     pub action: usize,
     pub start: Instant,
@@ -105,6 +122,9 @@ pub struct Claw {
 /// What the claw slash draws: where, its action and frame, and how it is turned and mirrored.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClawDraw {
+    pub sprite: &'static str,
+    pub scale: f32,
+    pub alpha: f32,
     pub at: Vector,
     pub action: usize,
     pub frame: usize,
@@ -166,8 +186,15 @@ pub fn claw_action(d: u32) -> usize {
 }
 
 /// The claw slash's frame at tick t: 1, 1, 2, 2 … 8 (frames 0 and 9 to 11 never show).
+#[cfg(test)]
 pub fn claw_frame(t: u32) -> usize {
-    1 + t as usize / 2
+    sprite_frame(&SLASH, t)
+}
+
+/// A sprite look's frame at tick t: from frame 1, a frame every `per_frame` ticks, then frame 0 past its last.
+fn sprite_frame(look: &SpriteLook, t: u32) -> usize {
+    let frame = 1 + (t / look.per_frame) as usize;
+    if frame > look.last { 0 } else { frame }
 }
 
 impl Monk {
@@ -219,9 +246,22 @@ impl Monk {
 
     /// A claw slash at the target's feet `to`, the caster at `from`, the camera at `longitude` degrees.
     pub fn claw(&mut self, from: Vector, to: Vector, longitude: i32, now: Instant) {
+        self.sprite_at(&SLASH, from, to, longitude, now);
+    }
+
+    /// Pang Voice's ring (606) and Wink of Charm's heart (607) at the target, the same way.
+    pub fn pang_voice(&mut self, from: Vector, to: Vector, longitude: i32, now: Instant) {
+        self.sprite_at(&PANG_VOICE, from, to, longitude, now);
+    }
+
+    pub fn wink(&mut self, from: Vector, to: Vector, longitude: i32, now: Instant) {
+        self.sprite_at(&WINK_OF_CHARM, from, to, longitude, now);
+    }
+
+    fn sprite_at(&mut self, look: &'static SpriteLook, from: Vector, to: Vector, longitude: i32, now: Instant) {
         let toward = (from[2] - to[2]).atan2(from[0] - to[0]).to_degrees().trunc() as i32;
         let action = claw_action((longitude + toward).rem_euclid(360) as u32);
-        self.claws.push(Claw { at: to, action, start: now });
+        self.claws.push(Claw { look, at: to, action, start: now });
     }
 
     /// A spark takes its heading when its count reaches 1: toward the aim from the caster's place then, a whole number of
@@ -241,7 +281,7 @@ impl Monk {
         }
         self.investigations.retain(|investigation| passes(investigation.start, now) <= 100);
         self.starbursts.retain(|burst| passes(burst.start, now) <= 100);
-        self.claws.retain(|claw| passes(claw.start, now) <= CLAW_TICKS);
+        self.claws.retain(|claw| passes(claw.start, now) <= claw.look.life);
     }
 
     /// Investigate's sparks at `now`: camera-facing squares, added on.
@@ -303,10 +343,26 @@ impl Monk {
         self.claws
             .iter()
             .filter_map(|claw| {
-                let t = passes(claw.start, now).checked_sub(1).filter(|&t| t < CLAW_TICKS)?;
-                // Turned 325° for actions 0 and 2, 35° for 1 and 3; mirrored for 2 and 3.
-                let turn = if claw.action % 2 == 0 { 325.0 } else { 35.0 };
-                Some(ClawDraw { at: claw.at, action: claw.action, frame: claw_frame(t), turn, mirrored: claw.action >= 2 })
+                let t = passes(claw.start, now).checked_sub(1).filter(|&t| t < claw.look.life)?;
+                // The slash is turned 325° for actions 0 and 2, 35° for 1 and 3, and mirrored for 2 and 3.
+                let turn = if !claw.look.turned {
+                    0.0
+                } else if claw.action % 2 == 0 {
+                    325.0
+                } else {
+                    35.0
+                };
+                let (sprite, scale, alpha) = (claw.look.sprite, claw.look.scale, claw.look.alpha);
+                Some(ClawDraw {
+                    sprite,
+                    scale,
+                    alpha,
+                    at: claw.at,
+                    action: claw.action,
+                    frame: sprite_frame(claw.look, t),
+                    turn,
+                    mirrored: claw.look.turned && claw.action >= 2,
+                })
             })
             .collect()
     }
@@ -417,6 +473,28 @@ mod tests {
         let mut fourth = Monk::default();
         fourth.claw([0.0, 0.0, -5.0], [0.0; 3], 180, start);
         assert_eq!((fourth.claws(start)[0].action, fourth.claws(start)[0].turn, fourth.claws(start)[0].mirrored), (1, 35.0, false));
+    }
+
+    #[test]
+    fn pang_voice_and_wink_stream_in_at_the_target() {
+        let start = Instant::now();
+        let mut monk = Monk::default();
+        monk.pang_voice([5.0, 0.0, 0.0], [0.0; 3], 180, start);
+        monk.wink([5.0, 0.0, 0.0], [0.0; 3], 180, start);
+        let draws = |monk: &Monk, tick: u32| monk.claws(start + TICK * tick);
+        // Frame 1 on ticks 0…5, frame 2 on 6…11; 606 shows frame 0 from tick 66, 607 from tick 30.
+        assert_eq!([0, 5, 6, 11].map(|tick| draws(&monk, tick)[0].frame), [1, 1, 2, 2]);
+        assert_eq!([65, 66, 98].map(|tick| draws(&monk, tick)[0].frame), [11, 0, 0]);
+        assert_eq!([29, 30, 98].map(|tick| draws(&monk, tick)[1].frame), [5, 0, 0]);
+        // Scale 1, the layer's own colour (full), no turn, no mirror; the action as the claw slash's (d = 180: 0).
+        let first = draws(&monk, 0);
+        assert_eq!((first[0].sprite, first[1].sprite), (FVOICE, WINK));
+        assert!(first.iter().all(|draw| draw.scale == 1.0 && draw.turn == 0.0 && !draw.mirrored && draw.action == 0 && draw.at == [0.0; 3]));
+        // Drawn on ticks 0…98 only.
+        assert_eq!(draws(&monk, 98).len(), 2);
+        assert!(draws(&monk, 99).is_empty());
+        monk.advance(start + TICK * 101, |_| None, |_| 0);
+        assert!(monk.claws.is_empty());
     }
 
     #[test]

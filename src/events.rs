@@ -3472,6 +3472,11 @@ impl App {
                     (true, _, Some(gpu)) => game.play_effect(gpu, grf, table, heal_effect(amount), target),
                     (false, Some(used), Some(gpu)) => {
                         for &(who, effect) in used {
+                            // What lands at the target (Pang Voice's ring, Wink of Charm's heart) is aimed from the caster.
+                            if effects::AIMED.contains(&effect) {
+                                game.aimed(gpu, grf, table, effect, source, target, 1);
+                                continue;
+                            }
                             game.play_effect(gpu, grf, table, effect, if who == effects::Who::Caster { source } else { target });
                         }
                     }
@@ -3567,11 +3572,13 @@ impl App {
             }
             MapEvent::ProgressCancel => {
                 game.casts.remove(&None);
+                game.effects.cut_twilight();
                 game.player.stop_holding(SKILL_ACTION);
                 game.end_progress(true);
             }
             MapEvent::CastCancelled(source) => {
                 let caster = (source != game.account_id).then_some(source);
+                game.effects.cut_twilight();
                 game.casts.remove(&caster);
                 game.cast_squares.remove(&caster);
             }

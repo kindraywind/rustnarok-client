@@ -616,9 +616,6 @@ skill	489	successEffectId	500
 skill	490	effectId	537
 skill	494	effectId	424
 skill	494	effectId	503
-skill	496	effectId	497
-skill	497	effectId	498
-skill	498	effectId	499
 skill	502	effectId	648
 skill	503	effectId	649
 skill	504	effectId	625
@@ -1559,8 +1556,6 @@ spr	587	m_ef05	1	-
 spr	588	m_ef06	1	-
 spr	589	m_ef07	1	-
 spr	604	cconfine	1	stopAtEnd=true
-spr	606	fvoice	0	-
-spr	607	wink	0	-
 spr	612	합격_	1	-
 spr	630	그림자베기	1	-
 spr	631	다다미 뒤집기	1	-
@@ -1948,7 +1943,11 @@ wav	587	dragon_breath	0
 wav	589	effect\t_보조마법	0
 wav	590	effect\priest_resurrection	0
 wav	604	effect\ef_hit6	0
-wav	606	amon_ra_die01	0
+wav	599	effect\EF_BeginSpell	80
+wav	602	effect\ef_hit6	320
+wav	606	amon_ra_die01	0	listener
+wav	607	effect\vallentine	0	listener
+wav	840	effect\EF_BeginSpell	0
 wav	608	_heal_effect	0
 wav	609	caramel_die	0
 wav	612	effect\itempokjuk	0
@@ -5051,3 +5050,6 @@ skillwav	270	effect\mon_폭기	0	listener
 skillquake	270	0	200
 skillwav	472	effect\T_방어형	0	listener
 skillquake	472	0	200
+skillwav	320	effect\석양의 어쌔신	0	listener
+skillwav	329	effect\행운의	0	listener
+skillwav	330	effect\당신을 위한 서비스	0	listener

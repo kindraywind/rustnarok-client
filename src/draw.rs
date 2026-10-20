@@ -879,9 +879,28 @@ impl App {
                 Some((extra, extra_tint)) => (flags | extra, extra_tint.or(tint)),
                 None => (flags, tint),
             });
+            // Close Confine shakes every part of its target: each edge of its rectangle moves on its own, afresh every frame.
+            let shake = match owner {
+                Owner::Player => game.effects.shakes(None, now).then_some(5),
+                Owner::Unit(id) => {
+                    game.effects.shakes(Some(*id), now).then(|| if game.units.get(id).is_some_and(|actor| actor.kind == PLAYER) { 5 } else { 10 })
+                }
+                Owner::Item(_) | Owner::SkillUnit(_) => None,
+            };
             for (index, &(key, position, size, angle)) in placements.iter().enumerate() {
                 let texture = sprites.texture(key);
                 let layer = sprite_layer(index, player, flat);
+                if let Some(range) = shake {
+                    let corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|uv| world::sprite_corner(position, size, angle, uv).0);
+                    let edge = |axis: usize, pick_max: bool| {
+                        let values = corners.map(|corner| corner[axis]);
+                        let at = if pick_max { values.into_iter().fold(f32::MIN, f32::max) } else { values.into_iter().fold(f32::MAX, f32::min) };
+                        at + (crate::effects::pick(0, 2 * range) as f32 - range as f32) * grow_unit
+                    };
+                    let [left, top, right, bottom] = [edge(0, false), edge(1, false), edge(0, true), edge(1, true)];
+                    glows.push((texture, *feet, [[left, top], [right, top], [right, bottom], [left, bottom]], tint, false, 0.0));
+                    continue;
+                }
                 let Some((flags, body_tint)) = glow.filter(|(flags, _)| *flags != 0) else {
                     billboards.push((texture, *feet, position, size, tint, angle, layer));
                     continue;
