@@ -1719,7 +1719,6 @@ wav	130	effect\knight_twohandquicken	0
 wav	131	effect\knight_autocounter	0
 wav	136	effect\priest_slowpoison	0
 wav	139	effect\hunter_sandman	0
-wav	140	effect\priest_resurrection	0
 wav	142	effect\wizard_earthspike	0
 wav	144	effect\knight_brandish_spear	0
 wav	150	_enemy_hit_normal1	0
@@ -1860,6 +1859,7 @@ wav	493	effect\assasin_enchantpoison	176
 wav	493	effect\assasin_enchantpoison	288
 wav	493	effect\assasin_enchantpoison	416
 wav	493	effect\assasin_enchantpoison	640
+wav	494	effect\cru_shield boomerang	0
 wav	495	effect\복호격	16
 wav	495	effect\복호격	176
 wav	495	effect\복호격	336
@@ -5119,6 +5119,7 @@ length	988	100
 length	1020	100
 length	920	40
 length	95	150
+length	140	250
 length	172	100
 length	173	100
 length	174	100
@@ -5126,6 +5127,7 @@ length	175	100
 length	176	100
 length	177	100
 length	178	100
+length	341	9999
 length	850	100
 length	932	100
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.

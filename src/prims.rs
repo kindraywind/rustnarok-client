@@ -26,6 +26,7 @@ pub mod monk;
 pub mod napalm;
 pub mod notes;
 pub mod painter;
+pub mod portal;
 pub mod radar;
 pub mod sage;
 pub mod shafts;
@@ -195,6 +196,7 @@ pub struct Prims {
     pub radar: radar::Radar,
     pub notes: notes::Notes,
     pub emblems: emblems::Emblems,
+    pub portal: portal::Portal,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -617,6 +619,7 @@ impl Prims {
         self.dancer.forget(unit);
         self.cells.forget(unit);
         self.emblems.forget(unit);
+        self.portal.forget(unit);
         self.souls.forget(unit);
         self.guard.forget(unit);
         self.brawl.forget(unit);
