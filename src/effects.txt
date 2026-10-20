@@ -1293,8 +1293,6 @@ part	216	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/
 part	217	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;red=0.4;green=0.4;blue=1.0;sizeStart=150.0;sizeEnd=180.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
 part	232	3D	alphaMax=0.5;angle=180;attachedEntity=true;blendMode=2;red=0.1;green=0.1;blue=0.9;duration=100;fadeIn=true;fadeOut=true;file=effect/alpha_center.tga;fromSrc=true;rotateToTarget=true;rotateWithCamera=true;sizeX=5;sizeY=50;zOffset=1;zIndex=1
 part	262	3D	wav=effect/mon_폭기;duplicate=12;timeBetweenDupli=0;file=effect/alpha_center.tga;delayStart=250;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;overlay=true;rotateToTarget=true;rotateWithCamera=true
-part	274	2D	overlay=true;file=effect/coin_a.bmp;blendMode=2;alphaMax=0.8;duplicate=30;timeBetweenDupli=50;duration=1500;fadeOut=true;posxEndRand=10;posyEndRand=10;posz=2;size=20;rotateToTarget=true;attachedEntity=true
-part	276	3D	duplicate=20;timeBetweenDupli=0;file=effect/lens1.tga;delayStart=100;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;red=0.1;green=0.1;blue=1.0;overlay=true;rotateToTarget=true;rotateWithCamera=true
 part	298	3D	alphaMax=1;angle=180;attachedEntity=true;duration=300;fadeIn=true;fadeOut=true;file=유저인터페이스/item/염산병.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=0.5;size=30;zOffset=1;zIndex=1
 part	308	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/돌.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=0.5;size=20;zOffset=1;zIndex=1
 part	313	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1500;duplicate=4;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1.2;posyRand=1.2;poszEndRand=1;poszEndRandMiddle=8;poszStart=0;red=1;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=10;zIndex=1
@@ -1835,11 +1833,11 @@ wav	266	effect\mon_아수라 패황권	0	listener
 wav	267	effect\mon_침투경	0
 wav	269	effect\복호격	96
 wav	270	effect\복호격	96
-wav	271	effect\t_벽튕김	0
-wav	272	effect\t_벽튕김	0
+wav	271	effect\복호격	96
+wav	272	effect\복호격	96
 wav	273	effect\mon_연환	0
 wav	274	effect\rog_steal coin	0
-wav	275	effect\rog_back stap	0
+wav	275	effect\rog_back stap	320
 wav	278	effect\자장가	0
 wav	279	effect\김서방돈	0
 wav	280	effect\영원의 혼돈	0

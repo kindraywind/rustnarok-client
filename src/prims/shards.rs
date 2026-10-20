@@ -1,5 +1,6 @@
 //! Intimidate's shards (EF_INTIMIDATE): 80 white triangles in four bands of twenty, each waiting 70 to 99 ticks, then
-//! growing out from the spot the caster stood on, spinning, and fading. They stay in the world.
+//! growing out from the spot the caster stood on, spinning, and fading; and Steal Coin's 120 gold coins (EF_RG_COIN), the
+//! same prim with other numbers. They stay in the world.
 
 use std::time::Instant;
 
@@ -7,16 +8,30 @@ use super::passes;
 use crate::world::{MeshVertex, Vector};
 
 pub const TEXTURE: &str = "data\\texture\\effect\\white01.bmp";
-/// 20 prims of 4 bands.
-const BANDS: usize = 80;
+pub const COIN_TEXTURE: &str = "data\\texture\\effect\\coin_a.bmp";
 /// Half the diagonal of a shard, and where the bands start out and how far they grow a tick.
 const SIZE: f32 = 3.5;
 const START_RADIUS: f32 = 12.0;
 const GROWTH: f32 = 1.5;
-/// The longest wait is 99 ticks (70 + 29) and a band is shown for 46 after it: nothing shows after tick 144.
-const LAST_TICK: u32 = 144;
-/// The shards' colour, #6496FF.
-const COLOUR: [f32; 3] = [100.0 / 255.0, 150.0 / 255.0, 1.0];
+
+/// What tells one kind of burst from another.
+struct Look {
+    texture: &'static str,
+    colour: [f32; 3],
+    /// How many bands, and the ticks a band's count n is behind the tick: n = t − `behind` − wait.
+    bands: usize,
+    behind: u32,
+    /// The bands are shown for n = 1 to `last`, and the burst is over after `over`.
+    last: u32,
+    over: u32,
+    alpha: fn(u32) -> f32,
+}
+
+/// Intimidate's: 20 prims of 4, waiting 70 to 99 ticks, shown for 46, #6496FF. Nothing shows after tick 144.
+const INTIMIDATE: Look = Look { texture: TEXTURE, colour: [100.0 / 255.0, 150.0 / 255.0, 1.0], bands: 80, behind: 69, last: 46, over: 144, alpha };
+/// Steal Coin's: 30 prims of 4, waiting 18 to 47 ticks, shown for 60, #FAFA9B.
+const COINS: Look =
+    Look { texture: COIN_TEXTURE, colour: [250.0 / 255.0, 250.0 / 255.0, 155.0 / 255.0], bands: 120, behind: 17, last: 60, over: 106, alpha: coin_alpha };
 
 /// One band's choices, all in whole degrees but the wait (ticks).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -29,6 +44,7 @@ struct Band {
 }
 
 struct Burst {
+    look: &'static Look,
     origin: Vector,
     start: Instant,
     bands: Vec<Band>,
@@ -39,9 +55,19 @@ pub struct Shards {
     list: Vec<Burst>,
 }
 
-/// A band's age n after the tick t (shown for 1 to 46): its first tick is 70 + wait.
-fn age(tick: u32, wait: u32) -> Option<u32> {
-    tick.checked_sub(69 + wait).filter(|n| (1..=46).contains(n))
+/// A band's age n after the tick t (shown for 1 to `last`): its first tick is `behind` + 1 + wait.
+fn age(look: &Look, tick: u32, wait: u32) -> Option<u32> {
+    tick.checked_sub(look.behind + wait).filter(|n| (1..=look.last).contains(n))
+}
+
+/// A coin's alpha (out of 255) at age n: 25 a tick to 250, held to 25, then 7 less a tick.
+pub fn coin_alpha(n: u32) -> f32 {
+    match n {
+        1..=10 => 25.0 * n as f32,
+        11..=25 => 250.0,
+        26..=60 => 250.0 - 7.0 * (n - 25) as f32,
+        _ => 0.0,
+    }
 }
 
 /// A band's alpha (out of 255) at age n: 15 a tick to 150, held to 25, then 7 less a tick.
@@ -61,15 +87,15 @@ pub fn radius(n: u32) -> f32 {
 
 impl Band {
     /// Its six vertices over `origin` at tick `tick` of its burst, once it shows.
-    fn mesh(&self, origin: Vector, tick: u32) -> Option<Vec<MeshVertex>> {
-        let n = age(tick, self.wait)?;
+    fn mesh(&self, look: &Look, origin: Vector, tick: u32) -> Option<Vec<MeshVertex>> {
+        let n = age(look, tick, self.wait)?;
         let r = radius(n);
         let (x1, y1) = (r * self.elevation.to_radians().cos(), r * self.elevation.to_radians().sin());
         let (sin, cos) = self.azimuth.to_radians().sin_cos();
         let centre = [origin[0] + x1 * cos, origin[1] - y1, origin[2] + x1 * sin];
         // Spinning 5° a tick from the first tick, the waiting ones too.
         let (spin_sin, spin_cos) = ((self.spin + 5.0 * (tick + 1) as f32) % 360.0).to_radians().sin_cos();
-        let tint = [COLOUR[0], COLOUR[1], COLOUR[2], alpha(n) / 255.0];
+        let tint = [look.colour[0], look.colour[1], look.colour[2], (look.alpha)(n) / 255.0];
         let corner = |j: u32, uv: [f32; 2]| {
             let (sin, cos) = (self.turn + 90.0 * j as f32).to_radians().sin_cos();
             let (across, up) = (SIZE * cos, -SIZE * sin);
@@ -83,29 +109,48 @@ impl Band {
 impl Shards {
     /// Intimidate's burst round `origin`, its choices from `rand(n)` (0 to n − 1): per band the wait, then the azimuth,
     /// the elevation, the turn and the first spin.
-    pub fn burst(&mut self, origin: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
-        let bands = (0..BANDS)
+    pub fn burst(&mut self, origin: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make(&INTIMIDATE, origin, now, rand);
+    }
+
+    /// Steal Coin's coins round `origin`, chosen the same way.
+    pub fn coins(&mut self, origin: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make(&COINS, origin, now, rand);
+    }
+
+    fn make(&mut self, look: &'static Look, origin: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let bands = (0..look.bands)
             .map(|_| {
                 let wait = rand(30);
                 let [azimuth, elevation, turn, spin] = [(); 4].map(|()| rand(360) as f32);
                 Band { wait, azimuth, elevation, turn, spin }
             })
             .collect();
-        self.list.push(Burst { origin, start: now, bands });
+        self.list.push(Burst { look, origin, start: now, bands });
     }
 
     pub fn advance(&mut self, now: Instant) {
-        self.list.retain(|burst| passes(burst.start, now) <= LAST_TICK + 1);
+        self.list.retain(|burst| passes(burst.start, now) <= burst.look.over + 1);
     }
 
-    /// Every shard showing at `now`.
-    pub fn mesh(&self, now: Instant) -> Vec<MeshVertex> {
-        let mut vertices = Vec::new();
+    /// Every shard and coin showing at `now`, by texture.
+    pub fn meshes(&self, now: Instant) -> Vec<(&'static str, Vec<MeshVertex>)> {
+        let mut meshes: Vec<(&'static str, Vec<MeshVertex>)> = Vec::new();
         for burst in &self.list {
             let Some(tick) = passes(burst.start, now).checked_sub(1) else { continue };
-            vertices.extend(burst.bands.iter().filter_map(|band| band.mesh(burst.origin, tick)).flatten());
+            let vertices: Vec<MeshVertex> = burst.bands.iter().filter_map(|band| band.mesh(burst.look, burst.origin, tick)).flatten().collect();
+            match meshes.iter_mut().find(|(texture, _)| *texture == burst.look.texture) {
+                Some((_, all)) => all.extend(vertices),
+                None => meshes.push((burst.look.texture, vertices)),
+            }
         }
-        vertices
+        meshes
+    }
+
+    /// The shards of Intimidate only, for the tests' sake.
+    #[cfg(test)]
+    fn mesh(&self, now: Instant) -> Vec<MeshVertex> {
+        self.meshes(now).into_iter().find(|(texture, _)| *texture == TEXTURE).map(|(_, vertices)| vertices).unwrap_or_default()
     }
 }
 
@@ -147,6 +192,39 @@ mod tests {
         let mut late = late;
         late.advance(late_start + TICK * 146);
         assert!(late.list.is_empty());
+    }
+
+    #[test]
+    fn steal_coin_throws_120_gold_coins() {
+        let start = Instant::now();
+        let mut shards = Shards::default();
+        shards.coins([4.0, 1.0, 5.0], start, |_| 0);
+        assert_eq!(shards.list[0].bands.len(), 120);
+        let coins = |tick: u32| shards.meshes(start + TICK * tick).into_iter().next().unwrap_or(("", Vec::new()));
+        // Every draw 0: hidden until tick 18, shown for n = 1…60 (ticks 18…77), gone at 78.
+        assert!(coins(17).1.is_empty());
+        let (texture, vertices) = coins(18);
+        assert_eq!((texture, vertices.len()), (COIN_TEXTURE, 120 * 6));
+        assert_eq!(coins(77).1.len(), 120 * 6);
+        assert!(coins(78).1.is_empty());
+        // Alpha 25 at n = 1, 250 at 10 and 25, 243 at 26, 5 at 60, 0 after; the radius 13.5 and 102; #FAFA9B.
+        assert_eq!([1, 10, 25, 26, 60, 61].map(coin_alpha), [25.0, 250.0, 250.0, 243.0, 5.0, 0.0]);
+        assert!(near(radius(1), 13.5) && near(radius(60), 102.0));
+        assert_eq!(vertices[0].tint[..3], [250.0 / 255.0, 250.0 / 255.0, 155.0 / 255.0]);
+        assert_eq!((vertices[0].tint[3] * 255.0).round(), 25.0);
+        // The longest wait, 29: shown on ticks 47…106, over after.
+        let mut late = Shards::default();
+        late.coins([0.0; 3], start, |n| if n == 30 { 29 } else { 0 });
+        let count = |tick: u32| late.meshes(start + TICK * tick).first().map_or(0, |(_, vertices)| vertices.len());
+        assert_eq!((count(46), count(47), count(106), count(107)), (0, 120 * 6, 120 * 6, 0));
+        late.advance(start + TICK * 108);
+        assert!(late.list.is_empty());
+        // Intimidate's own burst alongside takes its own texture.
+        shards.burst([0.0; 3], start, |_| 0);
+        let textures = |tick: u32| {
+            shards.meshes(start + TICK * tick).into_iter().filter(|(_, vertices)| !vertices.is_empty()).map(|(texture, _)| texture).collect::<Vec<_>>()
+        };
+        assert_eq!((textures(69), textures(70), textures(78)), (vec![COIN_TEXTURE], vec![COIN_TEXTURE, TEXTURE], vec![TEXTURE]));
     }
 
     #[test]

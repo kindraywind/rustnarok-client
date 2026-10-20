@@ -16,6 +16,7 @@ pub mod sage;
 pub mod shards;
 pub mod sight;
 pub mod sparkle;
+pub mod star;
 pub mod stone;
 pub mod tanji;
 pub mod throw;
@@ -109,6 +110,7 @@ pub struct Prims {
     pub walls: walls::Walls,
     pub shards: shards::Shards,
     pub monk: monk::Monk,
+    pub stars: star::Stars,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -465,6 +467,7 @@ impl Prims {
         self.balls.advance(now);
         self.waterballs.advance(now);
         self.shards.advance(now);
+        self.stars.advance(now);
         self.walls.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
         self.stone.advance(now);
         self.volleys.retain(|volley| volley.alive(now));
