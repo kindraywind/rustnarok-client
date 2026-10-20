@@ -17,6 +17,7 @@ pub mod napalm;
 pub mod sage;
 pub mod shards;
 pub mod sight;
+pub mod sniper;
 pub mod songs;
 pub mod sparkle;
 pub mod star;
@@ -156,6 +157,7 @@ pub struct Prims {
     pub songs: songs::Songs,
     pub knight: knight::Knight,
     pub transcend: transcend::Transcend,
+    pub sniper: sniper::Sniper,
 }
 
 /// COLDHIT's shard and smoke textures.

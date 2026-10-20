@@ -1593,7 +1593,7 @@ func	266	quake	0	200
 func	303	quake	132	650
 func	365	quake	528	650
 func	380	quake	480	650
-func	387	quake	300	650
+func	387	quake	480	650
 func	512	quake	132	650
 func	537	quake	200	650
 func	563	quake	0	650
@@ -1877,12 +1877,12 @@ wav	377	effect\mon_폭기	0
 wav	380	effect\매직 크래쉬	400
 wav	384	effect\소울 체인지	0
 wav	386	effect\hunter_detecting	0
-wav	387	effect\hunter_blitzbeat	0
-wav	388	effect\샤프슈팅	0
+wav	388	effect\샤프슈팅	480
 wav	389	effect\윈드워크	0
 wav	391	effect\ef_incagility	0
+wav	390	effect\black_overthrust	0
 wav	392	effect\kyrie_guard	0
-wav	393	effect\애로우 발칸	0
+wav	393	effect\애로우 발칸	480
 wav	394	effect\달빛세레나데	0
 wav	399	effect\헤드 크러쉬	0
 wav	400	effect\비트 조인트	0
@@ -4463,6 +4463,7 @@ used	364	target	379
 used	373	caster	383
 used	374	caster	384
 used	374	target	385
+used	374	caster	385
 used	375	target	406
 used	375	target	380
 used	378	caster	493
