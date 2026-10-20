@@ -1230,14 +1230,9 @@ impl App {
                 {
                     item.refine = refine as u8;
                 }
+                // The window hammers for 1.4 s, shows the result and says it in the chat after it.
                 if let Some(window) = &mut game.refine {
-                    window.answered();
-                    if result == 1 {
-                        window.clear();
-                    }
-                    if let Some(&(id, color)) = REFINE_RESULTS.get(usize::from(result)) {
-                        game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
-                    }
+                    window.refined(result, control::now());
                 }
                 let (effect, line) = non_window_refine_result(game.refine.is_some(), result);
                 if let Some(effect) = effect

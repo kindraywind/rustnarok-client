@@ -260,7 +260,6 @@ const CARD_FAILED: usize = 494;
 /// The mail and bank windows shut when the refine window opens.
 const REFINE_CLOSED_MAIL: usize = 2991;
 const REFINE_CLOSED_BANK: usize = 3013;
-const REFINE_RESULTS: [(usize, [u8; 3]); 4] = [(2971, CHAT_ITEM), (3246, CHAT_ERROR), (1537, CHAT_ERROR), (2972, CHAT_ERROR)];
 /// Results for refines done without the refine window (ZC_ACK_ITEMREFINING): success, failed, lowered.
 const UPGRADE_SUCCESS: usize = 498;
 const UPGRADE_FAILED: usize = 499;
