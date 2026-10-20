@@ -7502,6 +7502,7 @@ mod tests {
     #[test]
     fn rampage_blaster_cross_impact_and_reverberation_have_their_rows() {
         let table = Table::load();
+        assert_eq!([RAMPAGE_BODY, CROSS_LINES, REVERB_FX].map(|id| table.lengths[&id]), [300, 300, 150]);
         // Rampage Blaster's chi burst is the body flash alone under /mineffect.
         assert_eq!((rampage_effect(2332, CHI_BURST, true), rampage_effect(2332, CHI_BURST, false)), (RAMPAGE_BODY, CHI_BURST));
         assert_eq!((rampage_effect(2324, CHI_BURST, true), rampage_effect(2332, 549, true)), (CHI_BURST, 549));

@@ -5235,6 +5235,9 @@ length	675	200
 length	850	100
 length	634	23
 length	932	100
+length	1545	300
+length	1568	300
+length	1569	150
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
 skillwav	10	effect\ef_sight	0
 skillwav	8005	effect\h_castling	0
