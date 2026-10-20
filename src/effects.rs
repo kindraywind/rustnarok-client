@@ -82,6 +82,9 @@ pub struct Table {
     units: HashMap<u32, u32>,
     /// Units whose effect plays once and is kept rather than starting again.
     units_once: std::collections::HashSet<u32>,
+    /// The units whose effect plays on a grid of points round their cell, again and again: the effect and how far below the ground
+    /// its anchor is put (`area`).
+    areas: HashMap<u32, (u32, f32)>,
     models: HashMap<u32, String>,
     /// Effects that end (or, on a ground unit, start again) by their own length in ticks rather than their STR's.
     lengths: HashMap<u32, u32>,
@@ -148,6 +151,7 @@ impl Table {
             hit_quakes: HashMap::new(),
             units: HashMap::new(),
             units_once: std::collections::HashSet::new(),
+            areas: HashMap::new(),
             models: HashMap::new(),
             lengths: HashMap::new(),
             misc: HashMap::new(),
@@ -189,6 +193,11 @@ impl Table {
                     let random = number(5).zip(number(6));
                     let once = fields.last() == Some(&"once");
                     table.parts.entry(id).or_default().push(Part { file: file.to_owned(), folder, attached: attached == "1", random, once });
+                }
+                ["area", kind, effect, lift] => {
+                    if let (Ok(kind), Ok(effect), Ok(lift)) = (kind.parse(), effect.parse(), lift.parse()) {
+                        table.areas.insert(kind, (effect, lift));
+                    }
                 }
                 ["spr", _, file, attached, text] => {
                     let Some(id) = number(1) else { continue };
@@ -497,6 +506,18 @@ fn playing_ticks(effect: u32, str: &Str, length: Option<u32>) -> u32 {
     if effect == REJECT_SWORD { REJECT_SWORD_TICKS } else { str_ticks(str, length) }
 }
 
+/// A skill unit whose effect plays on a grid of points round its cell: the unit, the effect, how far below the ground it is put,
+/// the unit's range, the cell's centre, when the next grid starts and the ticks between grids.
+struct Area {
+    id: u32,
+    effect: u32,
+    lift: f32,
+    range: u8,
+    at: Vector,
+    next: Instant,
+    period: u32,
+}
+
 /// A frame's layers, each with its ACT alpha.
 type Layers = Vec<(Placed, f32)>;
 
@@ -528,7 +549,7 @@ fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
 /// How many ticks before its length a ground unit's effect starts again.
 fn restart_early(effect: u32, kind: u32) -> u32 {
     match kind {
-        228 | 230..=233 | 235 | 241..=244 | 258 => 1,
+        228 | 230..=233 | 235 | 240..=244 | 258 => 1,
         220 | 221 => 7,
         _ if effect == 95 => 20,
         _ => 8,
@@ -1619,6 +1640,9 @@ pub struct Effects {
     fist_frames: HashMap<(usize, usize, bool), Vec<Placed>>,
     /// The crowds' monsters by sprite, action and frame.
     crowd_frames: HashMap<(&'static str, usize, usize), Vec<Placed>>,
+    /// The skill units whose effect plays on a grid of points, and the points made and waiting to play.
+    areas: Vec<Area>,
+    area_queue: Vec<(u32, Vector, Instant)>,
     /// The cells' sprites' frames, plain white, each layer with its ACT alpha, by sprite, action and frame.
     cell_frames: HashMap<(&'static str, usize, usize), Layers>,
     /// The sound files a cell effect plays again with each copy.
@@ -3218,6 +3242,7 @@ impl Effects {
         self.prims.first.advance(now, &ground_at);
         self.prims.crowds.advance(now, &position_of, &ground_at, |n| pick(0, n.saturating_sub(1)));
         self.prims.cells.advance(now, &ground_at, |n| pick(0, n.saturating_sub(1)));
+        self.make_areas(now, &ground_at, |n| pick(0, n.saturating_sub(1)));
         for effect in self.prims.cells.take_restarts() {
             for file in self.cell_sounds.get(&effect).into_iter().flatten() {
                 self.sounds.push((now, file.clone(), LISTENER));
@@ -3278,10 +3303,16 @@ impl Effects {
     }
 
     /// Shows what a skill's unit on the ground shows (`kind`: rathena's UNT_ number) until `forget(id)`.
-    pub fn play_unit(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, kind: u32, id: u32, at: Vector, now: Instant) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_unit(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, kind: u32, id: u32, at: Vector, range: u8, now: Instant) {
         // The server tells again of units coming back into sight.
         self.forget(id);
         self.unit_kinds.insert(id, kind);
+        // Poison Mist's cells put a puff of mist on a grid round them, now and every length − 20 ticks.
+        if let Some(&(effect, lift)) = table.areas.get(&kind) {
+            let period = table.lengths.get(&effect).copied().unwrap_or(21).saturating_sub(20).max(1);
+            self.areas.push(Area { id, effect, lift, range, at, next: now, period });
+        }
         if let Some(&effect) = table.units.get(&kind) {
             // Volcano's, Deluge's, Violent Gale's and Land Protector's cells keep their loops, drawn in code.
             if effect == GRAVITATION {
@@ -3962,6 +3993,36 @@ impl Effects {
         playing.or_else(|| standing_at(&self.standing, unit))
     }
 
+    /// Starts the grids that are due by `now`: per skill unit of an `area` type, (2r + 1)² points 6 units apart round its cell (r its
+    /// range), each jittered by `rand(11)` draws (x, z, then the height), the ground under it from `ground_at(x, z)`. They wait to be
+    /// played by `take_areas`.
+    pub fn make_areas(&mut self, now: Instant, ground_at: impl Fn(f32, f32) -> f32, mut rand: impl FnMut(u32) -> u32) {
+        let tick = Duration::from_secs_f32(STR_TICK_MS / 1000.0);
+        for area in &mut self.areas {
+            // A long gap (a hidden window) starts one grid, not all it missed.
+            if area.next + tick * area.period * 3 < now {
+                area.next = now;
+            }
+            while area.next <= now {
+                let r = i32::from(area.range);
+                for i in -r..=r {
+                    for j in -r..=r {
+                        let x = area.at[0] + 6.0 * i as f32 + 0.2 * rand(11) as f32 - 1.0;
+                        let z = area.at[2] + 6.0 * j as f32 + 0.2 * rand(11) as f32 - 1.0;
+                        let y = ground_at(x, z) - area.lift + 0.4 * rand(11) as f32;
+                        self.area_queue.push((area.effect, [x, y, z], area.next));
+                    }
+                }
+                area.next += tick * area.period;
+            }
+        }
+    }
+
+    /// The grid points made since this was last asked: the effect, where to play it and when.
+    pub fn take_areas(&mut self) -> Vec<(u32, Vector, Instant)> {
+        std::mem::take(&mut self.area_queue)
+    }
+
     /// The skill unit type a ground unit was shown as.
     pub fn unit_kind(&self, unit: u32) -> Option<u32> {
         self.unit_kinds.get(&unit).copied()
@@ -3995,6 +4056,7 @@ impl Effects {
     }
 
     pub fn forget(&mut self, unit: u32) {
+        self.areas.retain(|area| area.id != unit);
         self.worlds.remove_status(Some(unit), None);
         self.prims.sage.forget(unit);
         self.prims.stone.forget(unit);
@@ -6837,5 +6899,72 @@ mod tests {
         assert!(table.used(408).unwrap().contains(&(Who::Target, BABY_FX)) && table.used(5065).unwrap().contains(&(Who::Target, BABY_FX)));
         assert_eq!(sounds(BABY_FX), [("effect\\EF_Blessing", 0, false)]);
         assert_eq!(table.lengths[&BABY_FX], 200);
+    }
+
+    #[test]
+    fn poison_mists_units_put_a_puff_on_a_grid_round_each_cell() {
+        let start = Instant::now();
+        let table = Table::load();
+        let (effect, lift) = table.areas[&245];
+        assert_eq!((effect, lift), (959, 20.0));
+        let period = table.lengths[&effect] - 20;
+        assert_eq!(period, 40);
+        let tick = |n: u32| start + Duration::from_secs_f32(STR_TICK_MS / 1000.0) * n;
+        let area = |id: u32, range: u8, at: Vector, now: Instant| Area { id, effect, lift, range, at, next: now, period };
+        let flat = |_: f32, _: f32| 2.0;
+        let copies = |effects: &mut Effects, ticks: &[u32]| -> Vec<usize> {
+            ticks
+                .iter()
+                .map(|&n| {
+                    effects.make_areas(tick(n), flat, |_| 0);
+                    effects.take_areas().len()
+                })
+                .collect()
+        };
+        // Range 0: one copy at tick 0, none at 1 … 39, one more at 40 and 80.
+        let mut one = Effects { areas: vec![area(1, 0, [10.0, 0.0, 10.0], start)], ..Effects::default() };
+        assert_eq!(copies(&mut one, &[0, 1, 20, 39, 40, 41, 80]), [1, 0, 0, 0, 1, 0, 1]);
+        // 49 units (a 7 x 7 area) start 49 copies at tick 0, each on its own cell.
+        let cells: Vec<Area> = (0..49).map(|k| area(k, 0, [5.0 * (k % 7) as f32, 0.0, 5.0 * (k / 7) as f32], start)).collect();
+        let mut seven = Effects { areas: cells, ..Effects::default() };
+        seven.make_areas(start, flat, |_| 5);
+        let made = seven.take_areas();
+        assert_eq!(made.len(), 49);
+        assert!(made.iter().all(|&(each, _, when)| each == 959 && when == start));
+        // A unit that comes into sight 10 ticks later renews at its own tick 50.
+        let mut late = Effects { areas: vec![area(2, 0, [0.0; 3], tick(10))], ..Effects::default() };
+        assert_eq!(copies(&mut late, &[10, 49, 50]), [1, 0, 1]);
+        // Ranges 1, 2, 3 make 9, 25, 49 copies, none between grids.
+        for (range, want) in [(1, 9), (2, 25), (3, 49)] {
+            let mut grid = Effects { areas: vec![area(3, range, [0.0; 3], start)], ..Effects::default() };
+            assert_eq!(copies(&mut grid, &[0, 1, 39, 40, 80]), [want, 0, 0, want, want], "range {range}");
+        }
+        // The offsets of a range-3 grid are 6·i, 6·j (outer i, inner j) plus the jitter; draws 0 give −1.0 and no rise, draws 10 give
+        // +1.0 and 4.0 up, the lift 20 under the ground.
+        let mut low = Effects { areas: vec![area(4, 3, [100.0, 0.0, 200.0], start)], ..Effects::default() };
+        low.make_areas(start, flat, |_| 0);
+        let low = low.take_areas();
+        assert_eq!((low[0].1, low[1].1), ([100.0 - 18.0 - 1.0, 2.0 - 20.0, 200.0 - 18.0 - 1.0], [100.0 - 18.0 - 1.0, 2.0 - 20.0, 200.0 - 12.0 - 1.0]));
+        assert_eq!(low.last().unwrap().1[0], 100.0 + 18.0 - 1.0);
+        let mut high = Effects { areas: vec![area(5, 0, [0.0; 3], start)], ..Effects::default() };
+        high.make_areas(start, flat, |_| 10);
+        let [x, y, z] = high.take_areas()[0].1;
+        assert!((x - 1.0).abs() < 1e-4 && (z - 1.0).abs() < 1e-4 && (y - (2.0 - 20.0 + 4.0)).abs() < 1e-4);
+        // The draws of a point are x, z, then the height.
+        let mut order = Effects { areas: vec![area(6, 0, [0.0; 3], start)], ..Effects::default() };
+        let mut asked = Vec::new();
+        order.make_areas(start, flat, |n| {
+            asked.push(n);
+            asked.len() as u32
+        });
+        assert_eq!(asked, [11, 11, 11]);
+        let [x, y, z] = order.take_areas()[0].1;
+        assert!((x - (0.2 - 1.0)).abs() < 1e-4 && (z - (0.4 - 1.0)).abs() < 1e-4 && (y - (2.0 - 20.0 + 1.2)).abs() < 1e-4);
+        // A gone unit makes no more grids.
+        one.forget(1);
+        assert_eq!(copies(&mut one, &[120]), [0]);
+        // Rows: no skill-line copy, the puff stays where it was made, and Power of Gaia restarts a tick before its length.
+        assert!(table.skill(8020, "effectId").is_empty() && !table.parts[&959][0].attached && table.lengths[&959] == 60);
+        assert_eq!((restart_ticks(1088, 240, 2000), restart_ticks(0, 239, 2000), restart_ticks(0, 9, 2000)), (1999, 1992, 1992));
     }
 }

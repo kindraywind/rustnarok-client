@@ -8,6 +8,7 @@
 # func <effect id> quake <delay ms> <duration ms>: what the client does in code for the effect; quake shakes the camera
 # length <effect id> <ticks>: how long an effect's STR plays (16 ms ticks) when shorter than its keys; on a ground unit it starts again 8 ticks before that (Quagmire's 95: 20)
 # unit <skill unit type> <effect id> [once]: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there (once: played once and kept, not started again)
+# area <skill unit type> <effect id> <lift>: the effect plays on a grid of points round each such unit's cell (one point at range 0, 6 units apart), now and every length less 20 ticks while it stands; lift is how far below the ground its anchor goes
 # rsm <skill unit type> <model under data\model\ without .rsm, or an .rsm2 with its extension>: the model standing on such a unit's cell (traps)
 # wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
 # hit <skill> <hit effect 1> <hit effect 2>: what a damaging skill shows on its target at each hit (-1 none); skills not listed fall back to the skill lines
@@ -217,7 +218,7 @@ str	817	unlucky	-	1
 str	818	weakness	-	1
 str	920	firewall_per	-	1
 str	926	hunter_shockwave_blue	-	1
-str	959	poison_mist	-	1
+str	959	poison_mist	-	0
 str	960	eraser_cutter	-	1
 str	964	lava_slide	-	1
 str	965	sonic_claw	-	1
@@ -744,7 +745,6 @@ skill	8008	effectId	571
 skill	8010	effectId	564
 skill	8011	effectId	564
 skill	8016	effectId	183
-skill	8020	effectId	959
 skill	8024	effectId	960
 skill	8026	effectId	961
 skill	8028	effectId	965
@@ -4889,6 +4889,7 @@ unit	258	1051
 unit	259	1278
 unit	261	1064
 unit	264	1120
+area	245	959	20
 status	2	166
 status	161	166
 status	25	166
