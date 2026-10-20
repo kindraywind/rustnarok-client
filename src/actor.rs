@@ -466,6 +466,22 @@ pub fn left_weapon(look: &Look, tables: &LookTables) -> bool {
     !shield_id(look.left) && tables.item_views.get(&look.left).is_some_and(|&view| view > 0)
 }
 
+/// The glow file (no extension) of a body that never draws a weapon, for drawn job `job`; None for every other body.
+/// The Taekwon's only shows with the body style of its own job; `madogear` is the Madogear type (2 the suit).
+pub fn body_glow(job: u16, sex: &str, style: u16, madogear: u8, names: Option<&JobSprites>) -> Option<Option<String>> {
+    let path = |file: String| Some(format!("data\\sprite\\인간족\\{file}"));
+    let suit = madogear == 2;
+    Some(match job {
+        4047 | 4048 | 4226 | 4238 | 4239 | 4241 | 4243 | 4244 | 4302 | 4316 => names?.weapon_path("인간족", sex, "_발광"),
+        4046 | 4225 => (style == job).then(|| format!("data\\sprite\\인간족\\태권소년\\태권소년_{sex}_발광")),
+        4084 | 4085 | 4111 => path(format!("레인져늑대\\레인져늑대_{sex}_검광")),
+        4278 => path(format!("windhawk\\wolf_windhawk_{sex}_검광")),
+        4086 | 4087 | 4112 => path(format!("마도기어\\{}_{sex}_검광", if suit { "마도아머" } else { "마도기어" })),
+        4279 => path(format!("meister_madogear\\meister_madogear{}_{sex}_검광", if suit { 2 } else { 1 })),
+        _ => return None,
+    })
+}
+
 /// One weapon's sprite and glow files (no extension) for drawn job `job`, by what `exists` finds (an .act there):
 /// the item's own name first (a Doram's always under 인간족, so never found), else its type's name, remapped for some
 /// jobs; the glow likewise, its own name's first. Neither for the cases that skip the type's name.
@@ -753,8 +769,12 @@ impl SpriteSet {
         let bottom = (!orcish).then(|| headgear(look.head_bottom, Part::HeadBottom)).flatten();
         let mid = (!orcish && look.head_mid != look.head_bottom).then(|| headgear(look.head_mid, Part::HeadMid)).flatten();
         let top = (!orcish && look.head_top != look.head_bottom && look.head_top != look.head_mid).then(|| headgear(look.head_top, Part::HeadTop)).flatten();
+        // Some bodies hold no weapon sprite, only a glow of their own. ponytail: the Madogear type isn't tracked per
+        // unit yet, so type 0.
+        let weapon = if let Some(glow) = body_glow(job, sex, look.body, 0, Some(&names)) {
+            Some((None, glow.and_then(|path| load(path, None, Part::WeaponGlow))))
         // Two weapons: one sprite for both hands, named by the pair's type alone; its glow only for some types.
-        let weapon = if left_weapon(look, tables) {
+        } else if left_weapon(look, tables) {
             dual_weapon(look, job, tables).and_then(|(name, glows)| {
                 let path = names.weapon_path(race, sex, name)?;
                 let glow = glows.then(|| load(format!("{path}_검광"), None, Part::WeaponGlow)).flatten();
@@ -3072,6 +3092,24 @@ impl Actor {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn some_bodies_draw_only_their_own_glow() {
+        let glow = |job: u16, sex: &str, style: u16, madogear: u8| body_glow(job, sex, style, madogear, job_sprites(job).as_ref());
+        let file = |name: &str| Some(Some(format!("data\\sprite\\인간족\\{name}")));
+        assert_eq!(glow(4047, "남", 0, 0), file("권성\\권성_남_발광"));
+        // GRF names ignore case: this is sky_emperor\sky_emperor_여_발광.
+        assert_eq!(glow(4302, "여", 0, 0), file("SKY_EMPEROR\\SKY_EMPEROR_여_발광"));
+        assert_eq!(glow(4046, "남", 4046, 0), file("태권소년\\태권소년_남_발광"));
+        assert_eq!(glow(4046, "남", 1, 0), Some(None));
+        assert_eq!(glow(4084, "여", 0, 0), file("레인져늑대\\레인져늑대_여_검광"));
+        assert_eq!(glow(4278, "남", 0, 0), file("windhawk\\wolf_windhawk_남_검광"));
+        assert_eq!(glow(4086, "남", 0, 0), file("마도기어\\마도기어_남_검광"));
+        assert_eq!(glow(4086, "남", 0, 2), file("마도기어\\마도아머_남_검광"));
+        assert_eq!(glow(4279, "여", 0, 2), file("meister_madogear\\meister_madogear2_여_검광"));
+        // A Knight still loads its weapon.
+        assert_eq!(glow(7, "남", 0, 0), None);
+    }
 
     #[test]
     fn weapons_fall_back_to_their_types_file() {
