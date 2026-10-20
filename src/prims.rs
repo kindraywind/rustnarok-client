@@ -29,6 +29,7 @@ pub mod shards;
 pub mod sight;
 pub mod sniper;
 pub mod songs;
+pub mod souls;
 pub mod sparkle;
 pub mod spears;
 pub mod spray;
@@ -185,6 +186,7 @@ pub struct Prims {
     pub spears: spears::Spears,
     pub crowds: crowds::Crowds,
     pub chi: chi::Chi,
+    pub souls: souls::Souls,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -605,6 +607,7 @@ impl Prims {
         self.ground.forget(unit);
         self.transcend.forget(unit);
         self.dancer.forget(unit);
+        self.souls.forget(unit);
         self.guard.forget(unit);
         self.brawl.forget(unit);
         self.circles.forget(Some(unit));

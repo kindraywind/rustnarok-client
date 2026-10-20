@@ -13,7 +13,7 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, bolts, boomerang, brawl, burst, chi, circle, crowds, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter, sage,
-    shafts, shards, sight, sniper, songs, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
+    shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1915,6 +1915,8 @@ const WARG_DANCE: u32 = 866;
 const SPEAR_RUSH: u32 = 835;
 const SWING_DANCE: u32 = 847;
 const HARMONIZE: u32 = 849;
+/// Arrullo's drifting lights (`prims::souls`); Harmonize's (850) are launched by its emitter.
+const SOUL_LIGHT_PINK: u32 = 932;
 const GREAT_ECHO_V: u32 = 863;
 /// Sonic Wave's crescents and Duple Light's orbs (`prims::waves`).
 const SONIC_WAVE: u32 = 832;
@@ -2457,7 +2459,15 @@ impl Effects {
                 self.textures.entry(songs::STREAK_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, songs::STREAK_TEXTURE, true).ok());
                 self.prims.songs.swing_dance(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
-            (HARMONIZE, Target::Unit(unit)) => self.prims.spears.emitter(unit, now),
+            (HARMONIZE, Target::Unit(unit)) => {
+                self.textures.entry(souls::DOT.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, souls::DOT, true).ok());
+                self.prims.spears.emitter(unit, now);
+            }
+            // Arrullo's lights come from its own emitter; one made by hand starts at 25 up.
+            (SOUL_LIGHT_PINK, Target::Unit(unit)) => {
+                self.textures.entry(souls::DOT.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, souls::DOT, true).ok());
+                self.prims.souls.launch(true, unit, [0.0, 25.0, 0.0], now, |n| pick(0, n.saturating_sub(1)));
+            }
             (DRAGON_RAYS, Target::Unit(unit)) => {
                 self.textures.entry(brawl::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::RAY, true).ok());
                 self.prims.brawl.dragon_rays(unit, now, |n| pick(0, n.saturating_sub(1)));
@@ -3421,9 +3431,12 @@ impl Effects {
         self.prims.mechanic.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.waves.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.chi.advance(now);
-        // Harmonize's lights (effect 850) have no look yet: what the emitters launch is let go.
+        // Harmonize's emitters launch a pair of bands of soft lights (850) on their units each tick.
         self.prims.spears.advance(now);
-        let _ = self.prims.spears.take_launched();
+        for (unit, offset) in self.prims.spears.take_launched() {
+            self.prims.souls.launch(false, unit, offset, now, |n| pick(0, n.saturating_sub(1)));
+        }
+        self.prims.souls.advance(now, |n| pick(0, n.saturating_sub(1)));
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -4303,6 +4316,14 @@ impl Effects {
             // Cart Termination's dots: soft squares facing the camera, added on.
             if let Some(Some(texture)) = self.textures.get(spray::DOT) {
                 for dot in self.prims.spray.dots(now, &position_of) {
+                    let half = dot.half * PIXELS_PER_UNIT;
+                    let corners = [[-half, half], [half, half], [half, -half], [-half, -half]];
+                    quads.push((texture, dot.at, corners, [dot.tint[0], dot.tint[1], dot.tint[2], dot.alpha / 255.0], true, false));
+                }
+            }
+            // Harmonize's and Arrullo's soul lights: soft squares facing the camera, added on.
+            if let Some(Some(texture)) = self.textures.get(souls::DOT) {
+                for dot in self.prims.souls.dots(&position_of) {
                     let half = dot.half * PIXELS_PER_UNIT;
                     let corners = [[-half, half], [half, half], [half, -half], [-half, -half]];
                     quads.push((texture, dot.at, corners, [dot.tint[0], dot.tint[1], dot.tint[2], dot.alpha / 255.0], true, false));
@@ -6133,10 +6154,12 @@ mod tests {
         assert!(!table.sounds.contains_key(&SWING_DANCE) && table.skill(2425, "effectId").is_empty());
         let files = [2350, 2351, 2352].map(|skill| (table.skill_sounds[&skill][0].file.as_str(), table.skill_sounds[&skill][0].listener));
         assert_eq!(files, [("effect\\스윙댄스", true), ("effect\\연인들을위한심포니", true), ("effect\\AB_judex", true)]);
-        // Harmonize: an emitter on both units; effect 850 has no line.
+        // Harmonize: an emitter on both units; its lights (850) and Arrullo's (932) run 100 ticks, with no line of their own.
         let used = table.used(2383).unwrap();
         assert!(used.contains(&(Who::Target, HARMONIZE)) && used.contains(&(Who::Caster, HARMONIZE)));
         assert!(!table.sounds.contains_key(&850) && !table.floaters.contains_key(&850) && !table.rings.contains_key(&850));
+        assert!(!table.sounds.contains_key(&932) && table.used(2383).unwrap().iter().all(|&(_, effect)| effect != 850 && effect != SOUL_LIGHT_PINK));
+        assert_eq!((table.lengths[&850], table.lengths[&SOUL_LIGHT_PINK]), (100, 100));
         // Great Echo's "V": launched from the caster at the target, with the sound and the shake it had.
         assert!(AIMED.contains(&GREAT_ECHO_V) && table.struck(2426).unwrap().contains(&(Who::Caster, GREAT_ECHO_V)));
         assert_eq!(sounds(GREAT_ECHO_V), [("effect\\LG_EARTHDRIVE", 0, true)]);
