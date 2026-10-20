@@ -26,6 +26,13 @@ pub const WEAPONS: [&str; 8] = [
     "data\\texture\\유저인터페이스\\item\\드래곤슬레이어.bmp",
     "data\\texture\\유저인터페이스\\item\\배틀액스.bmp",
 ];
+/// Disarm's four gun icons, one a prim.
+pub const GUNS: [&str; 4] = [
+    "data\\texture\\유저인터페이스\\item\\골드룩스.bmp",
+    "data\\texture\\유저인터페이스\\item\\더개리슨.bmp",
+    "data\\texture\\유저인터페이스\\item\\더블샷건.bmp",
+    "data\\texture\\유저인터페이스\\item\\더스크.bmp",
+];
 /// Sound of Destruction's two note glyphs.
 pub const NOTES: [&str; 2] = ["data\\texture\\effect\\melody_a.bmp", "data\\texture\\effect\\melody_b.bmp"];
 /// Strip Accessory's eight icons, one a prim.
@@ -330,6 +337,11 @@ impl Guard {
     /// Weapon Crush's 32 weapon icons, four of each of eight, the same way, all with a half-diagonal of 5.
     pub fn weapon_crush(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.burst(at, now, false, 8, STRIP_TINT, |prim| (WEAPONS[prim], 5.0), rand);
+    }
+
+    /// Disarm's 16 gun icons, four of each of four, the same way, all with a half-diagonal of 5.
+    pub fn disarm(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.burst(at, now, false, 4, STRIP_TINT, |prim| (GUNS[prim], 5.0), rand);
     }
 
     /// Sound of Destruction's 16 red music notes in upright planes: four prims of four, melody_a, melody_b, melody_a, melody_b.
@@ -787,6 +799,32 @@ mod tests {
         assert!((0..8).all(|prim| pieces[4 * prim..4 * prim + 4].iter().all(|piece| piece.icon == WEAPONS[prim])));
         assert!(WEAPONS[0].ends_with("루드라의활.bmp") && WEAPONS[7].ends_with("배틀액스.bmp"));
         assert!(guard.pieces(start + TICK * 17).is_empty() && guard.pieces(start + TICK * 18).len() == 32);
+    }
+
+    #[test]
+    fn disarm_bursts_16_gun_icons_four_of_each() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        let mut draws = Vec::new();
+        guard.disarm([5.0, 1.0, 5.0], start, |n| {
+            draws.push(n);
+            0
+        });
+        let pieces = &guard.strips[0].pieces;
+        assert_eq!(pieces.len(), 16);
+        assert!(pieces.iter().all(|piece| piece.half == 5.0 && piece.wait == -18 && piece.azimuth == 0.0 && piece.elevation == 0.0 && piece.spin == 0.0));
+        assert!((0..4).all(|prim| pieces[4 * prim..4 * prim + 4].iter().all(|piece| piece.icon == GUNS[prim])));
+        // Per element: its wait R(30), azimuth, elevation, spin and one unused R(360).
+        assert_eq!(draws[..5], [30, 360, 360, 360, 360]);
+        assert!(GUNS[0].ends_with("골드룩스.bmp") && GUNS[3].ends_with("더스크.bmp"));
+        // Nothing before n = 1 (tick 18); r = 12 + n; alpha 25, 250, 250, 243, 5 at n = 1, 10, 25, 26, 60; none from 61.
+        assert!(guard.pieces(start + TICK * 17).is_empty() && guard.pieces(start + TICK * 18).len() == 16);
+        let alpha = |tick: u32| guard.pieces(start + TICK * tick).first().map(|piece| piece.potion.alpha);
+        assert_eq!([18, 27, 42, 43, 77].map(alpha), [25.0, 250.0, 250.0, 243.0, 5.0].map(Some));
+        assert_eq!(alpha(78), None);
+        let at = guard.pieces(start + TICK * 18)[0].potion.at;
+        assert!(near(at[0], 5.0 + 13.0) && near(at[1], 1.0) && near(at[2], 5.0));
+        assert_eq!(guard.pieces(start + TICK * 20)[0].potion.spin, 63.0);
     }
 
     #[test]
