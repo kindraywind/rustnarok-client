@@ -1412,9 +1412,6 @@ ring	321	alphaMax=0.4;animation=3;renderBeforeEntities=true;attachedEntity=true;
 ring	325	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=3;red=0.7;rotate=true;textureName=ring_white;topSize=3
 ring	328	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=4.5;height=-4;duration=800
 ring	328	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=2.5;height=-4;duration=800
-ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1.5;topSize=1;height=0.7;posZ=2.14;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
-ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1.5;topSize=1.5;height=1.14;posZ=1;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
-ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1;topSize=1.5;height=0.7;posZ=0.3;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.45;topSize=2.45;height=2.0;alphaMax=32;blendMode=2;rotateWithCamera=true;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.52;topSize=2.52;height=2.1;alphaMax=32;blendMode=2;rotateWithCamera=true;angleY=10;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=26.6;duration=20000;attachedEntity=true
@@ -1452,7 +1449,7 @@ spr	373	poisonhit	1	-
 spr	453	cconfine	1	delayFrame=192;firstFrame=1;hold=true;alpha=100;onTop=true
 spr	509	05vallentine	1	-
 spr	519	fast	1	-
-spr	570	캐슬링	1	-
+spr	570	캐슬링	1	delayFrame=32;firstFrame=1;onTop=true
 spr	571	블러드러스트	1	-
 spr	576	item_thunder	1	-
 spr	577	item_cloud	1	-
@@ -1900,6 +1897,8 @@ wav	567	effect\h_moonlight_3	0
 wav	579	_snore	0
 wav	587	dragon_breath	0
 wav	590	effect\priest_resurrection	0
+wav	460	ice_titan_attack	80
+wav	564	effect\ef_beginspell	0
 wav	1224	effect\mon_침투경	80
 wav	604	effect\ef_hit6	0
 wav	599	effect\EF_BeginSpell	80
@@ -4368,6 +4367,7 @@ struck	8433	target	942
 struck	8433	caster	439
 struck	8434	caster	943
 struck	8435	target	466
+struck	8435	target	460
 struck	8437	caster	935
 struck	8442	target	944
 struck	2259	target	787
@@ -5195,6 +5195,11 @@ length	488	400
 length	503	500
 length	506	100
 length	542	200
+length	336	200
+length	460	100
+length	465	1000
+length	564	60
+length	570	100
 length	544	99999999
 length	1003	99999999
 length	1004	99999999
@@ -5225,6 +5230,7 @@ length	850	100
 length	932	100
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
 skillwav	10	effect\ef_sight	0
+skillwav	8005	effect\h_castling	0
 skillwav	268	effect\mon_맹룡과강	0	listener
 skillquake	268	0	200
 skillwav	270	effect\mon_폭기	0	listener

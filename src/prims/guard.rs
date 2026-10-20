@@ -109,6 +109,8 @@ struct Dome {
     holy: bool,
     /// Anti-Magic's orange dome: shells of its own, no spin.
     anti: bool,
+    /// Circle of Fire's pale green dome: Anti-Magic's shells and turn in Preserve's colours.
+    green: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -273,11 +275,12 @@ impl Dome {
     /// The dome's 45 quads at its age n: 15 tiles in three shells, their corners round the caster's feet.
     fn walls(&self, feet: Vector, n: u32) -> Vec<Wall> {
         let alpha = dome_alpha(n) / 255.0;
-        let turn = if self.anti { (self.facing.trunc() + 270.0).rem_euclid(360.0) } else { dome_turn(self.facing, n) };
+        let fixed = self.anti || self.green;
+        let turn = if fixed { (self.facing.trunc() + 270.0).rem_euclid(360.0) } else { dome_turn(self.facing, n) };
         let grow = dome_grow(n);
         let mut walls = Vec::new();
         for (shell, &(rgb, additive)) in SHELLS.iter().enumerate() {
-            let (radius, lift) = match (self.anti, shell) {
+            let (radius, lift) = match (fixed, shell) {
                 (true, 0) => (7.8, 9.8),
                 (true, 1) => (8.0, 7.8),
                 (true, _) => (8.2 + grow, 7.8),
@@ -311,7 +314,7 @@ impl Dome {
                     vertices.extend([a, b, c, a, c, d]);
                 }
             }
-            let texture = match (self.anti, shell) {
+            let texture = match (fixed, shell) {
                 (true, 2) => GUARD_K2,
                 (true, _) => GUARD_K,
                 _ if self.holy && additive => HOLY_TILE,
@@ -396,19 +399,24 @@ impl Guard {
 
     /// Preserve's dome on `unit`, facing `facing` degrees.
     pub fn preserve(&mut self, unit: Option<u32>, facing: f32, now: Instant) {
-        self.domes.push(Dome { unit, start: now, facing, holy: false, anti: false });
+        self.domes.push(Dome { unit, start: now, facing, holy: false, anti: false, green: false });
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Strobe([0xFA; 3], 10, 30) });
     }
 
     /// Neutral Barrier's dome on `unit`: Preserve's with another tile, and a yellow strobe.
     pub fn neutral_barrier(&mut self, unit: Option<u32>, facing: f32, now: Instant) {
-        self.domes.push(Dome { unit, start: now, facing, holy: true, anti: false });
+        self.domes.push(Dome { unit, start: now, facing, holy: true, anti: false, green: false });
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Strobe([0xFA, 0xFA, 0], 10, 30) });
     }
 
     /// Anti-Magic's orange dome on `unit`, facing `facing` degrees.
     pub fn anti_magic(&mut self, unit: Option<u32>, facing: f32, now: Instant) {
-        self.domes.push(Dome { unit, start: now, facing, holy: false, anti: true });
+        self.domes.push(Dome { unit, start: now, facing, holy: false, anti: true, green: false });
+    }
+
+    /// Circle of Fire's pale green dome on `unit`, facing `facing` degrees: Anti-Magic's tiles in Preserve's colours.
+    pub fn circle_of_fire(&mut self, unit: Option<u32>, facing: f32, now: Instant) {
+        self.domes.push(Dome { unit, start: now, facing, holy: false, anti: false, green: true });
     }
 
     /// Analyze's white strobe of `unit` (ticks 10 to 90).
@@ -1101,5 +1109,33 @@ mod tests {
         let mut green = Guard::default();
         green.preserve(Some(1), 90.4, start);
         assert_ne!(green.meshes(start + TICK, |_| Some(feet))[0].vertices[0].position, green.meshes(start + TICK * 20, |_| Some(feet))[0].vertices[0].position);
+    }
+
+    #[test]
+    fn circle_of_fire_stands_a_pale_green_dome_that_does_not_spin() {
+        let start = Instant::now();
+        let feet = [0.0; 3];
+        let mut guard = Guard::default();
+        guard.circle_of_fire(Some(1), 90.4, start);
+        let mut anti = Guard::default();
+        anti.anti_magic(Some(1), 90.4, start);
+        let walls = |guard: &Guard, tick: u32| guard.meshes(start + TICK * tick, |_| Some(feet));
+        // Three shells of 15 tiles on guardK, guardK, guardK2, the first two added on, the third blended, in Preserve's greens.
+        let first = walls(&guard, 0);
+        assert_eq!(first.iter().map(|wall| wall.texture).collect::<Vec<_>>(), [GUARD_K, GUARD_K, GUARD_K2]);
+        assert_eq!(first.iter().map(|wall| wall.additive).collect::<Vec<_>>(), [true, true, false]);
+        assert!(first.iter().all(|wall| wall.vertices.len() == 15 * 6));
+        let colours: Vec<[u8; 3]> = first.iter().map(|wall| std::array::from_fn(|k| (wall.vertices[0].tint[k] * 255.0).round() as u8)).collect();
+        assert_eq!(colours, [[0xCD, 0xFF, 0xCD], [0x9B, 0xFF, 0x9B], [0xE1, 0xFF, 0xE1]]);
+        // Anti-Magic's tiles: the same places, radii 7.8, 8.0, 8.2 + grow, and the turn the facing + 270 on every tick.
+        assert!((0..3).all(|shell| first[shell].vertices.iter().zip(&walls(&anti, 0)[shell].vertices).all(|(a, b)| a.position == b.position)));
+        assert_eq!(walls(&guard, 1)[0].vertices[0].position, walls(&guard, 20)[0].vertices[0].position);
+        assert!((0..3).all(|shell| walls(&guard, 41)[shell].vertices.iter().zip(&walls(&anti, 41)[shell].vertices).all(|(a, b)| a.position == b.position)));
+        // Alpha at n = 1, 5, 26, 27, 42: 20, 100, 100, 94, 4; gone from n = 43.
+        let alpha = |tick: u32| (walls(&guard, tick)[0].vertices[0].tint[3] * 255.0).round();
+        assert_eq!([0, 4, 25, 26, 41].map(alpha), [20.0, 100.0, 100.0, 94.0, 4.0]);
+        assert!(walls(&guard, 42).is_empty());
+        // The dome follows its unit.
+        assert!(guard.meshes(start, |_| None).is_empty());
     }
 }
