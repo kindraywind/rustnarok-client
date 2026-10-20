@@ -4870,6 +4870,14 @@ fn hovered(hit_boxes: &[picking::Target<Owner>], cursor: [f32; 2], players_first
     picking::pick(hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player), cursor, players_first, screen_middle())
 }
 
+/// What the pointer is on for its name: as `hovered`, and with nothing else there, ourselves (the game names the own
+/// character too).
+// ponytail: whoever stands over us is named before us; the game's own order between us and them isn't known.
+fn hovered_named(hit_boxes: &[picking::Target<Owner>], cursor: [f32; 2], players_first: bool) -> Option<Owner> {
+    hovered(hit_boxes, cursor, players_first)
+        .or_else(|| picking::pick(hit_boxes.iter().copied().filter(|target| target.owner == Owner::Player), cursor, players_first, screen_middle()))
+}
+
 /// The unit the pointer is on, the player included: what skills and taming aim at.
 fn hovered_unit(hit_boxes: &[picking::Target<Owner>], cursor: [f32; 2], players_first: bool) -> Option<Owner> {
     picking::pick(hit_boxes.iter().copied().filter(|target| !matches!(target.owner, Owner::Item(_))), cursor, players_first, screen_middle())
@@ -6830,6 +6838,17 @@ mod tests {
         goal.shake(&mut camera, feet, effects.quake(start + effects::QUAKE_LONG));
         assert!(!goal.shaking);
         assert_eq!((camera.target, camera.distance, camera.pitch), before);
+    }
+
+    #[test]
+    fn the_pointer_names_ourselves_but_clicks_pass_through() {
+        let target = |owner, kind| picking::Target { owner, kind, sprite: [0.0; 4], area: [100.0, 100.0, 200.0, 200.0], depth: 1.0 };
+        let boxes = [target(Owner::Player, picking::Kind::Player)];
+        assert!(hovered_named(&boxes, [150.0, 150.0], false) == Some(Owner::Player));
+        assert!(hovered(&boxes, [150.0, 150.0], false).is_none());
+        // Anyone over us is what's named, as before.
+        let boxes = [target(Owner::Player, picking::Kind::Player), target(Owner::Unit(7), picking::Kind::Player)];
+        assert!(hovered_named(&boxes, [150.0, 150.0], false) == Some(Owner::Unit(7)));
     }
 
     #[test]

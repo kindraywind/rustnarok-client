@@ -1,0 +1,146 @@
+{
+ "about": "Hover name on ourselves (issue #912): the pointer over our own character names it, the way it does another player, and with a party and a guild the block shows them (`Name (Party)` over `Guild [Position]`). The shots' crop is the name under our feet. The party is left and the guild broken at the end.",
+ "account": "",
+ "slot": 0,
+ "steps": [
+  {
+   "say": "@warp morocc 160 120"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "move": [
+    700,
+    600
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "expect": {
+    "state": {
+     "hover_name": null
+    }
+   }
+  },
+  {
+   "move": {
+    "unit": "{first}"
+   }
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "expect": {
+    "state": {
+     "hover_name.lines.0": "{first}"
+    }
+   }
+  },
+  {
+   "shot": "hover-own",
+   "crop": [
+    412,
+    284,
+    200,
+    200
+   ],
+   "threshold": 30
+  },
+  {
+   "type": "/leave"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "type": "/organize Own{stamp}"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "say": "@guild Own{stamp}"
+  },
+  {
+   "key": "Escape"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "key": "Escape"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "key": "Escape"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "move": [
+    700,
+    600
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "move": {
+    "unit": "{first}"
+   }
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "expect": {
+    "state": {
+     "hover_name.lines.0": "{first} (Own{stamp})",
+     "hover_name.lines.1": "Own{stamp} [GuildMaster]"
+    }
+   }
+  },
+  {
+   "shot": "hover-own-party-guild",
+   "crop": [
+    412,
+    284,
+    200,
+    200
+   ],
+   "threshold": 30
+  },
+  {
+   "say": "@breakguild"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "type": "/leave"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait": 500
+  }
+ ]
+}

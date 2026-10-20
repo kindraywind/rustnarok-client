@@ -202,9 +202,9 @@ def locate(target):
     state = drive.send({"cmd": "state"})
     game = state.get("game", {})
     if kind in ("unit", "ground_item"):
-        # A unit by name or an item on the ground by item id (its sprite's box on screen); "offset" from its centre, e.g.
+        # A unit by name (the player too) or an item on the ground by item id (its sprite's box on screen); "offset" from its centre, e.g.
         # into the menu it opens or onto its cell, or "below": that many pixels under the sprite's bottom edge.
-        things = game.get("units", []) if kind == "unit" else game.get("ground_items", [])
+        things = game.get("units", []) + [game.get("player", {})] if kind == "unit" else game.get("ground_items", [])
         for thing in things:
             if thing.get("name" if kind == "unit" else "item") == value and thing.get("screen"):
                 x0, y0, x1, y1 = thing["screen"]
