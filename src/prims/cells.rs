@@ -3,11 +3,14 @@
 //!
 //! A shape's own age a counts from 0 on the tick it is made; n from 1 on its first tick after.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use super::crowds::{CrowdDraw, planted_alpha};
 use super::passes;
-use crate::world::Vector;
+use super::sight::Drawn;
+use super::walls::Wall;
+use crate::world::{MeshVertex, Vector};
 
 pub const ANCIENT_TREE: &str = "data\\sprite\\몬스터\\Ancient_tree";
 pub const BREEZE: &str = "data\\sprite\\몬스터\\breeze";
@@ -21,6 +24,17 @@ const IFRITS: u32 = 20;
 const BLAST_FRAMES: u32 = 24;
 const BLAST_TICKS: u32 = 4 * (BLAST_FRAMES - 1);
 const BLAST_SPEED: f32 = 0.3;
+/// The Sight option's flame (22): the effect lasts 270 ticks, a counter starts it again then; a pair of sprites every 2nd tick.
+const SIGHT_LENGTH: u32 = 270;
+const SIGHT_LIFE: u32 = 20;
+const SIGHT_FRAMES: u32 = 25;
+/// The counter of a unit that has just got the option: past the length, so the first tick starts the flame.
+const COUNTER_NEW: u32 = 36_000;
+/// The monsters' element changes (172 to 178): a ring 4 across leaning 89° whose rim rises to a hump 250 high, for 100 ticks.
+const SHEET_LENGTH: u32 = 100;
+const SHEET_RADIUS: f32 = 4.0;
+const SHEET_LEAN: f32 = 89.0;
+const SHEET_PEAK: f32 = 250.0;
 
 /// One sprite on a cell: its ticks a frame, alpha, scale, action and colour.
 struct Look {
@@ -85,8 +99,25 @@ struct Blasts {
     start: Instant,
 }
 
+/// A flame circling a unit, started at `start`; it follows the unit.
+struct Circling {
+    unit: Option<u32>,
+    start: Instant,
+}
+
+/// A coloured flame sheet at a monster's feet.
+struct Sheet {
+    effect: u32,
+    at: Vector,
+    start: Instant,
+}
+
 #[derive(Default)]
 pub struct Cells {
+    circlings: Vec<Circling>,
+    sheets: Vec<Sheet>,
+    /// Per unit with the Sight option, the ticks since its flame started and the time they are counted to.
+    sights: HashMap<Option<u32>, (u32, Instant)>,
     stands: Vec<Stand>,
     rings: Vec<Ring>,
     blasts: Vec<Blasts>,
@@ -126,6 +157,32 @@ const GREEN: [f32; 3] = rgb(0x55, 0xFF, 0x55);
 const GREY: [f32; 3] = rgb(0x9B, 0x9B, 0x9B);
 
 /// The tint of an Insignia's Ifrits by its skill unit's type: Water, Wind and Earth; none for the rest.
+/// The angle of a flame pair made at tick `e` of the effect: -5e degrees, plus 1 unless it comes to 0.
+pub fn flame_angle(e: u32) -> f32 {
+    match (-5 * e as i32).rem_euclid(360) {
+        0 => 0.0,
+        angle => (angle + 1) as f32,
+    }
+}
+
+/// The texture of an element change's sheet (172 to 178).
+pub fn sheet_texture(effect: u32) -> &'static str {
+    match effect {
+        172 => "data\\texture\\effect\\ring_black.tga",
+        173 => "data\\texture\\effect\\ring_red.tga",
+        174 => "data\\texture\\effect\\ring_blue.tga",
+        175 => "data\\texture\\effect\\ring_yellow.tga",
+        176 => "data\\texture\\effect\\ring_jadu.tga",
+        177 => "data\\texture\\effect\\ring_brown.tga",
+        _ => "data\\texture\\effect\\ring_white.tga",
+    }
+}
+
+/// The height of a sheet's rim at point s (0 to 20) at its age n: a hump rising over 90 ticks.
+pub fn sheet_profile(s: u32, n: u32) -> f32 {
+    SHEET_PEAK * (9.0 * s as f32).to_radians().sin() * (n.min(90) as f32).to_radians().sin()
+}
+
 pub fn insignia_tint(kind: u32) -> Option<[f32; 3]> {
     match kind {
         242 => Some(rgb(0x14, 0x14, 0xB4)),
@@ -157,6 +214,49 @@ impl Cells {
     /// The Ifrits (916 to 918) or Imps (929) of skill unit `id` on the cell `at`, tinted `tint`.
     pub fn ring(&mut self, effect: u32, id: u32, tint: Option<[f32; 3]>, at: Vector, now: Instant) {
         self.rings.push(Ring { id, effect, tint, at, start: now, made: 0, ifrits: Vec::new() });
+    }
+
+    /// The Sight flame (22) on `unit`, started now.
+    pub fn sight(&mut self, unit: Option<u32>, now: Instant) {
+        self.circlings.push(Circling { unit, start: now });
+    }
+
+    /// Stops the flames circling `unit` (Sight Rasher ends them).
+    pub fn stop_sight(&mut self, unit: Option<u32>) {
+        self.circlings.retain(|circling| circling.unit != unit);
+    }
+
+    /// The units with the Sight option now: each starts a flame the moment it has it and every 270 ticks while it lasts (one check a
+    /// tick); one that is not listed or has lost it starts counting from nothing again.
+    pub fn watch_sight(&mut self, units: impl IntoIterator<Item = (Option<u32>, bool)>, now: Instant) {
+        let mut seen = Vec::new();
+        for (unit, on) in units {
+            if !on {
+                continue;
+            }
+            seen.push(unit);
+            let (counter, clock) = self.sights.entry(unit).or_insert((COUNTER_NEW, now - super::TICK));
+            // A long gap (a hidden window) counts at most one period.
+            let mut steps = 0;
+            while *clock + super::TICK <= now && steps < SIGHT_LENGTH {
+                *clock += super::TICK;
+                steps += 1;
+                if *counter >= SIGHT_LENGTH {
+                    *counter = 0;
+                    self.circlings.push(Circling { unit, start: *clock });
+                }
+                *counter += 1;
+            }
+            if *clock + super::TICK <= now {
+                *clock = now;
+            }
+        }
+        self.sights.retain(|unit, _| seen.contains(unit));
+    }
+
+    /// A flame sheet of element change `effect` at the monster's feet `at`.
+    pub fn sheet(&mut self, effect: u32, at: Vector, now: Instant) {
+        self.sheets.push(Sheet { effect, at, start: now });
     }
 
     /// Poison Buster's eight blasts round `unit`.
@@ -204,6 +304,8 @@ impl Cells {
             }
         }
         self.blasts.retain(|blasts| passes(blasts.start, now) <= BLAST_TICKS + 3);
+        self.circlings.retain(|circling| passes(circling.start, now) <= SIGHT_LENGTH);
+        self.sheets.retain(|sheet| passes(sheet.start, now) <= SHEET_LENGTH);
     }
 
     /// The tree and the whirlwinds standing at `now`.
@@ -235,6 +337,64 @@ impl Cells {
             }
         }
         draws
+    }
+
+    /// The Sight flames and their shadows at `now` over their units' feet (`position_of`): on each even tick of the effect a pair
+    /// turns up on a circle round the unit, shrinking and fading for 20 ticks.
+    pub fn flames(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<Drawn> {
+        let mut drawn = Vec::new();
+        for circling in &self.circlings {
+            let (Some(feet), Some(t)) = (position_of(circling.unit), passes(circling.start, now).checked_sub(1)) else { continue };
+            for e in (0..SIGHT_LENGTH).step_by(2).take_while(|&e| e <= t) {
+                let a = t - e;
+                if a >= SIGHT_LIFE.min(SIGHT_LENGTH - e - 1) {
+                    continue;
+                }
+                let (sin, cos) = flame_angle(e).to_radians().sin_cos();
+                let (x, z) = (feet[0] + 15.0 * sin, feet[2] - 15.0 * cos);
+                let a_f = a as f32;
+                drawn.push(Drawn {
+                    sprite: super::sight::SIGHT,
+                    frame: ((a / 3 + 1) % SIGHT_FRAMES) as usize,
+                    at: [x, feet[1] + 20.0, z],
+                    scale: 2.5 - 0.1 * (a_f + 1.0),
+                    alpha: 150.0 - 3.0 * (a_f + 1.0),
+                });
+                drawn.push(Drawn { sprite: super::sight::SHADOW, frame: 0, at: [x, feet[1], z], scale: 1.5 - 0.06 * (a_f + 1.0), alpha: 120.0 - (a_f + 1.0) });
+            }
+        }
+        drawn
+    }
+
+    /// The sheets at `now`: a ring of 20 quads whose rim rises to a hump over 90 ticks, blended, 80 alpha, standing where it was made.
+    pub fn meshes(&self, now: Instant) -> Vec<Wall> {
+        let mut walls = Vec::new();
+        for sheet in &self.sheets {
+            let n = passes(sheet.start, now);
+            if n == 0 || n >= SHEET_LENGTH {
+                continue;
+            }
+            let (lean_sin, lean_cos) = SHEET_LEAN.to_radians().sin_cos();
+            let tint = [1.0, 1.0, 1.0, 80.0 / 255.0];
+            let corner = |s: u32, top: bool, uv: [f32; 2]| {
+                let (sin, cos) = (18.0 * s as f32).to_radians().sin_cos();
+                let (reach, up) = if top {
+                    let rise = sheet_profile(s, n);
+                    (SHEET_RADIUS + rise * lean_cos, rise * lean_sin)
+                } else {
+                    (SHEET_RADIUS, 0.0)
+                };
+                MeshVertex { position: [sheet.at[0] + reach * cos, sheet.at[1] + up, sheet.at[2] + reach * sin], uv, tint }
+            };
+            let mut vertices = Vec::with_capacity(20 * 6);
+            for j in 0..20 {
+                let (u0, u1) = (j as f32 / 21.0, (j + 1) as f32 / 21.0);
+                let [a, b, c, d] = [corner(j, false, [u0, 1.0]), corner(j + 1, false, [u1, 1.0]), corner(j + 1, true, [u1, 0.0]), corner(j, true, [u0, 0.0])];
+                vertices.extend([a, b, c, a, c, d]);
+            }
+            walls.push(Wall { texture: sheet_texture(sheet.effect), vertices, additive: false, forced: false });
+        }
+        walls
     }
 
     /// The frames Poison Buster's blasts show at `now` (1 to 23), for the caller to have ready.
@@ -458,5 +618,95 @@ mod tests {
         cells.advance(start + TICK * 9998, |_, _| 0.0, |_| 0);
         assert_eq!(cells.take_restarts(), [929]);
         assert_eq!(cells.rings[0].ifrits.len(), 1);
+    }
+
+    #[test]
+    fn the_sight_option_keeps_a_flame_circling_its_unit() {
+        let start = Instant::now();
+        let mut cells = Cells::default();
+        // The flame starts the moment the option shows, again every 270 ticks, and never without it.
+        cells.watch_sight([(Some(1), false)], start);
+        assert!(cells.circlings.is_empty());
+        cells.watch_sight([(Some(1), true)], start);
+        assert_eq!(cells.circlings.len(), 1);
+        cells.watch_sight([(Some(1), true)], start + TICK * 100);
+        assert_eq!(cells.circlings.len(), 1);
+        cells.watch_sight([(Some(1), true)], start + TICK * 269);
+        assert_eq!(cells.circlings.len(), 1, "the counter is at 269");
+        cells.watch_sight([(Some(1), true)], start + TICK * 270);
+        assert_eq!(cells.circlings.len(), 2, "again 270 ticks on");
+        // Losing the option starts the count over; the flame already running plays out.
+        cells.watch_sight([(Some(1), false)], start + TICK * 300);
+        cells.watch_sight([(Some(1), true)], start + TICK * 301);
+        assert_eq!(cells.circlings.len(), 3);
+        // Sight Rasher ends a unit's flames.
+        cells.stop_sight(Some(1));
+        assert!(cells.circlings.is_empty());
+        // The angle of a pair made at e = 0, 2, 4, 72, 142: 0, 351, 341, 0, 11.
+        assert_eq!([0, 2, 4, 72, 142].map(flame_angle), [0.0, 351.0, 341.0, 0.0, 11.0]);
+    }
+
+    #[test]
+    fn two_sprites_on_every_even_tick_circle_and_shrink() {
+        let start = Instant::now();
+        let feet = [10.0, 1.0, 20.0];
+        let mut cells = Cells::default();
+        cells.sight(Some(1), start);
+        let at = |tick: u32| cells.flames(start + TICK * tick, |_| Some(feet));
+        // e = 0: the flame (20 up, 15 behind) and its shadow (on the ground); scale 2.4 and 1.44, alpha 147 and 119.
+        let first = at(0);
+        assert_eq!(first.len(), 2);
+        assert_eq!((first[0].sprite, first[1].sprite), (crate::prims::sight::SIGHT, crate::prims::sight::SHADOW));
+        assert!(near(first[0].at[0], 10.0) && near(first[0].at[1], 21.0) && near(first[0].at[2], 5.0) && near(first[1].at[1], 1.0));
+        assert!(near(first[0].scale, 2.4) && near(first[0].alpha, 147.0) && near(first[1].scale, 1.44) && near(first[1].alpha, 119.0));
+        // Pairs only on even ticks: 2 at tick 0, 2 at 1 (the first aged), 4 at tick 2.
+        assert_eq!((at(1).len(), at(2).len()), (2, 4));
+        // At a = 19: scale 0.5 and 0.30, alpha 90 and 100; the frame 1, 1, 2, 7 for a = 0, 2, 3, 19 and 0 for the shadow.
+        let old = at(19);
+        assert!(near(old[0].scale, 0.5) && near(old[0].alpha, 90.0) && near(old[1].scale, 0.30) && near(old[1].alpha, 100.0));
+        assert_eq!([0, 2, 3, 19].map(|tick| at(tick)[0].frame), [1, 1, 2, 7]);
+        assert!(at(5).iter().skip(1).step_by(2).all(|shadow| shadow.frame == 0));
+        // A pair lasts 20 ticks: 10 pairs are alive from tick 19 on.
+        assert_eq!(at(40).len(), 2 * 10);
+        // The prims made at e = 252 … 268 are cut by the end: e = 268 is drawn once (270 − 268 − 1).
+        assert_eq!(at(268).len(), 2 * 10);
+        assert!(at(269).is_empty(), "the last tick draws none of the cut pairs");
+        // The flames follow the unit's feet.
+        assert!(cells.flames(start, |_| Some([100.0, 0.0, 100.0]))[0].at[0] > 99.0);
+        assert!(cells.flames(start, |_| None).is_empty());
+        cells.advance(start + TICK * 270, |_, _| 0.0, |_| 0);
+        assert!(cells.circlings.is_empty());
+    }
+
+    #[test]
+    fn an_element_change_raises_a_tall_coloured_sheet_at_the_monsters_feet() {
+        let start = Instant::now();
+        let at = [10.0, 2.0, 20.0];
+        let mut cells = Cells::default();
+        cells.sheet(172, at, start);
+        // The profile at n = 1, 45, 90, 91 for s = 10: 250 sin 1°, 250 sin 45°, 250, 250; zero at s = 0 and 20.
+        assert!(near(sheet_profile(10, 1), 250.0 * 1.0_f32.to_radians().sin()) && near(sheet_profile(10, 45), 250.0 * 45.0_f32.to_radians().sin()));
+        assert!(near(sheet_profile(10, 90), 250.0) && near(sheet_profile(10, 91), 250.0));
+        assert!(sheet_profile(0, 50).abs() < 1e-3 && sheet_profile(20, 50).abs() < 1e-2);
+        // One band of 20 quads, blended, alpha 80 at any age, radius 4, lean 89.
+        let walls = cells.meshes(start);
+        assert_eq!(walls.len(), 1);
+        assert!(!walls[0].additive && walls[0].vertices.len() == 20 * 6 && walls[0].texture.ends_with("ring_black.tga"));
+        assert!(walls[0].vertices.iter().all(|vertex| vertex.tint == [1.0, 1.0, 1.0, 80.0 / 255.0]));
+        assert!(cells.meshes(start + TICK * 80)[0].vertices.iter().all(|vertex| vertex.tint[3] == 80.0 / 255.0));
+        // The foot of quad 0 is 4 out at angle 0; the top at s = 10 is the highest, 250 sin 89° at n = 90.
+        let feet = walls[0].vertices[0].position;
+        assert!(near(feet[0], 14.0) && near(feet[1], 2.0) && near(feet[2], 20.0));
+        let top = cells.meshes(start + TICK * 89)[0].vertices.iter().map(|vertex| vertex.position[1] - 2.0).fold(0.0, f32::max);
+        assert!(near(top, 250.0 * 89.0_f32.to_radians().sin()));
+        // The uv runs j / 21 across the ring, 1 at the foot and 0 at the top.
+        assert_eq!([walls[0].vertices[0].uv, walls[0].vertices[1].uv, walls[0].vertices[2].uv], [[0.0, 1.0], [1.0 / 21.0, 1.0], [1.0 / 21.0, 0.0]]);
+        // Drawn on 99 ticks, 0 to 98; it stays where the monster was made, and goes at 100.
+        assert!(!cells.meshes(start + TICK * 98).is_empty() && cells.meshes(start + TICK * 99).is_empty());
+        cells.advance(start + TICK * 100, |_, _| 0.0, |_| 0);
+        assert!(cells.sheets.is_empty());
+        // The textures by id.
+        let names: Vec<&str> = (172..=178).map(|id| sheet_texture(id).rsplit('\\').next().unwrap()).collect();
+        assert_eq!(names, ["ring_black.tga", "ring_red.tga", "ring_blue.tga", "ring_yellow.tga", "ring_jadu.tga", "ring_brown.tga", "ring_white.tga"]);
     }
 }

@@ -2563,6 +2563,17 @@ impl Effects {
                 self.textures.entry(chi::NEEDLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, chi::NEEDLE, true).ok());
                 self.prims.chi.buff(id, unit, 500, now, |n| pick(0, n.saturating_sub(1)));
             }
+            (SIGHT, Target::Unit(unit)) => {
+                for path in [sight::SIGHT, sight::SHADOW] {
+                    self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
+                }
+                self.prims.cells.sight(unit, now);
+            }
+            (172..=178, Target::Unit(_) | Target::Ground) => {
+                let path = cells::sheet_texture(id);
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                self.prims.cells.sheet(id, at, now);
+            }
             (LULLABY, Target::Unit(unit)) => {
                 for (name, path) in notes::TEXTURES {
                     self.textures.entry(name.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
@@ -3587,7 +3598,7 @@ impl Effects {
             }
         }
         self.prims.sights.advance(now);
-        for drawn in self.prims.sights.sprites(now) {
+        for drawn in self.prims.sights.sprites(now).into_iter().chain(self.prims.cells.flames(now, |_| Some([0.0; 3]))) {
             if let (Some(Some(sprite)), false) = (self.sprites.get_mut(drawn.sprite), self.sight_frames.contains_key(&(drawn.sprite, drawn.frame))) {
                 let frames = sprite.frames(0).max(1);
                 let layers = sprite.frame_plain(gpu, 0, Timing::Span((drawn.frame as f32 + 0.5) / frames as f32));
@@ -3776,6 +3787,15 @@ impl Effects {
         let on = |anchor: Anchor| matches!(anchor, Anchor::Unit(each) if each == unit);
         self.playing.retain(|playing| !(playing.effect == effect && on(playing.anchor)));
         self.floating.retain(|floating| !(floating.effect == effect && on(floating.anchor)));
+        if effect == SIGHT {
+            self.prims.cells.stop_sight(unit);
+        }
+    }
+
+    /// The units that have the Sight option now (None = the player): each starts its circling flame the moment it has it and every
+    /// 270 ticks while it lasts.
+    pub fn watch_sight(&mut self, units: impl IntoIterator<Item = (Option<u32>, bool)>, now: Instant) {
+        self.prims.cells.watch_sight(units, now);
     }
 
     /// Drops the effects playing on a unit that went away.
@@ -4129,6 +4149,7 @@ impl Effects {
             .chain(
                 self.prims.spears.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
+            .chain(self.prims.cells.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
             .chain(
                 self.prims
                     .chi
@@ -4389,7 +4410,7 @@ impl Effects {
             // Lullaby Deep Sleep's notes, over everything (`STR_RISE` is taken off again).
             quads.extend(self.prims.notes.quads(|path| self.textures.get(path).and_then(Option::as_ref), STR_RISE));
             // Sight Rasher's sprites and their shadows, white with their alpha.
-            for drawn in self.prims.sights.sprites(now) {
+            for drawn in self.prims.sights.sprites(now).into_iter().chain(self.prims.cells.flames(now, &position_of)) {
                 let Some(Some(sprite)) = self.sprites.get(drawn.sprite) else { continue };
                 for &(key, position, size, layer_angle) in self.sight_frames.get(&(drawn.sprite, drawn.frame)).into_iter().flatten() {
                     let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0.map(|value| value * drawn.scale));
@@ -6574,5 +6595,20 @@ mod tests {
         // Escape on the source of its use, with no sound and no line of its own for 793.
         assert!(table.used(5010).unwrap().contains(&(Who::Caster, ESCAPE_FX)) && !table.sounds.contains_key(&ESCAPE_FX));
         assert!(!table.parts.contains_key(&793) && !table.sounds.contains_key(&793));
+    }
+
+    #[test]
+    fn sight_and_the_monsters_element_changes_have_their_rows() {
+        let table = Table::load();
+        // 22 comes from the option and from Wide Sight, not from the Sight skill; its sound belongs to the skill.
+        assert!(table.skill(10, "effectId").is_empty() && !table.parts.contains_key(&SIGHT) && !table.sounds.contains_key(&SIGHT));
+        assert!(table.struck(669).unwrap().contains(&(Who::Caster, SIGHT)));
+        assert_eq!((table.skill_sounds[&10][0].file.as_str(), table.skill_sounds[&10][0].delay_ms), ("effect\\ef_sight", 0));
+        assert_eq!(table.lengths[&SIGHT], 270);
+        // The element changes: the six rows hold and Telekinesis is added; 100 ticks each.
+        for (skill, effect) in [(168, 172), (164, 173), (162, 174), (165, 175), (169, 176), (163, 177), (167, 178)] {
+            assert_eq!(table.skill(skill, "effectId"), [effect], "{skill}");
+        }
+        assert!((172..=178).all(|id| table.lengths[&id] == 100 && !table.sounds.contains_key(&id)));
     }
 }
