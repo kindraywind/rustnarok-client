@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, burst, first, ground, huujin, knight, monk, sage, shards, sight, sniper, songs, star, stone, tanji, throw, transcend,
-    walls, waterball,
+    balls, blitz, bolts, boomerang, burst, dancer, first, ground, huujin, knight, monk, sage, shards, sight, sniper, songs, star, stone, tanji, throw,
+    transcend, walls, waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1786,6 +1786,14 @@ const STEAL_COIN: u32 = 274;
 /// (`prims::transcend`).
 /// Soul Change's glow, True Sight's rays, Falcon Assault's spin, the shot lines, Wind Walk's arcs and Reject Sword's blinking
 /// (`prims::sniper`).
+/// Moonlit Water Mill's crescents and Spider Web's web (`prims::dancer`), Marionette's tube (`prims::transcend`), Head Crush's and
+/// Joint Beat's rays (`prims::knight`) and Mind Breaker's flicker.
+const MOONLIT: u32 = 394;
+const MARIONETTE_LINK: u32 = 395;
+const HEAD_CRUSH: u32 = 399;
+const JOINT_BEAT: u32 = 400;
+const MIND_BREAKER: u32 = 403;
+const SPIDER_WEB: u32 = 404;
 const SOUL_CHANGE_GLOW: u32 = 385;
 const TRUE_SIGHT: u32 = 386;
 const FALCON_ASSAULT: u32 = 387;
@@ -1843,7 +1851,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 25] = [
+pub const AIMED: [u32; 26] = [
+    MARIONETTE_LINK,
     SHARP_SHOOTING,
     ARROW_VULCAN,
     SOUL_DRAIN,
@@ -2096,6 +2105,28 @@ impl Effects {
             self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
             self.prims.walls.ribbons(unit, now);
         }
+        // Moonlit Water Mill's crescents, Head Crush's and Joint Beat's rays, Mind Breaker's flicker and the web on a unit.
+        match (id, target) {
+            (MOONLIT, Target::Status(unit, status)) => {
+                self.textures.entry(dancer::FIRE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, dancer::FIRE, true).ok());
+                self.prims.dancer.mill(unit, Some(status), now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (MOONLIT, Target::Unit(unit)) if !self.prims.dancer.has_mill(unit) => {
+                self.textures.entry(dancer::FIRE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, dancer::FIRE, true).ok());
+                self.prims.dancer.mill(unit, None, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (HEAD_CRUSH | JOINT_BEAT, Target::Unit(unit)) => {
+                self.textures.entry(knight::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, knight::RAY, true).ok());
+                let rand = |n: u32| pick(0, n.saturating_sub(1));
+                if id == HEAD_CRUSH { self.prims.knight.head_crush(unit, now, rand) } else { self.prims.knight.joint_beat(unit, now, rand) }
+            }
+            (MIND_BREAKER, Target::Unit(unit)) => self.prims.transcend.breaker(unit, now, |n| pick(0, n.saturating_sub(1))),
+            (SPIDER_WEB, Target::Status(unit, _)) => {
+                self.textures.entry(dancer::WEB.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, dancer::WEB, true).ok());
+                self.prims.dancer.web(None, Some(unit), at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            _ => {}
+        }
         // Soul Change's glow, True Sight's rays, Falcon Assault's spin, Wind Walk's arcs, Reject Sword's blinking body.
         match (id, target) {
             (SOUL_CHANGE_GLOW, Target::Unit(unit)) => self.prims.sniper.glow_link(unit, now),
@@ -2165,6 +2196,8 @@ impl Effects {
                 };
                 if let Some(status) = status {
                     self.prims.songs.forget_status(unit, status);
+                    self.prims.transcend.forget_status(unit, status);
+                    self.prims.dancer.forget_status(unit, status);
                 }
                 self.prims.songs.dance(unit, status, id == ETERNAL_CHAOS, now, |n| pick(0, n.saturating_sub(1)));
             }
@@ -2469,7 +2502,10 @@ impl Effects {
         self.unit_kinds.insert(id, kind);
         if let Some(&effect) = table.units.get(&kind) {
             // Volcano's, Deluge's, Violent Gale's and Land Protector's cells keep their loops, drawn in code.
-            if effect == GOSPEL {
+            if effect == SPIDER_WEB {
+                self.textures.entry(dancer::WEB.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, dancer::WEB, true).ok());
+                self.prims.dancer.web(Some(id), None, at, now, |n| pick(0, n.saturating_sub(1)));
+            } else if effect == GOSPEL {
                 self.textures.entry(transcend::CROSS.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, transcend::CROSS, false).ok());
                 self.prims.transcend.keep_gospel(id, at, now, |n| pick(0, n.saturating_sub(1)));
             } else if matches!(effect, MAGNUS | SANCTUARY) {
@@ -2663,6 +2699,11 @@ impl Effects {
                 self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
                 self.prims.soul_drain(from, to, now, |n| pick(0, n.saturating_sub(1)));
                 self.prims.transcend.drain_caster(caster, now);
+            }
+            MARIONETTE_LINK => {
+                self.textures.entry(transcend::TUBE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, transcend::TUBE, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.transcend.marionette(caster, target, own, now);
             }
             LINE_LINK => {
                 self.textures.entry(transcend::TUBE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, transcend::TUBE, true).ok());
@@ -3149,6 +3190,13 @@ impl Effects {
             .chain(sage)
             .chain(burst_rings)
             .chain(other_walls)
+            .chain(
+                self.prims
+                    .dancer
+                    .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .chain(
                 self.prims
                     .sniper
@@ -4893,5 +4941,29 @@ mod tests {
             (Some(100.0), None, None)
         );
         assert_eq!(REJECT_SWORD_TICKS, 200);
+    }
+
+    #[test]
+    fn moonlit_marionette_head_crush_joint_beat_napalm_vulcan_mind_breaker_and_the_web() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        // Moonlit Water Mill shows with the dance's statuses and the use packet, and makes no sound.
+        assert!(!table.sounds.contains_key(&394) && table.status(123).contains(&394) && table.status(646).contains(&394));
+        assert_eq!(table.used(395), Some(&[(Who::Caster, 394)][..]));
+        // Marionette's tube: aimed from the caster, sounding at once, ended by the control's status.
+        assert!(AIMED.contains(&395) && table.used(396).unwrap().contains(&(Who::Caster, 395)));
+        assert_eq!(sounds(395), [("effect\\소울 체인지", 0)]);
+        assert!(table.status(121).contains(&396));
+        // Head Crush's and Joint Beat's rays are made in code: no rings, the sound at tick 0 and 22.
+        assert!(!table.rings.contains_key(&399) && !table.rings.contains_key(&400));
+        assert_eq!((sounds(399), sounds(400)), (vec![("effect\\헤드 크러쉬", 0)], vec![("effect\\비트 조인트", 352)]));
+        assert_eq!((table.struck(398), table.struck(399)), (Some(&[(Who::Caster, 399)][..]), Some(&[(Who::Caster, 400)][..])));
+        // Napalm Vulcan's five sounds on its target; Mind Breaker's at tick 25.
+        assert_eq!(sounds(401), [320, 480, 640, 800, 960].map(|ms| ("effect\\EF_NapalmBeat", ms)));
+        assert_eq!(table.struck(400), Some(&[(Who::Target, 401)][..]));
+        assert_eq!((sounds(403), table.used(402)), (vec![("effect\\swordman_provoke", 400)], Some(&[(Who::Target, 403)][..])));
+        // The web: on the skill unit and on the status.
+        assert_eq!(table.units[&183], 404);
+        assert!(table.units_once.contains(&183) && table.status(735).contains(&404) && !table.sounds.contains_key(&404));
     }
 }

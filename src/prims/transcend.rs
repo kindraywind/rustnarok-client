@@ -10,6 +10,8 @@ use super::walls::Wall;
 use crate::world::{MeshVertex, Vector};
 
 pub const CROSS: &str = "data\\texture\\effect\\cross_old.bmp";
+/// The status of the Marionette control, which ends the tube.
+pub const MARIONETTE_STATUS: u16 = 121;
 pub const TUBE: &str = "data\\texture\\effect\\alpha_center.tga";
 
 /// A Gospel's cross over a skill unit's cell.
@@ -26,6 +28,8 @@ enum Body {
     DrainTarget,
     DrainCaster,
     Crasher([[u8; 3]; 31]),
+    /// Mind Breaker's colour a tick on ticks 0 to 60, drawn as it is.
+    Breaker([[u8; 3]; 61]),
     Indulge,
 }
 
@@ -37,6 +41,8 @@ struct Coloured {
 
 /// Soul Change's tube between the caster and the unit the packet names by id.
 struct Link {
+    /// Marionette Control's pink tube (395), which breathes and stays until the control's status packet, instead of Soul Change's.
+    marionette: bool,
     caster: Option<u32>,
     /// The id of the target as the game reads it, through a 32-bit float.
     aim: u32,
@@ -82,6 +88,18 @@ pub fn tube_alpha(n: u32) -> f32 {
         41..=77 => 114.0 - 3.0 * (n - 40) as f32,
         _ => 0.0,
     }
+}
+
+/// Marionette's tube radius at its count n: 0.7 and 0.005 more for the sine of each degree so far, a 360-tick breath.
+pub fn marionette_width(n: u32) -> f32 {
+    // The sum of sin(k°) for k = 1…n.
+    let sum = (f64::from(n) / 2.0).to_radians().sin() * (f64::from(n + 1) / 2.0).to_radians().sin() / 0.5_f64.to_radians().sin();
+    0.7 + 0.005 * sum as f32
+}
+
+/// Marionette's tube alpha at n: 1 a tick to 80, held for good.
+pub fn marionette_alpha(n: u32) -> f32 {
+    n.min(80) as f32
 }
 
 /// How far along the line the tube's far end is at n: sin(6n)° of the way for n under 15, then at the target.
@@ -141,7 +159,30 @@ impl Transcend {
 
     /// Soul Change's tube from `caster` to the unit named by `target` (the player is `own`).
     pub fn link(&mut self, caster: Option<u32>, target: u32, own: u32, now: Instant) {
-        self.links.push(Link { caster, aim: target, own, start: now, lost: false });
+        self.links.push(Link { marionette: false, caster, aim: target, own, start: now, lost: false });
+    }
+
+    /// Marionette Control's tube (395): it stays until the status packet of the control (EFST 121) takes it.
+    pub fn marionette(&mut self, caster: Option<u32>, target: u32, own: u32, now: Instant) {
+        self.links.push(Link { marionette: true, caster, aim: target, own, start: now, lost: false });
+    }
+
+    /// A status packet of the Marionette control (EFST 121), on or off, takes the unit's tube.
+    pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
+        if status == MARIONETTE_STATUS {
+            self.links.retain(|link| !(link.marionette && link.caster == unit));
+        }
+    }
+
+    /// Mind Breaker's flicker on its target: a colour a tick on ticks 0 to 60 (the blue, the green, then the red).
+    pub fn breaker(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let colours = [(); 61].map(|()| {
+            let blue = rand(255) as u8;
+            let green = rand(255) as u8;
+            let red = rand(255) as u8;
+            [red, green, blue]
+        });
+        self.bodies.push(Coloured { unit, start: now, body: Body::Breaker(colours) });
     }
 
     /// A tube whose end is not found for a tick is hidden for good; what ended goes.
@@ -154,7 +195,7 @@ impl Transcend {
             }
         }
         self.bodies.retain(|coloured| passes(coloured.start, now) <= 260);
-        self.links.retain(|link| passes(link.start, now) <= 200);
+        self.links.retain(|link| link.marionette || passes(link.start, now) <= 200);
     }
 
     /// The crosses to draw: over each Gospel's cell. Alpha 200, or at most 100 on `dim` maps.
@@ -186,7 +227,7 @@ impl Transcend {
                     let level = (2 * (125 - e as i32)) as u8;
                     (crate::actor::GLOW_OUTLINE, Some([level, level, 250]))
                 }),
-                Body::DrainTarget => None,
+                Body::DrainTarget | Body::Breaker(_) => None,
             }
         })
     }
@@ -199,6 +240,8 @@ impl Transcend {
                 Body::DrainTarget if e < 200 => Some([(205 - e) as u8, (205 - e) as u8, 255]),
                 Body::DrainTarget => fade_back([6, 6, 255], e - 199),
                 Body::Crasher(colours) if e > 60 => fade_back(colours[30], e - 60),
+                Body::Breaker(colours) if e <= 60 => Some(colours[e as usize]),
+                Body::Breaker(colours) => fade_back(colours[60], e - 60),
                 _ => None,
             }
         })
@@ -209,7 +252,7 @@ impl Transcend {
         let mut walls = Vec::new();
         for link in self.links.iter().filter(|link| !link.lost) {
             let n = passes(link.start, now);
-            if !(1..=77).contains(&n) {
+            if n == 0 || (!link.marionette && n > 77) {
                 continue;
             }
             let target = linked_unit(link.aim, link.own);
@@ -217,11 +260,18 @@ impl Transcend {
             let (p0, p1) = ([caster[0], caster[1] + 8.0, caster[2]], [far[0], far[1] + 8.0, far[2]]);
             let grow = tube_growth(n);
             let end = [p0[0] + (p1[0] - p0[0]) * grow, p0[1] + (p1[1] - p0[1]) * grow, p0[2] + (p1[2] - p0[2]) * grow];
-            let alpha = tube_alpha(n);
             // The bearing of (P0 − P1) in x/z turned a quarter: the facets are round the line, across it.
             let bearing = crate::actor::step_rot(p0[0] - p1[0], p0[2] - p1[2]);
             let (sin, cos) = ((bearing + 90.0) % 360.0).to_radians().sin_cos();
-            for (width, rgb, vertex_alpha) in [(0.2, [0.0, 100.0 / 255.0, 150.0 / 255.0], alpha), (0.4, [1.0, 50.0 / 255.0, 0.0], (2.0 * alpha).min(255.0))] {
+            let tubes = if link.marionette {
+                let (width, alpha) = (marionette_width(n), marionette_alpha(n));
+                let pink = [1.0, 89.0 / 255.0, 182.0 / 255.0];
+                [(width, pink, alpha), (2.0 * width, pink, 2.0 * alpha)]
+            } else {
+                let alpha = tube_alpha(n);
+                [(0.2, [0.0, 100.0 / 255.0, 150.0 / 255.0], alpha), (0.4, [1.0, 50.0 / 255.0, 0.0], (2.0 * alpha).min(255.0))]
+            };
+            for (width, rgb, vertex_alpha) in tubes {
                 let tint = [rgb[0], rgb[1], rgb[2], vertex_alpha / 255.0];
                 let ring = |at: Vector, j: u32| {
                     let (phi_sin, phi_cos) = ((36 * j) as f32).to_radians().sin_cos();
@@ -351,5 +401,46 @@ mod tests {
         assert!(transcend.meshes(start + TICK * 7, feet).is_empty());
         transcend.advance(start + TICK * 201, feet);
         assert!(transcend.links.is_empty());
+    }
+
+    #[test]
+    fn marionette_control_breathes_a_pink_tube_until_its_status_comes() {
+        let start = Instant::now();
+        let mut transcend = Transcend::default();
+        let feet = |unit: Option<u32>| match unit {
+            None => Some([0.0, 0.0, 0.0]),
+            Some(7) => Some([20.0, 0.0, 0.0]),
+            _ => None,
+        };
+        transcend.marionette(None, 7, 1, start);
+        // Alpha at n = 1, 80, 81, 300: 1, 80, 80, 80; the width at n = 1, 180, 360: 0.70009, 1.273, 0.70.
+        assert_eq!([1, 80, 81, 300].map(marionette_alpha), [1.0, 80.0, 80.0, 80.0]);
+        assert!(
+            (marionette_width(1) - 0.700_09).abs() < 0.0001 && (marionette_width(180) - 1.273).abs() < 0.005 && (marionette_width(360) - 0.7).abs() < 0.0001
+        );
+        // Both tubes #FF59B6, added on: the inner of the width and the alpha, the outer of twice each (alpha 2a at most 160).
+        let walls = transcend.meshes(start + TICK * 99, feet);
+        assert_eq!(walls.len(), 2);
+        assert!(walls.iter().all(|wall| wall.additive && wall.vertices[0].tint[..3] == [1.0, 89.0 / 255.0, 182.0 / 255.0]));
+        assert_eq!((walls[0].vertices[0].tint[3] * 255.0).round(), 80.0);
+        assert_eq!((walls[1].vertices[0].tint[3] * 255.0).round(), 160.0);
+        // It stays for good (well past Soul Change's 77 ticks), follows both units, and is hidden once an end is missing.
+        assert_eq!(transcend.meshes(start + TICK * 5000, feet).len(), 2);
+        transcend.advance(start + TICK * 5000, feet);
+        assert_eq!(transcend.links.len(), 1);
+        // The control's status packet takes it (EFST 121, on or off); other statuses and other units don't.
+        transcend.forget_status(Some(5), 121);
+        transcend.forget_status(None, 396);
+        assert_eq!(transcend.links.len(), 1);
+        transcend.forget_status(None, 121);
+        assert!(transcend.links.is_empty());
+        // Mind Breaker: a colour a tick on 0…60, from the draws blue, green, red; drawn as it is; faded back afterwards.
+        let mut breaker = Transcend::default();
+        let mut draws = [10, 20, 30].into_iter().cycle();
+        breaker.breaker(Some(1), start, |_| draws.next().unwrap());
+        let tint = |tick: u32| breaker.body_tint(Some(1), start + TICK * tick);
+        assert_eq!((tint(0), tint(60)), (Some([30, 20, 10]), Some([30, 20, 10])));
+        assert_eq!(tint(61), Some([38, 28, 18]));
+        assert!(breaker.glow(Some(1), start).is_none(), "not added on");
     }
 }
