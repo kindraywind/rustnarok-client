@@ -209,18 +209,27 @@ impl Stone {
     /// Earth Spike at `at` from `now`: a centre spike that rises and settles back a little, never fading, and six
     /// leaning outer ones round it that push up a little and fade over their last 10 ticks. All stand 240 ticks.
     pub fn earth_spike(&mut self, at: Vector, now: Instant) {
+        self.spike_field(at, now, STONE);
+    }
+
+    /// Spear of Ice at `at` from `now`: Earth Spike's seven spikes in ice.
+    pub fn ice_spike(&mut self, at: Vector, now: Instant) {
+        self.spike_field(at, now, ICE_TEXTURE);
+    }
+
+    fn spike_field(&mut self, at: Vector, now: Instant, texture: &'static str) {
         // ponytail: the spikes stand where the target stood; whether the game's follow it isn't known.
         let left = EARTH_SPIKE_TICKS - 1;
         let size = [3.0 + below(50) / 100.0, 18.0];
         let centre = Spike::new(now, at, 10.0, [below(360), 80.0 + below(20)], size, 240, left);
-        self.spikes.push(Spike { speed: 1.0, change: 0.01, turn: Some((12, -1.2)), stop: 15, sink: Some((0.0, 0.0)), ..centre });
+        self.spikes.push(Spike { texture, speed: 1.0, change: 0.01, turn: Some((12, -1.2)), stop: 15, sink: Some((0.0, 0.0)), ..centre });
         // Each at a random way out, its lean in a widening random range.
         for k in 1..=6 {
             let (sin, cos) = below(360).to_radians().sin_cos();
             let at = [at[0] + 3.5 * sin, at[1], at[2] - 3.5 * cos];
             let yaw = ((60 * (k - 1)) as f32 + below(60 * k)).min(360.0);
             let outer = Spike::new(now, at, 20.0, [yaw, 100.0], [4.0 + below(100) / 100.0, 20.0], 240, left);
-            self.spikes.push(Spike { speed: 1.5, stop: 2, alpha: 250.0, ..outer });
+            self.spikes.push(Spike { texture, speed: 1.5, stop: 2, alpha: 250.0, ..outer });
         }
     }
 
@@ -431,6 +440,27 @@ mod tests {
         assert_eq!(spikes.spikes.len(), 7);
         spikes.advance(start + TICK * 240);
         assert!(spikes.spikes.is_empty());
+    }
+
+    #[test]
+    fn spear_of_ice_stands_earth_spikes_seven_spikes_in_ice() {
+        let start = Instant::now();
+        let mut spikes = Stone::default();
+        spikes.ice_spike([1.0, 2.0, 3.0], start);
+        spikes.advance(start);
+        assert_eq!(spikes.spikes.len(), 7);
+        assert!(spikes.spikes.iter().all(|spike| spike.texture == ICE_TEXTURE));
+        assert_eq!((spikes.mesh(ICE_TEXTURE).len(), spikes.mesh(STONE).len()), (7 * 12, 0));
+        // The same rise, settling and fade as Earth Spike's: the centre at 7.98 up, the stubs 4.5, ending at tick 240.
+        spikes.advance(start + TICK * 30);
+        assert!((spikes.spikes[0].rise - (12.78 - 4.8)).abs() < 1e-3 && (spikes.spikes[1].rise - 4.5).abs() < 1e-4);
+        assert_eq!(spikes.spikes[0].alpha, 254.0);
+        spikes.advance(start + TICK * 240);
+        assert!(spikes.spikes.is_empty());
+        // Earth Spike's stay in stone.
+        let mut earth = Stone::default();
+        earth.earth_spike([0.0; 3], start);
+        assert!(earth.spikes.iter().all(|spike| spike.texture == STONE));
     }
 
     #[test]

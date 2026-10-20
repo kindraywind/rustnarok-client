@@ -16,13 +16,17 @@ pub const LOOKS: [(u32, &str); 4] = [
     (238, "data\\texture\\effect\\ring_white.tga"),
 ];
 /// The loops' effect ids and textures; Land Protector's square is additive.
-pub const LOOPS: [(u32, &str); 4] = [
+pub const LOOPS: [(u32, &str); 5] = [
     (239, "data\\texture\\effect\\ring_red.tga"),
     (240, "data\\texture\\effect\\ring_blue.tga"),
     (241, "data\\texture\\effect\\magic_green.tga"),
     (LAND_PROTECTOR, "data\\texture\\effect\\aaa copy.bmp"),
+    (HIDDEN_WATER, "data\\texture\\effect\\ring_blue.tga"),
 ];
 pub const LAND_PROTECTOR: u32 = 242;
+/// Hidden Water's cells (620): Deluge's ring in a pale blue (#7878FF).
+pub const HIDDEN_WATER: u32 = 620;
+const HIDDEN_WATER_TINT: [f32; 3] = [120.0 / 255.0, 120.0 / 255.0, 1.0];
 
 /// A ground look shows for 110 ticks (its ribbons faded by then), though the effect lives on unseen.
 const LOOK_TICKS: u32 = 110;
@@ -47,6 +51,7 @@ struct Loop {
     start: Instant,
     unit: u32,
     texture: &'static str,
+    tint: [f32; 3],
     at: Vector,
     /// Ticks run.
     ticks: u32,
@@ -169,7 +174,8 @@ impl Sage {
         if let Some(&(_, texture)) = LOOPS.iter().find(|(kept, _)| *kept == id) {
             self.loops.retain(|each| each.unit != unit);
             let (turn, alpha) = (rand(360) as f32, rand(100) as i32);
-            self.loops.push(Loop { start: now, unit, texture, at, ticks: 0, turn, alpha, radius: 2.6, lean: 80, spin: rand(360) });
+            let tint = if id == HIDDEN_WATER { HIDDEN_WATER_TINT } else { [1.0; 3] };
+            self.loops.push(Loop { start: now, unit, texture, tint, at, ticks: 0, turn, alpha, radius: 2.6, lean: 80, spin: rand(360) });
         }
     }
 
@@ -189,13 +195,13 @@ impl Sage {
         }
     }
 
-    /// Everything to draw at `now`: its texture, whether it adds on, and its triangles.
-    pub fn shapes(&self, now: Instant) -> Vec<(&'static str, bool, Vec<Corner>)> {
+    /// Everything to draw at `now`: its texture, whether it adds on, the colour of its vertices, and its triangles.
+    pub fn shapes(&self, now: Instant) -> Vec<(&'static str, bool, [f32; 3], Vec<Corner>)> {
         let looks = self.looks.iter().filter_map(|look| {
             let age = (now.checked_duration_since(look.start)?.as_millis() / TICK.as_millis()) as u32 + 1;
-            (age <= LOOK_TICKS).then(|| (look.texture, false, ribbons(look.at, age)))
+            (age <= LOOK_TICKS).then(|| (look.texture, false, [1.0; 3], ribbons(look.at, age)))
         });
-        let loops = self.loops.iter().map(|each| (each.texture, each.texture == LOOPS[3].1, each.shape()));
+        let loops = self.loops.iter().map(|each| (each.texture, each.texture == LOOPS[3].1, each.tint, each.shape()));
         looks.chain(loops).collect()
     }
 }
@@ -210,7 +216,7 @@ mod tests {
         let mut sage = Sage::default();
         // Volcano's look: four ribbons of 20 quads, faded out after 110 ticks.
         sage.look(225, [0.0; 3], start);
-        assert_eq!(sage.shapes(start)[0].2.len(), RIBBONS * RIBBON_QUADS * 6);
+        assert_eq!(sage.shapes(start)[0].3.len(), RIBBONS * RIBBON_QUADS * 6);
         let first = ribbons([0.0; 3], 10);
         assert_eq!(first[0].2, 200.0 / 255.0);
         assert_eq!(ribbons([0.0; 3], 110)[0].2, 0.0);
@@ -230,9 +236,31 @@ mod tests {
         // Land Protector's square breathes between 5.6 and 7 out, additive at alpha 100.
         sage.keep(LAND_PROTECTOR, 8, [0.0; 3], start, |_| 90);
         let shapes = sage.shapes(start);
-        let (_, additive, square) = &shapes[0];
+        let (_, additive, _, square) = &shapes[0];
         assert!(*additive && square.len() == 6 && (square[0].0[0] - 7.0).abs() < 1e-4);
         sage.forget(8);
         assert!(sage.loops.is_empty());
+    }
+
+    #[test]
+    fn hidden_waters_cell_is_deluges_ring_in_pale_blue() {
+        let start = Instant::now();
+        let mut sage = Sage::default();
+        for id in [239, 240, 241, HIDDEN_WATER] {
+            sage.keep(id, id, [0.0; 3], start, |n| if n == 100 { 40 } else { 0 });
+        }
+        let shapes = sage.shapes(start);
+        // 239 to 241 stay white; 620 is #7878FF on ring_blue, with the normal blend like Deluge's.
+        assert!(shapes[..3].iter().all(|(_, _, tint, _)| *tint == [1.0; 3]));
+        let (texture, additive, tint, corners) = &shapes[3];
+        assert_eq!((*texture, *additive, *tint), (LOOPS[1].1, false, [120.0 / 255.0, 120.0 / 255.0, 1.0]));
+        assert_eq!(corners.len(), PETAL_QUADS * 6);
+        // The same cycle: 9 ticks brightening to 180, 65 ticks round, and it goes with its unit.
+        let mut cell = sage.loops.pop().unwrap();
+        (0..20).for_each(|_| cell.step());
+        (0..9).for_each(|_| cell.step());
+        assert_eq!(cell.alpha, 180);
+        sage.forget(HIDDEN_WATER);
+        assert!(sage.loops.iter().all(|each| each.unit != HIDDEN_WATER));
     }
 }

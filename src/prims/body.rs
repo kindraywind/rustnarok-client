@@ -29,6 +29,10 @@ pub enum Change {
     BlueGlow,
     /// The Star Gladiator's warmth: a red glow that rises over 1.4 s and settles.
     RedGlow,
+    /// Madness Canceller: the body blinks blue every 4th tick for 0.9 s.
+    BlueBlink,
+    /// Adjustment and Gatling Fever: the same in red.
+    RedBlink,
     /// Comfort of the Sun, Moon and Stars: Soul Link's blue outline swelling for 3.2 s and ebbing for 3.2 s.
     Comfort,
 }
@@ -41,6 +45,7 @@ impl Change {
             Change::Shrink => 99_999,
             Change::Soul | Change::Stack | Change::RedGlow => 99_999_999,
             Change::BlueGlow => 200,
+            Change::BlueBlink | Change::RedBlink => 60,
             Change::Comfort => 400,
             Change::Drop => 35,
         }
@@ -170,6 +175,12 @@ impl Bodies {
         }
         if let Some(e) = self.tick(unit, Change::BlueGlow, now).filter(|&e| e <= 150) {
             return Some((GLOW_BLUE | (copies_alpha(e / 3) as u32) << PARAM_SHIFT, None));
+        }
+        // The blinks: ticks 0, 4 … 56, the copies at f = 20 (alpha 160) for that tick only.
+        for (change, flag) in [(Change::BlueBlink, GLOW_BLUE), (Change::RedBlink, GLOW_RED)] {
+            if self.tick(unit, change, now).is_some_and(|e| e % 4 == 0 && e <= 56) {
+                return Some((flag | (copies_alpha(20) as u32) << PARAM_SHIFT, None));
+            }
         }
         let e = self.tick(unit, Change::RedGlow, now)?;
         Some((GLOW_RED | (copies_alpha(red_counter(e)) as u32) << PARAM_SHIFT, None))
@@ -329,6 +340,26 @@ mod tests {
         assert_eq!(landing.glow(None, start + TICK * 12), Some((GLOW_DROP | 2 << PARAM_SHIFT, None)));
         landing.advance(start + TICK * 46);
         assert!(landing.active.is_empty() && landing.glow(None, start + TICK * 46).is_none());
+    }
+
+    #[test]
+    fn madness_canceller_and_adjustment_blink_every_fourth_tick() {
+        let start = Instant::now();
+        let mut bodies = Bodies::default();
+        bodies.start(Change::BlueBlink, Some(1), start);
+        bodies.start(Change::RedBlink, Some(2), start);
+        let flags = |unit: u32, tick: u32| bodies.glow(Some(unit), start + TICK * tick);
+        // On at e = 0, 4 … 56: 15 ticks of 60, the copies at alpha 160 in blue for 625 and red for 626.
+        let lit: Vec<u32> = (0..60).filter(|&tick| flags(1, tick).is_some()).collect();
+        assert_eq!(lit, (0..=56).step_by(4).collect::<Vec<_>>());
+        assert_eq!(lit.len(), 15);
+        assert_eq!(flags(1, 0), Some((GLOW_BLUE | 160 << PARAM_SHIFT, None)));
+        assert_eq!(flags(2, 56), Some((GLOW_RED | 160 << PARAM_SHIFT, None)));
+        assert!([1, 2, 3, 57, 59, 60].iter().all(|&tick| flags(1, tick).is_none() && flags(2, tick).is_none()));
+        // Nothing for another unit, and the effect ends at tick 60.
+        assert!(bodies.glow(Some(3), start).is_none());
+        bodies.advance(start + TICK * 61);
+        assert!(bodies.active.is_empty());
     }
 
     #[test]

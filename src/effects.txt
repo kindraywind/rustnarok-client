@@ -173,8 +173,6 @@ str	603	firehit%d	-	1	1	3
 str	608	cook_suc	-	1
 str	609	cook_fail	-	1
 str	612	itempokjuk	-	1
-str	619	freeze	-	1	1	3
-str	622	setsudan	-	1
 str	635	fire dragon	-	0
 str	636	icy	-	0
 str	646	트랙킹	-	1
@@ -1463,6 +1461,7 @@ spr	579	item_zzz	1	-
 spr	580	item_rain	1	-
 spr	583	m_ef01	1	-
 spr	584	m_ef02	1	delayFrame=64;firstFrame=1;onTop=true
+spr	622	썬더스톰	1	delayFrame=32;firstFrame=1;repeat=true;duration=1584;onTop=true;scale=2.5;yOffset=-31.5
 spr	585	m_ef03	1	-
 spr	586	m_ef04	1	-
 spr	587	m_ef05	1	-
@@ -1521,6 +1520,7 @@ func	522	quake	0	650
 func	387	quake	480	650
 func	512	quake	132	650
 func	537	quake	200	650
+func	619	quake	0	200
 func	563	quake	0	650
 func	563	quake	80	650
 func	563	quake	160	650
@@ -5134,7 +5134,11 @@ length	25	40
 length	568	100
 length	569	60
 length	609	100
+length	619	250
+length	620	29999
 length	622	100
+length	625	60
+length	626	60
 length	704	100
 length	706	100
 length	709	70
