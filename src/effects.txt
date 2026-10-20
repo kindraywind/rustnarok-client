@@ -2046,7 +2046,8 @@ wav	828	effect\maelstrom	0
 wav	829	effect\bloodylust	0
 wav	830	effect\EF_BeginSpell	16	listener
 wav	831	effect\EF_BeginSpell	0
-wav	832	effect\기공포	0
+wav	832	effect\기공포	0	listener
+wav	833	effect\AB_duplelight	0	listener
 wav	847	effect\수줍은하루의우울	0
 wav	856	effect\reverberation	0
 wav	857	effect\rainstorm	0

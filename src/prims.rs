@@ -36,6 +36,7 @@ pub mod throw;
 pub mod transcend;
 pub mod walls;
 pub mod waterball;
+pub mod waves;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -177,6 +178,7 @@ pub struct Prims {
     pub mechanic: mechanic::Mechanic,
     pub painter: painter::Painter,
     pub holes: holes::Holes,
+    pub waves: waves::Waves,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -603,6 +605,7 @@ impl Prims {
         self.circles.forget_venom(Some(unit));
         self.mechanic.forget(unit);
         self.holes.forget(unit);
+        self.waves.forget(unit);
         self.shafts.forget(unit);
     }
 

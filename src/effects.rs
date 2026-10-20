@@ -13,7 +13,7 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, bolts, boomerang, brawl, burst, circle, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter, sage, shafts, shards,
-    sight, sniper, songs, spray, star, stone, tanji, throw, transcend, walls, waterball,
+    sight, sniper, songs, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1872,6 +1872,9 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Sonic Wave's crescents and Duple Light's orbs (`prims::waves`).
+const SONIC_WAVE: u32 = 832;
+const DUPLE_LIGHT: u32 = 833;
 /// Shadow Form's cast aura, the ground cells of Chaos Panic, Maelstrom and Bloody Lust, the bubble casts of the Arch Bishop and the
 /// Sura (`prims::holes`, `prims::songs`).
 const SHADOW_CAST: u32 = 826;
@@ -2013,7 +2016,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 32] = [
+pub const AIMED: [u32; 33] = [
+    SONIC_WAVE,
     SHADOW_LINK,
     BOOST_KNUCKLE,
     RELEASE,
@@ -2380,6 +2384,14 @@ impl Effects {
                 // The skill packet's aura: 60 ticks, with the sound at the listener.
                 self.play_aura(gpu, grf, unit, SHADOW_CAST, 960, now);
                 self.sounds.push((now, "effect\\shadowform.wav".to_owned(), LISTENER));
+            }
+            (DUPLE_LIGHT, Target::Status(unit, _)) | (DUPLE_LIGHT, Target::Unit(unit))
+                if !matches!(target, Target::Unit(_)) || !self.prims.waves.has_orbs(unit) =>
+            {
+                for path in [waves::GLOW, waves::PANE] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.waves.duple_light(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
             (STRIP_ACCESSORY, _) => {
                 for path in guard::ACCESSORIES {
@@ -3178,6 +3190,14 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.waterballs.throw(from, to, now);
             }
+            SONIC_WAVE => {
+                for path in songs::BUBBLES {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.play_sounds(table, id, from, now);
+                self.prims.waves.sonic(from, to, self.min, now);
+                self.prims.guard.sonic(caster, now);
+            }
             SHADOW_LINK => {
                 self.textures.entry(transcend::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, transcend::CLOUD, true).ok());
                 self.prims.transcend.shadow(caster, target, own, now);
@@ -3243,6 +3263,7 @@ impl Effects {
         self.prims.spray.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.brawl.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.mechanic.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        self.prims.waves.advance(now, |n| pick(0, n.saturating_sub(1)));
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -3466,6 +3487,7 @@ impl Effects {
         self.prims.songs.forget_status(unit, status);
         self.prims.transcend.forget_status(unit, status);
         self.prims.brawl.forget_status(unit, status);
+        self.prims.waves.forget_status(unit, status);
         if status == 330 {
             self.prims.circles.forget(unit);
         }
@@ -3772,6 +3794,13 @@ impl Effects {
                 self.prims
                     .mechanic
                     .meshes(now, |n| pick(0, n.saturating_sub(1)))
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
+                self.prims
+                    .waves
+                    .meshes(now, &position_of)
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
@@ -4172,6 +4201,7 @@ impl Effects {
             }
         }
         quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, spear, &self.textures, self.yaw));
+        quads.extend(self.prims.waves.quads(now, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads.extend(self.prims.circles.mark_quads(now, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads.extend(self.prims.circles.quads(now, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads.extend(self.prims.sparkle_quads(now, self.dim, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
@@ -5869,5 +5899,17 @@ mod tests {
         assert!([2326, 2327, 2328, 2329, 2330, 2518].iter().all(|&skill| table.cast_aura(skill, 12) == Some(SURA_CAST)));
         assert_eq!(sounds(SURA_CAST), [("effect\\EF_BeginSpell", 0, false)]);
         assert!(!is_cast_aura(SURA_CAST));
+    }
+
+    #[test]
+    fn sonic_wave_and_duple_light_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Sonic Wave: launched on the caster at the target's feet, its sound at the listener.
+        assert!(AIMED.contains(&SONIC_WAVE) && table.struck(2002).unwrap().contains(&(Who::Caster, SONIC_WAVE)));
+        assert_eq!(sounds(SONIC_WAVE), [("effect\\기공포", 0, true)]);
+        // Duple Light: on the status and on the skill's target; its sound at the listener.
+        assert!(table.status(350).contains(&DUPLE_LIGHT) && table.used(2054).unwrap().contains(&(Who::Target, DUPLE_LIGHT)));
+        assert_eq!(sounds(DUPLE_LIGHT), [("effect\\AB_duplelight", 0, true)]);
     }
 }
