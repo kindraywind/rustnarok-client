@@ -3615,7 +3615,7 @@ impl App {
                 }
             }
             MapEvent::StatusIcon { kind, id, on, left_ms, value, .. } => {
-                game.status_loop(gpu, grf, table, id, kind, on);
+                game.status_loop(gpu, grf, table, id, kind, on, i64::from(value));
                 // ChangeSize's percent multiplies the size table when the status is on.
                 if kind == actor::CHANGE_SIZE || kind == actor::CHANGE_SIZE_MONSTER {
                     let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
