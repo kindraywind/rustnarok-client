@@ -361,9 +361,9 @@ impl MapSession {
         self.stream.write_all(&CZ_NPC_TRADE_QUIT.to_le_bytes())
     }
 
-    /// Answers a making list: the item, or 0 to give it up (rathena then forgets the list).
-    pub fn make(&mut self, item: u32) -> io::Result<()> {
-        self.stream.write_all(&encode_make(item))
+    /// Answers a making list: the item and extra materials, or 0 to give it up (rathena then forgets the list).
+    pub fn make(&mut self, item: u32, materials: [u32; 3]) -> io::Result<()> {
+        self.stream.write_all(&encode_make(item, materials))
     }
 
     pub fn cook(&mut self, kind: u16, item: u32) -> io::Result<()> {

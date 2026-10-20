@@ -1669,6 +1669,7 @@ impl App {
         pick_icons.extend(game.grade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.enchant.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
+        pick_icons.extend(game.forge.as_ref().map(|window| window.icons(items)).unwrap_or_default());
         pick_icons.extend(game.synthesis.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
@@ -2201,6 +2202,9 @@ impl App {
         }
         if let Some((list, _)) = &game.pick {
             list.draw(shop_layer.window(), &assets.chrome, &assets.pick_list, &assets.npc_menu, icons, items, skill_info, messages, font, pointer);
+        }
+        if let Some(forge) = &game.forge {
+            forge.draw(shop_layer.window(), &assets.chrome, &assets.forge, icons, items, messages, font, pointer);
         }
         if let Some(shop) = &game.shop {
             shop.draw(shop_layer.window(), &assets.chrome, &assets.shop, icons, items, messages, font, pointer);

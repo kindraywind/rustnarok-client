@@ -4100,6 +4100,11 @@ impl Effects {
         self.animations.retain(|animation| !on(animation.anchor));
     }
 
+    /// Stops a playing STR effect on its unit (None = the player).
+    pub fn forget_effect(&mut self, unit: Option<u32>, effect: u32) {
+        self.playing.retain(|p| !(p.anchor.unit() == Some(unit) && p.effect == effect));
+    }
+
     pub fn forget(&mut self, unit: u32) {
         self.areas.retain(|area| area.id != unit);
         self.worlds.remove_status(Some(unit), None);

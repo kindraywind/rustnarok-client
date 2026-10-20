@@ -1087,6 +1087,7 @@ impl Game {
         matches!(title, Some(TitleHit::Close | TitleHit::Minimize))
             || self.equipment.button_boxes().into_iter().any(|(_, area)| inside(area))
             || self.pick.as_ref().is_some_and(|(list, _)| list.button_boxes().into_iter().any(|(_, area)| inside(area)))
+            || self.forge.as_ref().is_some_and(|forge| forge.button_boxes().into_iter().any(|(_, area)| inside(area)))
             || self.on_grip(cursor)
     }
 
@@ -2072,6 +2073,7 @@ impl Game {
             self.bank = None;
         }
         self.close_catalog();
+        self.cancel_forge();
     }
 
     /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
@@ -2122,6 +2124,7 @@ impl Game {
             || (self.deal_choice.is_some() && contains(self.deal_frame.position, shop::DEAL_SIZE, cursor))
             || self.menu.is_some()
             || self.pick.as_ref().is_some_and(|(list, _)| list.covers(cursor))
+            || self.forge.as_ref().is_some_and(|forge| forge.covers(cursor))
             || self.shop.as_ref().is_some_and(|shop| shop.covers(cursor))
             || self.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.enchant.as_ref().is_some_and(|window| window.hit(cursor).is_some())
@@ -2746,6 +2749,9 @@ impl Game {
         if self.pick.as_ref().is_some_and(|(_, picking)| !picking.escapable()) {
             names.push("PickList".into());
         }
+        if self.forge.as_ref().is_some_and(|forge| forge.frame.open) {
+            names.push("MakingMaterial".into());
+        }
         if self.reason_box.is_some() {
             names.push("GuildReason".into());
         }
@@ -3303,7 +3309,15 @@ impl Game {
             // The server waits for the Magnifier's answer, a cancel too.
             (Picking::Identify, item) => self.session.identify(item.map(|item| item.index)),
             // A making list unanswered isn't sent again: a cancel answers item 0.
-            (Picking::Make, item) => self.session.make(item.map_or(0, |item| item.id)),
+            (Picking::Make, Some(item)) => {
+                if forge::skips_material_window(self.me.job) {
+                    self.session.make(item.id, [0, 0, 0])
+                } else {
+                    self.forge = Some(forge::Forge::new(list.frame.position, item.id));
+                    Ok(())
+                }
+            }
+            (Picking::Make, None) => self.session.make(0, [0, 0, 0]),
             (Picking::Cook(kind), item) => self.session.cook(kind, item.map_or(0, |item| item.id)),
             (Picking::Arrow, Some(item)) => self.session.make_arrow(item.id),
             // Both lists end with an answer, a cancel too.
@@ -3320,6 +3334,38 @@ impl Game {
             (Picking::Hatch, None) => Ok(()),
             (Picking::Merge, _) => self.session.cancel_merge(),
         };
+    }
+
+    pub(crate) fn forget_effect(&mut self, unit: u32, effect: u32) {
+        let key = (unit != self.account_id).then_some(unit);
+        self.effects.forget_effect(key, effect);
+    }
+
+    pub(crate) fn cancel_forge(&mut self) {
+        if let Some(mut forge) = self.forge.take() {
+            for slot in &mut forge.slots {
+                if let Some(item) = slot.take() {
+                    self.inventory.extend(vec![item]);
+                }
+            }
+            let _ = self.session.make(0, [0, 0, 0]);
+        }
+    }
+
+    pub(crate) fn ok_forge(&mut self) {
+        if let Some(forge) = self.forge.take() {
+            let materials =
+                [forge.slots[0].as_ref().map_or(0, |i| i.id), forge.slots[1].as_ref().map_or(0, |i| i.id), forge.slots[2].as_ref().map_or(0, |i| i.id)];
+            let _ = self.session.make(forge.item, materials);
+        }
+    }
+
+    pub(crate) fn take_forge_slot(&mut self, slot: usize) {
+        if let Some(forge) = &mut self.forge
+            && let Some(item) = forge.take_slot(slot)
+        {
+            self.inventory.extend(vec![item]);
+        }
     }
 
     /// Answers the bind question: OK wears the item.

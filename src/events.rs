@@ -423,6 +423,7 @@ impl App {
                     whispered: VecDeque::new(),
                     whisper_asked: VecDeque::new(),
                     pick: None,
+                    forge: None,
                     card_asked: None,
                     item_skill: None,
                     trade: None,
@@ -3138,10 +3139,14 @@ impl App {
                 let name = inventory::item_name(&self.items, item, true, 0);
                 game.chat_line(messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]), color);
             }
-            MapEvent::Made { result, item } => {
-                let name = inventory::item_name(&self.items, item, true, 0);
-                let (id, color) = if result % 2 == 0 { (MADE, CHAT_ITEM) } else { (NOT_MADE, CHAT_ERROR) };
-                game.chat_line(messages::fill(self.messages.get(id).map_or("", String::as_str), &[&name]), color);
+            MapEvent::Made { result, .. } => {
+                let Some(effect) = forge::result_effect(result) else { return };
+                if (2..=7).contains(&result) {
+                    game.forget_effect(game.account_id, effect);
+                }
+                if let Some(gpu) = gpu {
+                    game.play_effect(gpu, grf, table, effect, game.account_id);
+                }
             }
             MapEvent::CardList(indexes) => {
                 let items: Vec<_> = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
