@@ -2102,6 +2102,10 @@ pub struct Actor {
     /// Escape: the run, the aims copies are due at, where the unit was drawn last and the effects its copies started.
     escape: Option<Escape>,
     escape_due: Vec<[f32; 3]>,
+    /// Hallucination Walk (EFST 334 and 869, effect 792): tints the unit #FAFAFA and leaves an Escape copy every 20 ticks.
+    hallucination: bool,
+    hallu_age: u32,
+    hallu_due: bool,
     last_feet: Option<[f32; 3]>,
     launches: Vec<(u32, [f32; 3])>,
     /// What statuses do to how its own parts are drawn: by status, the body flags and colour (`status_body`).
@@ -2117,6 +2121,9 @@ pub struct Actor {
 pub const AFTERIMAGE: u32 = 166;
 /// Striking's copies (EFST 445): a frozen copy every 5th tick, whatever the player does.
 pub const STRIKING: u32 = 925;
+/// Hallucination Walk's copies and tint (#FAFAFA, effect 792, EFST 334 and 869).
+pub const HALLU_TINT: [u8; 3] = [250, 250, 250];
+pub const HALLUCINATION_WALK: u32 = 792;
 
 /// How a status has its unit's own parts drawn: the body, head and headgears added on; the weapon added on; two grown
 /// added-on copies of the body, head and headgears (Assumptio); four growing copies of every part, the part itself at
@@ -2452,6 +2459,9 @@ impl Actor {
             strike_tint: None,
             escape: None,
             escape_due: Vec::new(),
+            hallucination: false,
+            hallu_age: 0,
+            hallu_due: false,
             last_feet: None,
             launches: Vec::new(),
             glows: Vec::new(),
@@ -2509,6 +2519,14 @@ impl Actor {
         self.strike_tint
     }
 
+    /// Hallucination Walk (EFST 334 and 869, effect 792): tints the unit #FAFAFA and leaves an Escape copy every 20 ticks.
+    /// A status packet removes the running effect if it has one and starts a new one; off only removes.
+    pub fn hallucination(&mut self, on: bool) {
+        self.hallucination = on;
+        self.hallu_age = 0;
+        self.hallu_due = false;
+    }
+
     /// Escape (5010) is used: the unit is tinted yellow for 20 ticks and a copy is left at the aim every 5th, the aim closing on the
     /// unit. A second use while one runs does nothing.
     pub fn escape(&mut self) {
@@ -2545,6 +2563,11 @@ impl Actor {
                 self.strike_due |= self.strike_age.is_multiple_of(5);
                 self.strike_age += 1;
             }
+            if self.hallucination {
+                self.blur_colour = HALLU_TINT;
+                self.hallu_due |= self.hallu_age.is_multiple_of(20);
+                self.hallu_age += 1;
+            }
             if let Some(run) = &mut self.escape {
                 self.blur_colour = ESCAPE_TINT;
                 run.aim = run.aim.or(self.last_feet);
@@ -2564,6 +2587,9 @@ impl Actor {
                 if run.e >= 20 {
                     self.escape = None;
                 }
+                continue;
+            }
+            if self.hallucination {
                 continue;
             }
             if self.blurs.is_empty() && self.snap_left == 0 {
@@ -2603,6 +2629,10 @@ impl Actor {
             self.strike_due = false;
             let tint = self.strike_tint.unwrap_or([255; 3]);
             self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint, kind: GhostKind::Striking, launched: false });
+        }
+        if self.hallu_due && !placed.is_empty() {
+            self.hallu_due = false;
+            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint: HALLU_TINT, kind: GhostKind::Escape, launched: false });
         }
         for aim in std::mem::take(&mut self.escape_due) {
             if !placed.is_empty() {
@@ -4758,5 +4788,53 @@ mod tests {
         assert_eq!([55, 130, 131, 199].map(|f| alpha(&stack(f), 0)), [0.0, 75.0, 104.0, 36.0]);
         assert_eq!([0, 1, 2, 3, 4].map(|ring| alpha(&stack(199), ring)), [36.0, 26.0, 16.0, 6.0, 0.0]);
         assert!(glow_copies(GLOW_STACK | 100 << PARAM_SHIFT, None, PartGroup::Body, 0.0, 0.0, 1.0, true).1.is_empty());
+    }
+
+    #[test]
+    fn hallucination_walk_tints_near_white_and_leaves_copies_every_20_ticks() {
+        let start = Instant::now();
+        let tick = |ticks: u64| start + Duration::from_millis(16 * ticks);
+        let mut actor = Actor::new("Guillotine Cross".into(), None, [0, 0], 0, 150);
+        let placed: Vec<Placed> = vec![((0, 0, 0, [255; 4], 0), [0.0; 2], [1.0; 2], 0.0)];
+        actor.step_blur(tick(0), || false);
+        actor.hallucination(true);
+        // Copies on e = 0, 20, 40 and none on 1 … 19.
+        let mut copies = Vec::new();
+        for t in 1..=45 {
+            actor.step_blur(tick(t), || false);
+            let before = actor.ghosts.len();
+            actor.leave_ghost(tick(t), [0.0; 3], &placed);
+            if actor.ghosts.len() > before {
+                copies.push(t - 1);
+            }
+            assert_eq!(actor.body_tint(), Some(HALLU_TINT), "tick {t}");
+        }
+        assert_eq!(copies, [0, 20, 40]);
+        // The copy's alpha at n = 107, 108, 111, 112, 192, 193 (180, 172, 172, 164, 4, gone).
+        assert_eq!([107, 108, 111, 112, 192, 193].map(escape_alpha), [180.0, 172.0, 172.0, 164.0, 4.0, 0.0]);
+        // 793 started at n = 110.
+        let mut walker = Actor::new("Guillotine Cross".into(), None, [0, 0], 0, 150);
+        walker.step_blur(tick(0), || false);
+        walker.hallucination(true);
+        walker.step_blur(tick(1), || false);
+        walker.leave_ghost(tick(1), [5.0; 3], &placed);
+        assert_eq!(walker.ghosts.len(), 1);
+        walker.leave_ghost(tick(1 + 108), [5.0; 3], &placed);
+        assert!(walker.take_launches().is_empty(), "n = 109");
+        walker.leave_ghost(tick(1 + 109), [5.0; 3], &placed);
+        assert_eq!(walker.take_launches(), [(793, [5.0; 3])]);
+        // Status off removes it; copies outlive the effect.
+        walker.hallucination(false);
+        assert_eq!(walker.ghosts.len(), 1);
+        // Drifting back to white by 8 per channel a tick after it is removed.
+        walker.step_blur(tick(1 + 110), || false);
+        assert_eq!(walker.body_tint(), None);
+        // A second status packet starts one 792 only.
+        let mut second = Actor::new("Guillotine Cross".into(), None, [0, 0], 0, 150);
+        second.step_blur(tick(0), || false);
+        second.hallucination(true);
+        second.hallucination(true);
+        second.step_blur(tick(1), || false);
+        assert!(second.hallu_due && second.hallu_age == 1);
     }
 }

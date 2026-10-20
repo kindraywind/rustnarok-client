@@ -3511,6 +3511,10 @@ impl App {
                                 game.start_escape(unit);
                                 continue;
                             }
+                            if effect == effects::EF_FROSTDIVER3 {
+                                game.jack_frost(gpu, grf, source, target);
+                                continue;
+                            }
                             game.play_effect(gpu, grf, table, effect, unit);
                             // A cast aura blooms again with the use (Arrullo's blue one, Change Material's green).
                             if effects::is_cast_aura(effect) {

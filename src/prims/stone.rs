@@ -71,6 +71,8 @@ struct Spike {
     unit: Option<u32>,
     /// Gravitation Field's: every 6 ticks it bobs (the speed is −1.2 at age 2 and 1.18 at age 5 of each cycle).
     cycle: bool,
+    /// Jack Frost's: additive dark blue spikes with random color jitter each frame.
+    blue: bool,
 }
 
 /// The axes of a spike turned `yaw` about the vertical, then pitched `pitch` from lying along it (90: upright), in
@@ -114,6 +116,7 @@ impl Spike {
             fade: life - 10,
             unit: None,
             cycle: false,
+            blue: false,
         }
     }
 
@@ -158,20 +161,26 @@ impl Spike {
     /// A Frost Diver ice spike born at `born`, its base `around` units off `at` the way `turn` points: it rises 3 units
     /// the first tick, slowing by 0.15 a tick, and stops after age 20 (28.35 up); it fades over its last 10 ticks.
     #[allow(clippy::too_many_arguments)]
-    fn ice(born: Instant, at: Vector, around: f32, turn: f32, size: [f32; 2], angles: [f32; 2], left: u32, alpha: f32) -> Self {
+    fn ice(born: Instant, at: Vector, around: f32, turn: f32, size: [f32; 2], angles: [f32; 2], left: u32, alpha: f32, blue: bool) -> Self {
         let (sin, cos) = turn.to_radians().sin_cos();
         let spike = Spike::new(born, [at[0] + around * sin, at[1], at[2] - around * cos], FROST_DEPTH, angles, size, FROST_LIFE, left);
-        Spike { texture: ICE_TEXTURE, speed: 3.0, change: -0.15, stop: 20, alpha, ..spike }
+        Spike { texture: ICE_TEXTURE, speed: 3.0, change: -0.15, stop: 20, alpha, blue, ..spike }
     }
 
     /// Its four faces: base corner, apex, base corner, with the texture across them a fifth at a time.
-    fn faces(&self) -> [MeshVertex; 12] {
+    fn faces(&self, mut rand: impl FnMut(u32) -> u32) -> [MeshVertex; 12] {
         let [across, side, up] = self.axes;
         let point =
             |x: f32, y: f32, z: f32| -> Vector { std::array::from_fn(|axis| self.base[axis] + across[axis] * x + side[axis] * y + up[axis] * (self.rise + z)) };
         // ponytail: a spike that never fades draws fully opaque (the game leaves its colour white, alpha 255).
         let alpha = if self.sink.is_some() { 1.0 } else { self.alpha / 255.0 };
-        let tint = [1.0, 1.0, 1.0, alpha];
+        let tint = if self.blue {
+            let r = (40 + rand(11)) as f32 / 255.0;
+            let g = (40 + rand(11)) as f32 / 255.0;
+            [r, g, 1.0, alpha]
+        } else {
+            [1.0, 1.0, 1.0, alpha]
+        };
         let [s, h] = [self.half, self.height];
         let apex = point(0.0, 0.0, h);
         let sides = [[[-s, -s], [s, -s]], [[-s, -s], [-s, s]], [[-s, s], [s, s]], [[s, s], [s, -s]]];
@@ -277,11 +286,9 @@ impl Stone {
         self.trains.push(Train { start: now, ticks: 0, from, way, short: distance <= TRAIN_STOP });
     }
 
-    /// Frost Diver (EF_FROSTDIVER) from `from` at `to` from `now`: one ice spike a tick in a line toward the target,
-    /// its random choices from `rand(n)` (0 to n − 1).
-    pub fn frost_diver(&mut self, from: Vector, to: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    fn frost_line(&mut self, from: Vector, to: Vector, now: Instant, blue: bool, mut rand: impl FnMut(u32) -> u32) {
         // Along the whole degree before the bearing's (ψ), 1° to 2° off the line toward smaller bearings; 0 below 1°.
-        let heading = crate::actor::step_rot(to[0] - from[0], to[2] - from[2]).trunc();
+        let heading = (crate::actor::step_rot(to[0] - from[0], to[2] - from[2]) + 1e-3).trunc();
         let (sin, cos) = (if heading == 0.0 { 0.0 } else { heading - 1.0 }).to_radians().sin_cos();
         let way = [sin, -cos];
         for tick in 0..FROST_TICKS {
@@ -290,10 +297,29 @@ impl Stone {
             let [turn, around, half, height, yaw, pitch] = [rand(360), rand(10), rand(40), rand(30), rand(360), rand(30)];
             let (around, half, height) = ((around + 5) as f32 / 10.0, (half + 60) as f32 / 100.0, (height + 150) as f32 / 10.0);
             let angles = [yaw as f32, (pitch + 75) as f32];
-            self.spikes.push(Spike::ice(now + TICK * tick, at, around, turn as f32, [half, height], angles, FROST_TICKS - tick - 1, 254.0));
+            self.spikes.push(Spike::ice(now + TICK * tick, at, around, turn as f32, [half, height], angles, FROST_TICKS - tick - 1, 254.0, blue));
             if f32::hypot(to[0] - at[0], to[2] - at[2]) <= FROST_REACH {
                 break;
             }
+        }
+    }
+
+    /// Frost Diver (EF_FROSTDIVER) from `from` at `to` from `now`: one ice spike a tick in a line toward the target,
+    /// its random choices from `rand(n)` (0 to n − 1).
+    pub fn frost_diver(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.frost_line(from, to, now, false, rand);
+    }
+
+    /// Jack Frost (EF_FROSTDIVER3) from `from` toward `to` from `now`: Frost Diver's line with dark blue additive spikes.
+    pub fn jack_frost(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.frost_line(from, to, now, true, rand);
+    }
+
+    /// Jack Frost's ten lines bursting out from `source` in each 36° sector to 16 cells out.
+    pub fn jack_frost_star(&mut self, source: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        for i in 0..10 {
+            let aim = jack_frost_aim(source, i, rand(36)).1;
+            self.jack_frost(source, aim, now, &mut rand);
         }
     }
 
@@ -304,7 +330,7 @@ impl Stone {
             let [turn, around, half, height, yaw, pitch] = [rand(360), rand(4), rand(250), rand(100), rand(360), rand(20)];
             let (around, half, height) = ((around + 1) as f32 / 10.0, (half + 100) as f32 / 100.0, (height + 200) as f32 / 10.0);
             let angles = [yaw as f32, (pitch + 80) as f32];
-            self.spikes.push(Spike::ice(now, at, around, turn as f32, [half, height], angles, FROST_LIFE, 200.0));
+            self.spikes.push(Spike::ice(now, at, around, turn as f32, [half, height], angles, FROST_LIFE, 200.0, false));
         }
     }
 
@@ -405,9 +431,47 @@ impl Stone {
     }
 
     /// The triangles of every spike showing in `texture`.
+    #[cfg(test)]
     pub fn mesh(&self, texture: &str) -> Vec<MeshVertex> {
-        self.spikes.iter().filter(|spike| spike.age > 0 && spike.texture == texture).flat_map(Spike::faces).collect()
+        self.spikes.iter().filter(|spike| spike.age > 0 && spike.texture == texture).flat_map(|spike| spike.faces(|_| 0)).collect()
     }
+
+    /// The meshes showing now, by texture: (texture, triangles, additive).
+    pub fn meshes(&self, mut rand: impl FnMut(u32) -> u32) -> Vec<(&'static str, Vec<MeshVertex>, bool)> {
+        let mut normal_ice = Vec::new();
+        let mut stone = Vec::new();
+        let mut blue_ice = Vec::new();
+        for spike in &self.spikes {
+            if spike.age == 0 {
+                continue;
+            }
+            if spike.blue {
+                blue_ice.extend(spike.faces(&mut rand));
+            } else if spike.texture == STONE {
+                stone.extend(spike.faces(&mut rand));
+            } else {
+                normal_ice.extend(spike.faces(&mut rand));
+            }
+        }
+        let mut meshes = Vec::new();
+        if !normal_ice.is_empty() {
+            meshes.push((ICE_TEXTURE, normal_ice, false));
+        }
+        if !stone.is_empty() {
+            meshes.push((STONE, stone, false));
+        }
+        if !blue_ice.is_empty() {
+            meshes.push((ICE_TEXTURE, blue_ice, true));
+        }
+        meshes
+    }
+}
+
+/// Where Jack Frost line `i` aims, 80 units out at angle 36·i + `rand` (0 to 35): (angle, aim).
+pub fn jack_frost_aim(source: Vector, i: u32, rand: u32) -> (f32, Vector) {
+    let a = 36 * i + rand;
+    let (sin, cos) = (a as f32).to_radians().sin_cos();
+    (a as f32, [source[0] + 80.0 * cos, source[1], source[2] + 80.0 * sin])
 }
 
 #[cfg(test)]
@@ -513,7 +577,7 @@ mod tests {
         // Straight up at pitch 90; four faces of three corners; fading over its last 10 ticks, from tick 30.
         let up = axes(0.0, 90.0)[2];
         assert!((up[1] - 1.0).abs() < 1e-6 && up[0].abs() < 1e-6 && up[2].abs() < 1e-6);
-        assert_eq!(spikes.spikes[0].faces().len(), 12);
+        assert_eq!(spikes.spikes[0].faces(|_| 0).len(), 12);
         spikes.advance(start + TICK * 29);
         assert_eq!(spikes.spikes[0].alpha, 254.0);
         spikes.advance(start + TICK * 35);
@@ -678,5 +742,53 @@ mod tests {
         assert_eq!(spikes.spikes.len(), 99);
         spikes.advance(start + TICK * 300);
         assert!(spikes.spikes.is_empty());
+    }
+
+    #[test]
+    fn jack_frost_bursts_ten_lines_of_dark_blue_spikes() {
+        let start = Instant::now();
+        // Ten launches per use with aims 80 units from the source at angles 36i + R(36)
+        // (with every draw 0: 0°, 36° … 324°; with every draw 35: 35° … 359°).
+        let min_aims: Vec<(f32, Vector)> = (0..10).map(|i| jack_frost_aim([0.0; 3], i, 0)).collect();
+        let max_aims: Vec<(f32, Vector)> = (0..10).map(|i| jack_frost_aim([0.0; 3], i, 35)).collect();
+        assert_eq!(min_aims.iter().map(|(a, _)| *a).collect::<Vec<_>>(), [0.0, 36.0, 72.0, 108.0, 144.0, 180.0, 216.0, 252.0, 288.0, 324.0]);
+        assert_eq!(max_aims.iter().map(|(a, _)| *a).collect::<Vec<_>>(), [35.0, 71.0, 107.0, 143.0, 179.0, 215.0, 251.0, 287.0, 323.0, 359.0]);
+        for (_, aim) in min_aims.iter().chain(&max_aims) {
+            let dist = f32::hypot(aim[0], aim[2]);
+            assert!((dist - 80.0).abs() < 1e-3);
+        }
+        // For an aim 80 units along +x one line has 38 spikes, the last 79 out.
+        let mut line = Stone::default();
+        line.jack_frost([0.0; 3], [80.0, 0.0, 0.0], start, |_| 0);
+        assert_eq!(line.spikes.len(), 38);
+        assert_eq!(FROST_FIRST + FROST_STEP * (line.spikes.len() - 1) as f32, 79.0);
+        assert!((line.spikes.last().unwrap().base[0] - 78.98).abs() < 0.05);
+        // The star has 380 spikes.
+        let mut star = Stone::default();
+        star.jack_frost_star([0.0; 3], start, |_| 0);
+        assert_eq!(star.spikes.len(), 380);
+        // Each spike's colour red = green = 40 … 50 and blue 255, additive, redrawn each frame.
+        star.advance(start + TICK);
+        let meshes = star.meshes(|n| n - 1);
+        assert_eq!(meshes.len(), 1);
+        let (texture, vertices, additive) = &meshes[0];
+        assert_eq!(*texture, ICE_TEXTURE);
+        assert!(*additive);
+        for v in vertices {
+            let r = (v.tint[0] * 255.0).round() as u32;
+            let g = (v.tint[1] * 255.0).round() as u32;
+            let b = (v.tint[2] * 255.0).round() as u32;
+            assert!((40..=50).contains(&r), "r={r}");
+            assert!((40..=50).contains(&g), "g={g}");
+            assert_eq!(b, 255);
+        }
+        // Redrawn each frame with new random draws.
+        let meshes2 = star.meshes(|_| 0);
+        for v in &meshes2[0].1 {
+            let r = (v.tint[0] * 255.0).round() as u32;
+            let g = (v.tint[1] * 255.0).round() as u32;
+            assert_eq!(r, 40);
+            assert_eq!(g, 40);
+        }
     }
 }
