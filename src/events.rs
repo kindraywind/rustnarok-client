@@ -3430,6 +3430,10 @@ impl App {
                             game.effects.bloom_aura(gpu, grf, (act.source != me).then_some(act.source), effect, Instant::now());
                         }
                     }
+                    // Moonlight shows one, two or three slashes by the packet's hit count.
+                    if skill == effects::MOONLIGHT_SKILL {
+                        game.play_effect_hits(gpu, grf, table, effects::moonlight_effect(act.hits), act.target, Instant::now(), act.hits);
+                    }
                     if let Some(struck) = table.struck(skill) {
                         // Told the hit count, as the game tells them: a bolt drops an arrow a hit.
                         for &(who, effect) in struck {

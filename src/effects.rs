@@ -529,7 +529,7 @@ fn plain_layers(gpu: &Gpu, sprite: &mut SpriteSet, action: usize, frame: usize, 
 }
 
 /// How often a ground unit's effect starts again, in ticks: 8 before its length ends (Quagmire's 20), by the skill unit's type 1
-/// before it for Wall of Thorns, the Insignias and their like, 7 for Fire Walk.
+/// before it for Wall of Thorns, the Insignias, Kaensin, Ground Drift and their like, 7 for Fire Walk.
 fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
     // Shockwave's waves start again every 75 ticks.
     if effect == 145 {
@@ -549,7 +549,7 @@ fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
 /// How many ticks before its length a ground unit's effect starts again.
 fn restart_early(effect: u32, kind: u32) -> u32 {
     match kind {
-        228 | 230..=233 | 235 | 240..=244 | 258 => 1,
+        228 | 230..=233 | 235 | 239..=244 | 258 => 1,
         220 | 221 => 7,
         // Kaensin's and Ground Drift's cells start the next copy a tick before this one ends.
         189..=194 => 1,
@@ -593,6 +593,14 @@ struct Animation {
     first: f32,
     /// Drawn over everything with no depth test.
     over: bool,
+    /// The ticks a frame as the first and how many it picks from (`frameTicks`, `frameTicksRan`), drawn again at each start.
+    frame_ticks: Option<[u32; 2]>,
+    /// Action 0, or this one when a draw of two comes up 0 (`sideAction`): the slash turned to one of two sides.
+    side_action: Option<usize>,
+    /// On a ground unit it starts again each time the unit's effect does (`restart`).
+    restarts: bool,
+    /// The table's length of its effect, for that restart.
+    length: Option<u32>,
     /// Its images now, from `advance`.
     placed: Vec<Placed>,
     effect: u32,
@@ -616,7 +624,11 @@ impl Animation {
         let number = |name: &str| part.parameters.get(name).and_then(|value| value.parse::<f32>().ok());
         let flag = |name: &str| part.parameters.get(name).is_some_and(|value| value == "true");
         let rise = if flag("head") { -100.0 } else { 0.0 };
-        let repeat = flag("repeat") || (lasting && !flag("hold"));
+        let repeat = match part.parameters.get("repeat").map(String::as_str) {
+            Some("true") => true,
+            Some("false") => false,
+            _ => lasting && !flag("hold"),
+        };
         // `delayStart`: made late, nothing shows before.
         let start = start + Duration::from_secs_f32(number("delayStart").unwrap_or(0.0).max(0.0) / 1000.0);
         Self {
@@ -633,8 +645,22 @@ impl Animation {
             alpha: number("alpha").map_or(1.0, |alpha| alpha / 255.0),
             first: number("firstFrame").unwrap_or(0.0),
             over: flag("onTop"),
+            frame_ticks: number("frameTicks").map(|base| [base as u32, number("frameTicksRan").map_or(1, |spread| spread.max(1.0) as u32)]),
+            side_action: number("sideAction").map(|action| action as usize),
+            restarts: flag("restart"),
+            length: None,
             placed: Vec::new(),
             effect,
+        }
+    }
+
+    /// The random choices of a start: the ticks a frame and the side of the slash.
+    fn roll(&mut self, mut rand: impl FnMut(u32) -> u32) {
+        if let Some([base, spread]) = self.frame_ticks {
+            self.frame_ms = Some(STR_TICK_MS * (base + rand(spread)) as f32);
+        }
+        if let Some(side) = self.side_action {
+            self.action = Some(if rand(2) == 0 { side } else { 0 });
         }
     }
 }
@@ -1104,7 +1130,7 @@ pub fn circle_ignores(status: u16, on: bool, value: i64) -> bool {
 pub fn is_cast_aura(effect: u32) -> bool {
     matches!(
         effect,
-        12 | 54
+        12 | HOMUN_CASTING | 54
             ..=59
                 | TETRA_CASTING
                 | SHADOW_CAST
@@ -1131,7 +1157,7 @@ pub fn is_cast_aura(effect: u32) -> bool {
 pub fn is_banded(effect: u32) -> bool {
     matches!(
         effect,
-        12 | 54
+        12 | HOMUN_CASTING | 54
             ..=59
                 | 304
                 | 312
@@ -1230,6 +1256,8 @@ fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
             | 1923
     ) {
         56
+    } else if effect == HOMUN_CASTING {
+        60
     } else {
         70
     })
@@ -1259,6 +1287,7 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         314 => ("ring_purple", [0x64, 0x64, 0xFF], true),
         344 => ("ring_blue", [0x64, 0x64, 0xFF], true),
         58 | TETRA_CASTING => ("ring_white", [0xFF, 0xFF, 0xFF], true),
+        HOMUN_CASTING => ("ring_red", [0xFF, 0x59, 0xB6], true),
         SHADOW_CAST | DARK_CASTING => ("ring_black", [0x32, 0x32, 0x32], false),
         BUBBLE_CAST => ("ring_white", [0xFF, 0xFF, 0xFF], true),
         COUPLE_CASTING => ("ring_red", [0xFF, 0x59, 0xB6], true),
@@ -1420,7 +1449,8 @@ fn arrival_bands(age: u32) -> [Band; 4] {
 fn is_bloom(effect: u32) -> bool {
     matches!(
         effect,
-        12 | 58
+        12 | HOMUN_CASTING
+            | 58
             | 367
             | TETRA_CASTING
             | SHADOW_CAST
@@ -2057,6 +2087,15 @@ pub fn spread_attack_action(longitude: i32, heading: i32) -> usize {
     [0, 6, 4, 2][blast_quarter(longitude, heading)]
 }
 
+/// Moonlight's slash by the packet's hit count: one (565), two (566) or three or more (567).
+pub fn moonlight_effect(hits: u16) -> u32 {
+    match hits {
+        0 | 1 => 565,
+        2 => 566,
+        _ => 567,
+    }
+}
+
 /// Whether the server sends this effect (ZC_NOTIFY_EFFECT2) with no target, so it flies from its unit at the map's
 /// centre: Fire Ball's and Frost Diver's.
 pub fn aimed_at_centre(effect: u32) -> bool {
@@ -2238,6 +2277,12 @@ const RUN_STATUS_EFST: u16 = 133;
 const DARK_CASTING: u32 = 454;
 const AGI_UP: u32 = 456;
 const SEVEN_WIND: u32 = 461;
+/// Circle of Fire's dome, Hurricane Rage's and Zephyr's funnels, the Filir's pink bloom and Moonlight's slashes (by hit count).
+const CIRCLE_GUARD: u32 = 336;
+const HURRICANE_RAGE: u32 = 460;
+const ZEPHYR: u32 = 465;
+pub const HOMUN_CASTING: u32 = 564;
+pub const MOONLIGHT_SKILL: u16 = 8009;
 const BLUE_BODY: u32 = 542;
 const RED_LIGHT_BODY: u32 = 544;
 /// Comfort's cones, Soul Link's mote and letters and Stin's blade (`prims::soul`).
@@ -2364,6 +2409,7 @@ const MOONLIT: u32 = 394;
 const MARIONETTE_LINK: u32 = 395;
 const HEAD_CRUSH: u32 = 399;
 const JOINT_BEAT: u32 = 400;
+const DUST: u32 = 628;
 const MIND_BREAKER: u32 = 403;
 const SPIDER_WEB: u32 = 404;
 const SOUL_CHANGE_GLOW: u32 = 385;
@@ -2919,6 +2965,25 @@ impl Effects {
                 self.textures.entry(walls::STREAK.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::STREAK, true).ok());
                 self.prims.walls.agility(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
+            (CIRCLE_GUARD, Target::Unit(unit)) => {
+                for path in [guard::GUARD_K, guard::GUARD_K2] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
+                self.prims.guard.circle_of_fire(unit, facing, now);
+            }
+            (HURRICANE_RAGE, Target::Unit(unit)) => {
+                for path in [brawl::STORM, brawl::CLOUD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.brawl.hurricane(unit, at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (ZEPHYR, Target::Lasting(id)) => {
+                for path in [brawl::STORM, brawl::CLOUD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.brawl.zephyr(id, at, now, |n| pick(0, n.saturating_sub(1)));
+            }
             (SEVEN_WIND, Target::Unit(unit)) => {
                 for path in [brawl::STORM, brawl::CLOUD] {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
@@ -3286,10 +3351,14 @@ impl Effects {
                 self.textures.entry(dancer::FIRE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, dancer::FIRE, true).ok());
                 self.prims.dancer.mill(unit, None, now, |n| pick(0, n.saturating_sub(1)));
             }
-            (HEAD_CRUSH | JOINT_BEAT, Target::Unit(unit)) => {
+            (HEAD_CRUSH | JOINT_BEAT | DUST, Target::Unit(unit)) => {
                 self.textures.entry(knight::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, knight::RAY, true).ok());
                 let rand = |n: u32| pick(0, n.saturating_sub(1));
-                if id == HEAD_CRUSH { self.prims.knight.head_crush(unit, now, rand) } else { self.prims.knight.joint_beat(unit, now, rand) }
+                match id {
+                    HEAD_CRUSH => self.prims.knight.head_crush(unit, now, rand),
+                    JOINT_BEAT => self.prims.knight.joint_beat(unit, now, rand),
+                    _ => self.prims.knight.dust(unit, now, rand),
+                }
             }
             (MIND_BREAKER, Target::Unit(unit)) => self.prims.transcend.breaker(unit, now, |n| pick(0, n.saturating_sub(1))),
             (SPIDER_WEB, Target::Status(unit, _)) => {
@@ -3499,7 +3568,9 @@ impl Effects {
             }
         }
         for part in table.sprites.get(&id).into_iter().flatten() {
-            let animation = Animation::new(part, id, now, anchor(part.attached), lasting);
+            let mut animation = Animation::new(part, id, now, anchor(part.attached), lasting);
+            animation.length = table.lengths.get(&id).copied();
+            animation.roll(|n| pick(0, n.saturating_sub(1)));
             self.sprites.entry(animation.sprite.clone()).or_insert_with(|| SpriteSet::at(grf, &animation.sprite));
             self.animations.push(animation);
         }
@@ -4372,8 +4443,22 @@ impl Effects {
         // ponytail: sprites face south as seen; the few effect sprites drawn in 8 directions would face their unit.
         let facing = usize::from(crate::seen_direction(0.0, yaw, true));
         let sprites = &mut self.sprites;
+        let unit_kinds = &self.unit_kinds;
+        let tick = Duration::from_secs_f32(STR_TICK_MS / 1000.0);
         self.animations.retain_mut(|animation| {
             let Some(Some(sprite)) = sprites.get_mut(&animation.sprite) else { return false };
+            // A ground unit's sprite starts again when its effect does, with new choices.
+            if let (true, Anchor::Lasting(unit, _), Some(length)) = (animation.restarts, animation.anchor, animation.length) {
+                let kind = unit_kinds.get(&unit).copied().unwrap_or(0);
+                let period = tick * restart_ticks(animation.effect, kind, length);
+                // After a stall it starts once, on the period it is in.
+                let missed = (now.saturating_duration_since(animation.start).as_nanos() / period.as_nanos().max(1)) as u32;
+                if missed > 0 {
+                    animation.start += period * missed;
+                    animation.roll(|n| pick(0, n.saturating_sub(1)));
+                }
+                animation.end = Some(animation.start + period);
+            }
             let index = animation.action.unwrap_or(facing) % sprite.actions().max(1);
             let frames = sprite.frames(index).max(1) as f32;
             let frame_ms = animation.frame_ms.unwrap_or_else(|| sprite.index_ms(index).unwrap_or(100.0) / frames);
@@ -7635,7 +7720,8 @@ mod tests {
         assert_eq!(copies(&mut one, &[120]), [0]);
         // Rows: no skill-line copy, the puff stays where it was made, and Power of Gaia restarts a tick before its length.
         assert!(table.skill(8020, "effectId").is_empty() && !table.parts[&959][0].attached && table.lengths[&959] == 60);
-        assert_eq!((restart_ticks(1088, 240, 2000), restart_ticks(0, 239, 2000), restart_ticks(0, 9, 2000)), (1999, 1992, 1992));
+        // (Zephyr's cell, type 239, restarts a tick early too.)
+        assert_eq!((restart_ticks(1088, 240, 2000), restart_ticks(0, 239, 2000), restart_ticks(0, 9, 2000)), (1999, 1999, 1992));
     }
 
     #[test]
@@ -7878,6 +7964,59 @@ mod tests {
     }
 
     #[test]
+    fn dust_the_ninja_slashes_kaensin_and_the_dragon_and_ice_pictures_have_their_rows() {
+        let table = Table::load();
+        // Dust: Joint Beat's rays in code, no stand-in rings, its own sound.
+        assert!(
+            !table.rings.contains_key(&DUST) && table.sounds[&DUST][0].file == "effect\\더스트샷" && table.struck(518).unwrap().contains(&(Who::Target, DUST))
+        );
+        // The sprites: (effect, frames, ticks a frame, last shown age + 1, over everything, rise).
+        let animation = |effect: u32| Animation::new(&table.sprites[&effect][0], effect, Instant::now(), Anchor::Unit(Some(1)), false);
+        for (effect, frames, t, ends, over, rise) in
+            [(630, 9.0, 4, 32, true, 0.0), (631, 13.0, 6, 72, false, -6.0), (632, 11.0, 4, 40, true, 0.0), (633, 30.0, 2, 58, true, -6.0)]
+        {
+            let animation = animation(effect);
+            assert!(!animation.repeat && animation.over == over && animation.first == 1.0 && animation.offset[1] == rise, "{effect}");
+            let frame_ms = animation.frame_ms.unwrap();
+            assert_eq!(frame_ms, 16.0 * t as f32, "{effect}");
+            let frame = |age: u32| (animation_progress(16.0 * age as f32, frame_ms, frames, 1.0, false) * frames) as usize;
+            assert_eq!((frame(0), frame(t - 1), frame(t), frame(ends - 1)), (1, 1, 2, frames as usize - 1), "{effect}");
+            assert_eq!((frames - 1.0) * frame_ms / 16.0, ends as f32, "{effect}");
+        }
+        assert_eq!(table.sprites[&631][0].file, "다다미");
+        // 630 and 632 turn to one of two sides on a draw of two.
+        for (effect, side) in [(630, 4), (632, 2)] {
+            let mut slash = animation(effect);
+            slash.roll(|_| 0);
+            assert_eq!(slash.action, Some(side));
+            slash.roll(|_| 1);
+            assert_eq!(slash.action, Some(0));
+        }
+        assert!(animation(631).side_action.is_none() && animation(633).side_action.is_none());
+        // Issen's sprite has 9 actions: it plays action 0, not the camera's facing.
+        assert_eq!(animation(633).action, Some(0));
+        // Kaensin's flame: looped from frame 1, 3 + a draw of five ticks a frame, 22 draws a copy, starts again with its unit.
+        let mut flame = Animation::new(&table.sprites[&634][0], 634, Instant::now(), Anchor::Lasting(1, [0.0; 3]), true);
+        assert!(flame.repeat && flame.restarts && !flame.over && flame.offset[1] == -1.0 && table.lengths[&634] == 23);
+        for draw in 0..5 {
+            flame.roll(|n| {
+                assert_eq!(n, 5);
+                draw
+            });
+            assert_eq!(flame.frame_ms, Some(16.0 * (3 + draw) as f32));
+        }
+        flame.roll(|_| 0);
+        let frame = |age: u32| (animation_progress(16.0 * age as f32, 48.0, 5.0, 1.0, true) * 5.0) as usize;
+        assert_eq!([0, 2, 3, 12, 14, 15, 21].map(frame), [1, 1, 2, 0, 0, 1, 3]);
+        assert_eq!(table.units[&189], 634);
+        assert_eq!([189, 190, 191, 192, 193, 194].map(|kind| restart_ticks(634, kind, 23)), [22; 6]);
+        assert_eq!((restart_ticks(634, 188, 23), restart_ticks(0, 195, 100)), (15, 92));
+        // Bakuenryu's and Hyousyouraku's pictures follow their unit.
+        assert!([635, 636].iter().all(|id| table.parts[id].iter().all(|part| part.attached)));
+        assert_eq!([635, 636].map(|id| table.sounds[&id][0].delay_ms), [0, 0]);
+    }
+
+    #[test]
     fn hallucination_walk_sienna_execrate_and_jack_frost_have_their_rows_and_timing() {
         let table = Table::load();
         let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
@@ -7979,5 +8118,45 @@ mod tests {
         // The grey: the three statuses play it, once each.
         assert!([606, 655, 659].iter().all(|&status| table.status(status).contains(&GREY_BODY)));
         assert_eq!(table.lengths[&GREY_BODY], 99_999);
+    }
+
+    #[test]
+    fn circle_of_fire_the_funnels_the_pink_bloom_moonlight_and_castling_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        // 336: the struck row stays, the three stand-in rings are gone.
+        assert!(table.struck(8401).unwrap().contains(&(Who::Target, CIRCLE_GUARD)) && !table.rings.contains_key(&CIRCLE_GUARD));
+        assert_eq!(sounds(CIRCLE_GUARD), [("effect\\kyrie_guard", 0)]);
+        // 460 on Hurricane Rage's target at 80 ms; 465 on Zephyr's cell, starting again every 999 ticks.
+        assert!(table.struck(8435).unwrap().contains(&(Who::Target, HURRICANE_RAGE)));
+        assert_eq!(sounds(HURRICANE_RAGE), [("ice_titan_attack", 80)]);
+        assert_eq!(table.units[&239], ZEPHYR);
+        assert_eq!((restart_ticks(ZEPHYR, 239, 1000), restart_ticks(0, 238, 100), restart_ticks(0, 245, 100)), (999, 92, 92));
+        assert_eq!([CIRCLE_GUARD, HURRICANE_RAGE, ZEPHYR].map(|id| table.lengths[&id]), [200, 100, 1000]);
+        // 564: a pink bloom of ring_red for 60 ticks on both of the Filir's skills, two sets of four bands starting at alpha 0.
+        assert!(table.used(8010).unwrap().contains(&(Who::Caster, HOMUN_CASTING)) && table.used(8011).unwrap().contains(&(Who::Caster, HOMUN_CASTING)));
+        assert!(is_cast_aura(HOMUN_CASTING) && is_banded(HOMUN_CASTING) && is_bloom(HOMUN_CASTING));
+        assert_eq!(aura_look(HOMUN_CASTING), ("ring_red", [0xFF, 0x59, 0xB6], true));
+        assert_eq!((aura_ticks(HOMUN_CASTING, 0), table.lengths[&HOMUN_CASTING]), (60, 60));
+        assert_eq!(sounds(HOMUN_CASTING), [("effect\\ef_beginspell", 0)]);
+        // Band k begins 5k ticks late with nothing drawn at first; its first tick is alpha 10.
+        for band in 0..4 {
+            assert!(bloom(HOMUN_CASTING, 0, band, 60, 5 * band as u32).is_none() && bloom(HOMUN_CASTING, 1, band, 60, 5 * band as u32).is_none());
+            let first = bloom(HOMUN_CASTING, 0, band, 60, 5 * band as u32 + 1).unwrap();
+            assert_eq!(first.alpha, 10.0);
+        }
+        // Moonlight's slashes by the hit count 1, 2, 3, 4, 10.
+        assert_eq!([1, 2, 3, 4, 10].map(moonlight_effect), [565, 566, 567, 567, 567]);
+        assert!(table.struck(8012).unwrap().contains(&(Who::Target, 567)));
+        assert!(table.parts.contains_key(&565) && table.parts.contains_key(&566) && table.parts.contains_key(&567));
+        // 570: two ticks a frame from frame 1, once, over everything, one sound a use.
+        let castling = Animation::new(&table.sprites[&570][0], 570, Instant::now(), Anchor::Unit(Some(1)), false);
+        assert!(castling.over && !castling.repeat && castling.frame_ms == Some(32.0) && castling.first == 1.0);
+        let frame = |age: u32| (animation_progress(16.0 * age as f32, 32.0, 13.0, 1.0, false) * 13.0) as usize;
+        assert_eq!([0, 1, 2, 23].map(frame), [1, 1, 2, 12]);
+        assert!(table.used(8005).unwrap().contains(&(Who::Caster, 570)) && table.used(8005).unwrap().contains(&(Who::Target, 570)));
+        assert!(!table.sounds.contains_key(&570));
+        assert_eq!(table.skill_sounds[&8005].iter().map(|sound| sound.file.as_str()).collect::<Vec<_>>(), ["effect\\h_castling"]);
+        assert_eq!(table.lengths[&570], 100);
     }
 }

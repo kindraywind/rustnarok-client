@@ -308,6 +308,19 @@ struct Tornado {
     kept: Option<u32>,
     /// Seven Wind's: a plain blue-violet funnel, one for each caster.
     seven: Option<Option<u32>>,
+    /// Hurricane Rage's white or Zephyr's pale green funnel.
+    funnel: Option<Funnel>,
+}
+
+/// A funnel in one colour, blended: Hurricane Rage's lasts 100 ticks, Zephyr's never fades and starts again every 999 until its
+/// cell goes.
+#[derive(Clone, Copy)]
+struct Funnel {
+    rgb: [f32; 3],
+    fades: bool,
+    life: u32,
+    /// The unit it stands for (Hurricane Rage's target); Zephyr's belong to a cell.
+    owner: Option<Option<u32>>,
 }
 
 pub struct Wisp {
@@ -346,6 +359,11 @@ impl Tornado {
         };
         let [a, b, c, d] = [corner(0.0, 1.0, [0.0, 1.0]), corner(1.0, 1.0, [1.0, 1.0]), corner(2.0, 0.0, [1.0, 0.0]), corner(3.0, 0.0, [0.0, 0.0])];
         vec![a, b, c, a, c, d]
+    }
+
+    /// The last tick of its life: 99, or a funnel's life less one.
+    fn last(&self) -> u32 {
+        self.funnel.map_or(TORNADO_LAST, |funnel| funnel.life - 1)
     }
 
     fn turn_at(&self, a: u32) -> f32 {
@@ -601,6 +619,27 @@ impl Brawl {
         }
     }
 
+    /// Hurricane Rage's white funnel and wisps where `unit` stood (`at`), unless it has one running.
+    pub fn hurricane(&mut self, unit: Option<u32>, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        let running = |tornado: &Tornado| tornado.funnel.is_some_and(|funnel| funnel.owner == Some(unit)) && passes(tornado.start, now) <= tornado.last() + 1;
+        if self.tornados.iter().any(running) {
+            return;
+        }
+        self.tornado(at, now, None, rand);
+        if let Some(tornado) = self.tornados.last_mut() {
+            tornado.funnel = Some(Funnel { rgb: [1.0; 3], fades: true, life: 100, owner: Some(unit) });
+        }
+    }
+
+    /// Zephyr's pale green funnel and wisps standing on the cell `at` of skill unit `id`, gone with it.
+    pub fn zephyr(&mut self, id: u32, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.tornado(at, now, Some(id), rand);
+        if let Some(tornado) = self.tornados.last_mut() {
+            tornado.red = false;
+            tornado.funnel = Some(Funnel { rgb: [155.0 / 255.0, 1.0, 155.0 / 255.0], fades: false, life: 1000, owner: None });
+        }
+    }
+
     /// Reverberation's red tornado and wisps at a trap's cell `at`, gone with the trap `id`.
     pub fn trap_tornado(&mut self, id: u32, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.tornado(at, now, Some(id), rand);
@@ -695,7 +734,7 @@ impl Brawl {
                 wisps.push(Wisp { height: height - drop * k as f32, turn: 90.0 * k as f32, radius: radius - step * k as f32, lean });
             }
         }
-        self.tornados.push(Tornado { at, start: now, first, turns: Vec::new(), wisps, red: kept.is_some(), kept, seven: None });
+        self.tornados.push(Tornado { at, start: now, first, turns: Vec::new(), wisps, red: kept.is_some(), kept, seven: None, funnel: None });
     }
 
     /// Dark Illusion's 32 lines from the caster's feet `from` toward `to`, each streak's choices from `rand(n)`.
@@ -798,7 +837,7 @@ impl Brawl {
     /// Runs the tornados' turns up to `now`, a tick at a time (3 to 5 degrees each from `rand(n)`), and drops what ended.
     pub fn advance(&mut self, now: Instant, mut rand: impl FnMut(u32) -> u32) {
         for tornado in &mut self.tornados {
-            let due = passes(tornado.start, now).min(TORNADO_LAST) as usize;
+            let due = passes(tornado.start, now).min(tornado.last()) as usize;
             while tornado.turns.len() < due {
                 let turn = tornado.turns.last().copied().unwrap_or(tornado.first);
                 tornado.turns.push(turn + 3.0 + rand(3) as f32);
@@ -817,7 +856,8 @@ impl Brawl {
         self.flares.retain(|flares| passes(flares.start, now) <= 30);
         self.hops.retain(|hops| passes(hops.start, now) <= 100);
         self.rays.retain(|rays| passes(rays.start, now) <= RAY_LAST + 1);
-        self.tornados.retain(|tornado| passes(tornado.start, now) <= TORNADO_LAST + 1);
+        // Zephyr's funnel starts again every 999 ticks, until its cell goes.
+        self.tornados.retain(|tornado| tornado.kept.is_some_and(|_| tornado.funnel.is_some()) || passes(tornado.start, now) <= tornado.last() + 1);
         self.lines.retain(|lines| passes(lines.start, now) <= if lines.kind.fast() { GOLD_LAST } else { STRIP_LAST } + 1);
         self.spreads.retain(|spread| passes(spread.start, now) <= 100);
         self.spins.retain(|spin| passes(spin.start, now) <= SPIN_TICKS + 1);
@@ -928,16 +968,22 @@ impl Brawl {
         }
         for tornado in &self.tornados {
             let Some(t) = passes(tornado.start, now).checked_sub(1) else { continue };
-            let a = t + 1;
-            if a <= TORNADO_LAST {
+            // Zephyr's funnel starts again every 999 ticks.
+            let a = if tornado.funnel.is_some_and(|funnel| !funnel.fades) { t % 999 + 1 } else { t + 1 };
+            if a <= tornado.last() {
                 let turn = tornado.turn_at(a);
-                let alpha = tornado_alpha(a);
+                let alpha = match tornado.funnel {
+                    Some(funnel) if !funnel.fades => a.min(40) as f32,
+                    _ => tornado_alpha(a),
+                };
                 if tornado.red {
                     // Each square twice: a white veil of a third of the alpha, then red added on.
                     let veil = (0..SQUARES.len()).flat_map(|i| tornado.square(i, turn, [1.0; 3], (alpha / 3.0).floor())).collect();
                     walls.push(Wall { texture: STORM, vertices: veil, additive: false, forced: false });
                 }
-                let rgb = if tornado.red {
+                let rgb = if let Some(funnel) = tornado.funnel {
+                    funnel.rgb
+                } else if tornado.red {
                     [1.0, 55.0 / 255.0, 55.0 / 255.0]
                 } else if tornado.seven.is_some() {
                     [130.0 / 255.0, 130.0 / 255.0, 1.0]
@@ -945,8 +991,8 @@ impl Brawl {
                     [50.0 / 255.0, 50.0 / 255.0, 1.0]
                 };
                 let vertices = (0..SQUARES.len()).flat_map(|i| tornado.square(i, turn, rgb, alpha)).collect();
-                // Seven Wind's squares are blended, not added on.
-                walls.push(Wall { texture: STORM, vertices, additive: tornado.seven.is_none(), forced: false });
+                // Seven Wind's, Hurricane Rage's and Zephyr's squares are blended, not added on.
+                walls.push(Wall { texture: STORM, vertices, additive: tornado.seven.is_none() && tornado.funnel.is_none(), forced: false });
             }
             if a <= WISP_LAST {
                 for wisp in &tornado.wisps {
@@ -1614,5 +1660,45 @@ mod tests {
         other.windmill(Some(1), [0.0; 3], start, |_| 0);
         let blue = other.meshes(start, |_| None).into_iter().find(|wall| wall.texture == STORM).unwrap();
         assert!(blue.additive && blue.vertices[0].tint[..3] == [50.0 / 255.0, 50.0 / 255.0, 1.0]);
+    }
+
+    #[test]
+    fn hurricane_rage_and_zephyr_stand_a_white_and_a_pale_green_funnel() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.hurricane(Some(1), [10.0, 1.0, 10.0], start, |_| 0);
+        // One tornado prim with its eight wisps (two kind-62 prims of four), none started while the target has one.
+        assert_eq!((brawl.tornados.len(), brawl.tornados[0].wisps.len()), (1, 8));
+        brawl.hurricane(Some(1), [10.0, 1.0, 10.0], start + TICK * 10, |_| 0);
+        assert_eq!(brawl.tornados.len(), 1);
+        // Another target gets its own.
+        let mut other = Brawl::default();
+        other.hurricane(Some(1), [10.0, 1.0, 10.0], start, |_| 0);
+        other.hurricane(Some(2), [30.0, 1.0, 30.0], start + TICK * 10, |_| 0);
+        assert_eq!(other.tornados.len(), 2);
+        // White squares, the normal blend; alpha at a = 40, 60, 61, 99: 40, 40, 39, 1; gone at 100.
+        let walls = |brawl: &Brawl, tick: u32| brawl.meshes(start + TICK * tick, |_| None);
+        let squares = |brawl: &Brawl, tick: u32| walls(brawl, tick).into_iter().find(|wall| wall.texture == STORM);
+        assert!(squares(&brawl, 39).is_some_and(|wall| !wall.additive && wall.vertices[0].tint[..3] == [1.0; 3]));
+        let alpha = |tick: u32| (squares(&brawl, tick).unwrap().vertices[0].tint[3] * 255.0).round();
+        assert_eq!([39, 59, 60, 98].map(alpha), [40.0, 40.0, 39.0, 1.0]);
+        assert_eq!(tornado_alpha(60), 40.0);
+        assert!(squares(&brawl, 99).is_none());
+        brawl.advance(start + TICK * 101, |_| 0);
+        assert!(brawl.tornados.is_empty());
+        // Zephyr: pale green, blended, never fading, life 1000, starting again every 999 ticks until its cell goes.
+        brawl.zephyr(7, [10.0, 1.0, 10.0], start, |_| 0);
+        brawl.advance(start + TICK * 998, |_| 0);
+        let green = squares(&brawl, 998).unwrap();
+        assert!(!green.additive && green.vertices[0].tint[..3] == [155.0 / 255.0, 1.0, 155.0 / 255.0]);
+        assert_eq!([39, 60, 500, 998].map(|tick| (squares(&brawl, tick).unwrap().vertices[0].tint[3] * 255.0).round()), [40.0, 40.0, 40.0, 40.0]);
+        // The next copy drops to alpha 1 at the 1000th tick and fades back in; the wisps are gone by a = 61 in each.
+        assert_eq!((squares(&brawl, 999).unwrap().vertices[0].tint[3] * 255.0).round(), 1.0);
+        brawl.advance(start + TICK * 5000, |_| 0);
+        assert_eq!(brawl.tornados.len(), 1);
+        assert!(walls(&brawl, 70).iter().all(|wall| wall.texture != CLOUD));
+        assert!(walls(&brawl, 1030).iter().any(|wall| wall.texture == CLOUD));
+        brawl.forget(7);
+        assert!(brawl.tornados.is_empty());
     }
 }

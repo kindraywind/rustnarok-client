@@ -5,6 +5,7 @@
 # part <effect id> <2D|3D> <name=value;...>: a texture (or a sprite) moving from a start to an end over its duration
 # ring <effect id> <name=value;...>: a textured cylinder growing, turning and fading
 # spr <effect id> <sprite under data\sprite\이팩트\ without .spr> <follows the unit 1/0> <name=value;... or ->: a sprite's animation
+#   (frameTicks=<n>;frameTicksRan=<m>: n + a random number below m ticks a frame, drawn at each start; sideAction=<action>: action 0, or this one on a draw of two; restart=true: starts again with its ground unit's effect)
 # func <effect id> quake <delay ms> <duration ms>: what the client does in code for the effect; quake shakes the camera
 # length <effect id> <ticks>: how long an effect's STR plays (16 ms ticks) when shorter than its keys; on a ground unit it starts again 8 ticks before that (Quagmire's 95: 20)
 # unit <skill unit type> <effect id> [once]: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there (once: played once and kept, not started again)
@@ -173,8 +174,8 @@ str	603	firehit%d	-	1	1	3
 str	608	cook_suc	-	1
 str	609	cook_fail	-	1
 str	612	itempokjuk	-	1
-str	635	fire dragon	-	0
-str	636	icy	-	0
+str	635	fire dragon	-	1
+str	636	icy	-	1
 str	646	트랙킹	-	1
 str	649	불스아이	-	1
 str	668	dragon_h	-	1
@@ -1412,17 +1413,12 @@ ring	321	alphaMax=0.4;animation=3;renderBeforeEntities=true;attachedEntity=true;
 ring	325	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=3;red=0.7;rotate=true;textureName=ring_white;topSize=3
 ring	328	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=4.5;height=-4;duration=800
 ring	328	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=2.5;height=-4;duration=800
-ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1.5;topSize=1;height=0.7;posZ=2.14;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
-ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1.5;topSize=1.5;height=1.14;posZ=1;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
-ring	336	textureName=guardk;blendMode=2;duration=600;fade=true;totalCircleSides=8;circleSides=5;repeatTextureX=5;angleY=112.5;bottomSize=1;topSize=1.5;height=0.7;posZ=0.3;alphaMax=0.6;red=0.91;green=1.0;blue=0.9;rotateWithSource=true;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.45;topSize=2.45;height=2.0;alphaMax=32;blendMode=2;rotateWithCamera=true;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.52;topSize=2.52;height=2.1;alphaMax=32;blendMode=2;rotateWithCamera=true;angleY=10;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=26.6;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=79.8;duration=20000;attachedEntity=true
 ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=4.5;height=-4;duration=800
 ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=2.5;height=-4;duration=800
-ring	628	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
-ring	628	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=6;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
 ring	715	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.5;topSize=1.5;height=2.0;alphaMax=40;blendMode=2;rotateWithCamera=true;red=0.2;green=0.6;blue=1.0;duration=20000;attachedEntity=true
 ring	715	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.58;topSize=1.58;height=2.1;alphaMax=32;blendMode=2;rotateWithCamera=true;angleY=10;red=0.2;green=0.6;blue=1.0;duration=20000;attachedEntity=true
 ring	715	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=1.65;topSize=1.65;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=26.6;red=0.1;green=0.4;blue=1.0;duration=20000;attachedEntity=true
@@ -1452,7 +1448,7 @@ spr	373	poisonhit	1	-
 spr	453	cconfine	1	delayFrame=192;firstFrame=1;hold=true;alpha=100;onTop=true
 spr	509	05vallentine	1	-
 spr	519	fast	1	-
-spr	570	캐슬링	1	-
+spr	570	캐슬링	1	delayFrame=32;firstFrame=1;onTop=true
 spr	571	블러드러스트	1	-
 spr	576	item_thunder	1	-
 spr	577	item_cloud	1	-
@@ -1469,11 +1465,11 @@ spr	588	m_ef06	1	-
 spr	589	m_ef07	1	delayFrame=64;firstFrame=1;onTop=true
 spr	604	cconfine	1	stopAtEnd=true
 spr	612	합격_	1	-
-spr	630	그림자베기	1	-
-spr	631	다다미 뒤집기	1	-
-spr	632	안개베기	1	-
-spr	633	일섬	1	-
-spr	634	화염진	1	repeat=true
+spr	630	그림자베기	1	delayFrame=64;firstFrame=1;onTop=true;sideAction=4
+spr	631	다다미	1	delayFrame=96;firstFrame=1;yOffset=-6
+spr	632	안개베기	1	delayFrame=64;firstFrame=1;onTop=true;sideAction=2
+spr	633	일섬	1	delayFrame=32;firstFrame=1;onTop=true;yOffset=-6;frame=0
+spr	634	화염진	1	repeat=true;firstFrame=1;frameTicks=3;frameTicksRan=5;restart=true;yOffset=-1
 spr	637	데스페라도	1	delayFrame=64;firstFrame=1;onTop=true
 spr	638	라이트닝스피어	0	frame=0;repeat=true;yOffset=-7
 spr	639	블라인드스피어	0	-
@@ -1900,6 +1896,8 @@ wav	567	effect\h_moonlight_3	0
 wav	579	_snore	0
 wav	587	dragon_breath	0
 wav	590	effect\priest_resurrection	0
+wav	460	ice_titan_attack	80
+wav	564	effect\ef_beginspell	0
 wav	1224	effect\mon_침투경	80
 wav	604	effect\ef_hit6	0
 wav	599	effect\EF_BeginSpell	80
@@ -1929,7 +1927,7 @@ wav	622	effect\ef_thunderstorm	0
 wav	623	effect\피어싱샷	448
 wav	624	effect\t_바람방출	16
 wav	627	effect\디스암	336
-wav	628	effect\bash3d5	0
+wav	628	effect\더스트샷	0
 wav	630	effect\그림자베기	0
 wav	631	effect\다다미뒤집기	0
 wav	632	effect\안개베기	0
@@ -4375,6 +4373,7 @@ struck	8433	target	942
 struck	8433	caster	439
 struck	8434	caster	943
 struck	8435	target	466
+struck	8435	target	460
 struck	8437	caster	935
 struck	8442	target	944
 struck	2259	target	787
@@ -5202,6 +5201,11 @@ length	488	400
 length	503	500
 length	506	100
 length	542	200
+length	336	200
+length	460	100
+length	465	1000
+length	564	60
+length	570	100
 length	544	99999999
 length	1003	99999999
 length	1004	99999999
@@ -5229,9 +5233,11 @@ length	554	200
 length	555	200
 length	675	200
 length	850	100
+length	634	23
 length	932	100
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
 skillwav	10	effect\ef_sight	0
+skillwav	8005	effect\h_castling	0
 skillwav	268	effect\mon_맹룡과강	0	listener
 skillquake	268	0	200
 skillwav	270	effect\mon_폭기	0	listener
