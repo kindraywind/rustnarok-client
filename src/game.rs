@@ -1357,6 +1357,11 @@ impl Game {
                 let rot = key.map_or(Some(self.player.rot), |id| self.units.get(&id).map(|actor| actor.rot));
                 self.effects.blitz_beat(gpu, grf, key, rot.unwrap_or(0.0), u32::from(hits > 0), start);
             }
+            // EF_HITDARK is EF_HIT1 with near-black sparks.
+            if effect == effects::HIT_DARK {
+                let rot = key.map_or(Some(self.player.rot), |id| self.units.get(&id).map(|actor| actor.rot));
+                self.effects.play_hit_dark(gpu, grf, key, rot.unwrap_or(0.0), start);
+            }
             // EF_HIT1 is made in code, flying the exact way the target faces.
             if effect == EF_HIT1 {
                 let rot = key.map_or(Some(self.player.rot), |id| self.units.get(&id).map(|actor| actor.rot));
