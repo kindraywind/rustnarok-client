@@ -9,7 +9,8 @@ is gitignored: game images never go in the repository.
   drive.py launch [account] [slot]   start the client logged in (account "" or "2"; slot 0), in the background
   drive.py send '<json>'             one command, prints the reply (a screenshot's png is left out)
   drive.py shot <name> [x y w h]     screenshot (optionally cropped) to docs/personal/shots/<name>.png
-  drive.py state                     the game state, pretty-printed
+  drive.py state [path]              the game state, pretty-printed; a dotted path keeps one part of it (game.ground_items,
+                                     game.targets.3.box), which is far cheaper than the whole state
   drive.py quit
 """
 import base64
@@ -82,7 +83,7 @@ def send(command, timeout=60):
     return json.loads(data)
 
 
-def launch(n="", slot="0", binary=None, env_extra=None, quiet=False):
+def launch(n="", slot="0", binary=None, env_extra=None, quiet=False, tries=3):
     user, password = account(n)
     env = dict(os.environ)
     env.update(env_extra or {})
@@ -109,6 +110,11 @@ def launch(n="", slot="0", binary=None, env_extra=None, quiet=False):
         if os.path.exists(SOCK):
             try:
                 state = send({"cmd": "state"})
+                if state.get("scene") == "message" and "last log-in" in state.get("text", "") and tries > 1:
+                    # The server still holds the previous run's session (a verify.sh live test, a client that quit): wait it out.
+                    quit_quietly()
+                    time.sleep(35)
+                    return launch(n, slot, binary, env_extra, quiet, tries - 1)
                 if not quiet:
                     print(json.dumps(state, ensure_ascii=False)[:300])
                 return state
@@ -153,6 +159,9 @@ if __name__ == "__main__":
     elif what == "shot":
         print(shot(args[0], args[1:5] or None))
     elif what == "state":
-        print(json.dumps(send({"cmd": "state"}), ensure_ascii=False, indent=1))
+        part = send({"cmd": "state"})
+        for key in (args[0].split(".") if args else []):
+            part = part[int(key)] if isinstance(part, list) else part.get(key)
+        print(json.dumps(part, ensure_ascii=False, indent=1))
     elif what == "quit":
         print(send({"cmd": "quit"}))
