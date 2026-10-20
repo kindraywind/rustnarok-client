@@ -1340,6 +1340,10 @@ impl Game {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn play_effect_hits(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32, start: Instant, hits: u16) {
         let key = (unit != self.account_id).then_some(unit);
+        // Resurrection's ring is for a player character, not a monster or an NPC.
+        if effect == effects::REVIVE_FX && key.is_some_and(|id| self.units.get(&id).is_some_and(|actor| actor.look.is_none())) {
+            return;
+        }
         let cell = match key {
             None => Some(self.player.cell),
             Some(id) => self.units.get(&id).map(|actor| actor.cell),

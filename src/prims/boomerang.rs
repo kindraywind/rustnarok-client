@@ -8,6 +8,8 @@ use super::passes;
 use crate::world::{EffectQuad, Vector};
 
 pub const SHIELD: &str = "data\\texture\\effect\\shield_boomerang.bmp";
+/// Tomahawk's axe, thrown the way the shield is.
+pub const AXE: &str = "data\\texture\\effect\\토마.bmp";
 /// The effect's length in ticks.
 const LIFE: u32 = 499;
 /// How high over the caster's feet it starts, and how far it flies a tick.
@@ -43,6 +45,8 @@ struct Copy {
 }
 
 struct Shield {
+    /// Tomahawk's: the axe's picture, not the shield's.
+    axe: bool,
     start: Instant,
     /// The caster (None = the player), whose place it turns back to.
     unit: Option<u32>,
@@ -77,6 +81,7 @@ impl Shield {
         let reach = f32::hypot(to[0] - from[0], to[2] - from[2]);
         let climb = if reach > 0.0 { SPEED * (to[1] - from[1]) / reach } else { 0.0 };
         Self {
+            axe: false,
             start: now,
             unit,
             ticks: 0,
@@ -143,6 +148,11 @@ impl Boomerangs {
         self.shields.push(Shield::new(unit, from, to, now, dim));
     }
 
+    /// Tomahawk's axe, thrown the same way.
+    pub fn throw_axe(&mut self, unit: Option<u32>, from: Vector, to: Vector, now: Instant, dim: bool) {
+        self.shields.push(Shield { axe: true, ..Shield::new(unit, from, to, now, dim) });
+    }
+
     /// Runs the shields up to `now`, a tick at a time, turning back to where `position_of` has their casters.
     // ponytail: the caster's place is taken as it is now, for every tick run in a frame.
     pub fn advance(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) {
@@ -156,10 +166,10 @@ impl Boomerangs {
     }
 
     /// The squares to draw: the shield, then its copies, white and faint as their alphas say.
-    pub fn quads<'a>(&self, texture: Option<&'a crate::render::Texture>) -> Vec<EffectQuad<'a>> {
-        let Some(texture) = texture else { return Vec::new() };
+    pub fn quads<'a>(&self, texture_of: impl Fn(&str) -> Option<&'a crate::render::Texture>) -> Vec<EffectQuad<'a>> {
         let mut quads = Vec::new();
         for shield in self.shields.iter().filter(|shield| shield.ticks > 0) {
+            let Some(texture) = texture_of(if shield.axe { AXE } else { SHIELD }) else { continue };
             let square = |at: Vector, spin: f32, alpha: f32| -> Option<EffectQuad<'a>> {
                 let corners = [225.0_f32, 315.0, 45.0, 135.0].map(|angle| {
                     let (sin, cos) = (angle + spin).to_radians().sin_cos();
@@ -251,5 +261,19 @@ mod tests {
         assert_eq!(boomerangs.shields.len(), 1);
         boomerangs.advance(start + super::super::TICK * 499, |_| Some([0.0; 3]));
         assert!(boomerangs.shields.is_empty());
+    }
+
+    #[test]
+    fn tomahawk_throws_the_axe_the_way_the_shield_flies() {
+        let start = Instant::now();
+        let mut boomerangs = Boomerangs::default();
+        boomerangs.throw(None, [0.0; 3], [50.0, 0.0, 0.0], start, false);
+        boomerangs.throw_axe(None, [0.0; 3], [50.0, 0.0, 0.0], start, false);
+        boomerangs.advance(start + crate::prims::TICK * 30, |_| Some([0.0; 3]));
+        // The axe is the shield with another picture: the same place, spin and alpha.
+        assert!(!boomerangs.shields[0].axe && boomerangs.shields[1].axe);
+        assert_eq!(boomerangs.shields[0].at, boomerangs.shields[1].at);
+        assert_eq!((boomerangs.shields[0].spin, boomerangs.shields[0].alpha), (boomerangs.shields[1].spin, boomerangs.shields[1].alpha));
+        assert_eq!(AXE, "data\\texture\\effect\\토마.bmp");
     }
 }

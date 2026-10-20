@@ -13,7 +13,7 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, knight, mechanic, monk,
-    notes, painter, sage, shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
+    notes, painter, portal, sage, shafts, shards, sight, sniper, songs, souls, spears, spray, star, stone, tanji, throw, transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1885,6 +1885,8 @@ const BERSERK_PITCHER: u32 = 541;
 const SPORE_EXPLOSION: u32 = 914;
 /// EF_SHIELDBOOMERANG: Shield Boomerang's shield, out to the target, round and back past the caster (`prims::boomerang`).
 const SHIELD_BOOMERANG: u32 = 249;
+/// EF_SHIELDBOOMERANG2: Tomahawk's axe, thrown as the shield is.
+const AXE_THROW: u32 = 494;
 /// EF_WATERBALL2: Water Ball's ball, one a damage packet (`prims::waterball`).
 const WATER_BALL: u32 = 117;
 /// EF_OVERTHRUST: the ring of Sonic Blow's, on the unit (`prims::burst`).
@@ -1973,6 +1975,9 @@ const ARRULLO_FX: u32 = 931;
 const ELEMENTAL_ACTION: u32 = 934;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
+/// Resurrection's rings and the Call Partner portal's warp (`prims::portal`).
+pub const REVIVE_FX: u32 = 140;
+const PORTAL_FX: u32 = 341;
 /// King's Grace's emblems, Offertorium's ring and Escape's tint and copies (`prims::emblems`, `actor`).
 const KINGS_GRACE: u32 = 1051;
 const OFFERTORIUM_RING: u32 = 1057;
@@ -2124,7 +2129,7 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 38] = [
+pub const AIMED: [u32; 39] = [
     PINPOINT_FX,
     ELBOW_LINES,
     KNUCKLE_LINES,
@@ -2157,6 +2162,7 @@ pub const AIMED: [u32; 38] = [
     GRIMTOOTH,
     SPEAR_BOOMERANG,
     SHIELD_BOOMERANG,
+    AXE_THROW,
     SPHERE,
     DARK_STRIKE,
     HUUJIN,
@@ -2573,6 +2579,10 @@ impl Effects {
                 let path = cells::sheet_texture(id);
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
                 self.prims.cells.sheet(id, at, now);
+            }
+            (REVIVE_FX, Target::Unit(_)) => {
+                self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
+                self.prims.portal.revive(at, now);
             }
             (LULLABY, Target::Unit(unit)) => {
                 for (name, path) in notes::TEXTURES {
@@ -3217,6 +3227,12 @@ impl Effects {
                 } else {
                     self.prims.cells.ring(effect, id, cells::insignia_tint(kind), at, now);
                 }
+            } else if effect == PORTAL_FX {
+                // The family call's cell burns a pink warp for its first 23 seconds.
+                for path in [portal::RING_RED, portal::CLOUD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.portal.keep(id, at, now, |n| pick(0, n.saturating_sub(1)));
             } else if effect == KINGS_GRACE {
                 // King's Grace's four emblems stand round the cell with their unit.
                 self.textures.entry(emblems::EMBLEM.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, emblems::EMBLEM, false).ok());
@@ -3375,6 +3391,11 @@ impl Effects {
                     self.play_sounds(table, id, from, now + crate::prims::TICK * tick);
                 }
                 self.prims.balls.fire_ball(from, to, now);
+            }
+            AXE_THROW => {
+                self.textures.entry(boomerang::AXE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, boomerang::AXE, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.boomerangs.throw_axe(caster, from, to, now, self.dim);
             }
             SHIELD_BOOMERANG => {
                 self.textures.entry(boomerang::SHIELD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, boomerang::SHIELD, true).ok());
@@ -3564,6 +3585,7 @@ impl Effects {
         self.prims.souls.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.notes.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.emblems.advance(now);
+        self.prims.portal.advance(now, |n| pick(0, n.saturating_sub(1)));
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -4149,6 +4171,9 @@ impl Effects {
             .chain(
                 self.prims.spears.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
+            .chain(
+                self.prims.portal.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .chain(self.prims.cells.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
             .chain(
                 self.prims
@@ -4400,7 +4425,7 @@ impl Effects {
         }
         let fire_ball = self.sprites.get(balls::FIRE_BALL_SPRITE).and_then(Option::as_ref);
         let spear = (self.sprites.get(balls::SPEAR_SPRITE).and_then(Option::as_ref), self.spear.as_slice());
-        quads.extend(self.prims.boomerangs.quads(self.textures.get(boomerang::SHIELD).and_then(Option::as_ref)));
+        quads.extend(self.prims.boomerangs.quads(|path| self.textures.get(path).and_then(Option::as_ref)));
         if !self.only_forced {
             quads.extend(self.prims.spheres.quads(self.textures.get(tanji::SPHERE).and_then(Option::as_ref)));
             // King's Grace's emblems: the glow added on, then the emblem, both facing the camera.
@@ -6610,5 +6635,25 @@ mod tests {
             assert_eq!(table.skill(skill, "effectId"), [effect], "{skill}");
         }
         assert!((172..=178).all(|id| table.lengths[&id] == 100 && !table.sounds.contains_key(&id)));
+    }
+
+    #[test]
+    fn resurrection_the_family_calls_portal_and_tomahawk_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // 140 comes with 77 at a Resurrection's use and has no sound of its own (77's plays once).
+        let skill = table.skill(54, "effectId");
+        assert_eq!(skill, [77, REVIVE_FX]);
+        assert!(!table.sounds.contains_key(&REVIVE_FX) && sounds(77).len() == 1);
+        assert_eq!(table.lengths[&REVIVE_FX], 250);
+        // 341 is the family call's unit, 9 999 ticks long, restarting 8 ticks before; no sound.
+        assert_eq!(table.units[&178], PORTAL_FX);
+        assert_eq!(table.lengths[&PORTAL_FX], 9999);
+        assert_eq!(restart_ticks(PORTAL_FX, 178, 9999), 9991);
+        assert!(!table.sounds.contains_key(&PORTAL_FX) && !table.units_once.contains(&178));
+        // 494: the axe is aimed from the caster at the target, with one sound.
+        assert!(AIMED.contains(&AXE_THROW) && table.struck(337).unwrap().contains(&(Who::Caster, AXE_THROW)));
+        assert_eq!(sounds(AXE_THROW), [("effect\\cru_shield boomerang", 0, false)]);
+        assert_eq!(table.lengths.get(&AXE_THROW), None);
     }
 }
