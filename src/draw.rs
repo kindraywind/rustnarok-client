@@ -2845,6 +2845,7 @@ impl App {
         if let Some(texture) = &assets.magic_target {
             for square in game.cast_squares.values() {
                 let steps = square.width.ceil() as usize;
+                let alpha = square.pose(now).1;
                 let vertices = square
                     .triangles(now, steps)
                     .into_iter()
@@ -2853,7 +2854,7 @@ impl App {
                         world::MeshVertex {
                             position: [cell[0] * world::CELL + world::CELL / 2.0, ground[1] + CAST_SQUARE_LIFT, cell[1] * world::CELL + world::CELL / 2.0],
                             uv,
-                            tint: [1.0; 4],
+                            tint: [1.0, 1.0, 1.0, alpha],
                         }
                     })
                     .collect();
