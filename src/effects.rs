@@ -1002,12 +1002,36 @@ pub fn circle_ignores(status: u16, on: bool, value: i64) -> bool {
 
 /// A cast's aura: one a caster has at a time.
 pub fn is_cast_aura(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59 | TETRA_CASTING | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    matches!(effect, 12 | 54..=59 | TETRA_CASTING | SHADOW_CAST | BUBBLE_CAST | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
 }
 
 /// The effects made of bands.
 pub fn is_banded(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 315 | 320 | 325 | 342 | 344 | 367 | 441 | TETRA_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    matches!(
+        effect,
+        12 | 54
+            ..=59
+                | 304
+                | 312
+                | 313
+                | 314
+                | 315
+                | 320
+                | 325
+                | 342
+                | 344
+                | 367
+                | 441
+                | TETRA_CASTING
+                | SHADOW_CAST
+                | BUBBLE_CAST
+                | 1872
+                | 1876
+                | 1902
+                | 1910
+                | 1918
+                | 1923
+    )
 }
 
 /// How long a band effect lasts, in ticks: Heal and the arrival 100, the teleport and logout 200, Aura Blade's bloom 60.
@@ -1054,7 +1078,9 @@ const ARRIVAL_BANDS: [[f32; 3]; 4] = [[3.7, 30.0, 90.0], [3.4, 30.0, 90.0], [3.6
 
 /// How long a cast's aura lasts: the cast time in 16 ms ticks, at least 56 for 12 and 58 and 70 for the rest.
 fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
-    (cast_ms / 16).max(if matches!(effect, 12 | 58 | TETRA_CASTING | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) {
+    (cast_ms / 16).max(if effect == BUBBLE_CAST {
+        100
+    } else if matches!(effect, 12 | 58 | TETRA_CASTING | SHADOW_CAST | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) {
         56
     } else {
         70
@@ -1081,6 +1107,8 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         314 => ("ring_purple", [0x64, 0x64, 0xFF], true),
         344 => ("ring_blue", [0x64, 0x64, 0xFF], true),
         58 | TETRA_CASTING => ("ring_white", [0xFF, 0xFF, 0xFF], true),
+        SHADOW_CAST => ("ring_black", [0x32, 0x32, 0x32], false),
+        BUBBLE_CAST => ("ring_white", [0xFF, 0xFF, 0xFF], true),
         COUPLE_CASTING => ("ring_red", [0xFF, 0x59, 0xB6], true),
         BLUE_CASTING => ("ring_blue", [0x64, 0x64, 0xFF], true),
         54 => ("ring_blue", [0xC3, 0xC3, 0xFF], false),
@@ -1109,7 +1137,7 @@ fn aura_set_texture(effect: u32, set: usize) -> String {
 
 /// How many sets of bands an aura draws with their own textures.
 fn aura_sets(effect: u32) -> usize {
-    if effect == 367 { 2 } else { 1 }
+    if matches!(effect, 367 | BUBBLE_CAST) { 2 } else { 1 }
 }
 
 /// The blooming bands' first alphas (two sets of four), their heights and turns.
@@ -1223,7 +1251,7 @@ fn arrival_bands(age: u32) -> [Band; 4] {
 
 /// The auras made of two sets of blooming bands.
 fn is_bloom(effect: u32) -> bool {
-    matches!(effect, 12 | 58 | 367 | TETRA_CASTING | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    matches!(effect, 12 | 58 | 367 | TETRA_CASTING | SHADOW_CAST | BUBBLE_CAST | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
 }
 
 impl Banded {
@@ -1231,7 +1259,11 @@ impl Banded {
     fn bloom_bands(&self, age: u32) -> Vec<(usize, Band, Vec<f32>)> {
         (0..2)
             .flat_map(|set| (0..4).filter_map(move |band| bloom(set, band, self.ticks, age).map(|shape| (set, band, shape))))
-            .map(|(set, band, shape)| (set, shape, (0..=BAND_QUADS).map(|s| bloom_height(band, shape.height, age, s)).collect()))
+            .map(|(set, band, shape)| {
+                // The bubble cast's cones stand 10 higher.
+                let shape = if self.effect == BUBBLE_CAST { Band { height: shape.height + 10.0, ..shape } } else { shape };
+                (set, shape, (0..=BAND_QUADS).map(|s| bloom_height(band, shape.height, age, s)).collect())
+            })
             .collect()
     }
 
@@ -1840,6 +1872,14 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Shadow Form's cast aura, the ground cells of Chaos Panic, Maelstrom and Bloody Lust, the bubble casts of the Arch Bishop and the
+/// Sura (`prims::holes`, `prims::songs`).
+const SHADOW_CAST: u32 = 826;
+const CHAOS_CELL: u32 = 827;
+const MAELSTROM_CELL: u32 = 828;
+const BLOODY_CELL: u32 = 829;
+const BUBBLE_CAST: u32 = 830;
+const SURA_CAST: u32 = 831;
 /// Shadow Form's tube, Strip Accessory's icons, Manhole's and Dimension Door's cells and Manhole's body (`prims::transcend`,
 /// `prims::guard`, `prims::holes`, `prims::shafts`, `prims::brawl`).
 const SHADOW_LINK: u32 = 819;
@@ -2100,6 +2140,21 @@ impl Effects {
             self.prims.songs.twilight(id, cast_ms / crate::prims::TICK.as_millis() as u32, now, |n| pick(0, n.saturating_sub(1)));
             return;
         }
+        // Shadow Form's cast aura shows with no sound; the sound comes with the skill packet.
+        if id == SHADOW_CAST {
+            return;
+        }
+        // The Sura casts: bubble cones over two blue squares.
+        if id == SURA_CAST {
+            let ticks = (cast_ms / crate::prims::TICK.as_millis() as u32).max(120);
+            for path in songs::BUBBLES.into_iter().chain([holes::SURA_CIRCLE]) {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            self.play_sounds(table, id, at, now);
+            self.prims.songs.cone(SURA_CAST, unit, ticks, now);
+            self.prims.holes.squares(unit, ticks, now);
+            return;
+        }
         // Tetra Vortex's cast also flickers the caster in a fresh colour each tick.
         if id == TETRA_CASTING {
             self.prims.brawl.tetra(unit, aura_ticks(id, cast_ms), now);
@@ -2321,6 +2376,11 @@ impl Effects {
                 self.prims.painter.paint(unit, at, now);
             }
             (DEADLY_INFECT, Target::Unit(unit)) => self.prims.guard.blink(unit, now),
+            (SHADOW_CAST, Target::Unit(unit)) => {
+                // The skill packet's aura: 60 ticks, with the sound at the listener.
+                self.play_aura(gpu, grf, unit, SHADOW_CAST, 960, now);
+                self.sounds.push((now, "effect\\shadowform.wav".to_owned(), LISTENER));
+            }
             (STRIP_ACCESSORY, _) => {
                 for path in guard::ACCESSORIES {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
@@ -2791,6 +2851,11 @@ impl Effects {
             let texture = aura_set_texture(effect, set);
             self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
         }
+        if effect == BUBBLE_CAST {
+            for path in songs::BUBBLES {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+        }
         let anchor = Anchor::Unit(unit);
         self.auras.retain(|aura| !(is_cast_aura(aura.effect) && matches!(aura.anchor, Anchor::Unit(each) if each == unit)));
         self.auras.push(Banded { effect, anchor, start, ticks: aura_ticks(effect, cast_ms), turns: [0.0; 3], extra: [0.0; 2], sparkles: Vec::new() });
@@ -2852,13 +2917,25 @@ impl Effects {
                 let look = if effect == MAGNUS { ground::RING_RED } else { ground::ALPHA_DOWN };
                 self.textures.entry(look.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, look, true).ok());
                 self.prims.ground.keep_box(effect, id, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+            } else if matches!(effect, CHAOS_CELL | MAELSTROM_CELL | BLOODY_CELL) {
+                // Chaos Panic's, Maelstrom's and Bloody Lust's cells turn their squares for as long as their unit stands.
+                let look = match effect {
+                    CHAOS_CELL => holes::Look::ChaosPanic,
+                    MAELSTROM_CELL => holes::Look::Maelstrom,
+                    _ => holes::Look::BloodyLust,
+                };
+                for path in holes::textures(&look, self.min).into_iter().chain([walls::RING_WHITE]) {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.holes.keep(id, look, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
             } else if matches!(effect, MANHOLE_CELL | DIMENSION_CELL) {
                 // Manhole's and Dimension Door's cells turn a blue swirl and throw ring triples, with the door's shafts.
                 let door = effect == DIMENSION_CELL;
-                for path in [if door { holes::SPHERE } else { holes::TWIRL }, walls::RING_WHITE, shafts::CLOUD] {
+                let look = if door { holes::Look::DimensionDoor } else { holes::Look::Manhole };
+                for path in holes::textures(&look, self.min).into_iter().chain([walls::RING_WHITE, shafts::CLOUD]) {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
                 }
-                self.prims.holes.keep(id, door, at, now, |n| pick(0, n.saturating_sub(1)));
+                self.prims.holes.keep(id, look, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
                 if door {
                     self.prims.shafts.keep(id, at, now);
                 }
@@ -3545,7 +3622,14 @@ impl Effects {
             let at = aura.anchor.place(&position_of);
             (0..aura_sets(aura.effect)).filter_map(move |set| {
                 let at = at?;
-                let texture = self.textures.get(&aura_set_texture(aura.effect, set)).and_then(Option::as_ref)?;
+                // The bubble cast: the picture moves every tick, set 1 blue and added on, set 2 white and blended.
+                let path = if aura.effect == BUBBLE_CAST { songs::BUBBLES[((age + 1) % 27) as usize].to_owned() } else { aura_set_texture(aura.effect, set) };
+                let (color, additive) = if aura.effect == BUBBLE_CAST {
+                    (if set == 0 { [100.0 / 255.0, 100.0 / 255.0, 1.0] } else { [1.0; 3] }, set == 0)
+                } else {
+                    (color, additive)
+                };
+                let texture = self.textures.get(&path).and_then(Option::as_ref)?;
                 let bands = if aura_sets(aura.effect) == 1 { aura.bands(age) } else { aura.bands_in_set(age, set) };
                 let triangles = bands.iter().flat_map(|(band, heights)| band_mesh(at, band, |s| heights[s], color)).collect();
                 Some((texture, triangles, additive))
@@ -3677,7 +3761,13 @@ impl Effects {
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
-            .chain(self.prims.holes.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
+            .chain(
+                self.prims
+                    .holes
+                    .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .chain(
                 self.prims
                     .mechanic
@@ -5752,5 +5842,32 @@ mod tests {
         assert!(table.units_once.contains(&204) && !table.units_once.contains(&205));
         // Dimension Door: its sound once at tick 1 at the listener.
         assert_eq!(sounds(DIMENSION_CELL), [("effect\\dimension", 16, true)]);
+    }
+
+    #[test]
+    fn shadow_form_the_cells_and_the_bubble_casts_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Shadow Form's aura: dark grey, blended; a cast of 40 ticks gives 56, the skill packet's 60; its sound is not a `wav` row.
+        assert_eq!(aura_look(SHADOW_CAST), ("ring_black", [0x32; 3], false));
+        assert!(is_cast_aura(SHADOW_CAST) && is_banded(SHADOW_CAST) && table.cast_aura(2287, 12) == Some(SHADOW_CAST));
+        assert_eq!((aura_ticks(SHADOW_CAST, 640), aura_ticks(SHADOW_CAST, 960)), (56, 60));
+        assert!(!table.sounds.contains_key(&SHADOW_CAST));
+        assert!(table.used(2287).unwrap().contains(&(Who::Caster, SHADOW_CAST)));
+        // The cells: their units keep them, the skills' own rows are gone, the sounds stay.
+        for (unit, effect, skill) in [(206, CHAOS_CELL, 2301), (207, MAELSTROM_CELL, 2302), (208, BLOODY_CELL, 2303)] {
+            assert_eq!(table.units[&unit], effect);
+            assert!(!table.units_once.contains(&unit) && table.skill(skill, "groundEffectId").is_empty());
+            assert!(table.sounds.contains_key(&effect));
+        }
+        // The Arch Bishop's casts: at least 100 ticks, two sets, the sound at tick 1 at the listener.
+        assert_eq!((aura_ticks(BUBBLE_CAST, 400), aura_ticks(BUBBLE_CAST, 3000)), (100, 187));
+        assert!(is_cast_aura(BUBBLE_CAST) && aura_sets(BUBBLE_CAST) == 2);
+        assert_eq!(sounds(BUBBLE_CAST), [("effect\\EF_BeginSpell", 16, true)]);
+        assert!([2041, 2042, 2045, 2047, 2048, 5072, 2322].iter().all(|&skill| table.cast_aura(skill, 12) == Some(BUBBLE_CAST)));
+        // The Sura's: an ordinary effect on the caster for the cast, with the begin-spell sound at tick 0.
+        assert!([2326, 2327, 2328, 2329, 2330, 2518].iter().all(|&skill| table.cast_aura(skill, 12) == Some(SURA_CAST)));
+        assert_eq!(sounds(SURA_CAST), [("effect\\EF_BeginSpell", 0, false)]);
+        assert!(!is_cast_aura(SURA_CAST));
     }
 }
