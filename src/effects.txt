@@ -1471,7 +1471,7 @@ spr	612	합격_	1	-
 spr	630	그림자베기	1	delayFrame=64;firstFrame=1;onTop=true;sideAction=4
 spr	631	다다미	1	delayFrame=96;firstFrame=1;yOffset=-6
 spr	632	안개베기	1	delayFrame=64;firstFrame=1;onTop=true;sideAction=2
-spr	633	일섬	1	delayFrame=32;firstFrame=1;onTop=true;yOffset=-6
+spr	633	일섬	1	delayFrame=32;firstFrame=1;onTop=true;yOffset=-6;frame=0
 spr	634	화염진	1	repeat=true;firstFrame=1;frameTicks=3;frameTicksRan=5;restart=true;yOffset=-1
 spr	637	데스페라도	1	delayFrame=64;firstFrame=1;onTop=true
 spr	638	라이트닝스피어	0	frame=0;repeat=true;yOffset=-7

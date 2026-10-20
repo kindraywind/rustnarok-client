@@ -7791,6 +7791,8 @@ mod tests {
             assert_eq!(slash.action, Some(0));
         }
         assert!(animation(631).side_action.is_none() && animation(633).side_action.is_none());
+        // Issen's sprite has 9 actions: it plays action 0, not the camera's facing.
+        assert_eq!(animation(633).action, Some(0));
         // Kaensin's flame: looped from frame 1, 3 + a draw of five ticks a frame, 22 draws a copy, starts again with its unit.
         let mut flame = Animation::new(&table.sprites[&634][0], 634, Instant::now(), Anchor::Lasting(1, [0.0; 3]), true);
         assert!(flame.repeat && flame.restarts && !flame.over && flame.offset[1] == -1.0 && table.lengths[&634] == 23);
