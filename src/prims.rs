@@ -37,6 +37,7 @@ pub mod shards;
 pub mod sight;
 pub mod sniper;
 pub mod songs;
+pub mod soul;
 pub mod souls;
 pub mod sparkle;
 pub mod spears;
@@ -195,6 +196,7 @@ pub struct Prims {
     pub spears: spears::Spears,
     pub crowds: crowds::Crowds,
     pub chi: chi::Chi,
+    pub soul: soul::Soul,
     pub kicks: kicks::Kicks,
     pub petals: petals::Petals,
     pub bodies: body::Bodies,

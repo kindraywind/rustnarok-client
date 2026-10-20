@@ -13,7 +13,7 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, kicks, knight,
-    mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, souls, spears, sphere, spray, star, stone, tanji, throw,
+    mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sight, sniper, songs, soul, souls, spears, sphere, spray, star, stone, tanji, throw,
     transcend, walls, waterball, waves,
 };
 use crate::render::{Gpu, Texture};
@@ -2127,6 +2127,10 @@ const AGI_UP: u32 = 456;
 const SEVEN_WIND: u32 = 461;
 const BLUE_BODY: u32 = 542;
 const RED_LIGHT_BODY: u32 = 544;
+/// Comfort's cones, Soul Link's mote and letters and Stin's blade (`prims::soul`).
+const COMFORT: u32 = 488;
+const SOUL_LINK_FX: u32 = 503;
+const STIN: u32 = 547;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
 /// Resurrection's rings and the Call Partner portal's warp (`prims::portal`).
@@ -2286,7 +2290,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 40] = [
+pub const AIMED: [u32; 41] = [
+    STIN,
     HIT_LINE_COUNTER,
     PINPOINT_FX,
     ELBOW_LINES,
@@ -2875,6 +2880,17 @@ impl Effects {
                 }
             }
             (RUN_STATUS, Target::Status(unit, _)) => self.prims.kicks.status(unit, true),
+            (COMFORT, Target::Unit(unit)) => {
+                self.textures.entry(soul::RING_BLUE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, soul::RING_BLUE, true).ok());
+                self.prims.soul.comfort(unit, now);
+                self.prims.bodies.start(body::Change::Comfort, unit, now);
+            }
+            (SOUL_LINK_FX, Target::Unit(unit)) => {
+                for path in std::iter::once(soul::MOTE).chain(soul::LETTERS) {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
+                }
+                self.prims.soul.link(unit, now);
+            }
             (BABY_FX, Target::Unit(unit)) => {
                 self.textures.entry(sphere::FIRE_IVY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sphere::FIRE_IVY, false).ok());
                 self.prims.sphere.ribbons(unit, now, |n| pick(0, n.saturating_sub(1)));
@@ -3729,6 +3745,11 @@ impl Effects {
                 self.textures.entry(kicks::LINE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, kicks::LINE, true).ok());
                 self.prims.kicks.hit(kicks::Kind::Counter, (target != own).then_some(target), Some(from), to, now);
             }
+            STIN => {
+                self.textures.entry(soul::BLADE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, soul::BLADE, false).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.soul.stin(from, to, now, |n| pick(0, n.saturating_sub(1)));
+            }
             AXE_THROW => {
                 self.textures.entry(boomerang::AXE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, boomerang::AXE, true).ok());
                 self.play_sounds(table, id, from, now);
@@ -3926,6 +3947,9 @@ impl Effects {
         self.prims.portal.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.sphere.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.petals.advance(now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.soul.advance(now, &position_of, self.yaw.to_degrees());
+        // The soul lights (506) the mote launches have no look yet.
+        let _ = self.prims.soul.take_launches();
         self.prims.kicks.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         let steps = self.prims.kicks.take_footprints();
         self.footprints.extend(steps);
@@ -4603,6 +4627,13 @@ impl Effects {
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
             .chain(
+                self.prims
+                    .soul
+                    .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
                 self.prims.portal.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
             .chain(self.prims.cells.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
@@ -4889,6 +4920,13 @@ impl Effects {
             // King's Grace's emblems: the glow added on, then the emblem, both facing the camera.
             if let Some(Some(texture)) = self.textures.get(emblems::EMBLEM) {
                 quads.extend(self.prims.emblems.draws(now).into_iter().map(|draw| (texture, draw.at, draw.corners, draw.tint, draw.additive, false)));
+            }
+            // Soul Link's mote and the letters SOUL LINK, facing the camera.
+            for draw in self.prims.soul.squares(self.yaw.to_degrees(), &position_of) {
+                if let Some(Some(texture)) = self.textures.get(draw.texture) {
+                    let [red, green, blue] = draw.rgb;
+                    quads.push((texture, draw.at, soul::Soul::corners(draw.half), [red, green, blue, draw.alpha / 255.0], draw.additive, false));
+                }
             }
             // Lope's motes and petals, facing the camera.
             quads.extend(self.prims.petals.quads(|path| self.textures.get(path).and_then(Option::as_ref)));
@@ -7355,5 +7393,22 @@ mod tests {
         assert!(table.used(465).unwrap().contains(&(Who::Target, 419)));
         assert!([165, 166, 167, 232, 660].iter().all(|&status| table.status(status).contains(&RED_LIGHT_BODY)));
         assert_eq!((table.lengths[&BLUE_BODY], table.lengths[&RED_LIGHT_BODY]), (200, 99_999_999));
+    }
+
+    #[test]
+    fn comfort_soul_link_and_stin_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        for skill in [431, 432, 433] {
+            assert!(table.used(skill).unwrap().contains(&(Who::Caster, COMFORT)), "{skill}");
+        }
+        assert_eq!(sounds(COMFORT), [("effect\\T_안락한마법", 80)]);
+        for skill in [445, 447, 448, 449, 450, 451, 2596, 2597, 2598, 2599] {
+            assert!(table.used(skill).unwrap().contains(&(Who::Target, SOUL_LINK_FX)), "{skill}");
+        }
+        assert_eq!(sounds(SOUL_LINK_FX), [("effect\\T_캐스팅", 0), ("effect\\T_영혼", 2320)]);
+        assert!(AIMED.contains(&STIN) && table.struck(467).unwrap().contains(&(Who::Caster, STIN)));
+        assert_eq!(sounds(STIN), [("effect\\T_바람마법", 160)]);
+        assert_eq!([COMFORT, SOUL_LINK_FX, STIN].map(|id| table.lengths[&id]), [400, 500, 200]);
     }
 }
