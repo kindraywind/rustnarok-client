@@ -863,7 +863,8 @@ impl App {
         for (owner, feet, placements) in &frames {
             let sprites = sprites_of(owner).unwrap();
             let tint = match owner {
-                Owner::Unit(id) => [1.0, 1.0, 1.0, game.units.get(id).map_or(1.0, |actor| actor.alpha(now))],
+                Owner::Player => [1.0, 1.0, 1.0, game.effects.cloak_alpha(None, now)],
+                Owner::Unit(id) => [1.0, 1.0, 1.0, game.units.get(id).map_or(1.0, |actor| actor.alpha(now)).min(game.effects.cloak_alpha(Some(*id), now))],
                 Owner::Item(id) if game.ground.get(id).is_some_and(|item| item_glints(now.saturating_duration_since(item.seen).as_secs_f32() / 0.024)) => {
                     [1.0, 1.0, 0.0, 1.0]
                 }
@@ -911,7 +912,7 @@ impl App {
                 !was
             });
             // A swinging head and gear (a player's only) run round their circles.
-            let swing = glow.filter(|(flags, _)| is_player && flags & actor::GLOW_SWING != 0).map(|(flags, _)| flags >> 16);
+            let swing = glow.filter(|(flags, _)| is_player && flags & actor::GLOW_SWING != 0).map(|(flags, _)| flags >> actor::PARAM_SHIFT);
             for (index, &(key, position, size, angle)) in placements.iter().enumerate() {
                 let position = match swing {
                     Some(n) => actor::swing_offset(n, sprites.swing_reach(key), position),

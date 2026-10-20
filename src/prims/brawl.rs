@@ -38,8 +38,6 @@ const SQUARES: [f32; 10] = [40.0, 36.0, 32.4, 29.2, 26.4, 24.0, 22.0, 20.4, 19.2
 const TORNADO_LAST: u32 = 99;
 const WISP_LAST: u32 = 60;
 const SPIN_TICKS: u32 = 48;
-/// Dark Illusion's shake of its target: ticks 0 to 34.
-const SHAKE_TICKS: u32 = 35;
 /// Dark Illusion: 8 prims of 4 pale lines, drawn for ages 1 to 49.
 const STRIP_PRIMS: usize = 8;
 const STRIP_LAST: u32 = 49;
@@ -352,7 +350,22 @@ struct Spread {
     start: Instant,
 }
 
-/// A unit whose parts shake (458), swing its head (466) or glow blue (543) from `start`.
+/// Camouflage's translucent unit (744): alpha 50 while the status lasts, then 8 more a tick back to 255.
+struct Cloak {
+    unit: Option<u32>,
+    start: Instant,
+    ended: Option<Instant>,
+}
+
+/// A unit whose parts shake on ticks `first` to `last` (458, 550).
+struct Shake {
+    unit: Option<u32>,
+    start: Instant,
+    first: u32,
+    last: u32,
+}
+
+/// A unit whose parts swing its head (466), glow blue (543) or red (548) from `start`.
 struct Marked {
     unit: Option<u32>,
     start: Instant,
@@ -376,9 +389,11 @@ pub struct Brawl {
     lines: Vec<Lines>,
     spreads: Vec<Spread>,
     spins: Vec<Spin>,
-    shakes: Vec<Marked>,
+    shakes: Vec<Shake>,
     swings: Vec<Swing>,
     blues: Vec<Blue>,
+    reds: Vec<Marked>,
+    cloaks: Vec<Cloak>,
 }
 
 impl Brawl {
@@ -438,9 +453,32 @@ impl Brawl {
         self.tornado(at, now, Some(id), rand);
     }
 
-    /// A trap went: its tornado with it.
+    /// A trap went: its tornado with it; a unit went: its cloak.
     pub fn forget(&mut self, id: u32) {
         self.tornados.retain(|tornado| tornado.kept != Some(id));
+        self.cloaks.retain(|cloak| cloak.unit != Some(id));
+    }
+
+    /// A status of Camouflage's on `unit` (replacing the last).
+    pub fn cloak(&mut self, unit: Option<u32>, now: Instant) {
+        self.cloaks.retain(|cloak| cloak.unit != unit);
+        self.cloaks.push(Cloak { unit, start: now, ended: None });
+    }
+
+    /// Camouflage's status went off `unit`.
+    pub fn uncloak(&mut self, unit: Option<u32>, now: Instant) {
+        for cloak in self.cloaks.iter_mut().filter(|cloak| cloak.unit == unit && cloak.ended.is_none()) {
+            cloak.ended = Some(now);
+        }
+    }
+
+    /// How opaque `unit` is drawn now (0 to 1) under Camouflage: 50 / 255, climbing back by 8 / 255 a tick once it is over.
+    pub fn cloak_alpha(&self, unit: Option<u32>, now: Instant) -> Option<f32> {
+        self.cloaks.iter().filter(|cloak| cloak.unit == unit).find_map(|cloak| {
+            passes(cloak.start, now).checked_sub(1)?;
+            let alpha = 50 + cloak.ended.map_or(0, |ended| 8 * passes(ended, now));
+            (alpha < 255).then_some(alpha as f32 / 255.0)
+        })
     }
 
     fn tornado(&mut self, at: Vector, now: Instant, kept: Option<u32>, mut rand: impl FnMut(u32) -> u32) {
@@ -474,14 +512,22 @@ impl Brawl {
         self.lines.push(Lines { start: now, from, heading, strips });
     }
 
-    /// Dark Illusion's and Knuckle Arrow's shake of `unit` (35 ticks).
-    pub fn shake(&mut self, unit: Option<u32>, now: Instant) {
-        self.shakes.push(Marked { unit, start: now });
+    /// A shake of `unit`'s parts on ticks `first` to `last` (Dark Illusion's 0 to 34, Sky Net Blow's 31 to 50).
+    pub fn shake(&mut self, unit: Option<u32>, now: Instant, first: u32, last: u32) {
+        self.shakes.push(Shake { unit, start: now, first, last });
     }
 
     /// Whether `unit`'s parts shake now.
     pub fn shaking(&self, unit: Option<u32>, now: Instant) -> bool {
-        self.shakes.iter().filter(|shake| shake.unit == unit).any(|shake| passes(shake.start, now).checked_sub(1).is_some_and(|t| t < SHAKE_TICKS))
+        self.shakes
+            .iter()
+            .filter(|shake| shake.unit == unit)
+            .any(|shake| passes(shake.start, now).checked_sub(1).is_some_and(|t| (shake.first..=shake.last).contains(&t)))
+    }
+
+    /// Sky Net Blow's and Infrared Scan's red flash of `unit`.
+    pub fn red(&mut self, unit: Option<u32>, now: Instant) {
+        self.reds.push(Marked { unit, start: now });
     }
 
     /// Marsh of Abyss' and Great Echo's head swing on `unit`.
@@ -515,7 +561,9 @@ impl Brawl {
         self.lines.retain(|lines| passes(lines.start, now) <= STRIP_LAST + 1);
         self.spreads.retain(|spread| passes(spread.start, now) <= 100);
         self.spins.retain(|spin| passes(spin.start, now) <= SPIN_TICKS + 1);
-        self.shakes.retain(|shake| passes(shake.start, now) <= SHAKE_TICKS);
+        self.shakes.retain(|shake| passes(shake.start, now) <= shake.last + 1);
+        self.reds.retain(|red| passes(red.start, now) <= 17);
+        self.cloaks.retain(|cloak| cloak.ended.is_none_or(|ended| passes(ended, now) <= 26));
         self.swings.retain(|swing| passes(swing.start, now) <= 50);
         self.blues.retain(|blue| passes(blue.start, now) <= 200);
     }
@@ -537,18 +585,23 @@ impl Brawl {
         let added = self.rays.iter().filter(|rays| rays.unit == unit).any(|rays| passes(rays.start, now).checked_sub(1).is_some_and(|t| (5..=35).contains(&t)));
         let spread = self.spreads.iter().filter(|spread| spread.unit == unit).find_map(|spread| {
             let t = passes(spread.start, now).checked_sub(1).filter(|t| (30..100).contains(t))?;
-            Some(crate::actor::GLOW_SPREAD | (t - 30) << 16)
+            Some(crate::actor::GLOW_SPREAD | (t - 30) << crate::actor::PARAM_SHIFT)
         });
         // Marsh of Abyss' swing on ticks 14 to 49 (the age in the upper half) and Hovering's blue copies on ticks 0 to 199 (the alpha).
         let swing = self.swings.iter().filter(|swing| swing.unit == unit).find_map(|swing| {
             let t = passes(swing.start, now).checked_sub(1).filter(|t| (14..50).contains(t))?;
-            Some(crate::actor::GLOW_SWING | (t - 14) << 16)
+            Some(crate::actor::GLOW_SWING | (t - 14) << crate::actor::PARAM_SHIFT)
         });
         let blue = self.blues.iter().filter(|blue| blue.unit == unit).find_map(|blue| {
             let t = passes(blue.start, now).checked_sub(1).filter(|&t| t < 200)?;
-            Some(crate::actor::GLOW_BLUE | (crate::actor::blue_alpha(t) as u32) << 16)
+            Some(crate::actor::GLOW_BLUE | (crate::actor::blue_alpha(t) as u32) << crate::actor::PARAM_SHIFT)
         });
-        match (added, spread.or(swing).or(blue)) {
+        // Sky Net Blow's red copies on ticks 0 to 16, three phases a tick.
+        let red = self.reds.iter().filter(|red| red.unit == unit).find_map(|red| {
+            let t = passes(red.start, now).checked_sub(1).filter(|&t| t <= 16)?;
+            Some(crate::actor::GLOW_RED | (crate::actor::copies_alpha(3 * t) as u32) << crate::actor::PARAM_SHIFT)
+        });
+        match (added, spread.or(swing).or(blue).or(red)) {
             (false, None) => None,
             (added, extra) => Some((if added { crate::actor::GLOW_ADDITIVE } else { 0 } | extra.unwrap_or(0), None)),
         }
@@ -766,10 +819,10 @@ mod tests {
         let glow = |tick: u32| brawl.glow(Some(1), start + TICK * tick);
         assert!(glow(29).is_none() && glow(100).is_none());
         for (tick, n) in [(30, 0), (31, 1), (59, 29), (99, 69)] {
-            assert_eq!(glow(tick), Some((crate::actor::GLOW_SPREAD | n << 16, None)));
+            assert_eq!(glow(tick), Some((crate::actor::GLOW_SPREAD | n << 24, None)));
         }
         // The copies: the age n → 4 · n px · unit right, left, down, up, alpha 5 · (30 − n).
-        let (_, copies) = crate::actor::glow_copies(crate::actor::GLOW_SPREAD | 29 << 16, None, crate::actor::PartGroup::Body, 0.0, 0.0, 400.0 / 300.0, true);
+        let (_, copies) = crate::actor::glow_copies(crate::actor::GLOW_SPREAD | 29 << 24, None, crate::actor::PartGroup::Body, 0.0, 0.0, 400.0 / 300.0, true);
         assert_eq!(copies.len(), 4);
         assert!(
             near(copies[0].offset[0], 154.67) && near(copies[1].offset[0], -154.67) && near(copies[2].offset[1], 154.67) && near(copies[3].offset[1], -154.67)
@@ -777,7 +830,7 @@ mod tests {
         assert!(copies.iter().all(|copy| !copy.additive && near(copy.color[3] * 255.0, 5.0)));
         let (_, first) = crate::actor::glow_copies(crate::actor::GLOW_SPREAD, None, crate::actor::PartGroup::Gear, 0.0, 0.0, 400.0 / 300.0, false);
         assert!(first.len() == 4 && first.iter().all(|copy| copy.offset == [0.0; 2]) && near(first[0].color[3] * 255.0, 150.0));
-        let (_, gone) = crate::actor::glow_copies(crate::actor::GLOW_SPREAD | 30 << 16, None, crate::actor::PartGroup::Body, 0.0, 0.0, 1.0, true);
+        let (_, gone) = crate::actor::glow_copies(crate::actor::GLOW_SPREAD | 30 << 24, None, crate::actor::PartGroup::Body, 0.0, 0.0, 1.0, true);
         assert!(gone.is_empty());
     }
 
@@ -857,7 +910,7 @@ mod tests {
     fn dark_illusion_shakes_marsh_of_abyss_swings_and_hovering_glows() {
         let start = Instant::now();
         let mut brawl = Brawl::default();
-        brawl.shake(Some(1), start);
+        brawl.shake(Some(1), start, 0, 34);
         brawl.swing(Some(2), start);
         brawl.blue(Some(3), start);
         // The shake is on ticks 0 to 34 only, for its unit.
@@ -867,11 +920,11 @@ mod tests {
         let swing = |tick: u32| brawl.glow(Some(2), start + TICK * tick);
         assert!(swing(13).is_none() && swing(50).is_none());
         assert_eq!(swing(14), Some((crate::actor::GLOW_SWING, None)));
-        assert_eq!(swing(49), Some((crate::actor::GLOW_SWING | 35 << 16, None)));
+        assert_eq!(swing(49), Some((crate::actor::GLOW_SWING | 35 << 24, None)));
         // The blue copies: ticks 0 to 199, the alpha in the upper half.
         let blue = |tick: u32| brawl.glow(Some(3), start + TICK * tick);
         assert_eq!(blue(0), Some((crate::actor::GLOW_BLUE, None)));
-        assert_eq!(blue(11), Some((crate::actor::GLOW_BLUE | 160 << 16, None)));
+        assert_eq!(blue(11), Some((crate::actor::GLOW_BLUE | 160 << 24, None)));
         assert!(blue(199).is_some() && blue(200).is_none());
     }
 
@@ -895,5 +948,43 @@ mod tests {
         assert_eq!(brawl.meshes(start + TICK * 59, |_| None).len(), 10);
         brawl.forget(7);
         assert!(brawl.meshes(start + TICK * 59, |_| None).is_empty());
+    }
+
+    #[test]
+    fn sky_net_blow_flashes_red_and_shakes_late_and_camouflage_goes_translucent() {
+        use crate::actor::{GLOW_RED, PARAM_SHIFT, PartGroup, glow_copies};
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.red(Some(1), start);
+        brawl.shake(Some(1), start, 31, 50);
+        // The red copies' alpha at t = 0, 1, 3, 4, 6, 7, 10, 16, 17: 0, 45, 135, 160, 160, 150, 105, 15, none.
+        let alpha = |tick: u32| brawl.glow(Some(1), start + TICK * tick).map(|(flags, _)| flags >> PARAM_SHIFT);
+        assert_eq!([0, 1, 3, 4, 6, 7, 10, 16].map(alpha), [0, 45, 135, 160, 160, 150, 105, 15].map(Some));
+        assert_eq!(alpha(17), None);
+        assert_eq!(brawl.glow(Some(1), start + TICK * 3).unwrap().0 & GLOW_RED, GLOW_RED);
+        let (_, copies) = glow_copies(GLOW_RED | 160 << PARAM_SHIFT, None, PartGroup::Body, 0.0, 0.0, 1.0, true);
+        assert_eq!(copies.len(), 2);
+        assert!(copies.iter().all(|copy| copy.additive && copy.color == [1.0, 5.0 / 255.0, 5.0 / 255.0, 160.0 / 255.0]));
+        // The jitter is on ticks 31 to 50 and not on 30 or 51.
+        assert!(!brawl.shaking(Some(1), start + TICK * 30) && brawl.shaking(Some(1), start + TICK * 31));
+        assert!(brawl.shaking(Some(1), start + TICK * 50) && !brawl.shaking(Some(1), start + TICK * 51));
+        // Camouflage: alpha 50 every tick while on, then 58, 66 … back to opaque in 26 ticks; one to a unit.
+        let mut cloak = Brawl::default();
+        cloak.cloak(Some(2), start);
+        cloak.cloak(Some(2), start);
+        assert_eq!(cloak.cloaks.len(), 1);
+        assert!(cloak.cloak_alpha(Some(3), start).is_none());
+        assert!([0, 1, 500].iter().all(|&tick| cloak.cloak_alpha(Some(2), start + TICK * tick) == Some(50.0 / 255.0)));
+        let ended = start + TICK * 600;
+        cloak.uncloak(Some(2), ended);
+        assert_eq!(cloak.cloak_alpha(Some(2), ended), Some(58.0 / 255.0));
+        assert_eq!(cloak.cloak_alpha(Some(2), ended + TICK * 1), Some(66.0 / 255.0));
+        assert_eq!(cloak.cloak_alpha(Some(2), ended + TICK * 24), Some(250.0 / 255.0));
+        assert_eq!(cloak.cloak_alpha(Some(2), ended + TICK * 25), None);
+        cloak.advance(ended + TICK * 40, |_| 0);
+        assert!(cloak.cloaks.is_empty());
+        cloak.cloak(Some(4), start);
+        cloak.forget(4);
+        assert!(cloak.cloaks.is_empty());
     }
 }

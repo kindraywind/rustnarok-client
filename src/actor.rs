@@ -2181,10 +2181,14 @@ pub const GLOW_WEAPON: u32 = 0x2;
 pub const GLOW_FLICKER: u32 = 0x4;
 pub const GLOW_OUTLINE: u32 = 0x8;
 pub const GLOW_REFLECT: u32 = 0x200;
-/// Marsh of Abyss' and Great Echo's swing: a player's head and gear run round circles; the age n (0 to 35) is in the upper half.
+/// A flag may carry one number (an age or an alpha, 0 to 255) in the top byte, from this bit.
+pub const PARAM_SHIFT: u32 = 24;
+/// Marsh of Abyss' and Great Echo's swing: a player's head and gear run round circles; the age n (0 to 35) is in the top byte.
 pub const GLOW_SWING: u32 = 0x40;
-/// Hovering's two blue copies of every part; their alpha (0 to 160) is in the upper half.
+/// Hovering's two blue copies of every part; their alpha (0 to 160) is in the top byte.
 pub const GLOW_BLUE: u32 = 0x4000;
+/// Sky Net Blow's two red copies of every part; their alpha is in the top byte.
+pub const GLOW_RED: u32 = 0x40000;
 /// Sound of Destruction's: four copies slide out of every part; the age n (0 to 69) of the effect's 30th tick on is in the upper half.
 pub const GLOW_SPREAD: u32 = 0x1000;
 
@@ -2204,12 +2208,16 @@ pub fn swing_offset(n: u32, reach: f32, [x, y]: [f32; 2]) -> [f32; 2] {
 
 /// The alpha of Hovering's blue copies at tick t (0 to 199): they open over 10 ticks, glow, and close from tick 150.
 pub fn blue_alpha(t: u32) -> f32 {
-    let f = match t {
+    copies_alpha(match t {
         0..=25 => t,
         26..=150 => 25,
         151..=175 => 175 - t,
         _ => 0,
-    };
+    })
+}
+
+/// The alpha of a flash's added-on copies at its phase f: 15 f to 10, 160 to 20, then 5 · (51 − f) down to nothing at 51.
+pub fn copies_alpha(f: u32) -> f32 {
     match f {
         0..=10 => 15.0 * f as f32,
         11..=20 => 160.0,
@@ -2282,16 +2290,18 @@ pub fn glow_copies(flags: u32, tint: Option<[u8; 3]>, group: PartGroup, breath: 
         }
         part.color = [1.0, 1.0, 1.0, 150.0 / 255.0];
     }
-    // Hovering: two more copies of every part, added on in blue.
-    if flags & GLOW_BLUE != 0 {
-        let alpha = (flags >> 16) as f32 / 255.0;
-        for _ in 0..2 {
-            copies.push(GlowCopy { additive: true, color: [5.0 / 255.0, 5.0 / 255.0, 1.0, alpha], grow: 0.0, offset: [0.0; 2] });
+    // Hovering and Sky Net Blow: two more copies of every part, added on in blue or red.
+    for (flag, color) in [(GLOW_BLUE, [5.0 / 255.0, 5.0 / 255.0, 1.0]), (GLOW_RED, [1.0, 5.0 / 255.0, 5.0 / 255.0])] {
+        if flags & flag != 0 {
+            let alpha = (flags >> PARAM_SHIFT) as f32 / 255.0;
+            for _ in 0..2 {
+                copies.push(GlowCopy { additive: true, color: [color[0], color[1], color[2], alpha], grow: 0.0, offset: [0.0; 2] });
+            }
         }
     }
     // Four white copies of every part slide right, left, down and up, fainter as they go.
     if flags & GLOW_SPREAD != 0 {
-        let n = (flags >> 16) as f32;
+        let n = (flags >> PARAM_SHIFT) as f32;
         let alpha = 5.0 * (30.0 - n);
         let away = 4.0 * n * unit;
         if alpha > 0.0 {
@@ -4307,7 +4317,7 @@ mod tests {
         let ticks = [0, 5, 10, 11, 20, 21, 25, 26, 150, 151, 154, 155, 164, 165, 175, 176, 200];
         assert_eq!(ticks.map(blue_alpha), [0.0, 75.0, 150.0, 160.0, 160.0, 150.0, 130.0, 130.0, 130.0, 135.0, 150.0, 160.0, 160.0, 150.0, 0.0, 0.0, 0.0]);
         // Two added-on copies of every part, in #0505FF, at the alpha in the flags' upper half.
-        let (_, copies) = glow_copies(GLOW_BLUE | 160 << 16, None, PartGroup::Gear, 0.0, 0.0, 1.0, true);
+        let (_, copies) = glow_copies(GLOW_BLUE | 160 << 24, None, PartGroup::Gear, 0.0, 0.0, 1.0, true);
         assert_eq!(copies.len(), 2);
         assert!(copies.iter().all(|copy| copy.additive && copy.color == [5.0 / 255.0, 5.0 / 255.0, 1.0, 160.0 / 255.0] && copy.grow == 0.0));
     }

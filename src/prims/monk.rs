@@ -16,6 +16,7 @@ pub const LENS_RAID: &str = "data\\texture\\effect\\lens2.tga";
 pub const CLAW: &str = "data\\sprite\\이팩트\\침투경_";
 pub const FVOICE: &str = "data\\sprite\\이팩트\\fvoice";
 pub const WINK: &str = "data\\sprite\\이팩트\\wink";
+pub const SPEARS: &str = "data\\sprite\\이팩트\\헌드레드스피어";
 /// Investigate's sparks are 5 prims of 4, Back Stab's 20; lifted 8 units, coloured #8282FA.
 const INVESTIGATE_SPARKS: usize = 20;
 const BACK_STAB_SPARKS: usize = 80;
@@ -79,6 +80,7 @@ pub struct SpriteLook {
 
 const SLASH: SpriteLook = SpriteLook { sprite: CLAW, scale: 2.5, alpha: 200.0, per_frame: 2, last: usize::MAX, life: 15, turned: true };
 const PANG_VOICE: SpriteLook = SpriteLook { sprite: FVOICE, scale: 1.0, alpha: 255.0, per_frame: 6, last: 11, life: 99, turned: false };
+const HUNDRED_SPEAR: SpriteLook = SpriteLook { sprite: SPEARS, scale: 1.0, alpha: 255.0, per_frame: 6, last: usize::MAX, life: 99, turned: false };
 const WINK_OF_CHARM: SpriteLook = SpriteLook { sprite: WINK, scale: 1.0, alpha: 255.0, per_frame: 6, last: 5, life: 99, turned: false };
 
 struct Spark {
@@ -252,6 +254,11 @@ impl Monk {
     /// Pang Voice's ring (606) and Wink of Charm's heart (607) at the target, the same way.
     pub fn pang_voice(&mut self, from: Vector, to: Vector, longitude: i32, now: Instant) {
         self.sprite_at(&PANG_VOICE, from, to, longitude, now);
+    }
+
+    /// Hundred Spear's spear flashes at the target, the same way.
+    pub fn hundred_spear(&mut self, from: Vector, to: Vector, longitude: i32, now: Instant) {
+        self.sprite_at(&HUNDRED_SPEAR, from, to, longitude, now);
     }
 
     pub fn wink(&mut self, from: Vector, to: Vector, longitude: i32, now: Instant) {
@@ -528,5 +535,20 @@ mod tests {
         let corners = streak_corners(&RAID, [0.0; 3], 12.0, 0.0, 0.0);
         let want = [[28.0, 1.0], [28.0, -1.0], [-4.0, -1.0], [-4.0, 1.0]];
         assert!((0..4).all(|k| near(corners[k][0], want[k][0]) && near(corners[k][1], want[k][1]) && near(corners[k][2], 0.0)), "{corners:?}");
+    }
+
+    #[test]
+    fn hundred_spear_flashes_in_17_frames_at_the_target() {
+        let start = Instant::now();
+        let mut monk = Monk::default();
+        monk.hundred_spear([5.0, 0.0, 0.0], [0.0; 3], 180, start);
+        let draws = |monk: &Monk, tick: u32| monk.claws(start + TICK * tick);
+        // Frame 1 from tick 0, 6 ticks a frame: 1, 1, 2, 16, 17, 17, gone at tick 99.
+        assert_eq!([0, 5, 6, 95, 96, 98].map(|tick| draws(&monk, tick)[0].frame), [1, 1, 2, 16, 17, 17]);
+        assert!(draws(&monk, 99).is_empty());
+        let draw = draws(&monk, 0)[0];
+        assert!(draw.sprite == SPEARS && draw.scale == 1.0 && draw.alpha == 255.0 && !draw.mirrored && draw.turn == 0.0);
+        // The action from the direction target → caster and the camera: 0, 1, 2, 3 for 200, 100, 40 and 300.
+        assert_eq!([200, 100, 40, 300].map(claw_action), [0, 1, 2, 3]);
     }
 }
