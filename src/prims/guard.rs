@@ -87,7 +87,7 @@ enum Flicker {
     /// Double Casting's red strobe in a white glow (ticks 10 to 50).
     DoubleCast,
     /// Refresh's and Abundance's green flicker, the poisons' magenta, in outline copies (ticks 0 to 30).
-    Outlined([u8; 3]),
+    Outlined([u8; 3], u32),
     /// Detonator's lilac flush (ticks 10 to 33).
     Concentration,
 }
@@ -162,7 +162,7 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
         Flicker::DoubleCast => {
             (10..=50).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) })
         }
-        Flicker::Outlined(rgb) => (e <= 30).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb)) } else { (GLOW_OUTLINE, Some([255; 3])) }),
+        Flicker::Outlined(rgb, last) => (e <= last).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb)) } else { (GLOW_OUTLINE, Some([255; 3])) }),
         Flicker::Concentration => (10..=33).contains(&e).then_some((if even { GLOW_ADDITIVE } else { 0 }, Some(LILAC))),
         Flicker::Pierce(length) => {
             (e < length.min(141)).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])) } else { (GLOW_OUTLINE, Some([255; 3])) })
@@ -301,12 +301,17 @@ impl Guard {
 
     /// Refresh's, Abundance's and Phantom Thrust's green flicker on `unit`.
     pub fn green(&mut self, unit: Option<u32>, now: Instant) {
-        self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0, 0xFF, 0]) });
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0, 0xFF, 0], 30) });
     }
 
     /// The Guillotine Cross poisons' magenta flicker on `unit`.
     pub fn purple(&mut self, unit: Option<u32>, now: Instant) {
-        self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0xFF, 0, 0xFF]) });
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0xFF, 0, 0xFF], 30) });
+    }
+
+    /// Acceleration's and Shape Shift's bluish-white pulse of `unit` (ticks 0 to 60).
+    pub fn pulse(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0x9B, 0x9B, 0xFF], 60) });
     }
 
     /// Detonator's lilac flush of `unit`.
@@ -407,7 +412,7 @@ impl Guard {
             match body.flicker {
                 Flicker::Poison if e > 80 => fade_back([0xFF, 0x00, 0xFF], e - 80),
                 Flicker::Preserve if e > 30 => fade_back([0xFA; 3], e - 30),
-                Flicker::Outlined(rgb) if e > 30 => fade_back(rgb, e - 30),
+                Flicker::Outlined(rgb, last) if e > last => fade_back(rgb, e - last),
                 Flicker::Concentration if e > 33 => fade_back(LILAC, e - 33),
                 _ => None,
             }
@@ -618,5 +623,18 @@ mod tests {
         assert!((0..8).all(|prim| pieces[4 * prim..4 * prim + 4].iter().all(|piece| piece.icon == WEAPONS[prim])));
         assert!(WEAPONS[0].ends_with("루드라의활.bmp") && WEAPONS[7].ends_with("배틀액스.bmp"));
         assert!(guard.pieces(start + TICK * 17).is_empty() && guard.pieces(start + TICK * 18).len() == 32);
+    }
+
+    #[test]
+    fn acceleration_pulses_bluish_white_for_61_ticks() {
+        use crate::actor::{GLOW_ADDITIVE, GLOW_OUTLINE};
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.pulse(Some(1), start);
+        let glow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        assert_eq!(glow(0), Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0x9B, 0x9B, 0xFF]))));
+        assert_eq!(glow(1), Some((GLOW_OUTLINE, Some([255; 3]))));
+        assert!(glow(60).is_some() && glow(61).is_none());
+        assert_eq!(guard.body_tint(Some(1), start + TICK * 61), Some([0xA3, 0xA3, 0xFF]));
     }
 }

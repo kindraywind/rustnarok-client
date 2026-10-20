@@ -16,6 +16,7 @@ pub const MAGIC_RED: &str = "data\\texture\\effect\\magic_red.tga";
 pub const RING_BLACK: &str = "data\\texture\\effect\\ring_black.tga";
 pub const RING_WHITE: &str = "data\\texture\\effect\\ring_white.tga";
 pub const RING_YELLOW: &str = first::RING_YELLOW;
+pub const RING_PURPLE: &str = "data\\texture\\effect\\ring_purple.tga";
 pub const RING_BLUE: &str = "data\\texture\\effect\\ring_blue.tga";
 pub const ALPHA_DOWN: &str = first::ALPHA_DOWN;
 pub const STREAK: &str = first::STREAK;
@@ -26,6 +27,9 @@ const FUNNEL_ALPHA: f32 = 240.0;
 /// A Venom Dust puff comes every 5 ticks and lives 10.
 const PUFF_EVERY: u32 = 5;
 const PUFF_LIFE: u32 = 10;
+/// Poison Smoke: a sparkle every 9 ticks, each living 40.
+const SMOKE_EVERY: u32 = 9;
+const SMOKE_LIFE: u32 = 40;
 /// Berserk's tint (#FA7878) is held to tick 150, then goes back to white by 8 a channel a tick.
 /// What tells Berserk Pitcher's effect from Enchant Blade's and its sisters': the body's tint and the streaks' colour.
 pub struct BerserkLook {
@@ -36,7 +40,16 @@ pub const BERSERK: BerserkLook = BerserkLook { tint: [0xFA, 0x78, 0x78], streak:
 pub const ENCHANT_BLADE: BerserkLook = BerserkLook { tint: [0xFA, 0xFA, 0xC8], streak: [240.0 / 255.0, 240.0 / 255.0, 120.0 / 255.0] };
 const BERSERK_HELD: u32 = 150;
 const CYLINDER_LIFE: u32 = 50;
-const STREAK_LIFE: u32 = 40;
+/// How a streak's alpha goes: `burst::alpha`'s step and top, the age it fades from, and its life.
+pub struct StreakStyle {
+    rate: f32,
+    max: f32,
+    fade: u32,
+    life: u32,
+}
+const BERSERK_STREAKS: StreakStyle = StreakStyle { rate: 9.0, max: 180.0, fade: 20, life: 40 };
+/// Acceleration's and Shape Shift's faint white streaks.
+const PULSE_STREAKS: StreakStyle = StreakStyle { rate: 3.0, max: 60.0, fade: 30, life: 50 };
 /// Defender plays 200 ticks (drawn on the first 199); its four bands: radius, height, start turn, turn a tick.
 const DEFENDER_TICKS: u32 = 199;
 const DEFENDER_BANDS: [(f32, f32, f32, f32); 4] = [(8.0, 40.0, 180.0, 1.0), (7.9, 39.0, 270.0, 2.0), (7.8, 38.0, 0.0, 1.0), (7.7, 37.0, 90.0, 2.0)];
@@ -91,6 +104,8 @@ pub const STORM_BLAST: RibbonLook = RibbonLook {
     ticks: 59,
     forced: false,
 };
+/// Phantom Menace's: Storm Blast's ribbons in purple.
+pub const PHANTOM_MENACE: RibbonLook = RibbonLook { texture: RING_PURPLE, ..STORM_BLAST };
 /// Grand Cross's four arcs: where from the caster's spot and the turn they start at.
 const ARCS: [([f32; 2], f32); 4] = [([23.0, 23.0], 180.0), ([23.0, -23.0], 90.0), ([-23.0, -23.0], 0.0), ([-23.0, 23.0], 270.0)];
 /// The arcs are drawn on ages 1…98, the bars on 1…89.
@@ -124,11 +139,38 @@ struct Standing {
 }
 
 struct Streak {
+    style: &'static StreakStyle,
+    width: f32,
     born: u32,
     yaw: f32,
     distance: f32,
     speed: f32,
     half: f32,
+}
+
+/// One of a poison smoke cell's sparkles: when it came, which way and how far from the centre, how fast it rises and how big.
+struct Glint {
+    born: u32,
+    yaw: f32,
+    distance: f32,
+    speed: f32,
+    scale: f32,
+}
+
+/// A Poison Smoke cell, standing with its skill unit.
+struct Smoke {
+    id: u32,
+    at: Vector,
+    start: Instant,
+    ticks: u32,
+    glints: Vec<Glint>,
+}
+
+/// Acceleration's and Shape Shift's streaks round a unit.
+struct Pulse {
+    unit: Option<u32>,
+    start: Instant,
+    streaks: Vec<Streak>,
 }
 
 /// A Berserk Pitcher's effect on its owner.
@@ -177,6 +219,8 @@ struct Cross {
 pub struct Walls {
     standing: Vec<Standing>,
     berserks: Vec<Berserk>,
+    smokes: Vec<Smoke>,
+    pulses: Vec<Pulse>,
     defenders: Vec<Defender>,
     ribbons: Vec<Ribbons>,
     providences: Vec<Providence>,
@@ -239,6 +283,12 @@ fn funnels(at: Vector, p: u32) -> Vec<MeshVertex> {
         .collect()
 }
 
+/// A sparkle of Poison Smoke's height at its age k: the speed less a 160th of it each tick, rising.
+pub fn smoke_height(speed: f32, k: u32) -> f32 {
+    let n = (k + 1) as f32;
+    speed * (n - n * (n + 1.0) / 160.0)
+}
+
 /// A puff's height at tick p of its own: each tick the speed drops by a 20th of the first, then it rises.
 fn puff_height(speed: f32, p: u32) -> f32 {
     let (mut left, mut height) = (speed, 0.0);
@@ -260,8 +310,8 @@ impl Streak {
     fn blades(&self, feet: Vector, p: u32, rgb: [f32; 3]) -> Vec<MeshVertex> {
         let (sin, cos) = self.yaw.to_radians().sin_cos();
         let centre = [feet[0] + self.distance * sin, feet[1] + self.speed * (p + 1) as f32, feet[2] + self.distance * cos];
-        let tint = tint(rgb, burst::alpha(p, 0.0, 9.0, 180.0, 20, STREAK_LIFE));
-        let (width, half) = (0.2, self.half);
+        let tint = tint(rgb, burst::alpha(p, 0.0, self.style.rate, self.style.max, self.style.fade, self.style.life));
+        let (width, half) = (self.width, self.half);
         let blade = |along_x: bool| {
             let corner = |side: f32, end: f32| {
                 let (x, z) = if along_x { (side * width, 0.0) } else { (0.0, side * width) };
@@ -453,6 +503,33 @@ impl Walls {
 
     pub fn forget(&mut self, id: u32) {
         self.standing.retain(|standing| standing.id != id);
+        self.smokes.retain(|smoke| smoke.id != id);
+    }
+
+    /// A Poison Smoke cell at `at`, standing as skill unit `id`.
+    pub fn keep_smoke(&mut self, id: u32, at: Vector, now: Instant) {
+        self.smokes.push(Smoke { id, at, start: now, ticks: 0, glints: Vec::new() });
+    }
+
+    /// Phantom Menace's four purple crescents on `unit`.
+    pub fn phantom_menace(&mut self, unit: Option<u32>, now: Instant) {
+        self.ribbons.push(Ribbons { look: &PHANTOM_MENACE, unit, at: None, start: now });
+    }
+
+    /// Acceleration's and Shape Shift's 26 streaks on `unit`, one on each even tick to the 50th, each one's choices from `rand(n)`.
+    pub fn pulse(&mut self, unit: Option<u32>, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let streaks = (0..=50)
+            .step_by(2)
+            .map(|born| {
+                let yaw = rand(360) as f32;
+                let distance = (2 + rand(7)) as f32;
+                let speed = (40 + rand(50)) as f32 / 100.0;
+                let half = (40 + rand(100)) as f32 / 10.0;
+                let width = 0.1 + 0.05 * rand(6) as f32;
+                Streak { style: &PULSE_STREAKS, width, born, yaw, distance, speed, half }
+            })
+            .collect();
+        self.pulses.push(Pulse { unit, start: now, streaks });
     }
 
     /// A Berserk Pitcher's effect on `unit` (None = the player): its 24 streaks drawn now from `rand(n)` (0 to n − 1).
@@ -465,7 +542,7 @@ impl Walls {
                 let distance = (2 + rand(7)) as f32;
                 let speed = (rand(50) + 20) as f32 / 60.0;
                 let half = (rand(60) + 30) as f32 / 10.0;
-                Streak { born, yaw, distance, speed, half }
+                Streak { style: &BERSERK_STREAKS, width: 0.2, born, yaw, distance, speed, half }
             })
             .collect();
         self.berserks.push(Berserk { look, unit, start: now, streaks });
@@ -524,13 +601,48 @@ impl Walls {
             let tick = standing.ticks;
             standing.puffs.retain(|&(born, _)| tick <= born + PUFF_LIFE);
         }
+        for smoke in &mut self.smokes {
+            while smoke.ticks < passes(smoke.start, now) {
+                if smoke.ticks % SMOKE_EVERY == 0 {
+                    let yaw = rand(360) as f32;
+                    let distance = (2 + rand(6)) as f32;
+                    let speed = (30 + rand(30)) as f32 / 100.0;
+                    let scale = (40 + rand(50)) as f32 / 170.0;
+                    smoke.glints.push(Glint { born: smoke.ticks, yaw, distance, speed, scale });
+                }
+                smoke.ticks += 1;
+            }
+            let tick = smoke.ticks;
+            smoke.glints.retain(|glint| tick <= glint.born + SMOKE_LIFE);
+        }
         let ended = |start: Instant, ticks: u32| passes(start, now) > ticks;
+        self.pulses.retain(|pulse| !ended(pulse.start, 50 + PULSE_STREAKS.life));
         self.berserks.retain(|berserk| !ended(berserk.start, BERSERK_HELD + 20));
         self.defenders.retain(|defender| !ended(defender.start, DEFENDER_TICKS));
         self.ribbons.retain(|ribbons| !ended(ribbons.start, ribbons.look.ticks));
         self.providences.retain(|providence| !ended(providence.start, TUBE_TICKS));
         self.curtains.retain(|curtains| !ended(curtains.start, CURTAIN_TICKS));
         self.crosses.retain(|cross| !ended(cross.start, ARC_AGES));
+    }
+
+    /// Poison Smoke's sparkles at `now`, drawn over everything with no depth test.
+    pub fn smoke_particles(&self, now: Instant) -> Vec<first::Particle> {
+        let mut particles = Vec::new();
+        for smoke in &self.smokes {
+            let Some(tick) = passes(smoke.start, now).checked_sub(1) else { continue };
+            for glint in &smoke.glints {
+                let Some(k) = tick.checked_sub(glint.born).filter(|&k| k < SMOKE_LIFE) else { continue };
+                let (sin, cos) = glint.yaw.to_radians().sin_cos();
+                particles.push(first::Particle {
+                    sprite: first::POISON_STAR,
+                    at: [smoke.at[0] + glint.distance * sin, smoke.at[1] + smoke_height(glint.speed, k), smoke.at[2] + glint.distance * cos],
+                    scale: glint.scale,
+                    alpha: burst::alpha(k, 0.0, 25.4, 254.0, 32, SMOKE_LIFE),
+                    spin: 3.0 * (k + 1) as f32,
+                });
+            }
+        }
+        particles
     }
 
     /// Venom Dust's puffs at `now`.
@@ -578,8 +690,16 @@ impl Walls {
                 walls.push(Wall { texture: ALPHA_DOWN, vertices: cylinder(feet, 4.5, cylinder_height(tick), alpha), additive: false, forced: false });
             }
             for streak in &berserk.streaks {
-                if let Some(p) = tick.checked_sub(streak.born).filter(|&p| p < STREAK_LIFE) {
+                if let Some(p) = tick.checked_sub(streak.born).filter(|&p| p < streak.style.life) {
                     walls.push(Wall { texture: STREAK, vertices: streak.blades(feet, p, berserk.look.streak), additive: false, forced: false });
+                }
+            }
+        }
+        for pulse in &self.pulses {
+            let (Some(feet), Some(tick)) = (position_of(pulse.unit), passes(pulse.start, now).checked_sub(1)) else { continue };
+            for streak in &pulse.streaks {
+                if let Some(p) = tick.checked_sub(streak.born).filter(|&p| p < streak.style.life) {
+                    walls.push(Wall { texture: STREAK, vertices: streak.blades(feet, p, [1.0; 3]), additive: false, forced: false });
                 }
             }
         }
@@ -974,5 +1094,66 @@ mod tests {
         assert_eq!(red.body_tint(Some(5), start + TICK * 150), Some([0xFA, 0x78, 0x78]));
         let blade = red.meshes(start + TICK * 30, |_| Some(feet)).into_iter().find(|wall| wall.texture == STREAK).unwrap();
         assert_eq!(blade.vertices[0].tint[..3], [240.0 / 255.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn poison_smoke_cells_throw_sparkles_and_acceleration_pulses_streaks() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        walls.keep_smoke(9, [10.0, 1.0, 10.0], start);
+        let run = |walls: &mut Walls, tick: u32| {
+            walls.advance(start + TICK * tick, |_| 0);
+            walls.smoke_particles(start + TICK * tick)
+        };
+        // A sparkle on ticks 0, 9, 18 and none between.
+        let counts: Vec<usize> = (0..=19).map(|tick| run(&mut walls, tick).len()).collect();
+        assert_eq!(counts, [1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3]);
+        // Every draw 0: distance 2 (due +z at yaw 0), speed 0.30, scale 40 / 170.
+        let first = run(&mut walls, 0)[0];
+        assert!((first.at[2] - 12.0).abs() < 1e-4 && first.at[0] == 10.0 && (first.scale - 40.0 / 170.0).abs() < 1e-6 && first.sprite == first::POISON_STAR);
+        assert!((smoke_height(0.30, 0) - 0.30 * (1.0 - 2.0 / 160.0)).abs() < 1e-5);
+        // Alpha at k = 0, 9, 10, 31, 32, 39: 25, 253, 254, 254, 222, 0; drawn 40 times.
+        let alpha = |k: u32| walls.smoke_particles(start + TICK * k).first().map_or(0.0, |particle| particle.alpha.trunc());
+        assert_eq!([0, 9, 10, 31, 32, 39].map(alpha), [25.0, 253.0, 254.0, 254.0, 222.0, 0.0]);
+        assert!(walls.smoke_particles(start + TICK * 39).iter().any(|particle| particle.alpha > 0.0) || alpha(39) == 0.0);
+        assert!(walls.smoke_particles(start + TICK * 40).len() <= 2);
+        // They end with the unit.
+        walls.forget(9);
+        assert!(walls.smoke_particles(start).is_empty());
+
+        // Acceleration: 26 streaks, one on each even tick to the 50th; every draw 0: d 2, speed 0.40, W 4.0, H 0.10.
+        let mut pulse = Walls::default();
+        pulse.pulse(Some(1), start, |_| 0);
+        let streaks = &pulse.pulses[0].streaks;
+        assert_eq!(streaks.len(), 26);
+        assert_eq!((streaks[0].born, streaks[25].born), (0, 50));
+        assert!(streaks.iter().all(|streak| streak.distance == 2.0 && streak.speed == 0.40 && streak.half == 4.0 && (streak.width - 0.10).abs() < 1e-6));
+        // Alpha at p = 0, 19, 20, 29, 30, 49: 3, 60, 60, 60, 57, 0 (and three more fade); height 0.4 at 0 and 20 at 49.
+        let alpha = |p: u32| burst::alpha(p, 0.0, PULSE_STREAKS.rate, PULSE_STREAKS.max, PULSE_STREAKS.fade, PULSE_STREAKS.life);
+        assert_eq!([0, 19, 20, 29, 30, 49].map(alpha), [3.0, 60.0, 60.0, 60.0, 57.0, 0.0]);
+        assert!((streaks[0].speed * 1.0 - 0.4).abs() < 1e-6 && (streaks[0].speed * 50.0 - 20.0).abs() < 1e-4);
+        // Following the unit; the one made on tick 50 is drawn 49 times; texture ac_center2 in white, blended.
+        let feet = [0.0; 3];
+        let drawn = |tick: u32| pulse.meshes(start + TICK * tick, |_| Some(feet)).iter().filter(|wall| wall.texture == STREAK).count();
+        assert_eq!((drawn(0), drawn(1), drawn(2)), (1, 1, 2));
+        assert_eq!(drawn(99), 1);
+        assert_eq!(drawn(100), 0);
+        assert!(pulse.meshes(start, |_| None).is_empty());
+    }
+
+    #[test]
+    fn phantom_menace_spins_four_purple_crescents() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        walls.phantom_menace(Some(3), start);
+        walls.phantom_menace(Some(3), start);
+        let look = &PHANTOM_MENACE;
+        assert_eq!([1, 10, 11, 59, 60].map(|t| ribbon_alpha(look, t)), [10.0, 100.0, 98.0, 2.0, 0.0]);
+        // One set of four per damage packet, in ring_purple, white and blended, drawn on ages 1 to 59.
+        let meshes = walls.meshes(start, |_| Some([0.0; 3]));
+        assert_eq!(meshes.len(), 8);
+        assert!(meshes.iter().all(|wall| wall.texture == RING_PURPLE && !wall.additive && !wall.forced));
+        assert_eq!(walls.meshes(start + TICK * 58, |_| Some([0.0; 3])).len(), 8);
+        assert!(walls.meshes(start + TICK * 59, |_| Some([0.0; 3])).is_empty());
     }
 }
