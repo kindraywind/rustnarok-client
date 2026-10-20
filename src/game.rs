@@ -11,16 +11,15 @@ pub(crate) fn unit_blocks(job: u16, walking: bool, hide_option: u32) -> bool {
     !walking && hide_option & 0x2 == 0 && !matches!(job, 45 | 111 | 139)
 }
 
-/// The cells units block for a click: each blocking unit's drawn cell, and ground skill units' cells but the unseen
-/// ones that only deal a skill's damage (UNT_DUMMYSKILL: Storm Gust's, Lord of Vermilion's).
-// ponytail: the ground skill units are the least certain rule (one line, easy to take out).
+/// The cells units block for a click: each blocking unit's drawn cell, and an Ice Wall's. Every other ground skill unit
+/// (Safety Wall, Pneuma, Sanctuary, traps, portals, the unseen damage-only ones) can be stood on.
 pub(crate) fn blocked_cells(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u16; 2])>, now: Instant) -> std::collections::HashSet<[i32; 2]> {
     let standing = units.values().filter(|actor| unit_blocks(actor.job, actor.moving(), actor.hide_option)).map(|actor| actor::drawn_cell(actor.position(now)));
-    standing.chain(skill_units.values().filter(|(kind, _)| *kind != DUMMY_SKILL_UNIT).map(|(_, cell)| cell.map(i32::from))).collect()
+    standing.chain(skill_units.values().filter(|(kind, _)| *kind == ICE_WALL_UNIT).map(|(_, cell)| cell.map(i32::from))).collect()
 }
 
-/// rathena's UNT_DUMMYSKILL: an unseen skill unit on the ground that deals its skill's damage.
-const DUMMY_SKILL_UNIT: u32 = 0x86;
+/// rathena's UNT_ICEWALL: the one ground skill unit whose cell the server makes unwalkable.
+const ICE_WALL_UNIT: u32 = 0x8d;
 
 impl Game {
     pub(crate) fn dialog_for(&mut self, npc: u32) -> &mut Dialog {
@@ -3790,12 +3789,16 @@ mod tests {
         // A dead one still blocks while it fades.
         units.get_mut(&1).unwrap().remove_at = Some(now + std::time::Duration::from_secs(1));
         assert!(blocked_cells(&units, &skill_units, now).contains(&[12, 10]));
-        // An Ice Wall blocks its cell; the unseen units of Storm Gust and Lord of Vermilion (0x86) don't.
+        // An Ice Wall blocks its cell; a dummy unit (0x86), Safety Wall (0x7e), Pneuma (0x85) and a trap (0x8a) don't.
         let mut skill_units = HashMap::new();
-        skill_units.insert(7, (0x8d, [3, 3]));
-        skill_units.insert(8, (0x86, [4, 4]));
+        for (id, (kind, cell)) in [(0x8d, [3, 3]), (0x86, [4, 4]), (0x7e, [5, 5]), (0x85, [6, 6]), (0x8a, [7, 7])].into_iter().enumerate() {
+            skill_units.insert(id as u32, (kind, cell));
+        }
         let taken = blocked_cells(&HashMap::new(), &skill_units, now);
-        assert!(taken.contains(&[3, 3]) && !taken.contains(&[4, 4]));
+        assert_eq!(taken, std::collections::HashSet::from([[3, 3]]));
+        // A click on a Safety Wall's cell walks onto it.
+        let walk = world::walk_goal([5, 5], [9, 5], |cell| gat.walkable(cell) && !taken.contains(&cell), |cell| world::find_path(&gat, [9, 5], cell).is_some());
+        assert_eq!(walk, Some([5, 5]));
         // A hiding player doesn't; a job-104 NPC does; a warp doesn't.
         assert!(!unit_blocks(4001, false, 0x2) && unit_blocks(4001, false, 0x4));
         assert!(unit_blocks(104, false, 0) && !unit_blocks(45, false, 0) && !unit_blocks(111, false, 0) && !unit_blocks(139, false, 0));
