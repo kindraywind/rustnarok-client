@@ -777,6 +777,11 @@ pub struct SpriteSet {
 
 impl SpriteSet {
     /// Which part an image is (`PartGroup`).
+    /// Whether Manhole turns an image into a grey ghost: the body and what comes after the headgears (not the head and its gear).
+    pub fn manhole_ghost(&self, key: ImageKey) -> bool {
+        !matches!(self.layers.get(key.0).map(|layer| layer.part), Some(Part::Head | Part::HeadBottom | Part::HeadMid | Part::HeadTop))
+    }
+
     /// How far the swing moves an image: the head 40 px, any gear 10, the body not at all.
     pub fn swing_reach(&self, key: ImageKey) -> f32 {
         match self.layers.get(key.0).map(|layer| layer.part) {
@@ -2185,6 +2190,8 @@ pub const GLOW_REFLECT: u32 = 0x200;
 pub const PARAM_SHIFT: u32 = 24;
 /// Marsh of Abyss' and Great Echo's swing: a player's head and gear run round circles; the age n (0 to 35) is in the top byte.
 pub const GLOW_SWING: u32 = 0x40;
+/// Manhole's: a player's parts sink 24 000 / D px; the body and everything after the headgears turn into a faint grey ghost.
+pub const GLOW_MANHOLE: u32 = 0x100000;
 /// Hovering's two blue copies of every part; their alpha (0 to 160) is in the top byte.
 pub const GLOW_BLUE: u32 = 0x4000;
 /// Sky Net Blow's two red copies of every part; their alpha is in the top byte.

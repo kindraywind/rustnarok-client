@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, circle, dancer, first, ground, guard, huujin, knight, mechanic, monk, painter, sage, shafts, shards, sight,
-    sniper, songs, spray, star, stone, tanji, throw, transcend, walls, waterball,
+    balls, blitz, bolts, boomerang, brawl, burst, circle, dancer, first, ground, guard, holes, huujin, knight, mechanic, monk, painter, sage, shafts, shards,
+    sight, sniper, songs, spray, star, stone, tanji, throw, transcend, walls, waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1840,6 +1840,13 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Shadow Form's tube, Strip Accessory's icons, Manhole's and Dimension Door's cells and Manhole's body (`prims::transcend`,
+/// `prims::guard`, `prims::holes`, `prims::shafts`, `prims::brawl`).
+const SHADOW_LINK: u32 = 819;
+const STRIP_ACCESSORY: u32 = 820;
+const MANHOLE_CELL: u32 = 822;
+pub const MANHOLE_BODY: u32 = 823;
+const DIMENSION_CELL: u32 = 825;
 /// Tetra Vortex's cast, Boost Knuckle's fists, Shadow Form's silhouette, Body Painting's strokes, Deadly Infect's blink and the
 /// Masquerade debuffs' hairlines.
 const TETRA_CASTING: u32 = 805;
@@ -1966,7 +1973,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 31] = [
+pub const AIMED: [u32; 32] = [
+    SHADOW_LINK,
     BOOST_KNUCKLE,
     RELEASE,
     SPEAR_FLASH,
@@ -2025,6 +2033,11 @@ fn between(ends: [f32; 2], steps: f32, smooth: bool) -> f32 {
 }
 
 impl Effects {
+    /// Sounds effect `id` makes, with none of its looks (Manhole's on a monster).
+    pub fn sound_of(&mut self, table: &Table, id: u32, at: Vector, now: Instant) {
+        self.play_sounds(table, id, at, now);
+    }
+
     /// Plays effect `id` from `now` on `target` at `at`; parts that don't follow units stay there.
     pub fn play(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
         if id == BASH && self.min {
@@ -2308,7 +2321,14 @@ impl Effects {
                 self.prims.painter.paint(unit, at, now);
             }
             (DEADLY_INFECT, Target::Unit(unit)) => self.prims.guard.blink(unit, now),
-            (813..=815, Target::Unit(unit)) => {
+            (STRIP_ACCESSORY, _) => {
+                for path in guard::ACCESSORIES {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
+                }
+                self.prims.guard.accessory(at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (MANHOLE_BODY, Target::Status(unit, _)) => self.prims.brawl.manhole(unit),
+            (813..=818, Target::Unit(unit)) => {
                 self.textures.entry(songs::STREAK_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, songs::STREAK_TEXTURE, true).ok());
                 self.prims.songs.hairlines(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
@@ -2832,6 +2852,16 @@ impl Effects {
                 let look = if effect == MAGNUS { ground::RING_RED } else { ground::ALPHA_DOWN };
                 self.textures.entry(look.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, look, true).ok());
                 self.prims.ground.keep_box(effect, id, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+            } else if matches!(effect, MANHOLE_CELL | DIMENSION_CELL) {
+                // Manhole's and Dimension Door's cells turn a blue swirl and throw ring triples, with the door's shafts.
+                let door = effect == DIMENSION_CELL;
+                for path in [if door { holes::SPHERE } else { holes::TWIRL }, walls::RING_WHITE, shafts::CLOUD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.holes.keep(id, door, at, now, |n| pick(0, n.saturating_sub(1)));
+                if door {
+                    self.prims.shafts.keep(id, at, now);
+                }
             } else if matches!(effect, BARRIER_CELL | STEALTH_CELL) {
                 // Neutral Barrier's and Stealth Field's cells breathe a faint band while their unit stands.
                 let path = if effect == BARRIER_CELL { mechanic::BARRIER_BAND } else { mechanic::STEALTH_BAND };
@@ -3070,6 +3100,10 @@ impl Effects {
                 self.sprites.entry(waterball::SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, waterball::SPRITE));
                 self.play_sounds(table, id, from, now);
                 self.prims.waterballs.throw(from, to, now);
+            }
+            SHADOW_LINK => {
+                self.textures.entry(transcend::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, transcend::CLOUD, true).ok());
+                self.prims.transcend.shadow(caster, target, own, now);
             }
             BOOST_KNUCKLE => {
                 self.sprites.entry(balls::FIST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, balls::FIST_SPRITE));
@@ -3353,13 +3387,15 @@ impl Effects {
     /// Stops what a status plays on its unit (None = the player).
     pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
         self.prims.songs.forget_status(unit, status);
-        // Camouflage, Stealth Field or Elemental Veil went off: the unit climbs back to opaque.
+        self.prims.transcend.forget_status(unit, status);
+        self.prims.brawl.forget_status(unit, status);
         if status == 330 {
             self.prims.circles.forget(unit);
         }
         if status == VENOM_STATUS {
             self.prims.circles.forget_venom(unit);
         }
+        // Camouflage, Stealth Field, Elemental Veil or Shadow Form went off: the unit climbs back to opaque.
         if matches!(status, 360 | 379 | 1301 | 394) {
             self.prims.brawl.uncloak(unit, Instant::now());
         }
@@ -3443,6 +3479,14 @@ impl Effects {
         if !self.only_forced {
             let rings = self.prims.first.top_meshes(now);
             meshes.extend(rings.into_iter().filter_map(|(path, triangles)| Some((self.textures.get(path)?.as_ref()?, triangles, false))));
+            // Strip Accessory's icons in upright planes, seen through the ground.
+            meshes.extend(
+                self.prims
+                    .guard
+                    .upright_pieces(now)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            );
             // Dark Illusion's lines, with no depth test.
             meshes.extend(
                 self.prims
@@ -3633,6 +3677,7 @@ impl Effects {
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
+            .chain(self.prims.holes.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
             .chain(
                 self.prims
                     .mechanic
@@ -5681,5 +5726,31 @@ mod tests {
             assert_eq!(sounds(effect), [(file, 0, true)]);
             assert!(table.used(skill).unwrap().contains(&(Who::Target, effect)));
         }
+    }
+
+    #[test]
+    fn the_masquerade_debuffs_shadow_form_strip_accessory_manhole_and_dimension_door_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // The three debuffs' sounds at the listener at tick 0.
+        for (effect, file) in [(816, "effect\\laziness"), (817, "effect\\unlucky"), (818, "effect\\weakness")] {
+            assert_eq!(sounds(effect), [(file, 0, true)]);
+        }
+        // Shadow Form's tube is launched from the source at the target; Strip Accessory's four sounds.
+        assert!(AIMED.contains(&SHADOW_LINK) && table.used(2287).unwrap().contains(&(Who::Caster, SHADOW_LINK)));
+        assert!(!table.sounds.contains_key(&SHADOW_LINK));
+        assert_eq!(sounds(STRIP_ACCESSORY), [16, 176, 336, 496].map(|ms| ("effect\\복호격", ms, false)));
+        assert!(table.used(2298).unwrap().contains(&(Who::Target, STRIP_ACCESSORY)));
+        // Manhole: no sound on its cells, none of the skill's own rows; the body's sound at the listener.
+        assert!(!table.sounds.contains_key(&MANHOLE_CELL));
+        assert!(
+            table.skill(2299, "groundEffectId").is_empty() && table.skill(2299, "successEffectId").is_empty() && table.skill(2300, "groundEffectId").is_empty()
+        );
+        assert_eq!(sounds(MANHOLE_BODY), [("effect\\manhole", 0, true)]);
+        assert!(table.status(422).contains(&MANHOLE_BODY));
+        assert_eq!((table.units[&204], table.units[&205]), (MANHOLE_CELL, DIMENSION_CELL));
+        assert!(table.units_once.contains(&204) && !table.units_once.contains(&205));
+        // Dimension Door: its sound once at tick 1 at the listener.
+        assert_eq!(sounds(DIMENSION_CELL), [("effect\\dimension", 16, true)]);
     }
 }

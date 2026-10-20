@@ -13,6 +13,9 @@ pub const CROSS: &str = "data\\texture\\effect\\cross_old.bmp";
 /// The status of the Marionette control, which ends the tube.
 pub const MARIONETTE_STATUS: u16 = 121;
 pub const TUBE: &str = "data\\texture\\effect\\alpha_center.tga";
+/// Shadow Form's dark grey tube (819) and the status that ends it.
+pub const CLOUD: &str = "data\\texture\\effect\\cloud11.tga";
+pub const SHADOW_STATUS: u16 = 394;
 
 /// A Gospel's cross over a skill unit's cell.
 struct Gospel {
@@ -43,6 +46,8 @@ struct Coloured {
 struct Link {
     /// Marionette Control's pink tube (395), which breathes and stays until the control's status packet, instead of Soul Change's.
     marionette: bool,
+    /// Shadow Form's dark grey tube (819): it pulses between alpha 43 and 53 and stays until its status goes.
+    shadow: bool,
     caster: Option<u32>,
     /// The id of the target as the game reads it, through a 32-bit float.
     aim: u32,
@@ -102,6 +107,11 @@ pub fn marionette_alpha(n: u32) -> f32 {
     n.min(80) as f32
 }
 
+/// Shadow Form's tube alpha at n: 45 and 2 more a tick while n mod 10 is under 5, else 2 less.
+pub fn shadow_alpha(n: u32) -> f32 {
+    45.0 + (1..=n).map(|i| if i % 10 < 5 { 2.0 } else { -2.0 }).sum::<f32>()
+}
+
 /// How far along the line the tube's far end is at n: sin(6n)° of the way for n under 15, then at the target.
 pub fn tube_growth(n: u32) -> f32 {
     if n < 15 { (6.0 * n as f32).to_radians().sin() } else { 1.0 }
@@ -159,18 +169,27 @@ impl Transcend {
 
     /// Soul Change's tube from `caster` to the unit named by `target` (the player is `own`).
     pub fn link(&mut self, caster: Option<u32>, target: u32, own: u32, now: Instant) {
-        self.links.push(Link { marionette: false, caster, aim: target, own, start: now, lost: false });
+        self.links.push(Link { marionette: false, shadow: false, caster, aim: target, own, start: now, lost: false });
     }
 
     /// Marionette Control's tube (395): it stays until the status packet of the control (EFST 121) takes it.
     pub fn marionette(&mut self, caster: Option<u32>, target: u32, own: u32, now: Instant) {
-        self.links.push(Link { marionette: true, caster, aim: target, own, start: now, lost: false });
+        self.links.push(Link { marionette: true, shadow: false, caster, aim: target, own, start: now, lost: false });
+    }
+
+    /// Shadow Form's tube (819) from `caster` to the unit the packet names, replacing the caster's last.
+    pub fn shadow(&mut self, caster: Option<u32>, target: u32, own: u32, now: Instant) {
+        self.links.retain(|link| !(link.shadow && link.caster == caster));
+        self.links.push(Link { marionette: false, shadow: true, caster, aim: target, own, start: now, lost: false });
     }
 
     /// A status packet of the Marionette control (EFST 121), on or off, takes the unit's tube.
     pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
         if status == MARIONETTE_STATUS {
             self.links.retain(|link| !(link.marionette && link.caster == unit));
+        }
+        if status == SHADOW_STATUS {
+            self.links.retain(|link| !(link.shadow && link.caster == unit));
         }
     }
 
@@ -195,7 +214,7 @@ impl Transcend {
             }
         }
         self.bodies.retain(|coloured| passes(coloured.start, now) <= 260);
-        self.links.retain(|link| link.marionette || passes(link.start, now) <= 200);
+        self.links.retain(|link| link.marionette || link.shadow || passes(link.start, now) <= 200);
     }
 
     /// The crosses to draw: over each Gospel's cell. Alpha 200, or at most 100 on `dim` maps.
@@ -252,7 +271,7 @@ impl Transcend {
         let mut walls = Vec::new();
         for link in self.links.iter().filter(|link| !link.lost) {
             let n = passes(link.start, now);
-            if n == 0 || (!link.marionette && n > 77) {
+            if n == 0 || (!link.marionette && !link.shadow && n > 77) {
                 continue;
             }
             let target = linked_unit(link.aim, link.own);
@@ -260,10 +279,13 @@ impl Transcend {
             let (p0, p1) = ([caster[0], caster[1] + 8.0, caster[2]], [far[0], far[1] + 8.0, far[2]]);
             let grow = tube_growth(n);
             let end = [p0[0] + (p1[0] - p0[0]) * grow, p0[1] + (p1[1] - p0[1]) * grow, p0[2] + (p1[2] - p0[2]) * grow];
-            // The bearing of (P0 − P1) in x/z turned a quarter: the facets are round the line, across it.
-            let bearing = crate::actor::step_rot(p0[0] - p1[0], p0[2] - p1[2]);
+            // The bearing A of (P0 − P1) in x/z (x = cos, z = sin) turned a quarter: the facets are round the line, across it.
+            let bearing = super::tanji::bearing(p0[0] - p1[0], p0[2] - p1[2]) as f32;
             let (sin, cos) = ((bearing + 90.0) % 360.0).to_radians().sin_cos();
-            let tubes = if link.marionette {
+            let shadow = [(0.4, shadow_alpha(n)), (0.8, shadow_alpha(n))];
+            let tubes = if link.shadow {
+                shadow.map(|(width, alpha)| (width, [50.0 / 255.0; 3], (alpha / 2.0).floor()))
+            } else if link.marionette {
                 let (width, alpha) = (marionette_width(n), marionette_alpha(n));
                 let pink = [1.0, 89.0 / 255.0, 182.0 / 255.0];
                 [(width, pink, alpha), (2.0 * width, pink, 2.0 * alpha)]
@@ -287,7 +309,11 @@ impl Transcend {
                     ];
                     vertices.extend([a, b, c, a, c, d]);
                 }
-                walls.push(Wall { texture: TUBE, vertices, additive: true, forced: false });
+                walls.push(if link.shadow {
+                    Wall { texture: CLOUD, vertices, additive: false, forced: false }
+                } else {
+                    Wall { texture: TUBE, vertices, additive: true, forced: false }
+                });
             }
         }
         walls
@@ -442,5 +468,43 @@ mod tests {
         assert_eq!((tint(0), tint(60)), (Some([30, 20, 10]), Some([30, 20, 10])));
         assert_eq!(tint(61), Some([38, 28, 18]));
         assert!(breaker.glow(Some(1), start).is_none(), "not added on");
+    }
+
+    #[test]
+    fn shadow_form_pulses_a_dark_grey_tube_until_its_status_goes() {
+        let start = Instant::now();
+        let mut transcend = Transcend::default();
+        let feet = |unit: Option<u32>| match unit {
+            None => Some([0.0, 0.0, 0.0]),
+            Some(7) => Some([20.0, 0.0, 0.0]),
+            _ => None,
+        };
+        transcend.shadow(None, 7, 1, start);
+        transcend.shadow(None, 7, 1, start);
+        assert_eq!(transcend.links.len(), 1);
+        // Alpha at n = 1, 4, 5, 9, 10, 14, 15: 47, 53, 51, 43, 45, 53, 51; the vertex alpha half of it, cut.
+        assert_eq!([1, 4, 5, 9, 10, 14, 15].map(shadow_alpha), [47.0, 53.0, 51.0, 43.0, 45.0, 53.0, 51.0]);
+        let alpha = |tick: u32| (transcend.meshes(start + TICK * tick, feet)[0].vertices[0].tint[3] * 255.0).round();
+        assert_eq!([0, 3, 4, 8, 9, 13, 14].map(alpha), [23.0, 26.0, 25.0, 21.0, 22.0, 26.0, 25.0]);
+        // Two tubes of 10 quads, #323232, blended, in the cloud texture: radius 0.4 and 0.8 round the line.
+        let walls = transcend.meshes(start + TICK * 20, feet);
+        assert_eq!(walls.len(), 2);
+        assert!(walls.iter().all(|wall| wall.texture == CLOUD && !wall.additive && wall.vertices.len() == 60));
+        assert_eq!(walls[0].vertices[0].tint[..3], [50.0 / 255.0; 3]);
+        let radius = |wall: &Wall| wall.vertices.iter().map(|vertex| f32::hypot(vertex.position[1] - 8.0, vertex.position[2])).fold(0.0, f32::max);
+        assert!((radius(&walls[0]) - 0.4).abs() < 0.01 && (radius(&walls[1]) - 0.8).abs() < 0.01);
+        // It stays well past Soul Change's 77 ticks, until the status of Shadow Form (EFST 394) takes it.
+        assert_eq!(transcend.meshes(start + TICK * 5000, feet).len(), 2);
+        transcend.advance(start + TICK * 5000, feet);
+        assert_eq!(transcend.links.len(), 1);
+        transcend.forget_status(Some(5), 394);
+        transcend.forget_status(None, 121);
+        assert_eq!(transcend.links.len(), 1);
+        transcend.forget_status(None, 394);
+        assert!(transcend.links.is_empty());
+        // Hidden for good once an end is missing for a tick.
+        transcend.shadow(None, 99, 1, start);
+        transcend.advance(start + TICK * 2, feet);
+        assert!(transcend.meshes(start + TICK * 3, feet).is_empty());
     }
 }

@@ -725,9 +725,6 @@ skill	2295	effectId	816
 skill	2296	effectId	817
 skill	2297	effectId	818
 skill	2298	effectId	820
-skill	2299	successEffectId	823
-skill	2299	groundEffectId	822
-skill	2300	groundEffectId	825
 skill	2301	groundEffectId	827
 skill	2302	groundEffectId	828
 skill	2303	groundEffectId	829
@@ -2038,10 +2035,15 @@ wav	812	effect\deadlyinfect	0	listener
 wav	813	effect\enervation	0	listener
 wav	814	effect\groomy	0	listener
 wav	815	effect\ignorance	0	listener
-wav	816	effect\laziness	0
-wav	822	effect\dimension	0
-wav	823	effect\manhole	0
-wav	825	effect\dimension	0
+wav	816	effect\laziness	0	listener
+wav	817	effect\unlucky	0	listener
+wav	818	effect\weakness	0	listener
+wav	820	effect\복호격	16
+wav	820	effect\복호격	176
+wav	820	effect\복호격	336
+wav	820	effect\복호격	496
+wav	823	effect\manhole	0	listener
+wav	825	effect\dimension	16	listener
 wav	827	effect\chaospanic	0
 wav	828	effect\maelstrom	0
 wav	829	effect\bloodylust	0
@@ -4655,6 +4657,7 @@ used	2273	caster	782
 used	2274	caster	500
 used	2275	target	785
 used	2287	caster	826
+used	2287	caster	819
 used	2289	caster	811
 used	2291	caster	812
 used	2292	target	813
