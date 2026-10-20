@@ -455,7 +455,6 @@ skill	215	successEffectId	269
 skill	216	successEffectId	270
 skill	217	successEffectId	271
 skill	218	successEffectId	272
-skill	229	groundEffectId	302
 skill	230	beforeHitEffectId	298
 skill	234	effectId	300
 skill	235	effectId	300
@@ -1488,10 +1487,6 @@ ring	317	alphaMax=0.4;animation=4;attachedEntity=true;blendMode=2;renderBeforeEn
 ring	317	alphaMax=0.3;animation=0;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.6;duration=25000;fade=true;green=0.392;height=15;red=0.392;rotate=true;textureName=ring_blue;topSize=0.6;wav=effect/ef_portal
 ring	317	alphaMax=0.3;animation=0;attachedEntity=true;blendMode=2;blue=1;bottomSize=0.8;duration=25000;fade=true;green=0.392;height=13;red=0.392;rotate=true;textureName=ring_blue;topSize=0.8
 ring	317	alphaMax=0.5;animation=0;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=25000;fade=true;green=0.392;height=1;posZ=2;red=0.392;rotate=true;totalCircleSides=20;circleSides=10;repeatTextureX=2;textureName=alpha1;topSize=1
-ring	318	alphaMax=0.2;animation=0;attachedEntity=true;blendMode=2;totalCircleSides=4;circleSides=4;bottomSize=0.7;duration=50000;fade=false;height=5;rotate=false;textureName=ring_red;topSize=0.7;angleY=45
-ring	318	alphaMax=0.1;animation=1;attachedEntity=true;blendMode=2;totalCircleSides=4;circleSides=4;bottomSize=0.7;duration=2000;fade=true;height=5;rotate=false;textureName=ring_red;topSize=0.7;angleY=45;repeat=true
-ring	319	alphaMax=0.3;animation=0;attachedEntity=true;blendMode=2;blue=0.5;totalCircleSides=4;circleSides=4;bottomSize=0.7;duration=50000;fade=false;green=0.9;height=2;red=0.5;rotate=false;textureName=magic_green;topSize=0.7;angleY=45
-ring	319	alphaMax=0.1;animation=1;attachedEntity=true;blendMode=2;blue=0.5;totalCircleSides=4;circleSides=4;bottomSize=0.7;duration=2000;fade=true;green=0.9;height=2;red=0.5;rotate=false;textureName=magic_green;topSize=0.7;angleY=45;repeat=true
 ring	321	alphaMax=0.4;animation=3;renderBeforeEntities=true;attachedEntity=true;blendMode=2;bottomSize=2;duration=4000;duplicate=4;timeBetweenDupli=1000;fade=true;red=0.5;green=0.5;blue=1;height=1.1;repeat=true;rotate=false;textureName=ring_blue;topSize=3.3
 ring	321	alphaMax=0.4;animation=3;renderBeforeEntities=true;attachedEntity=true;blendMode=2;bottomSize=1.9;duration=4000;duplicate=4;timeBetweenDupli=1000;fade=true;red=0.5;green=0.5;blue=1;height=1.1;repeat=true;rotate=false;textureName=ring_blue;topSize=3.2
 ring	325	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=3;red=0.7;rotate=true;textureName=ring_white;topSize=3
@@ -1542,7 +1537,7 @@ spr	53	poisonhit	0	-
 spr	165	크리스마스	1	duration=1000
 spr	212	darkbreath	1	head=true
 spr	215	smoke	1	-
-spr	302	데몬스트레이션	0	-
+spr	302	데몬스트레이션	0	delayFrame=64;scale=1.2;alpha=200;firstFrame=1;repeat=true;yOffset=-7
 spr	363	vallentine	1	-
 spr	373	poisonhit	1	-
 spr	382	한복천사	1	head=true
@@ -1869,9 +1864,12 @@ wav	317	effect\ef_readyportal	0
 wav	317	effect\ef_portal	0
 wav	320	_heal_effect	0
 wav	325	_heal_effect	0
-wav	329	effect\ef_hit2	0
-wav	329	effect\ef_hit4	200
-wav	329	effect\ef_hit2	400
+wav	329	effect\ef_hit2	160
+wav	329	effect\ef_hit4	320
+wav	329	effect\ef_hit2	480
+wav	342	effect\EF_BeginSpell	0
+wav	441	effect\EF_BeginSpell	0
+wav	497	assulter_attack	0	listener
 wav	331	_heal_effect	0
 wav	332	effect\흡기	0
 wav	336	effect\kyrie_guard	0

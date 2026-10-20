@@ -9,6 +9,7 @@ pub mod bolts;
 pub mod boomerang;
 pub mod burst;
 pub mod first;
+pub mod ground;
 pub mod huujin;
 pub mod monk;
 pub mod napalm;
@@ -111,6 +112,7 @@ pub struct Prims {
     pub shards: shards::Shards,
     pub monk: monk::Monk,
     pub stars: star::Stars,
+    pub ground: ground::Ground,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -407,6 +409,7 @@ impl Prims {
     pub fn forget(&mut self, unit: u32) {
         self.sparkles.retain(|s| s.unit != Some(unit));
         self.walls.forget(unit);
+        self.ground.forget(unit);
     }
 
     /// The camera-facing squares for effect 793 at `now`.
@@ -468,6 +471,7 @@ impl Prims {
         self.waterballs.advance(now);
         self.shards.advance(now);
         self.stars.advance(now);
+        self.ground.advance(now);
         self.walls.advance(now, |n| crate::effects::pick(0, n.saturating_sub(1)));
         self.stone.advance(now);
         self.volleys.retain(|volley| volley.alive(now));

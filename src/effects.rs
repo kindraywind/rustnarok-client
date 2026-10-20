@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, monk, sage, shards, sight, star, stone, tanji, throw, walls, waterball};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, first, ground, huujin, monk, sage, shards, sight, star, stone, tanji, throw, walls, waterball};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -465,9 +465,24 @@ struct Animation {
     hold: bool,
     /// Where it shows from the feet, in sprite pixels.
     offset: [f32; 2],
+    /// How much bigger it is drawn on top of its layers' own zoom, how opaque (0 to 1), and which frame it starts on.
+    scale: f32,
+    alpha: f32,
+    first: f32,
     /// Its images now, from `advance`.
     placed: Vec<Placed>,
     effect: u32,
+}
+
+/// How far through its frames a repeating or playing sprite is, 0 to 1: `elapsed` ms in, `frame_ms` a frame, starting on frame
+/// `first` (then a frame is picked whole).
+fn animation_progress(elapsed: f32, frame_ms: f32, frames: f32, first: f32, repeat: bool) -> f32 {
+    let pass = frames * frame_ms.max(1.0);
+    match (repeat, first > 0.0) {
+        (false, _) => (elapsed / pass).min(1.0),
+        (true, false) => elapsed % pass / pass,
+        (true, true) => (((elapsed / frame_ms.max(1.0)) as u32 as f32 + first) % frames).floor() / frames + 0.5 / frames,
+    }
 }
 
 impl Animation {
@@ -486,6 +501,9 @@ impl Animation {
             repeat,
             hold: flag("stopAtEnd"),
             offset: [number("xOffset").unwrap_or(0.0), number("yOffset").unwrap_or(rise)],
+            scale: number("scale").unwrap_or(1.0),
+            alpha: number("alpha").map_or(1.0, |alpha| alpha / 255.0),
+            first: number("firstFrame").unwrap_or(0.0),
             placed: Vec::new(),
             effect,
         }
@@ -920,14 +938,18 @@ struct Banded {
     sparkles: Vec<(u32, [f32; 2])>,
 }
 
+/// The couple and blue casting auras: the blooming bands of Heal's cast in pink and in blue.
+const COUPLE_CASTING: u32 = 342;
+const BLUE_CASTING: u32 = 441;
+
 /// A cast's aura: one a caster has at a time.
 pub fn is_cast_aura(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59 | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    matches!(effect, 12 | 54..=59 | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
 }
 
 /// The effects made of bands.
 pub fn is_banded(effect: u32) -> bool {
-    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 315 | 320 | 325 | 344 | 367 | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
+    matches!(effect, 12 | 54..=59 | 304 | 312 | 313 | 314 | 315 | 320 | 325 | 342 | 344 | 367 | 441 | 1872 | 1876 | 1902 | 1910 | 1918 | 1923)
 }
 
 /// How long a band effect lasts, in ticks: Heal and the arrival 100, the teleport and logout 200, Aura Blade's bloom 60.
@@ -974,7 +996,7 @@ const ARRIVAL_BANDS: [[f32; 3]; 4] = [[3.7, 30.0, 90.0], [3.4, 30.0, 90.0], [3.6
 
 /// How long a cast's aura lasts: the cast time in 16 ms ticks, at least 56 for 12 and 58 and 70 for the rest.
 fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
-    (cast_ms / 16).max(if matches!(effect, 12 | 58 | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) { 56 } else { 70 })
+    (cast_ms / 16).max(if matches!(effect, 12 | 58 | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) { 56 } else { 70 })
 }
 
 /// A band effect's texture, colour and whether it adds on.
@@ -989,6 +1011,8 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         314 => ("ring_purple", [0x64, 0x64, 0xFF], true),
         344 => ("ring_blue", [0x64, 0x64, 0xFF], true),
         58 => ("ring_white", [0xFF, 0xFF, 0xFF], true),
+        COUPLE_CASTING => ("ring_red", [0xFF, 0x59, 0xB6], true),
+        BLUE_CASTING => ("ring_blue", [0x64, 0x64, 0xFF], true),
         54 => ("ring_blue", [0xC3, 0xC3, 0xFF], false),
         55 => ("ring_yellow", [0xFF, 0xAF, 0xAF], true),
         57 => ("ring_yellow", [0xFF, 0xFF, 0xFF], false),
@@ -1153,7 +1177,7 @@ impl Banded {
             344 => return shaped(&arrival_bands(age), rising_height),
             _ => {}
         }
-        if matches!(self.effect, 12 | 58 | 367 | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) {
+        if matches!(self.effect, 12 | 58 | 367 | COUPLE_CASTING | BLUE_CASTING | 1872 | 1876 | 1902 | 1910 | 1918 | 1923) {
             (0..2)
                 .flat_map(|set| (0..4).filter_map(move |band| bloom(set, band, self.ticks, age).map(|shape| (band, shape))))
                 .map(|(band, shape)| (shape, heights(band, shape.height, bloom_height)))
@@ -1693,6 +1717,12 @@ const ABSORB_SPIRITS: u32 = 253;
 const INVESTIGATE_SPARKS: u32 = 264;
 /// Steal Coin's coins (`prims::shards`), Back Stab's sparks and Raid's streaks (`prims::monk`), Chemical Protection's star (`prims::star`).
 const STEAL_COIN: u32 = 274;
+/// Magnus' and Sanctuary's boxes, Triple Attack's streaks, Slim Pitcher's potion and Full Protection's strobe (`prims::ground`).
+const MAGNUS: u32 = 318;
+const SANCTUARY: u32 = 319;
+const TRIPLE_ATTACK: u32 = 329;
+const SLIM_PITCHER: u32 = 497;
+const CHEMICAL_BODY: u32 = 500;
 const BACK_STAB: u32 = 275;
 const RAID: u32 = 276;
 const CHEMICAL_PROTECTION: u32 = 300;
@@ -1718,7 +1748,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 17] = [
+pub const AIMED: [u32; 18] = [
+    TRIPLE_ATTACK,
     BACK_STAB,
     INVESTIGATE_SPARKS,
     CLAW_SLASH,
@@ -1948,6 +1979,16 @@ impl Effects {
         if let (RIBBONS, Target::Unit(unit)) = (id, target) {
             self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
             self.prims.walls.ribbons(unit, now);
+        }
+        // Slim Pitcher's potion falls on the cell, Full Protection strobes its target's body.
+        match (id, target) {
+            (SLIM_PITCHER, _) => {
+                self.textures.entry(ground::FLASH.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, ground::FLASH, true).ok());
+                self.textures.entry(ground::RED_POTION.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, ground::RED_POTION, false).ok());
+                self.prims.ground.slim(at, ground::RED_POTION, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (CHEMICAL_BODY, Target::Unit(unit)) => self.prims.ground.chemical(unit, now),
+            _ => {}
         }
         // Steal Coin's coins fly out round the target's feet, Raid's streaks round the user's, Chemical Protection's star flashes.
         match id {
@@ -2233,7 +2274,12 @@ impl Effects {
         self.unit_kinds.insert(id, kind);
         if let Some(&effect) = table.units.get(&kind) {
             // Volcano's, Deluge's, Violent Gale's and Land Protector's cells keep their loops, drawn in code.
-            if matches!(effect, FIRE_PILLAR | VENOM_DUST) {
+            if matches!(effect, MAGNUS | SANCTUARY) {
+                // Magnus' and Sanctuary's glowing boxes stand over each cell with their unit.
+                let look = if effect == MAGNUS { ground::RING_RED } else { ground::ALPHA_DOWN };
+                self.textures.entry(look.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, look, true).ok());
+                self.prims.ground.keep_box(effect, id, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+            } else if matches!(effect, FIRE_PILLAR | VENOM_DUST) {
                 // The Fire Pillar's funnels and Venom Dust's puffs stand with their unit, drawn in code.
                 self.textures.entry(walls::MAGIC_RED.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::MAGIC_RED, true).ok());
                 self.sprites.entry(first::POISON_STAR.to_owned()).or_insert_with(|| SpriteSet::at(grf, first::POISON_STAR));
@@ -2395,6 +2441,11 @@ impl Effects {
                 }
                 self.play_sounds(table, id, from, now);
                 self.prims.balls.thunder(from, to, now);
+            }
+            TRIPLE_ATTACK => {
+                self.textures.entry(ground::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, ground::CLOUD, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.ground.triple(from, to, now, |n| pick(0, n.saturating_sub(1)));
             }
             BACK_STAB => {
                 self.textures.entry(first::THUNDER_CENTER.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, first::THUNDER_CENTER, true).ok());
@@ -2574,7 +2625,7 @@ impl Effects {
             if animation.end.is_some_and(|end| now >= end) || (!animation.repeat && !animation.hold && elapsed >= pass) {
                 return false;
             }
-            let progress = if animation.repeat { elapsed % pass / pass } else { (elapsed / pass).min(1.0) };
+            let progress = animation_progress(elapsed, frame_ms, frames, animation.first, animation.repeat);
             animation.placed = sprite.frame_at(gpu, index, 0, Timing::Span(progress));
             true
         });
@@ -2678,7 +2729,12 @@ impl Effects {
 
     /// The colour an effect gives `unit`'s body at `now` (Berserk Pitcher's red).
     pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
-        self.prims.walls.body_tint(unit, now)
+        mix_tints(self.prims.walls.body_tint(unit, now), self.prims.ground.body_tint(unit, now))
+    }
+
+    /// The body flags and colour an effect gives `unit` now (Full Protection's strobe).
+    pub fn body_glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
+        self.prims.ground.glow(unit, now)
     }
 
     /// Whether effect `effect`'s parts draw: all of them, or with /effect off the force-drawn ones.
@@ -2862,6 +2918,9 @@ impl Effects {
             .chain(sage)
             .chain(burst_rings)
             .chain(other_walls)
+            .chain(
+                self.prims.ground.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .chain(self.prims.monk.meshes(now, false).into_iter().filter_map(|(path, vertices)| Some((self.textures.get(path)?.as_ref()?, vertices, true))))
             .chain(self.prims.shards.meshes(now).into_iter().filter_map(|(path, vertices)| Some((self.textures.get(path)?.as_ref()?, vertices, true))))
             .filter(|_| !self.only_forced);
@@ -3009,9 +3068,9 @@ impl Effects {
             for &(key, position, size, layer_angle) in &animation.placed {
                 let corners = QUAD_UV.map(|uv| {
                     let [left, top] = world::sprite_corner(position, size, layer_angle, uv).0;
-                    [left + x, top + y]
+                    [left * animation.scale + x, top * animation.scale + y]
                 });
-                quads.push((sprite.texture(key), at, corners, [1.0; 4], false, false));
+                quads.push((sprite.texture(key), at, corners, [1.0, 1.0, 1.0, animation.alpha], false, false));
             }
         }
         for playing in self.playing.iter().filter(|playing| playing.start <= now && self.shows(playing.effect)) {
@@ -3094,6 +3153,22 @@ impl Effects {
                         quads.push((sprite.texture(key), draw.at, corners, [1.0, 1.0, 1.0, monk::CLAW_ALPHA / 255.0], false, true));
                     }
                 }
+            }
+            // Slim Pitcher's potion and its ghosts: a square facing the camera, the icon in its top left three quarters.
+            for potion in self.prims.ground.potions(now) {
+                let Some(Some(texture)) = self.textures.get(potion.icon) else { continue };
+                // The padded texture is drawn whole, a third bigger and moved so that the icon's centre sits on the potion's.
+                let big = ground::POTION_HALF * PIXELS_PER_UNIT / 0.75;
+                let (sin, cos) = potion.spin.to_radians().sin_cos();
+                let shift = [0.25 * big * cos, 0.25 * big * sin];
+                let corner = |j: u32| {
+                    let (sin, cos) = (potion.spin + 90.0 * j as f32).to_radians().sin_cos();
+                    [shift[0] + big * cos, shift[1] + big * sin]
+                };
+                // Corner j gets the texture coordinate (1, 1), (0, 1), (0, 0), (1, 0): the quad's order is 1, 0, 3, 2.
+                let corners = [corner(1), corner(0), corner(3), corner(2)];
+                let tint = [1.0, 135.0 / 255.0, 135.0 / 255.0, potion.alpha.trunc().clamp(0.0, 255.0) / 255.0];
+                quads.push((texture, potion.at, corners, tint, false, false));
             }
             // Chemical Protection's star: rays facing the camera, added on.
             if let Some(Some(texture)) = self.textures.get(star::TEXTURE) {
@@ -4178,7 +4253,7 @@ mod tests {
         // Other sounds keep their place.
         let mut listeners: Vec<u32> = table.sounds.iter().filter(|(_, sounds)| sounds.iter().any(|sound| sound.listener)).map(|(&id, _)| id).collect();
         listeners.sort_unstable();
-        assert_eq!(listeners, [220, 227, 245, 266]);
+        assert_eq!(listeners, [220, 227, 245, 266, 497]);
     }
 
     #[test]
@@ -4341,5 +4416,34 @@ mod tests {
         }
         // Frost Joke and Scream have no picture of their own to draw.
         assert_eq!((table.used(318), table.used(326)), (Some(&[(Who::Caster, 295)][..]), Some(&[(Who::Caster, 296)][..])));
+    }
+
+    #[test]
+    fn demonstration_boxes_triple_attack_auras_slim_pitcher_and_full_protection() {
+        let table = Table::load();
+        // Demonstration's flame: a frame every 64 ms from frame 1 over 5 frames, 1.2 times as big, at alpha 200; the ground
+        // packet shows nothing.
+        let frame = |tick: u32| (animation_progress(16.0 * tick as f32, 64.0, 5.0, 1.0, true) * 5.0) as usize;
+        assert_eq!([0, 3, 4, 12, 16, 19, 20].map(frame), [1, 1, 2, 4, 0, 0, 1]);
+        let flame = &table.sprites[&302][0];
+        assert_eq!(flame.parameters.get("delayFrame").map(String::as_str), Some("64"));
+        assert!(flame.parameters.get("scale").is_some_and(|scale| scale == "1.2") && flame.parameters.get("alpha").is_some_and(|alpha| alpha == "200"));
+        assert!(table.skill(229, "groundEffectId").is_empty());
+        assert_eq!((table.units[&177], table.units[&132], table.units[&131]), (302, 318, 319));
+        // Magnus' and Sanctuary's boxes are made in code, one a cell.
+        assert!(!table.rings.contains_key(&318) && !table.rings.contains_key(&319));
+        // Triple Attack: the sounds at ticks 10, 20 and 30, on the caster; the streaks aimed at the target.
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        assert_eq!(sounds(329), [("effect\\ef_hit2", 160), ("effect\\ef_hit4", 320), ("effect\\ef_hit2", 480)]);
+        assert_eq!(table.struck(263), Some(&[(Who::Caster, 329)][..]));
+        assert!(AIMED.contains(&329));
+        // The couple and blue casting auras bloom like Heal's: 56 ticks at least, pink and blue.
+        assert_eq!((aura_ticks(342, 0), aura_ticks(441, 0), aura_ticks(342, 2000), aura_ticks(367, 0)), (56, 56, 125, 70));
+        assert!(is_cast_aura(342) && is_cast_aura(441) && is_banded(342) && is_banded(441));
+        assert_eq!((aura_look(342), aura_look(441)), (("ring_red", [0xFF, 0x59, 0xB6], true), ("ring_blue", [0x64, 0x64, 0xFF], true)));
+        assert_eq!((sounds(342), sounds(441)), (vec![("effect\\EF_BeginSpell", 0)], vec![("effect\\EF_BeginSpell", 0)]));
+        // Slim Pitcher's potion lands on the cell, with its sound at the listener.
+        assert_eq!(table.ground(478), Some(&[(Who::Ground, 497)][..]));
+        assert!(table.sounds[&497][0].listener && table.sounds[&497][0].file == "assulter_attack");
     }
 }

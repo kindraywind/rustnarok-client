@@ -869,6 +869,16 @@ impl App {
                 Owner::Unit(id) => game.units.get(id).map(actor::Actor::glow_flags),
                 Owner::Item(_) | Owner::SkillUnit(_) => None,
             };
+            // An effect's strobe adds its flags and colour (Full Protection's).
+            let effect_glow = match owner {
+                Owner::Player => game.effects.body_glow(None, now),
+                Owner::Unit(id) => game.effects.body_glow(Some(*id), now),
+                Owner::Item(_) | Owner::SkillUnit(_) => None,
+            };
+            let glow = glow.map(|(flags, tint)| match effect_glow {
+                Some((extra, extra_tint)) => (flags | extra, extra_tint.or(tint)),
+                None => (flags, tint),
+            });
             for (index, &(key, position, size, angle)) in placements.iter().enumerate() {
                 let texture = sprites.texture(key);
                 let layer = sprite_layer(index, player, flat);
