@@ -815,6 +815,16 @@ impl LookTables {
         if look < FIRST_ITEM_ID { look } else { self.item_views.get(&look).copied().filter(|&view| view > 0).unwrap_or(look) }
     }
 
+    /// A weapon look's iteminfo ClassNum: the look itself below the item ids, 0 for an item iteminfo doesn't know.
+    pub fn class_num(&self, look: u32) -> u32 {
+        if look < FIRST_ITEM_ID { look } else { self.item_views.get(&look).copied().unwrap_or(0) }
+    }
+
+    /// A weapon name ending (`_단검`): WeaponNameTable's 105 entries, entry 0 past them, "" when nil.
+    pub fn weapon_name(&self, index: u32) -> &str {
+        self.weapons.get(&if index < 105 { index } else { 0 }).map_or("", String::as_str)
+    }
+
     /// A weapon look's basic type (dagger, sword, bow, ...), which decides the attack motion.
     pub fn weapon_type(&self, look: u32) -> u32 {
         let view = self.view(look);
