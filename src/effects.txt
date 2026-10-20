@@ -725,9 +725,6 @@ skill	2295	effectId	816
 skill	2296	effectId	817
 skill	2297	effectId	818
 skill	2298	effectId	820
-skill	2301	groundEffectId	827
-skill	2302	groundEffectId	828
-skill	2303	groundEffectId	829
 skill	2310	beforeHitEffectId	906
 skill	2318	effectId	908
 skill	2319	effectId	909
@@ -2047,6 +2044,8 @@ wav	825	effect\dimension	16	listener
 wav	827	effect\chaospanic	0
 wav	828	effect\maelstrom	0
 wav	829	effect\bloodylust	0
+wav	830	effect\EF_BeginSpell	16	listener
+wav	831	effect\EF_BeginSpell	0
 wav	832	effect\기공포	0
 wav	847	effect\수줍은하루의우울	0
 wav	856	effect\reverberation	0
