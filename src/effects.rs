@@ -83,7 +83,7 @@ pub struct Table {
     hits: HashMap<u16, [Option<u32>; 2]>,
     casters: HashMap<u16, Option<u32>>,
     /// The aura of a cast with a cast time, by skill: 12 by element, −1 none, else that effect.
-    casts: HashMap<u16, i32>,
+    casts: HashMap<u16, Vec<i32>>,
     struck: HashMap<u16, Vec<(Who, u32)>>,
     /// Skills without damage, and ground skills (at the cell or on the caster).
     used: HashMap<u16, Vec<(Who, u32)>>,
@@ -166,7 +166,7 @@ impl Table {
             match fields[..] {
                 ["cast", skill, effect] => {
                     if let (Ok(skill), Ok(effect)) = (skill.parse(), effect.parse()) {
-                        table.casts.insert(skill, effect);
+                        table.casts.entry(skill).or_default().push(effect);
                     }
                 }
                 ["str", _, file, folder, attached, ..] => {
@@ -304,13 +304,18 @@ impl Table {
     /// none for −1, else the row's effect; a skill not listed shows Bash's burst (16), the 4th jobs' none.
     // ponytail: the table's own `None` rows show no aura.
     pub fn cast_aura(&self, skill: u16, by_element: u32) -> Option<u32> {
-        match self.casts.get(&skill) {
+        match self.casts.get(&skill).and_then(|rows| rows.first()) {
             Some(-1) => None,
             Some(12) => Some(by_element),
             Some(&effect) => u32::try_from(effect).ok(),
             None if NO_CASTER_EFFECT.iter().any(|range| range.contains(&skill)) => None,
             None => Some(CASTER_EFFECT),
         }
+    }
+
+    /// The effects a cast starts beside its aura: the rows of the skill after the first.
+    pub fn cast_extras(&self, skill: u16) -> Vec<u32> {
+        self.casts.get(&skill).into_iter().flat_map(|rows| rows.iter().skip(1)).filter_map(|&effect| u32::try_from(effect).ok()).collect()
     }
 
     pub fn caster(&self, skill: u16) -> Option<u32> {
@@ -479,6 +484,10 @@ fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
     // Shockwave's waves start again every 75 ticks.
     if effect == 145 {
         return 75;
+    }
+    // Electric Walk's wave runs its 29 frames and one more tick.
+    if effect == 926 {
+        return 30;
     }
     length.saturating_sub(restart_early(effect, kind)).max(1)
 }
@@ -1949,6 +1958,10 @@ const DEMONIC_FIRE: u32 = 916;
 const DEMONIC_FIRE_3: u32 = 918;
 const VACUUM_EXTREME: u32 = 921;
 const POISON_BUSTER_FX: u32 = 923;
+/// Warmer's Imps, Arrullo's spirals and Elemental Action's crescents (`prims::cells`, `prims::spears`, `prims::walls`).
+const WARMER: u32 = 929;
+const ARRULLO_FX: u32 = 931;
+const ELEMENTAL_ACTION: u32 = 934;
 const GREAT_ECHO_V: u32 = 863;
 /// Sonic Wave's crescents and Duple Light's orbs (`prims::waves`).
 const SONIC_WAVE: u32 = 832;
@@ -2532,6 +2545,15 @@ impl Effects {
             (PRESTIGE_FX..=INSPIRATION_FX, Target::Unit(unit) | Target::Status(unit, _)) => {
                 self.textures.entry(chi::NEEDLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, chi::NEEDLE, true).ok());
                 self.prims.chi.buff(id, unit, 500, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (ARRULLO_FX, Target::Unit(unit)) => {
+                self.textures.entry(souls::DOT.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, souls::DOT, true).ok());
+                self.prims.spears.arrullo(unit, now);
+            }
+            (ELEMENTAL_ACTION, Target::Unit(unit)) => {
+                self.textures.entry(walls::RING_WHITE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_WHITE, true).ok());
+                self.prims.walls.elemental_action(unit, now);
+                self.prims.guard.elemental(unit, now);
             }
             (POISON_BUSTER_FX, Target::Unit(unit)) => {
                 self.sprites.entry(cells::BLAST.to_owned()).or_insert_with(|| SpriteSet::at(grf, cells::BLAST));
@@ -3139,12 +3161,13 @@ impl Effects {
                 // Poison Smoke's cells throw violet sparkles over everything while their unit stands.
                 self.sprites.entry(first::POISON_STAR.to_owned()).or_insert_with(|| SpriteSet::at(grf, first::POISON_STAR));
                 self.prims.walls.keep_smoke(id, at, now);
-            } else if matches!(effect, WALL_OF_THORNS | VACUUM_EXTREME | DEMONIC_FIRE..=DEMONIC_FIRE_3) {
+            } else if matches!(effect, WALL_OF_THORNS | VACUUM_EXTREME | WARMER | DEMONIC_FIRE..=DEMONIC_FIRE_3) {
                 // Wall of Thorns' tree, Vacuum Extreme's whirlwinds and the Ifrits of Demonic Fire and the Insignias stand with their
                 // unit, a new copy at the end of each length.
                 let path = match effect {
                     WALL_OF_THORNS => cells::ANCIENT_TREE,
                     VACUUM_EXTREME => cells::BREEZE,
+                    WARMER => cells::IMP,
                     _ => cells::IFRIT,
                 };
                 self.sprites.entry(path.to_owned()).or_insert_with(|| SpriteSet::at(grf, path));
@@ -3491,8 +3514,8 @@ impl Effects {
         self.prims.chi.advance(now);
         // Harmonize's emitters launch a pair of bands of soft lights (850) on their units each tick.
         self.prims.spears.advance(now);
-        for (unit, offset) in self.prims.spears.take_launched() {
-            self.prims.souls.launch(false, unit, offset, now, |n| pick(0, n.saturating_sub(1)));
+        for (arrullo, unit, offset) in self.prims.spears.take_launched() {
+            self.prims.souls.launch(arrullo, unit, offset, now, |n| pick(0, n.saturating_sub(1)));
         }
         self.prims.souls.advance(now, |n| pick(0, n.saturating_sub(1)));
         for blues in &mut self.prims.blues {
@@ -4783,8 +4806,8 @@ mod tests {
         assert_eq!([5401, 5507, 6001, 6006, 6525, 6606].map(|skill| table.cast_aura(skill, 12)), [None; 6]);
         assert_eq!([5400, 6007, 6607].map(|skill| table.cast_aura(skill, 12)).len(), 3);
         // The table's rows, as the issue lists them: 766 skills and 5 None rows.
-        assert_eq!(table.casts.len(), 772);
-        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 772);
+        assert_eq!(table.casts.len(), 773);
+        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 774);
     }
 
     #[test]
@@ -4925,7 +4948,8 @@ mod tests {
         // The table's lengths and the units that play once.
         let table = Table::load();
         assert_eq!([table.lengths[&25], table.lengths[&95], table.lengths[&920]], [40, 150, 40]);
-        assert!([130, 136, 221].iter().all(|kind| table.units_once.contains(kind)));
+        // (Electric Walk's wave, 221, loops every 30 ticks now.)
+        assert!([130, 136].iter().all(|kind| table.units_once.contains(kind)) && !table.units_once.contains(&221));
     }
 
     #[test]
@@ -6443,5 +6467,31 @@ mod tests {
             table.struck(2448).unwrap().contains(&(Who::Target, POISON_BUSTER_FX)) && table.struck(742).unwrap().contains(&(Who::Target, POISON_BUSTER_FX))
         );
         assert!(table.status(445).contains(&crate::actor::STRIKING) && !table.sounds.contains_key(&crate::actor::STRIKING));
+    }
+
+    #[test]
+    fn electric_walk_warmer_arrullo_elemental_action_and_lux_anima_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // 926: the wave runs again every 30 ticks while the unit stands, from no `once`, with no skill-line copy.
+        assert_eq!((restart_ticks(926, 221, 29), restart_ticks(926, 221, 100)), (30, 30));
+        assert!(!table.units_once.contains(&221) && table.units[&221] == 926 && table.skill(2444, "groundEffectId").is_empty());
+        // 929: the Imps on Warmer's unit, the sound at the listener, no skill-line copy.
+        assert_eq!(table.units[&228], WARMER);
+        assert_eq!(sounds(WARMER), [("effect\\s워머", 0, true)]);
+        assert!(table.skill(2452, "effectId").is_empty());
+        assert_eq!(restart_ticks(WARMER, 228, 9999), 9998);
+        // 931: Arrullo's use puts the blue aura, 886 and the spirals on its target, with the sound of Poison Buster at the listener.
+        let used = table.used(2455).unwrap();
+        assert!(used.contains(&(Who::Target, 886)) && used.contains(&(Who::Target, BLUE_CASTING)) && used.contains(&(Who::Target, ARRULLO_FX)));
+        assert_eq!(sounds(ARRULLO_FX), [("effect\\S포이즌버스터", 0, true)]);
+        // 934: the use and the cast start of Akumukesu; its cast also keeps the aura 12 and starts the crescents beside it.
+        assert!(table.used(2461).unwrap().contains(&(Who::Caster, ELEMENTAL_ACTION)) && !table.sounds.contains_key(&ELEMENTAL_ACTION));
+        assert_eq!(table.cast_aura(5478, 58), Some(58));
+        assert_eq!(table.cast_extras(5478), [ELEMENTAL_ACTION]);
+        assert!(table.cast_extras(2455).is_empty() && table.cast_extras(1).is_empty());
+        // 1044: Lux Anima's sound with its STR.
+        assert_eq!(sounds(1044), [("effect\\rk_luxanima", 0, false)]);
+        assert!(table.parts.contains_key(&1044) && table.used(5005).unwrap().contains(&(Who::Caster, 1044)));
     }
 }

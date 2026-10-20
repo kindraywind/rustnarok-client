@@ -140,6 +140,8 @@ pub const CHI_CRESCENTS: RibbonLook = RibbonLook {
     ticks: 49,
     forced: false,
 };
+/// Elemental Action's crescents: the chi burst's in white, blended.
+pub const ELEMENTAL_CRESCENTS: RibbonLook = RibbonLook { rgb: [1.0; 3], additive: false, texture: RING_WHITE, ..CHI_CRESCENTS };
 /// Grand Cross's four arcs: where from the caster's spot and the turn they start at.
 const ARCS: [([f32; 2], f32); 4] = [([23.0, 23.0], 180.0), ([23.0, -23.0], 90.0), ([-23.0, -23.0], 0.0), ([-23.0, 23.0], 270.0)];
 /// The arcs are drawn on ages 1…98, the bars on 1…89.
@@ -548,6 +550,11 @@ impl Walls {
     /// The Sura's chi burst: four blue crescents on `unit`.
     pub fn chi_burst(&mut self, unit: Option<u32>, now: Instant) {
         self.ribbons.push(Ribbons { look: &CHI_CRESCENTS, unit, at: None, start: now });
+    }
+
+    /// Elemental Action's four white crescents on `unit`.
+    pub fn elemental_action(&mut self, unit: Option<u32>, now: Instant) {
+        self.ribbons.push(Ribbons { look: &ELEMENTAL_CRESCENTS, unit, at: None, start: now });
     }
 
     /// Phantom Menace's four purple crescents on `unit`.
@@ -1217,5 +1224,20 @@ mod tests {
         assert!(meshes.iter().all(|wall| wall.texture == RING_BLUE && wall.additive && wall.vertices[0].tint[..3] == [0.0, 0.0, 1.0]));
         assert_eq!(walls.meshes(start + TICK * 48, |_| Some([0.0; 3])).len(), 4);
         assert!(walls.meshes(start + TICK * 49, |_| Some([0.0; 3])).is_empty());
+    }
+
+    #[test]
+    fn elemental_action_opens_four_white_crescents() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        walls.elemental_action(Some(3), start);
+        let look = &ELEMENTAL_CRESCENTS;
+        assert_eq!([1, 10, 11, 49, 50].map(|n| ribbon_alpha(look, n)), [20.0, 200.0, 195.0, 5.0, 0.0]);
+        assert!(near(ribbon_shape(look, 2, 1).0, 3.3));
+        // Four blended white bands in ring_white on ages 1 to 49.
+        let meshes = walls.meshes(start, |_| Some([0.0; 3]));
+        assert_eq!(meshes.len(), 4);
+        assert!(meshes.iter().all(|wall| wall.texture == RING_WHITE && !wall.additive && wall.vertices[0].tint[..3] == [1.0; 3]));
+        assert!(walls.meshes(start + TICK * 48, |_| Some([0.0; 3])).len() == 4 && walls.meshes(start + TICK * 49, |_| Some([0.0; 3])).is_empty());
     }
 }
