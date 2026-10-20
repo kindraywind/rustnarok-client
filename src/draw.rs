@@ -1125,26 +1125,27 @@ impl App {
                 }
             }
         }
+        // Each layer of an emotion (the bubble, then the face) steps one nearer than the one under it.
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(shown.into_iter().flat_map(|(feet, placements)| {
                 let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
-                placements.into_iter().map(move |(key, position, size, angle)| {
-                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                placements.into_iter().enumerate().map(move |(layer, (key, position, size, angle))| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT + layer as f32, ..DepthLayer::default() })
                 })
             }));
         }
         if let Some(sprite) = &game.emotion_sprite {
             billboards.extend(quest_shown.into_iter().flat_map(|(anchor, placements)| {
-                placements.into_iter().map(move |(key, position, size, angle)| {
-                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                placements.into_iter().enumerate().map(move |(layer, (key, position, size, angle))| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT + layer as f32, ..DepthLayer::default() })
                 })
             }));
         }
         if let Some(sprite) = &game.mvp_sprite {
             billboards.extend(mvp_shown.into_iter().flat_map(|(feet, placements)| {
                 let anchor = head_marks::anchor(feet, head_marks::ANCHOR);
-                placements.into_iter().map(move |(key, position, size, angle)| {
-                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                placements.into_iter().enumerate().map(move |(layer, (key, position, size, angle))| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT + layer as f32, ..DepthLayer::default() })
                 })
             }));
         }
@@ -1154,8 +1155,8 @@ impl App {
                 None => game.emotion_sprite.as_ref(),
             };
             if let Some(sprite) = sprite {
-                billboards.extend(placements.into_iter().map(|(key, position, size, angle)| {
-                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT, ..DepthLayer::default() })
+                billboards.extend(placements.into_iter().enumerate().map(|(layer, (key, position, size, angle))| {
+                    (sprite.texture(key), anchor, position, size, [1.0; 4], angle, DepthLayer { nudge: IN_FRONT + layer as f32, ..DepthLayer::default() })
                 }));
             }
         }
