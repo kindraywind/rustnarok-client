@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, burst, first, ground, huujin, knight, monk, sage, shards, sight, songs, star, stone, tanji, throw, transcend, walls,
-    waterball,
+    balls, blitz, bolts, boomerang, burst, first, ground, huujin, knight, monk, sage, shards, sight, sniper, songs, star, stone, tanji, throw, transcend,
+    walls, waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -428,6 +428,22 @@ impl Playing {
 fn str_ticks(str: &Str, length: Option<u32>) -> u32 {
     let keys = str.last_key().max(0) as u32 + 1;
     length.map_or(keys, |length| length.min(keys))
+}
+
+/// Reject Sword's file ends at its last key, but two smudge layers (9 and 10) stay frozen where they were to tick 199.
+// ponytail: the layers are counted from 0 in the file's order.
+const REJECT_KEPT: [usize; 2] = [9, 10];
+const REJECT_SWORD_TICKS: u32 = 200;
+
+/// The frame to show a layer at once it has ended, if the effect keeps it: its last key's.
+fn kept_layer_frame(effect: u32, index: usize, layer: &rustnarok_client::effect::Layer, frame: f32) -> Option<f32> {
+    (effect == REJECT_SWORD && REJECT_KEPT.contains(&index) && frame < REJECT_SWORD_TICKS as f32)
+        .then(|| layer.keys.iter().map(|key| key.frame).max().unwrap_or(0) as f32)
+}
+
+/// How many ticks an STR playing for `effect` is kept: to its last key, or its effect's length if shorter; Reject Sword's 200.
+fn playing_ticks(effect: u32, str: &Str, length: Option<u32>) -> u32 {
+    if effect == REJECT_SWORD { REJECT_SWORD_TICKS } else { str_ticks(str, length) }
 }
 
 /// How often a ground unit's effect starts again, in ticks: 8 before its length ends (Quagmire's 20).
@@ -1768,6 +1784,15 @@ const STEAL_COIN: u32 = 274;
 /// (`prims::knight`).
 /// Gospel's cross, Soul Drain's and Indulge's sparks, the colours they and Magic Crasher give a body, Soul Change's tube
 /// (`prims::transcend`).
+/// Soul Change's glow, True Sight's rays, Falcon Assault's spin, the shot lines, Wind Walk's arcs and Reject Sword's blinking
+/// (`prims::sniper`).
+const SOUL_CHANGE_GLOW: u32 = 385;
+const TRUE_SIGHT: u32 = 386;
+const FALCON_ASSAULT: u32 = 387;
+const SHARP_SHOOTING: u32 = 388;
+const WIND_WALK: u32 = 389;
+const REJECT_SWORD: u32 = 392;
+const ARROW_VULCAN: u32 = 393;
 const GOSPEL: u32 = 370;
 const SOUL_DRAIN: u32 = 378;
 const DRAIN_TARGET: u32 = 379;
@@ -1818,7 +1843,9 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 23] = [
+pub const AIMED: [u32; 25] = [
+    SHARP_SHOOTING,
+    ARROW_VULCAN,
     SOUL_DRAIN,
     LINE_LINK,
     SOUL_BREAKER,
@@ -2068,6 +2095,22 @@ impl Effects {
         if let (RIBBONS, Target::Unit(unit)) = (id, target) {
             self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
             self.prims.walls.ribbons(unit, now);
+        }
+        // Soul Change's glow, True Sight's rays, Falcon Assault's spin, Wind Walk's arcs, Reject Sword's blinking body.
+        match (id, target) {
+            (SOUL_CHANGE_GLOW, Target::Unit(unit)) => self.prims.sniper.glow_link(unit, now),
+            (TRUE_SIGHT, Target::Unit(unit)) => {
+                self.textures.entry(sniper::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sniper::RAY, true).ok());
+                self.prims.sniper.true_sight(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (FALCON_ASSAULT, Target::Unit(unit)) => self.prims.sniper.falcon(unit, now),
+            (WIND_WALK, Target::Unit(unit)) => {
+                self.textures.entry(sniper::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sniper::CLOUD, true).ok());
+                self.prims.sniper.wind_walk(at, now, |n| pick(0, n.saturating_sub(1)));
+                self.prims.sniper.glow_wind_walk(unit, now);
+            }
+            (REJECT_SWORD, Target::Unit(unit)) => self.prims.sniper.reject_sword(unit, now),
+            _ => {}
         }
         // Soul Drain's target turns blue, Magic Crasher flickers its target, Indulge's sparks loop out and back.
         match (id, target) {
@@ -2611,6 +2654,11 @@ impl Effects {
                 self.textures.entry(first::THUNDER_CENTER.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, first::THUNDER_CENTER, true).ok());
                 self.prims.monk.investigate(caster, to, now, |n| pick(0, n.saturating_sub(1)));
             }
+            SHARP_SHOOTING | ARROW_VULCAN => {
+                self.textures.entry(sniper::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sniper::RAY, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.sniper.shot(id == ARROW_VULCAN, caster, to, now);
+            }
             SOUL_DRAIN => {
                 self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
                 self.prims.soul_drain(from, to, now, |n| pick(0, n.saturating_sub(1)));
@@ -2676,6 +2724,7 @@ impl Effects {
         self.prims.huujin.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.knight.advance(now, &position_of);
         self.prims.transcend.advance(now, &position_of);
+        self.prims.sniper.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.monk.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for (file, at) in self.prims.throws.advance(now, &position_of) {
             self.sounds.push((now, file, at));
@@ -2787,7 +2836,7 @@ impl Effects {
                     tails.push(previous);
                 }
             }
-            now < playing.start + tick * str_ticks(&playing.loaded.animation, playing.length)
+            now < playing.start + tick * playing_ticks(playing.effect, &playing.loaded.animation, playing.length)
         });
         self.playing.extend(tails);
 
@@ -2910,6 +2959,7 @@ impl Effects {
     /// The colour an effect gives `unit`'s body at `now` (Berserk Pitcher's red).
     pub fn body_tint(&self, unit: Option<u32>, now: Instant) -> Option<[u8; 3]> {
         let flashing = mix_tints(self.prims.walls.body_tint(unit, now), self.prims.ground.body_tint(unit, now));
+        let flashing = mix_tints(flashing, self.prims.sniper.body_tint(unit, now));
         let flashing = mix_tints(flashing, self.prims.songs.body_tint(unit, now));
         mix_tints(flashing, self.prims.transcend.body_tint(unit, now))
     }
@@ -2922,6 +2972,12 @@ impl Effects {
             .or_else(|| self.prims.songs.glow(unit, now))
             .or_else(|| self.prims.knight.glow(unit, now))
             .or_else(|| self.prims.transcend.glow(unit, now))
+            .or_else(|| self.prims.sniper.glow(unit, now))
+    }
+
+    /// How many degrees `unit` has been turned since this was last asked (Falcon Assault's spin).
+    pub fn turned(&mut self, unit: Option<u32>, now: Instant) -> f32 {
+        self.prims.sniper.turned(unit, now)
     }
 
     /// A cast cut off: Twilight Alchemy's icons go.
@@ -3093,6 +3149,13 @@ impl Effects {
             .chain(sage)
             .chain(burst_rings)
             .chain(other_walls)
+            .chain(
+                self.prims
+                    .sniper
+                    .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .chain(
                 self.prims
                     .transcend
@@ -3274,8 +3337,9 @@ impl Effects {
             let animation = &playing.loaded.animation;
             // Whole ticks: the state changes once each 16 ms, with nothing in between.
             let frame = str_frame(now.duration_since(playing.start)) as f32;
-            for (layer, textures) in animation.layers.iter().zip(&playing.loaded.textures) {
-                let Some(state) = layer.state(frame) else { continue };
+            for (index, (layer, textures)) in animation.layers.iter().zip(&playing.loaded.textures).enumerate() {
+                let state = layer.state(frame).or_else(|| kept_layer_frame(playing.effect, index, layer, frame).and_then(|kept| layer.state(kept)));
+                let Some(state) = state else { continue };
                 let Some(Some(texture)) = textures.get(state.texture) else { continue };
                 // In sprite pixels, y down, turned by the key's angle; drawn over everything, `STR_RISE` up.
                 // (Drawn `STR_RISE` up, so an anchor with less rise is moved down by the difference.)
@@ -4786,7 +4850,48 @@ mod tests {
         assert!(table.status(113).contains(&382));
         assert_eq!((table.skill_sounds[&366][0].file.as_str(), table.skill_sounds[&366][0].listener), ("effect\\마법력 증폭", true));
         // Soul Change's tube from the caster, the target's own effect.
-        assert_eq!(table.used(374), Some(&[(Who::Caster, 384), (Who::Target, 385)][..]));
+        assert_eq!(table.used(374), Some(&[(Who::Caster, 384), (Who::Target, 385), (Who::Caster, 385)][..]));
         assert_eq!(sounds(384), [("effect\\소울 체인지", 0, false)]);
+    }
+
+    #[test]
+    fn the_snipers_effects_and_reject_swords_kept_smudges() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        // Soul Change glows on both units; True Sight keeps its sound; Falcon Assault has none of its own, its shake at tick 30.
+        assert_eq!(
+            (table.used(374), table.used(380)),
+            (Some(&[(Who::Caster, 384), (Who::Target, 385), (Who::Caster, 385)][..]), Some(&[(Who::Caster, 386)][..]))
+        );
+        assert_eq!(sounds(386), [("effect\\hunter_detecting", 0)]);
+        assert!(!table.sounds.contains_key(&387));
+        assert_eq!(table.quakes[&387], [(Duration::from_millis(480), QUAKE_LONG)]);
+        // The shot lines are aimed from the caster; their sounds at tick 30. Meltdown plays a sound at last.
+        assert!(AIMED.contains(&388) && AIMED.contains(&393));
+        assert_eq!((table.struck(382), table.struck(394)), (Some(&[(Who::Caster, 388)][..]), Some(&[(Who::Caster, 393)][..])));
+        assert_eq!((sounds(388), sounds(393)), (vec![("effect\\샤프슈팅", 480)], vec![("effect\\애로우 발칸", 480)]));
+        assert_eq!(sounds(390), [("effect\\black_overthrust", 0)]);
+        assert_eq!((table.used(383), table.struck(8407)), (Some(&[(Who::Caster, 389)][..]), Some(&[(Who::Target, 389)][..])));
+        // Reject Sword keeps layers 9 and 10 frozen on their last key until tick 199, and plays 200 ticks.
+        let key = rustnarok_client::effect::Key {
+            frame: 100,
+            kind: 0,
+            position: [0.0; 2],
+            corners: [0.0; 8],
+            texture: 0.0,
+            texture_motion: 0,
+            delay: 0.0,
+            angle: 0.0,
+            color: [1.0; 4],
+            source_blend: 5,
+            destination_blend: 2,
+        };
+        let layer = rustnarok_client::effect::Layer { textures: Vec::new(), keys: vec![rustnarok_client::effect::Key { frame: 0, ..key }, key] };
+        assert_eq!([9, 10, 8, 11].map(|index| kept_layer_frame(392, index, &layer, 150.0)), [Some(100.0), Some(100.0), None, None]);
+        assert_eq!(
+            (kept_layer_frame(392, 9, &layer, 199.0), kept_layer_frame(392, 9, &layer, 200.0), kept_layer_frame(391, 9, &layer, 150.0)),
+            (Some(100.0), None, None)
+        );
+        assert_eq!(REJECT_SWORD_TICKS, 200);
     }
 }

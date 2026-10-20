@@ -451,6 +451,11 @@ impl App {
         let mut sounds: Vec<(String, f32)> = game.player.sounds_now(now).into_iter().map(|sound| (sound, 1.0)).chain(hit_sounds).collect();
         let (action, timing) = game.player.animation(now);
         let head_direction = game.player.head_direction;
+        // Falcon Assault spins whoever it hits.
+        let turned = game.effects.turned(None, now);
+        if turned != 0.0 {
+            game.player.rot = (game.player.rot + turned).rem_euclid(360.0);
+        }
         let player_seen = seen_direction(game.player.rot, yaw, rounds_facing(game.player.drawn_job(), action));
         // Pushcarts, apart from the bodies (their textures are the cart's, and they cast no shadow of their own).
         // A cart's ACT has one action per direction; its frames turn the wheels, so they run only while walking.
@@ -564,6 +569,10 @@ impl App {
             }
             let (action, timing) = actor.animation(now);
             let head_direction = actor.head_direction;
+            let turned = game.effects.turned(Some(id), now);
+            if turned != 0.0 {
+                actor.rot = (actor.rot + turned).rem_euclid(360.0);
+            }
             let seen = seen_direction(actor.rot, yaw, rounds_facing(actor.drawn_job(), action));
             // NPC names show under them; players' and monsters' on hover (below).
             if !silhouette && !actor.hidden && (actor.kind == NPC || actor.sprites.is_none()) {
