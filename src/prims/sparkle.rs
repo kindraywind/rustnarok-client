@@ -186,6 +186,8 @@ pub const BLUE: RiseLook = RiseLook {
     tint: [150.0 / 255.0, 150.0 / 255.0, 250.0 / 255.0],
     picture: None,
 };
+/// The Star Gladiator's warmth (572): the same sets in a faint red-pink.
+pub const WARM: RiseLook = RiseLook { tint: [250.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0], ..BLUE };
 pub const SPANNER_PICTURE: &str = "data\\texture\\유저인터페이스\\item\\스패너.bmp";
 pub const SPANNERS: RiseLook = RiseLook {
     sets: 6,
@@ -483,6 +485,27 @@ mod tests {
         assert_eq!([2, 10, 11, 54, 55].map(alpha_at), [15, 135, 132, 3, 0]);
         assert_eq!([texture_at(0, 34), texture_at(0, 35), texture_at(0, 36), texture_at(0, 37)], [POK1, POK3, POK3, POK1]);
         assert!(blues.alive(start + TICK * 134) && !blues.alive(start + TICK * 135));
+    }
+
+    #[test]
+    fn the_warmth_lets_red_pink_sparkles_rise_like_hovering_s() {
+        let start = Instant::now();
+        let feet = [10.0, 5.0, 20.0];
+        // 21 sets of 4 on ticks 0, 4 … 80 round the caster; the same size, place and rise as the blue ones, in #FA6464.
+        let mut warm = Rises::new(&WARM, Some(1), start);
+        for tick in 0..=82 {
+            warm.advance(start + TICK * tick, &|_| Some(feet), |_| 0);
+        }
+        assert_eq!((warm.squares.len(), warm.made), (84, 21));
+        assert_eq!((warm.squares[0].half_diagonal, warm.squares[0].at, warm.squares[0].rise), (2.0, [5.0, 11.0, 15.0], 0.10));
+        assert_eq!(WARM.tint, [250.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0]);
+        // The largest draws (9, 10, 10, 19): 2.9 across, +5 and +5, 0.29 a tick.
+        let mut big = Rises::new(&WARM, Some(1), start);
+        big.advance(start, &|_| Some(feet), |n| n - 1);
+        let first = big.squares[0];
+        assert!((first.half_diagonal - 2.9).abs() < 1e-4 && first.at[0] == 15.0 && first.at[2] == 25.0 && (first.rise - 0.29).abs() < 1e-4);
+        // 5.5 to 16 up over its life: 6 + 54 × 0.10 = 11.4 at most for the smallest, 6 + 54 × 0.29 = 21.7.
+        assert!(warm.alive(start + TICK * 134) && !warm.alive(start + TICK * 135));
     }
 
     #[test]

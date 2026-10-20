@@ -1958,6 +1958,23 @@ const SONIC_BLOW: u32 = 121;
 const SOUL_STRIKE: u32 = 15;
 /// EF_FIREBALL, EF_YUFITEL (Jupitel Thunder) and EF_GRIMTOOTH (`prims`).
 const FIRE_BALL: u32 = 24;
+/// The bearing from the target at `to` to the caster at `from`.
+fn bearing_between(from: Vector, to: Vector) -> i32 {
+    crate::prims::tanji::bearing(from[0] - to[0], from[2] - to[2])
+}
+
+/// Full Buster's action from the camera's longitude and the bearing from the target to the caster: 2 for 180 to 269, 3 for 90 to
+/// 179, 0 for 0 to 89 and 1 for 270 to 359 of their sum.
+// ponytail: the screen direction of these four diagonals is not checked against the game.
+pub fn full_buster_action(longitude: i32, heading: i32) -> usize {
+    match (longitude + heading).rem_euclid(360) {
+        180..=269 => 2,
+        90..=179 => 3,
+        0..=89 => 0,
+        _ => 1,
+    }
+}
+
 /// Whether the server sends this effect (ZC_NOTIFY_EFFECT2) with no target, so it flies from its unit at the map's
 /// centre: Fire Ball's and Frost Diver's.
 pub fn aimed_at_centre(effect: u32) -> bool {
@@ -2133,6 +2150,11 @@ const BLUE_HIT: u32 = 549;
 const ESMA_DISCS: u32 = 553;
 const ESMA_FROST: u32 = 554;
 const ESTUN_MOVER: u32 = 555;
+/// The warmth's sparkles, Full Buster's blast, Kaizel's fins and Kouenka's petals and rays.
+const WARM_SPARKLES: u32 = 572;
+const FULL_BUSTER: u32 = 584;
+const KAIZEL_FINS: u32 = 590;
+const KOUENKA: u32 = 618;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
 /// Resurrection's rings and the Call Partner portal's warp (`prims::portal`).
@@ -2292,10 +2314,11 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 43] = [
+pub const AIMED: [u32; 44] = [
     STIN,
     ESMA_DISCS,
     ESTUN_MOVER,
+    FULL_BUSTER,
     HIT_LINE_COUNTER,
     PINPOINT_FX,
     ELBOW_LINES,
@@ -2912,6 +2935,23 @@ impl Effects {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
                 }
                 self.prims.petals.lope(at, now);
+            }
+            (WARM_SPARKLES, Target::Unit(unit)) => {
+                for path in crate::prims::sparkle::TEXTURES {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.warm_sparkles(unit, now);
+            }
+            (KAIZEL_FINS, Target::Unit(unit)) => {
+                self.textures.entry(kicks::FIN.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, kicks::FIN, false).ok());
+                self.prims.kicks.kaizel(unit, now);
+            }
+            (KOUENKA, Target::Unit(unit)) => {
+                self.textures.entry(brawl::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::RAY, true).ok());
+                self.sprites.entry(petals::SAKURA.to_owned()).or_insert_with(|| SpriteSet::at(grf, petals::SAKURA));
+                // ponytail: the rays' draws come before the petals', not after the first petal's.
+                self.prims.brawl.petal_rays(unit, now, |n| pick(0, n.saturating_sub(1)));
+                self.prims.petals.kouenka(unit, at, now);
             }
             (SOUL_BODY, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Soul, unit, now),
             (SOUL_BODY_MONSTER, Target::Unit(unit)) => self.prims.bodies.start(body::Change::Stack, unit, now),
@@ -3757,6 +3797,14 @@ impl Effects {
                 self.textures.entry(kicks::LINE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, kicks::LINE, true).ok());
                 self.prims.kicks.hit(kicks::Kind::Counter, (target != own).then_some(target), Some(from), to, now);
             }
+            FULL_BUSTER => {
+                // The blast flares toward the target's side of the screen: one of the sprite's four diagonals, chosen once.
+                self.play(gpu, grf, table, id, Target::Unit(caster), from, now);
+                let action = full_buster_action(self.yaw.to_degrees().floor() as i32, bearing_between(from, to));
+                for animation in self.animations.iter_mut().filter(|animation| animation.effect == id && animation.start == now) {
+                    animation.action = Some(action);
+                }
+            }
             STIN => {
                 self.textures.entry(soul::BLADE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, soul::BLADE, false).ok());
                 self.play_sounds(table, id, from, now);
@@ -3968,6 +4016,7 @@ impl Effects {
         self.prims.portal.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.sphere.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.petals.advance(now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.petals.drift(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.soul.advance(now, &position_of, self.yaw.to_degrees());
         // The soul lights (506) the mote launches along its path.
         for (unit, offset) in self.prims.soul.take_launches() {
@@ -4026,7 +4075,7 @@ impl Effects {
                 self.sight_frames.insert((drawn.sprite, drawn.frame), layers);
             }
         }
-        for draw in self.prims.crowds.draws(now).into_iter().chain(self.prims.cells.ifrits(now)) {
+        for draw in self.prims.crowds.draws(now).into_iter().chain(self.prims.cells.ifrits(now)).chain(self.prims.petals.falls()) {
             if let Some(Some(sprite)) = self.sprites.get_mut(draw.sprite) {
                 let frames = sprite.frames(draw.action).max(1);
                 let frame = draw.steps as usize % frames;
@@ -4972,7 +5021,7 @@ impl Effects {
                 }
             }
             // Dead Hill Here's and Dance with Warg's monsters stand like units, each with a glowing outline a pixel bigger on every side.
-            for draw in self.prims.crowds.draws(now).into_iter().chain(self.prims.cells.ifrits(now)) {
+            for draw in self.prims.crowds.draws(now).into_iter().chain(self.prims.cells.ifrits(now)).chain(self.prims.petals.falls()) {
                 let Some(Some(sprite)) = self.sprites.get(draw.sprite) else { continue };
                 let frames = sprite.frames(draw.action).max(1);
                 let frame = draw.steps as usize % frames;
@@ -7462,5 +7511,34 @@ mod tests {
         assert!(AIMED.contains(&ESTUN_MOVER) && table.struck(468).unwrap().contains(&(Who::Caster, ESTUN_MOVER)));
         assert_eq!(sounds(ESMA_DISCS), [80, 320, 560, 800, 1040].map(|delay| ("effect\\T_날라차기", delay, true)));
         assert_eq!([BLUE_HIT, ESMA_DISCS, ESMA_FROST, ESTUN_MOVER].map(|id| table.lengths[&id]), [60, 200, 200, 200]);
+    }
+
+    #[test]
+    fn the_warmth_full_buster_kaizel_and_kouenka_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.random)).collect::<Vec<_>>();
+        for skill in [428, 429, 430] {
+            let used = table.used(skill).unwrap();
+            assert!(used.contains(&(Who::Caster, 418)) && used.contains(&(Who::Caster, WARM_SPARKLES)), "{skill}");
+        }
+        assert_eq!(sounds(WARM_SPARKLES), [("effect\\T_따듯한마법", 160, None)]);
+        // Full Buster: aimed from the caster, the sprite from frame 1 at 4 ticks a frame, once, over everything.
+        assert!(AIMED.contains(&FULL_BUSTER) && table.struck(519).unwrap().contains(&(Who::Caster, FULL_BUSTER)));
+        let part = &table.sprites[&FULL_BUSTER][0];
+        let animation = Animation::new(part, FULL_BUSTER, Instant::now(), Anchor::Unit(Some(1)), false);
+        assert!(animation.over && !animation.repeat && animation.frame_ms == Some(64.0) && animation.first == 1.0 && animation.action.is_none());
+        assert_eq!(sounds(FULL_BUSTER), [("effect\\풀버스터", 80, None)]);
+        // The frame at ages 0, 3, 4, 23, 24, 27: 1, 1, 2, 6, 7, 7 (the last frame is empty); the action for d = 0 … 359.
+        let frame = |age: u32| (animation_progress(16.0 * age as f32, 64.0, 8.0, 1.0, false) * 8.0) as usize;
+        assert_eq!([0, 3, 4, 23, 24, 27, 28].map(frame), [1, 1, 2, 6, 7, 7, 7]);
+        assert_eq!([0, 89, 90, 179, 180, 269, 270, 359].map(|d| full_buster_action(0, d)), [0, 0, 3, 3, 2, 2, 1, 1]);
+        assert_eq!(full_buster_action(300, 100), 0);
+        assert_eq!(full_buster_action(-30, 100), 0);
+        assert_eq!(bearing_between([0.0, 0.0, 0.0], [10.0, 0.0, 0.0]), 180);
+        // Kaizel's fins ride on its target; Kouenka makes no picture of its own and four crackles at 192 … 240 ms.
+        assert_eq!(table.skill(462, "effectId"), [KAIZEL_FINS]);
+        assert!(table.struck(534).unwrap().contains(&(Who::Target, KOUENKA)) && !table.parts.contains_key(&KOUENKA));
+        assert_eq!(sounds(KOUENKA), [192, 208, 224, 240].map(|delay| ("effect\\EF_FireArrow%d", delay, Some((1, 3)))));
+        assert_eq!([WARM_SPARKLES, FULL_BUSTER, KAIZEL_FINS, KOUENKA].map(|id| table.lengths[&id]), [300, 100, 200, 300]);
     }
 }

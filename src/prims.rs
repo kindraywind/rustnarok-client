@@ -613,6 +613,11 @@ impl Prims {
         self.blues.push(sparkle::Rises::new(&sparkle::BLUE, unit, now));
     }
 
+    /// The warmth's red-pink sparkles round `unit`.
+    pub fn warm_sparkles(&mut self, unit: Option<u32>, now: Instant) {
+        self.blues.push(sparkle::Rises::new(&sparkle::WARM, unit, now));
+    }
+
     /// Repair's spanners round `unit`.
     pub fn spanners(&mut self, unit: Option<u32>, now: Instant) {
         self.blues.push(sparkle::Rises::new(&sparkle::SPANNERS, unit, now));
