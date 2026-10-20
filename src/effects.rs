@@ -549,8 +549,10 @@ fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
 /// How many ticks before its length a ground unit's effect starts again.
 fn restart_early(effect: u32, kind: u32) -> u32 {
     match kind {
-        189..=194 | 228 | 230..=233 | 235 | 240..=244 | 258 => 1,
+        228 | 230..=233 | 235 | 240..=244 | 258 => 1,
         220 | 221 => 7,
+        // Kaensin's and Ground Drift's cells start the next copy a tick before this one ends.
+        189..=194 => 1,
         _ if effect == 95 => 20,
         _ => 8,
     }
@@ -627,6 +629,8 @@ impl Animation {
             Some("false") => false,
             _ => lasting && !flag("hold"),
         };
+        // `delayStart`: made late, nothing shows before.
+        let start = start + Duration::from_secs_f32(number("delayStart").unwrap_or(0.0).max(0.0) / 1000.0);
         Self {
             sprite: format!("data\\sprite\\이팩트\\{}", part.file),
             start,
@@ -1688,6 +1692,14 @@ fn glint_at(first_alpha: i32, age: u32) -> (i32, u32) {
     (alpha.max(0), round)
 }
 
+/// A bouncing Stapo (EF_STONERING, 797) on a target's feet.
+struct Stapo {
+    start: Instant,
+    anchor: Anchor,
+    action: usize,
+    placed: Vec<Placed>,
+}
+
 #[derive(Default)]
 pub struct Effects {
     /// Each unit's facing in degrees: set each frame (Preserve's dome starts from it).
@@ -1761,6 +1773,7 @@ pub struct Effects {
     arrow: Vec<Vec<Placed>>,
     blessings: Vec<Blessing>,
     status_prims: Vec<StatusPrim>,
+    stapos: Vec<Stapo>,
     /// The STR world effects running, the time up to which their ticks have run, and the black fill's texture.
     worlds: Worlds,
     world_clock: Option<Instant>,
@@ -1959,6 +1972,23 @@ pub const NAPALM_BEAT: u32 = 32;
 /// EF_HALLUTIME: white glints round a copy (`prims::sparkle`).
 pub const HALLUTIME: u32 = crate::prims::sparkle::EF_HALLUTIME;
 
+/// EF_STONERING: Sienna Execrate's bouncing Stapo (`data\sprite\몬스터\stapo`).
+pub const EF_STONERING: u32 = 797;
+/// EF_FROSTDIVER3: Jack Frost's star of dark blue ice spikes.
+pub const EF_FROSTDIVER3: u32 = 801;
+
+pub const STAPO_SPRITE: &str = "data\\sprite\\몬스터\\stapo";
+
+/// Stapo's action: 0 if rand == 0, else 7.
+pub fn stapo_action(rand: u32) -> usize {
+    if rand == 0 { 0 } else { 7 }
+}
+
+/// Stapo's frame: ⌊age / 4⌋ + 1 for ages 0..=47 (frames 1..=12), ends at age 48.
+pub fn stapo_frame(age: u32) -> Option<usize> {
+    if age < 48 { Some((age / 4) as usize + 1) } else { None }
+}
+
 /// EF_QUAGMIRE: only its sound is handled in code (one time in 12, quietly).
 const QUAGMIRE: u32 = 95;
 /// Whether a Quagmire cell's launch makes its sound, by one draw of 12: one time in 12.
@@ -1989,16 +2019,20 @@ fn bearing_between(from: Vector, to: Vector) -> i32 {
     crate::prims::tanji::bearing(from[0] - to[0], from[2] - to[2])
 }
 
-/// Full Buster's action from the camera's longitude and the bearing from the target to the caster: 2 for 180 to 269, 3 for 90 to
-/// 179, 0 for 0 to 89 and 1 for 270 to 359 of their sum.
+/// Which quarter of the circle the camera's longitude plus the bearing from the target to the caster falls in (0 to 3).
+fn blast_quarter(longitude: i32, heading: i32) -> usize {
+    (longitude + heading).rem_euclid(360) as usize / 90
+}
+
+/// Full Buster's action: 0 for a sum of 0 to 89, 3 for 90 to 179, 2 for 180 to 269 and 1 for 270 to 359.
 // ponytail: the screen direction of these four diagonals is not checked against the game.
 pub fn full_buster_action(longitude: i32, heading: i32) -> usize {
-    match (longitude + heading).rem_euclid(360) {
-        180..=269 => 2,
-        90..=179 => 3,
-        0..=89 => 0,
-        _ => 1,
-    }
+    [0, 3, 2, 1][blast_quarter(longitude, heading)]
+}
+
+/// Spread Attack's action for the same sum: 0, 6, 4 and 2.
+pub fn spread_attack_action(longitude: i32, heading: i32) -> usize {
+    [0, 6, 4, 2][blast_quarter(longitude, heading)]
 }
 
 /// Whether the server sends this effect (ZC_NOTIFY_EFFECT2) with no target, so it flies from its unit at the map's
@@ -2179,6 +2213,9 @@ const ESTUN_MOVER: u32 = 555;
 /// The warmth's sparkles, Full Buster's blast, Kaizel's fins and Kouenka's petals and rays.
 const WARM_SPARKLES: u32 = 572;
 const FULL_BUSTER: u32 = 584;
+/// Spread Attack's blast, aimed at the target; Granitic Armor's, Kyomu's and Gensou's grey tint.
+const SPREAD_ATTACK: u32 = 645;
+const GREY_BODY: u32 = 963;
 const KAIZEL_FINS: u32 = 590;
 const KOUENKA: u32 = 618;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
@@ -2260,6 +2297,9 @@ const SKY_NET_SHAKE: u32 = 550;
 const QUAKE_BODY: u32 = 458;
 pub const REVERBERATION: u32 = 464;
 const SPINED_BODY: u32 = 466;
+/// Prominence Kick's spin (the same swing), and Misty Frost's blue glow.
+const PROMINENCE_SPIN: u32 = 1224;
+const MISTY_FROST: u32 = 1420;
 const CAST_SPIN: u32 = 501;
 const GREEN_BODY: u32 = 538;
 const HATED: u32 = 543;
@@ -2345,13 +2385,14 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 46] = [
+pub const AIMED: [u32; 47] = [
     STIN,
     PIERCING_LINES,
     KAMAITACHI,
     ESMA_DISCS,
     ESTUN_MOVER,
     FULL_BUSTER,
+    SPREAD_ATTACK,
     HIT_LINE_COUNTER,
     PINPOINT_FX,
     ELBOW_LINES,
@@ -3048,6 +3089,18 @@ impl Effects {
                 self.prims.guard.accessory(at, now, |n| pick(0, n.saturating_sub(1)));
             }
             (MANHOLE_BODY, Target::Status(unit, _)) => self.prims.brawl.manhole(unit),
+            (EF_STONERING, target) => {
+                self.sprites.entry(STAPO_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, STAPO_SPRITE));
+                let action = stapo_action(pick(0, 1));
+                let anchor = match target {
+                    Target::Unit(unit) | Target::Status(unit, _) => Anchor::Unit(unit),
+                    _ => Anchor::At(at),
+                };
+                self.stapos.push(Stapo { start: now, anchor, action, placed: Vec::new() });
+            }
+            (EF_FROSTDIVER3, _) => {
+                self.jack_frost(gpu, grf, at, now, |n| pick(0, n.saturating_sub(1)));
+            }
             (813..=818, Target::Unit(unit)) => {
                 self.textures.entry(songs::STREAK_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, songs::STREAK_TEXTURE, true).ok());
                 self.prims.songs.hairlines(unit, now, |n| pick(0, n.saturating_sub(1)));
@@ -3113,12 +3166,14 @@ impl Effects {
             (QUAKE_BODY, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 0, 34),
             (SKY_NET_SHAKE, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 31, 50),
             (RED_HIT, Target::Unit(unit)) => self.prims.brawl.red(unit, now),
+            (GREY_BODY, Target::Status(unit, _)) => self.prims.guard.grey(unit),
             (BLUE_HIT, Target::Unit(unit)) => self.prims.brawl.blue_hit(unit, now),
             (ESMA_FROST, Target::Unit(unit)) => {
                 self.textures.entry(linker::FROST.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, linker::FROST, false).ok());
                 self.prims.linker.frost(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
-            (SPINED_BODY, Target::Unit(unit)) => self.prims.brawl.swing(unit, now),
+            (SPINED_BODY | PROMINENCE_SPIN, Target::Unit(unit)) => self.prims.brawl.swing(unit, now),
+            (MISTY_FROST, Target::Status(unit, _)) => self.prims.bodies.start(body::Change::MistyFrost, unit, now),
             (GREEN_BODY, Target::Unit(unit)) => self.prims.guard.green(unit, now),
             (HATED, Target::Unit(unit)) => {
                 for path in crate::prims::sparkle::TEXTURES {
@@ -3798,6 +3853,16 @@ impl Effects {
         self.prims.stone.frost_diver(from, to, now, |n| pick(0, n.saturating_sub(1)));
     }
 
+    /// Jack Frost (EF_FROSTDIVER3): 10 lines of Frost Diver spikes on source feet aimed 80 units out.
+    pub fn jack_frost(&mut self, gpu: &Gpu, grf: &Grf, from: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.sounds.push((now, "jack_frost.wav".to_owned(), LISTENER));
+        if self.min {
+            return;
+        }
+        self.textures.entry(crate::prims::ICE_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crate::prims::ICE_TEXTURE, true).ok());
+        self.prims.stone.jack_frost_star(from, now, rand);
+    }
+
     /// An effect launched on the caster at `from`, aimed at `to` (one of `AIMED`), told the skill's hit count.
     #[allow(clippy::too_many_arguments)]
     pub fn aimed(
@@ -3853,10 +3918,11 @@ impl Effects {
                 self.textures.entry(kicks::LINE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, kicks::LINE, true).ok());
                 self.prims.kicks.hit(kicks::Kind::Counter, (target != own).then_some(target), Some(from), to, now);
             }
-            FULL_BUSTER => {
+            FULL_BUSTER | SPREAD_ATTACK => {
                 // The blast flares toward the target's side of the screen: one of the sprite's four diagonals, chosen once.
                 self.play(gpu, grf, table, id, Target::Unit(caster), from, now);
-                let action = full_buster_action(self.yaw.to_degrees().floor() as i32, bearing_between(from, to));
+                let (longitude, heading) = (self.yaw.to_degrees().floor() as i32, bearing_between(from, to));
+                let action = if id == SPREAD_ATTACK { spread_attack_action(longitude, heading) } else { full_buster_action(longitude, heading) };
                 for animation in self.animations.iter_mut().filter(|animation| animation.effect == id && animation.start == now) {
                     animation.action = Some(action);
                 }
@@ -4277,12 +4343,24 @@ impl Effects {
             let frame_ms = animation.frame_ms.unwrap_or_else(|| sprite.index_ms(index).unwrap_or(100.0) / frames);
             // Played once from a later frame, it ends after the frames it shows.
             let pass = (frames - animation.first.min(frames - 1.0)) * frame_ms.max(1.0);
+            if now < animation.start {
+                animation.placed.clear();
+                return true;
+            }
             let elapsed = now.saturating_duration_since(animation.start).as_secs_f32() * 1000.0;
             if animation.end.is_some_and(|end| now >= end) || (!animation.repeat && !animation.hold && elapsed >= pass) {
                 return false;
             }
             let progress = animation_progress(elapsed, frame_ms, frames, animation.first, animation.repeat);
             animation.placed = sprite.frame_at(gpu, index, 0, Timing::Span(progress));
+            true
+        });
+        self.stapos.retain_mut(|stapo| {
+            let age = str_frame(now.saturating_duration_since(stapo.start));
+            let Some(frame) = stapo_frame(age) else { return false };
+            let Some(Some(sprite)) = sprites.get_mut(STAPO_SPRITE) else { return true };
+            let frames = sprite.frames(stapo.action).max(1);
+            stapo.placed = sprite.frame_at(gpu, stapo.action, 0, Timing::Span((frame as f32 + 0.5) / frames as f32));
             true
         });
         self.auras.retain(|aura| (now.saturating_duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) < aura.ticks as f32);
@@ -4409,6 +4487,10 @@ impl Effects {
         self.prims.songs.forget_status(unit, status);
         self.prims.transcend.forget_status(unit, status);
         self.prims.brawl.forget_status(unit, status);
+        // Granitic Armor, Kyomu or Gensou went off (or comes on again: its new copy follows at once).
+        if matches!(status, 606 | 655 | 659) {
+            self.prims.guard.ungrey(unit, Instant::now());
+        }
         self.prims.waves.forget_status(unit, status);
         self.prims.chi.forget_status(unit, status);
         // Running's status takes its start away, and ends with it.
@@ -4433,6 +4515,7 @@ impl Effects {
         self.floating.retain(|floating| !on(floating.anchor));
         self.rings.retain(|ring| !on(ring.anchor));
         self.animations.retain(|animation| !on(animation.anchor));
+        self.stapos.retain(|stapo| !on(stapo.anchor));
     }
 
     /// Stops a playing STR effect on its unit (None = the player).
@@ -4455,6 +4538,7 @@ impl Effects {
         self.rings.retain(|ring| !ring.anchor.on(unit));
         self.animations.retain(|animation| !animation.anchor.on(unit));
         self.standing.retain(|(_, id, _)| *id != unit);
+        self.stapos.retain(|stapo| !stapo.anchor.on(unit));
     }
 
     /// The colour an effect gives `unit`'s body at `now` (Berserk Pitcher's red).
@@ -4675,9 +4759,12 @@ impl Effects {
         let wall_mesh = |wall: walls::Wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive));
         let forced_walls: Vec<EffectMesh<'_>> = forced_walls.into_iter().filter_map(wall_mesh).collect();
         let other_walls: Vec<EffectMesh<'_>> = other_walls.into_iter().filter_map(wall_mesh).collect();
-        let spikes = [crate::prims::ICE_TEXTURE, stone::STONE]
+        let spikes = self
+            .prims
+            .stone
+            .meshes(|n| pick(0, n.saturating_sub(1)))
             .into_iter()
-            .filter_map(|path| Some((self.textures.get(path)?.as_ref()?, self.prims.stone.mesh(path), false)));
+            .filter_map(|(path, triangles, additive)| Some((self.textures.get(path)?.as_ref()?, triangles, additive)));
         // Turn Undead's ring, flat over the caster's feet.
         let ring = self.textures.get(burst::RING).and_then(Option::as_ref);
         let burst_rings = self.prims.bursts.iter().filter_map(|burst| {
@@ -5165,6 +5252,19 @@ impl Effects {
                         [x * draw.scale, y * draw.scale + STR_RISE]
                     });
                     quads.push((sprite.texture(key), draw.at, corners, [1.0, 1.0, 1.0, draw.alpha / 255.0], false, true));
+                }
+            }
+            // Sienna Execrate: bouncing Stapo at target's feet + 8 units up, over everything.
+            for stapo in &self.stapos {
+                let Some(at) = stapo.anchor.place(&position_of) else { continue };
+                let Some(Some(sprite)) = self.sprites.get(STAPO_SPRITE) else { continue };
+                let at = [at[0], at[1] + 8.0, at[2]];
+                for &(key, position, size, layer_angle) in &stapo.placed {
+                    let corners = QUAD_UV.map(|uv| {
+                        let [left, top] = world::sprite_corner(position, size, layer_angle, uv).0;
+                        [left, top + STR_RISE]
+                    });
+                    quads.push((sprite.texture(key), at, corners, [1.0; 4], false, true));
                 }
             }
             // The songs' puffs: upright squares turned by their yaws, 10 above the feet, added on and drawn over everything with
@@ -7710,5 +7810,109 @@ mod tests {
         // Bakuenryu's and Hyousyouraku's pictures follow their unit.
         assert!([635, 636].iter().all(|id| table.parts[id].iter().all(|part| part.attached)));
         assert_eq!([635, 636].map(|id| table.sounds[&id][0].delay_ms), [0, 0]);
+    }
+
+    #[test]
+    fn hallucination_walk_sienna_execrate_and_jack_frost_have_their_rows_and_timing() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // 792 EF_MAKEHALLU: length 9999, no sound, EFST 334 & 869.
+        assert_eq!(table.lengths[&792], 9999);
+        assert!(!table.sounds.contains_key(&792));
+        assert!(table.status(334).contains(&792));
+        assert!(table.status(869).contains(&792));
+
+        // 797 EF_STONERING: Sienna Execrate (skill 2207), length 300, sound wl_siennaexecrate at tick 0 at listener.
+        assert_eq!(table.lengths[&EF_STONERING], 300);
+        assert_eq!(sounds(EF_STONERING), [("effect\\wl_siennaexecrate", 0, true)]);
+        assert!(table.used(2207).unwrap().contains(&(Who::Target, EF_STONERING)));
+        // Stapo's random action: 0 for 0, 7 for 1.
+        assert_eq!(stapo_action(0), 0);
+        assert_eq!(stapo_action(1), 7);
+        // Stapo's frame: floor(age / 4) + 1 for ages 0..=47 (frames 1..=12), ends at age 48.
+        for age in 0..48 {
+            assert_eq!(stapo_frame(age), Some((age as usize / 4) + 1));
+        }
+        assert_eq!(stapo_frame(0), Some(1));
+        assert_eq!(stapo_frame(3), Some(1));
+        assert_eq!(stapo_frame(4), Some(2));
+        assert_eq!(stapo_frame(47), Some(12));
+        assert_eq!(stapo_frame(48), None);
+
+        // 801 EF_FROSTDIVER3: Jack Frost (skills 2204 & 720), length 150, no wav row.
+        assert_eq!(table.lengths[&EF_FROSTDIVER3], 150);
+        assert!(!table.sounds.contains_key(&EF_FROSTDIVER3));
+        assert!(table.used(2204).unwrap().contains(&(Who::Caster, EF_FROSTDIVER3)));
+        assert!(table.used(720).unwrap().contains(&(Who::Caster, EF_FROSTDIVER3)));
+    }
+
+    #[test]
+    fn zangetsu_kagemusya_misty_frost_and_prominence_kick_have_their_rows() {
+        let table = Table::load();
+        assert_eq!(table.status(657), [1003]);
+        assert_eq!(table.status(656), [crate::actor::KAGEMUSYA]);
+        assert_eq!(table.status(1141), [MISTY_FROST]);
+        assert!(table.struck(2593).unwrap().contains(&(Who::Target, PROMINENCE_SPIN)));
+        assert_eq!(table.sounds[&PROMINENCE_SPIN].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\mon_침투경", 80)]);
+        assert_eq!([1003, crate::actor::KAGEMUSYA, MISTY_FROST, PROMINENCE_SPIN].map(|id| table.lengths[&id]), [99_999_999, 99_999_999, 99_999_999, 50]);
+        // The spin shares the swing's flag: on ticks 14 to 49 only, the counter from 0 to 35.
+        let start = Instant::now();
+        let mut brawl = brawl::Brawl::default();
+        brawl.swing(Some(1), start);
+        let g = |tick: u32| brawl.glow(Some(1), start + crate::prims::TICK * tick).map(|(flags, _)| flags >> crate::actor::PARAM_SHIFT);
+        assert_eq!([13, 14, 49, 50].map(g), [None, Some(0), Some(35), None]);
+    }
+
+    #[test]
+    fn the_gunslingers_sprites_ground_drifts_spark_and_the_grey_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Each: the effect, ticks a frame, the sprite's frame count, the ages to read the frame at, the frames, and the end age.
+        type Row = (u32, f32, f32, [u32; 4], [usize; 4]);
+        let rows: [Row; 6] = [
+            (637, 4.0, 24.0, [0, 3, 4, 91], [1, 1, 2, 23]),
+            (643, 4.0, 20.0, [0, 3, 4, 75], [1, 1, 2, 19]),
+            (644, 2.0, 21.0, [0, 1, 2, 39], [1, 1, 2, 20]),
+            (645, 4.0, 12.0, [0, 3, 4, 43], [1, 1, 2, 11]),
+            (647, 2.0, 15.0, [0, 1, 2, 27], [1, 1, 2, 14]),
+            (648, 2.0, 15.0, [0, 1, 2, 27], [1, 1, 2, 14]),
+        ];
+        for (effect, ticks, frames, ages, want) in rows {
+            let animation = Animation::new(&table.sprites[&effect][0], effect, Instant::now(), Anchor::Unit(Some(1)), false);
+            assert!(animation.over && !animation.repeat && animation.first == 1.0 && animation.scale == 1.0 && animation.offset == [0.0, 0.0], "{effect}");
+            assert_eq!(animation.frame_ms, Some(16.0 * ticks), "{effect}");
+            let frame = |age: u32| (animation_progress(16.0 * age as f32, 16.0 * ticks, frames, 1.0, false) * frames) as usize;
+            assert_eq!(ages.map(frame), want, "{effect}");
+            // It ends after the frames it shows: (count − 1) × ticks.
+            assert_eq!((frames - 1.0) * ticks, (ages[3] + 1) as f32, "{effect}");
+        }
+        // Triple Action is made 30 ticks late.
+        let triple = Animation::new(&table.sprites[&648][0], 648, Instant::now(), Anchor::Unit(Some(1)), false);
+        assert_eq!(((triple.start - Instant::now()).as_secs_f32() * 1000.0).round(), 480.0);
+        // The rows hold: where they play, their sounds and lengths.
+        assert!(table.used(516).unwrap().contains(&(Who::Caster, 637)) && table.used(2565).unwrap().contains(&(Who::Caster, 637)));
+        for (skill, who, effect) in
+            [(515, Who::Target, 643), (507, Who::Target, 644), (512, Who::Target, 647), (502, Who::Target, 648), (520, Who::Caster, 645)]
+        {
+            assert!(table.struck(skill).unwrap().contains(&(who, effect)), "{skill}");
+        }
+        assert_eq!(sounds(637), [("effect\\데스페라도", 160, false)]);
+        assert_eq!(sounds(643), [("effect\\래피드샤워", 320, false)]);
+        assert_eq!(sounds(644), [("effect\\매지컬블릿", 0, false)]);
+        assert_eq!(sounds(648), [("effect\\트리플액션", 400, true)]);
+        assert!(!table.sounds.contains_key(&645) && !table.sounds.contains_key(&647));
+        assert_eq!([637, 643, 644, 645, 647, 648].map(|id| table.lengths[&id]), [200, 100, 100, 100, 100, 100]);
+        // Spread Attack is aimed; its action for the sums 0, 89, 90, 179, 180, 269, 270, 359.
+        assert!(AIMED.contains(&SPREAD_ATTACK));
+        assert_eq!([0, 89, 90, 179, 180, 269, 270, 359].map(|d| spread_attack_action(0, d)), [0, 0, 6, 6, 4, 4, 2, 2]);
+        // Ground Drift's wind: one frame of action 0 looped, 1 up, depth tested; the next copy a tick early.
+        let spark = Animation::new(&table.sprites[&638][0], 638, Instant::now(), Anchor::Lasting(1, [0.0; 3]), true);
+        assert!(spark.repeat && !spark.over && spark.action == Some(0) && spark.offset == [0.0, -7.0]);
+        assert_eq!(table.lengths[&638], 23);
+        assert_eq!(restart_ticks(638, 190, 23), 22);
+        assert!((189..=194).all(|kind| restart_ticks(0, kind, 100) == 99) && restart_ticks(0, 195, 100) == 92);
+        // The grey: the three statuses play it, once each.
+        assert!([606, 655, 659].iter().all(|&status| table.status(status).contains(&GREY_BODY)));
+        assert_eq!(table.lengths[&GREY_BODY], 99_999);
     }
 }

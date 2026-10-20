@@ -33,6 +33,8 @@ pub enum Change {
     BlueBlink,
     /// Adjustment and Gatling Fever: the same in red.
     RedBlink,
+    /// Misty Frost: Hovering's blue copies fading in over 1.4 s and held.
+    MistyFrost,
     /// Comfort of the Sun, Moon and Stars: Soul Link's blue outline swelling for 3.2 s and ebbing for 3.2 s.
     Comfort,
 }
@@ -43,7 +45,7 @@ impl Change {
             Change::Squash => 50,
             Change::Hop | Change::Flash => 100,
             Change::Shrink => 99_999,
-            Change::Soul | Change::Stack | Change::RedGlow => 99_999_999,
+            Change::Soul | Change::Stack | Change::RedGlow | Change::MistyFrost => 99_999_999,
             Change::BlueGlow => 200,
             Change::BlueBlink | Change::RedBlink => 60,
             Change::Comfort => 400,
@@ -104,6 +106,11 @@ pub fn red_counter(e: u32) -> u32 {
     if e <= 200 { e / 8 } else { 25 }
 }
 
+/// Misty Frost's counter at the tick e: e / 8 up to 150, then 18.
+pub fn misty_counter(e: u32) -> u32 {
+    if e <= 150 { e / 8 } else { 18 }
+}
+
 /// Spirit Link's counter at the tick e: 50 more than the tick up to 149, then 199.
 pub fn stack_counter(e: u32) -> u32 {
     if e < 150 { e + 50 } else { 199 }
@@ -129,7 +136,7 @@ impl Bodies {
     /// `change` starts on `unit` (None = the player).
     pub fn start(&mut self, change: Change, unit: Option<u32>, now: Instant) {
         // A new Soul Link or landing replaces the old one on the unit.
-        if matches!(change, Change::Soul | Change::Drop | Change::RedGlow) {
+        if matches!(change, Change::Soul | Change::Drop | Change::RedGlow | Change::MistyFrost) {
             self.active.retain(|each| !(each.unit == unit && each.change == change));
         }
         self.active.push(Active { unit, change, start: now });
@@ -182,6 +189,9 @@ impl Bodies {
                 return Some((flag | (copies_alpha(20) as u32) << PARAM_SHIFT, None));
             }
         }
+        if let Some(e) = self.tick(unit, Change::MistyFrost, now) {
+            return Some((GLOW_BLUE | (copies_alpha(misty_counter(e)) as u32) << PARAM_SHIFT, None));
+        }
         let e = self.tick(unit, Change::RedGlow, now)?;
         Some((GLOW_RED | (copies_alpha(red_counter(e)) as u32) << PARAM_SHIFT, None))
     }
@@ -190,6 +200,9 @@ impl Bodies {
     pub fn forget_status(&mut self, unit: Option<u32>, status: u16) {
         if matches!(status, 165..=167 | 232 | 660) {
             self.active.retain(|each| !(each.unit == unit && each.change == Change::RedGlow));
+        }
+        if status == 1141 {
+            self.active.retain(|each| !(each.unit == unit && each.change == Change::MistyFrost));
         }
     }
 
@@ -360,6 +373,24 @@ mod tests {
         assert!(bodies.glow(Some(3), start).is_none());
         bodies.advance(start + TICK * 61);
         assert!(bodies.active.is_empty());
+    }
+
+    #[test]
+    fn misty_frost_fades_its_blue_glow_in_over_1_4_seconds() {
+        let start = Instant::now();
+        let mut bodies = Bodies::default();
+        bodies.start(Change::MistyFrost, Some(1), start);
+        let glow = |bodies: &Bodies, tick: u32| bodies.glow(Some(1), start + TICK * tick).map(|(flags, _)| (flags & 0xFFFFFF, flags >> PARAM_SHIFT));
+        // f = e / 8 up to 150 then 18; the alpha at e = 0, 7, 8, 80, 87, 88, 144, 150, 151, 1000.
+        assert_eq!([0, 7, 8, 80, 87, 88, 144, 150, 151, 1000].map(misty_counter), [0, 0, 1, 10, 10, 11, 18, 18, 18, 18]);
+        let alphas = [0, 7, 8, 80, 87, 88, 144, 150, 151, 1000].map(|e| glow(&bodies, e).unwrap());
+        assert_eq!(alphas.map(|(_, alpha)| alpha), [0, 0, 15, 150, 150, 160, 160, 160, 160, 160]);
+        assert!(alphas.iter().all(|&(flags, _)| flags == GLOW_BLUE));
+        // A second status replaces the first; the status going off takes it away.
+        bodies.start(Change::MistyFrost, Some(1), start + TICK * 10);
+        assert_eq!(bodies.active.len(), 1);
+        bodies.forget_status(Some(1), 1141);
+        assert!(glow(&bodies, 20).is_none());
     }
 
     #[test]

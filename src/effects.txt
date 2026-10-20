@@ -1473,17 +1473,17 @@ spr	631	다다미	1	delayFrame=96;firstFrame=1;yOffset=-6
 spr	632	안개베기	1	delayFrame=64;firstFrame=1;onTop=true;sideAction=2
 spr	633	일섬	1	delayFrame=32;firstFrame=1;onTop=true;yOffset=-6
 spr	634	화염진	1	repeat=true;firstFrame=1;frameTicks=3;frameTicksRan=5;restart=true;yOffset=-1
-spr	637	데스페라도	1	-
-spr	638	라이트닝스피어	0	-
+spr	637	데스페라도	1	delayFrame=64;firstFrame=1;onTop=true
+spr	638	라이트닝스피어	0	frame=0;repeat=true;yOffset=-7
 spr	639	블라인드스피어	0	-
 spr	640	포이즌스피어	0	-
 spr	641	프리징스피어	0	-
 spr	642	플레어스피어	0	-
-spr	643	래피드샤워	1	-
-spr	644	매지컬불릿	1	-
-spr	645	스프레드	1	-
-spr	647	트래킹	1	-
-spr	648	트리플액션	1	-
+spr	643	래피드샤워	1	delayFrame=64;firstFrame=1;onTop=true
+spr	644	매지컬불릿	1	delayFrame=32;firstFrame=1;onTop=true
+spr	645	스프레드	1	delayFrame=64;firstFrame=1;onTop=true
+spr	647	트래킹	1	delayFrame=32;firstFrame=1;onTop=true
+spr	648	트리플액션	1	delayFrame=32;firstFrame=1;onTop=true;delayStart=480
 spr	666	어스퀘이크	1	-
 spr	682	폭죽_러브	1	-
 spr	683	폭죽_화이트데이	1	-
@@ -1899,6 +1899,7 @@ wav	567	effect\h_moonlight_3	0
 wav	579	_snore	0
 wav	587	dragon_breath	0
 wav	590	effect\priest_resurrection	0
+wav	1224	effect\mon_침투경	80
 wav	604	effect\ef_hit6	0
 wav	599	effect\EF_BeginSpell	80
 wav	602	effect\ef_hit6	320
@@ -1935,10 +1936,10 @@ wav	633	effect\일섬	0
 wav	634	effect\화염진	0
 wav	635	effect\폭염룡	0
 wav	636	effect\빙정락	0
-wav	637	effect\데스페라도	0
-wav	643	effect\래피드샤워	0
+wav	637	effect\데스페라도	160
+wav	643	effect\래피드샤워	320
 wav	644	effect\매지컬블릿	0
-wav	648	effect\트리플액션	0
+wav	648	effect\트리플액션	400	listener
 wav	666	effect\earth_quake	0
 wav	668	effect\dragonfear	0
 wav	669	effect\wideb	0
@@ -1985,6 +1986,7 @@ wav	782	effect\black_maximize_power_sword_bic	0
 wav	782	effect\mon_금강불괴	0	listener
 wav	786	effect\ANALYZE	0
 wav	794	effect\INFRAREDSCAN	0	listener
+wav	797	effect\wl_siennaexecrate	0	listener
 wav	799	effect\wl_stasis	0
 wav	802	effect\wl_whiteimprison	0
 wav	803	effect\wl_recognizedspell	0
@@ -5144,7 +5146,10 @@ length	704	100
 length	706	100
 length	709	70
 length	728	100
+length	792	9999
 length	793	100
+length	797	300
+length	801	150
 length	959	60
 length	975	40
 length	987	100
@@ -5190,9 +5195,21 @@ length	503	500
 length	506	100
 length	542	200
 length	544	99999999
+length	1003	99999999
+length	1004	99999999
+length	1224	50
+length	1420	99999999
 length	623	300
 length	624	200
 length	627	300
+length	637	200
+length	638	23
+length	643	100
+length	644	100
+length	645	100
+length	647	100
+length	648	100
+length	963	99999
 length	572	300
 length	584	100
 length	590	200

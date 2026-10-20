@@ -2087,6 +2087,9 @@ pub struct Actor {
     pub size_percent: Option<i32>,
     /// The statuses on that leave copies of the unit behind it (the quickens and the like), and the copies.
     blurs: Vec<u16>,
+    /// Kagemusya is on: a copy is due every tick.
+    shadowing: bool,
+    shadow_due: bool,
     /// Make Blur: the colour now multiplying the unit (white: none), the time its ticks are counted to, the ticks it has
     /// run, whether a copy is due, and the ticks left of Snap's blur.
     blur_colour: [u8; 3],
@@ -2102,6 +2105,10 @@ pub struct Actor {
     /// Escape: the run, the aims copies are due at, where the unit was drawn last and the effects its copies started.
     escape: Option<Escape>,
     escape_due: Vec<[f32; 3]>,
+    /// Hallucination Walk (EFST 334 and 869, effect 792): tints the unit #FAFAFA and leaves an Escape copy every 20 ticks.
+    hallucination: bool,
+    hallu_age: u32,
+    hallu_due: bool,
     last_feet: Option<[f32; 3]>,
     launches: Vec<(u32, [f32; 3])>,
     /// What statuses do to how its own parts are drawn: by status, the body flags and colour (`status_body`).
@@ -2117,6 +2124,14 @@ pub struct Actor {
 pub const AFTERIMAGE: u32 = 166;
 /// Striking's copies (EFST 445): a frozen copy every 5th tick, whatever the player does.
 pub const STRIKING: u32 = 925;
+/// Hallucination Walk's copies and tint (#FAFAFA, effect 792, EFST 334 and 869).
+pub const HALLU_TINT: [u8; 3] = [250, 250, 250];
+pub const HALLUCINATION_WALK: u32 = 792;
+/// Kagemusya's grey copies (EFST 656): a frozen copy every tick, 5 units behind the unit.
+pub const KAGEMUSYA: u32 = 1004;
+/// The tint of Kagemusya's copies (#C0C0C0), and where they stand: 5 units straight behind.
+const SHADOW_TINT: [u8; 3] = [192; 3];
+const SHADOW_BEHIND: f32 = 5.0;
 
 /// How a status has its unit's own parts drawn: the body, head and headgears added on; the weapon added on; two grown
 /// added-on copies of the body, head and headgears (Assumptio); four growing copies of every part, the part itself at
@@ -2186,6 +2201,8 @@ pub fn copies_alpha(f: u32) -> f32 {
 /// Assumptio's outline, Kaite's copies, Aura Blade's weapon.
 pub fn status_body(effect: u32) -> Option<(u32, Option<[u8; 3]>)> {
     match effect {
+        // Zangetsu's steady blue double glow (f = 20, alpha 160).
+        1003 => Some((GLOW_BLUE | 160 << PARAM_SHIFT, None)),
         368 => Some((GLOW_ADDITIVE, Some([0xFF, 0x64, 0x64]))),
         // Lord Knight's Concentration tints the body, drawn as it is.
         369 => Some((0, Some([0xFF, 0xFF, 0xA0]))),
@@ -2326,6 +2343,8 @@ pub enum GhostKind {
     Blur,
     Striking,
     Escape,
+    /// Kagemusya's (100 less 16 a tick).
+    Shadow,
 }
 
 impl Ghost {
@@ -2335,6 +2354,7 @@ impl Ghost {
         match self.kind {
             GhostKind::Blur => ghost_alpha(age),
             GhostKind::Striking => strike_alpha(age),
+            GhostKind::Shadow => shadow_alpha(age),
             GhostKind::Escape => escape_alpha(1 + (age.as_millis() / 16) as u32) / 255.0,
         }
     }
@@ -2358,6 +2378,18 @@ pub const ESCAPE_AFTER: u32 = 793;
 struct Escape {
     e: u32,
     aim: Option<[f32; 3]>,
+}
+
+/// How see-through one of Kagemusya's copies left `age` ago is drawn: 100 less 16 a tick, drawn from 84 and gone once it reaches 0; out
+/// of 255.
+pub fn shadow_alpha(age: Duration) -> f32 {
+    let ticks = (age.as_millis() / 16) as f32;
+    (100.0 - 16.0 * (ticks + 1.0)).max(0.0) / 255.0
+}
+
+/// How far a layer is turned at the counter n of the swing (466, 1224): one eased full turn, 180 − 180 cos(5n°).
+pub fn swing_spin(n: u32) -> f32 {
+    180.0 - 180.0 * (5.0 * n as f32).to_radians().cos()
 }
 
 /// How see-through one of Striking's copies left `age` ago is drawn: 255 less 16 a tick, drawn from 239 and gone at 0; out of 255.
@@ -2441,6 +2473,8 @@ impl Actor {
             held: None,
             size_percent: None,
             blurs: Vec::new(),
+            shadowing: false,
+            shadow_due: false,
             blur_colour: [255; 3],
             blur_clock: None,
             blur_age: 0,
@@ -2452,6 +2486,9 @@ impl Actor {
             strike_tint: None,
             escape: None,
             escape_due: Vec::new(),
+            hallucination: false,
+            hallu_age: 0,
+            hallu_due: false,
             last_feet: None,
             launches: Vec::new(),
             glows: Vec::new(),
@@ -2495,6 +2532,12 @@ impl Actor {
         }
     }
 
+    /// Kagemusya (EFST 656) comes on or goes off: a grey copy every tick.
+    pub fn shadow(&mut self, on: bool) {
+        self.shadowing = on;
+        self.shadow_due = false;
+    }
+
     /// Striking (445) comes on or goes off a player: a copy every 5th tick from its start, whatever the unit does.
     pub fn strike(&mut self, on: bool) {
         self.striking = on;
@@ -2507,6 +2550,14 @@ impl Actor {
     pub fn strike_colour(&mut self, over: Option<[u8; 3]>) -> Option<[u8; 3]> {
         self.strike_tint = over.filter(|_| self.striking).map(|over| over.map(|channel| ((u16::from(channel) + 250) / 2) as u8));
         self.strike_tint
+    }
+
+    /// Hallucination Walk (EFST 334 and 869, effect 792): tints the unit #FAFAFA and leaves an Escape copy every 20 ticks.
+    /// A status packet removes the running effect if it has one and starts a new one; off only removes.
+    pub fn hallucination(&mut self, on: bool) {
+        self.hallucination = on;
+        self.hallu_age = 0;
+        self.hallu_due = false;
     }
 
     /// Escape (5010) is used: the unit is tinted yellow for 20 ticks and a copy is left at the aim every 5th, the aim closing on the
@@ -2541,9 +2592,15 @@ impl Actor {
         let whole = (now.saturating_duration_since(*clock).as_millis() / 16).min(200) as u32;
         *clock += Duration::from_millis(u64::from(whole) * 16);
         for _ in 0..whole {
+            self.shadow_due |= self.shadowing;
             if self.striking {
                 self.strike_due |= self.strike_age.is_multiple_of(5);
                 self.strike_age += 1;
+            }
+            if self.hallucination {
+                self.blur_colour = HALLU_TINT;
+                self.hallu_due |= self.hallu_age.is_multiple_of(20);
+                self.hallu_age += 1;
             }
             if let Some(run) = &mut self.escape {
                 self.blur_colour = ESCAPE_TINT;
@@ -2564,6 +2621,9 @@ impl Actor {
                 if run.e >= 20 {
                     self.escape = None;
                 }
+                continue;
+            }
+            if self.hallucination {
                 continue;
             }
             if self.blurs.is_empty() && self.snap_left == 0 {
@@ -2603,6 +2663,18 @@ impl Actor {
             self.strike_due = false;
             let tint = self.strike_tint.unwrap_or([255; 3]);
             self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint, kind: GhostKind::Striking, launched: false });
+        }
+        if self.hallu_due && !placed.is_empty() {
+            self.hallu_due = false;
+            self.ghosts.push(Ghost { left: now, feet, placed: placed.to_vec(), tint: HALLU_TINT, kind: GhostKind::Escape, launched: false });
+        }
+        if self.shadow_due && !placed.is_empty() {
+            self.shadow_due = false;
+            // ponytail: the game's facing runs the other way round to the sprite direction: 0 is south (the copy stands north).
+            let facing = (360 - 45 * u32::from(self.direction % 8)) % 360;
+            let (sin, cos) = (facing as f32).to_radians().sin_cos();
+            let behind = [feet[0] - SHADOW_BEHIND * sin, feet[1], feet[2] + SHADOW_BEHIND * cos];
+            self.ghosts.push(Ghost { left: now, feet: behind, placed: placed.to_vec(), tint: SHADOW_TINT, kind: GhostKind::Shadow, launched: false });
         }
         for aim in std::mem::take(&mut self.escape_due) {
             if !placed.is_empty() {
@@ -4469,6 +4541,57 @@ mod tests {
     }
 
     #[test]
+    fn the_swing_turns_every_layer_once_round() {
+        // The layer angle at g = 0, 12, 18, 24, 35: 0, 90, 180, 270, 359.3.
+        let angles = [0, 12, 18, 24, 35].map(swing_spin);
+        let want = [0.0, 90.0, 180.0, 270.0, 359.3];
+        assert!(angles.iter().zip(want).all(|(got, want)| (got - want).abs() < 0.1), "{angles:?}");
+    }
+
+    #[test]
+    fn zangetsu_glows_steady_blue_and_kagemusya_leaves_a_grey_copy_every_tick() {
+        // Zangetsu: the blue copies at f = 20, alpha 160, #0505FF, two a part, added on, the same on every tick.
+        let (flags, tint) = status_body(1003).unwrap();
+        assert_eq!((flags & 0xFFFFFF, flags >> PARAM_SHIFT, tint), (GLOW_BLUE, 160, None));
+        let (_, copies) = glow_copies(flags, None, PartGroup::Body, 0.0, 0.0, 1.0, true);
+        assert_eq!(copies.len(), 2);
+        assert!(copies.iter().all(|copy| copy.additive && copy.color == [5.0 / 255.0, 5.0 / 255.0, 1.0, 160.0 / 255.0]));
+        // A second status packet makes no second copy.
+        let mut zangetsu = Actor::new("Ninja".into(), None, [0, 0], 0, 150);
+        zangetsu.glow(657, &[1003], true);
+        zangetsu.glow(657, &[1003], true);
+        assert_eq!(zangetsu.glow_flags().0, flags);
+        // Kagemusya: alpha on its ticks 1 to 7 is 84, 68, 52, 36, 20, 4, gone.
+        let alpha = |ticks: u64| shadow_alpha(Duration::from_millis(16 * ticks + 8)) * 255.0;
+        assert_eq!([0, 1, 2, 3, 4, 5, 6].map(alpha), [84.0, 68.0, 52.0, 36.0, 20.0, 4.0, 0.0]);
+        let start = Instant::now();
+        let tick = |ticks: u64| start + Duration::from_millis(16 * ticks);
+        let placed: Vec<Placed> = vec![((0, 0, 0, [255; 4], 0), [0.0; 2], [1.0; 2], 0.0)];
+        let mut actor = Actor::new("Ninja".into(), None, [0, 0], 0, 150);
+        actor.shadow(true);
+        actor.step_blur(tick(0), || false);
+        for n in 1..=10 {
+            actor.step_blur(tick(n), || false);
+            actor.leave_ghost(tick(n), [10.0, 0.0, 20.0], &placed);
+        }
+        // One copy a tick, grey #C0C0C0, at most six alive; the unit standing still leaves them too.
+        assert!(actor.ghosts.iter().all(|ghost| ghost.kind == GhostKind::Shadow && ghost.tint == [192; 3]));
+        assert_eq!(actor.ghosts.len(), 6);
+        // 5 units straight behind: facing south (0) the copy is north (0, +5); facing east (6) it is west (−5, 0).
+        assert_eq!(actor.ghosts[0].feet, [10.0, 0.0, 25.0]);
+        let mut east = Actor::new("Ninja".into(), None, [0, 0], 6, 150);
+        east.shadow(true);
+        east.step_blur(tick(0), || false);
+        east.step_blur(tick(1), || false);
+        east.leave_ghost(tick(1), [10.0, 0.0, 20.0], &placed);
+        assert!((east.ghosts[0].feet[0] - 5.0).abs() < 1e-4 && (east.ghosts[0].feet[2] - 20.0).abs() < 1e-4);
+        // Off: no more copies.
+        actor.shadow(false);
+        actor.step_blur(tick(11), || false);
+        assert!(!actor.shadow_due);
+    }
+
+    #[test]
     fn blurs_tint_the_unit_and_copy_it_while_it_moves() {
         let start = Instant::now();
         let tick = |ticks: u64| start + Duration::from_millis(16 * ticks);
@@ -4758,5 +4881,53 @@ mod tests {
         assert_eq!([55, 130, 131, 199].map(|f| alpha(&stack(f), 0)), [0.0, 75.0, 104.0, 36.0]);
         assert_eq!([0, 1, 2, 3, 4].map(|ring| alpha(&stack(199), ring)), [36.0, 26.0, 16.0, 6.0, 0.0]);
         assert!(glow_copies(GLOW_STACK | 100 << PARAM_SHIFT, None, PartGroup::Body, 0.0, 0.0, 1.0, true).1.is_empty());
+    }
+
+    #[test]
+    fn hallucination_walk_tints_near_white_and_leaves_copies_every_20_ticks() {
+        let start = Instant::now();
+        let tick = |ticks: u64| start + Duration::from_millis(16 * ticks);
+        let mut actor = Actor::new("Guillotine Cross".into(), None, [0, 0], 0, 150);
+        let placed: Vec<Placed> = vec![((0, 0, 0, [255; 4], 0), [0.0; 2], [1.0; 2], 0.0)];
+        actor.step_blur(tick(0), || false);
+        actor.hallucination(true);
+        // Copies on e = 0, 20, 40 and none on 1 … 19.
+        let mut copies = Vec::new();
+        for t in 1..=45 {
+            actor.step_blur(tick(t), || false);
+            let before = actor.ghosts.len();
+            actor.leave_ghost(tick(t), [0.0; 3], &placed);
+            if actor.ghosts.len() > before {
+                copies.push(t - 1);
+            }
+            assert_eq!(actor.body_tint(), Some(HALLU_TINT), "tick {t}");
+        }
+        assert_eq!(copies, [0, 20, 40]);
+        // The copy's alpha at n = 107, 108, 111, 112, 192, 193 (180, 172, 172, 164, 4, gone).
+        assert_eq!([107, 108, 111, 112, 192, 193].map(escape_alpha), [180.0, 172.0, 172.0, 164.0, 4.0, 0.0]);
+        // 793 started at n = 110.
+        let mut walker = Actor::new("Guillotine Cross".into(), None, [0, 0], 0, 150);
+        walker.step_blur(tick(0), || false);
+        walker.hallucination(true);
+        walker.step_blur(tick(1), || false);
+        walker.leave_ghost(tick(1), [5.0; 3], &placed);
+        assert_eq!(walker.ghosts.len(), 1);
+        walker.leave_ghost(tick(1 + 108), [5.0; 3], &placed);
+        assert!(walker.take_launches().is_empty(), "n = 109");
+        walker.leave_ghost(tick(1 + 109), [5.0; 3], &placed);
+        assert_eq!(walker.take_launches(), [(793, [5.0; 3])]);
+        // Status off removes it; copies outlive the effect.
+        walker.hallucination(false);
+        assert_eq!(walker.ghosts.len(), 1);
+        // Drifting back to white by 8 per channel a tick after it is removed.
+        walker.step_blur(tick(1 + 110), || false);
+        assert_eq!(walker.body_tint(), None);
+        // A second status packet starts one 792 only.
+        let mut second = Actor::new("Guillotine Cross".into(), None, [0, 0], 0, 150);
+        second.step_blur(tick(0), || false);
+        second.hallucination(true);
+        second.hallucination(true);
+        second.step_blur(tick(1), || false);
+        assert!(second.hallu_due && second.hallu_age == 1);
     }
 }
