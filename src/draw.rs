@@ -498,7 +498,7 @@ impl App {
         game.player.step_blur(now, || crate::effects::pick(0, 13) == 0);
         let player_tint = effects::mix_tints(game.player.body_tint(), game.effects.body_tint(None, now));
         let player_tint = game.player.strike_colour(game.effects.body_tint(None, now)).or(player_tint);
-        let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent);
+        let player_scale = unit_draw_scale(monster_sizes, game.player.kind, game.player.job, game.player.size_percent) * game.effects.body_scale(None, now);
         // The units the STR world effects' head rule is for.
         let head_owners = game.effects.world_head_owners();
         let mut bodies = HashMap::new();
@@ -513,6 +513,7 @@ impl App {
                     sprites.set_tint(player_tint);
                     let mut placed = sprites.frame(gpu, action, player_seen, head_direction, timing);
                     scale_frame(&mut placed, player_scale);
+                    game.effects.reshape(None, now, &mut placed);
                     game.player.leave_ghost(now, player_feet, &placed);
                     frames.push((Owner::Player, player_feet, placed));
                 }
@@ -610,7 +611,7 @@ impl App {
             actor.step_blur(now, || crate::effects::pick(0, 13) == 0);
             let tint = if silhouette { Some([0, 0, 0]) } else { effects::mix_tints(actor.body_tint(), game.effects.body_tint(Some(id), now)) };
             let tint = if silhouette { tint } else { actor.strike_colour(game.effects.body_tint(Some(id), now)).or(tint) };
-            let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent);
+            let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent) * game.effects.body_scale(Some(id), now);
             if head_owners.contains(&Some(id)) {
                 bodies.insert(Some(id), world_body(gpu, actor, scale));
             }
@@ -618,6 +619,7 @@ impl App {
                 sprites.set_tint(tint);
                 let mut placed = sprites.frame(gpu, action, seen, head_direction, timing);
                 scale_frame(&mut placed, scale);
+                game.effects.reshape(Some(id), now, &mut placed);
                 actor.leave_ghost(now, feet, &placed);
                 frames.push((Owner::Unit(id), feet, placed));
             }

@@ -5,6 +5,7 @@
 
 pub mod balls;
 pub mod blitz;
+pub mod body;
 pub mod bolts;
 pub mod boomerang;
 pub mod brawl;
@@ -194,6 +195,7 @@ pub struct Prims {
     pub crowds: crowds::Crowds,
     pub chi: chi::Chi,
     pub petals: petals::Petals,
+    pub bodies: body::Bodies,
     pub cells: cells::Cells,
     pub souls: souls::Souls,
     pub radar: radar::Radar,
@@ -622,6 +624,7 @@ impl Prims {
         self.transcend.forget(unit);
         self.dancer.forget(unit);
         self.cells.forget(unit);
+        self.bodies.forget(unit);
         self.emblems.forget(unit);
         self.portal.forget(unit);
         self.souls.forget(unit);
