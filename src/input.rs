@@ -1192,11 +1192,15 @@ impl App {
                 let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
                 let window = game.refine.as_mut().unwrap();
                 let hit = window.hit(cursor).unwrap();
-                match window.click(hit, count, zeny) {
+                // A double click on the item slot empties the machine.
+                if hit == refine::Hit::Item && window.item.is_some() && game.refine_clicks.double(0) {
+                    window.clear();
+                    return;
+                }
+                match window.click(hit, count, zeny, control::now()) {
                     Some(refine::Action::Refine { index, ore, blessings }) => {
                         let _ = game.session.refine(index, ore, blessings);
                     }
-                    Some(refine::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
                     // Until the server hears it, it won't open the window again and holds the player.
                     Some(refine::Action::Close) => {
                         let _ = game.session.close_refine();
@@ -1956,6 +1960,9 @@ impl App {
             if let Some(window) = &mut game.roulette {
                 window.frame.drag_to(self.cursor, roulette::HEIGHT);
             }
+            if let Some(window) = &mut game.refine {
+                window.frame.drag_to(self.cursor, refine::SIZE[1]);
+            }
             if let Some(window) = &mut game.grade {
                 window.frame.drag_to(self.cursor, grade::HEIGHT);
             }
@@ -2012,6 +2019,22 @@ impl App {
             if dropped || closed {
                 return;
             }
+        }
+        // A right press on an ore, the blessing or the item in the refine window describes it.
+        if let (Scene::Game(game), ElementState::Pressed) = (&mut self.scene, state)
+            && let Some(window) = &game.refine
+            && let Some(hit) = window.hit(self.cursor)
+            && let Some(shown) = window.item_at(hit, &game.inventory.items)
+        {
+            let shown = match shown {
+                refine::ItemAt::Plain(id) => iteminfo::Shown::of_link(id, 0, [0; 4], false, &self.items),
+                refine::ItemAt::Carried(index) => match game.inventory.get(index) {
+                    Some(item) => iteminfo::Shown::of(item),
+                    None => return,
+                },
+            };
+            game.show_item(shown);
+            return;
         }
         // Alt + right press orders the homunculus (when it's out), off the windows.
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
@@ -2630,9 +2653,13 @@ impl App {
                             game.inventory.remove(index, 1);
                         }
                     }
-                    // Into the refine machine: the server lists what refines it.
+                    // Into the refine machine's item slot: the server lists what refines it; anywhere else on it, refused.
                     (Some((Dragged::Item(index), _, true)), _) if on_refine => {
-                        let _ = game.session.refine_select(index);
+                        let on_slot = game.refine.as_ref().and_then(|window| window.hit(self.cursor)) == Some(refine::Hit::Item);
+                        let identified = game.inventory.get(index).is_some_and(|item| item.identified);
+                        if on_slot && game.refine.as_mut().is_some_and(|window| window.put(identified, control::now())) {
+                            let _ = game.session.refine_select(index);
+                        }
                     }
                     // Onto the grade window: the server lists what raises it.
                     (Some((Dragged::Item(index), _, true)), _) if on_grade => {
@@ -2710,6 +2737,7 @@ impl App {
                     | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.reform.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.refine.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.grade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag())
@@ -3191,6 +3219,14 @@ impl App {
         {
             if hit == reform::Hit::Title(TitleHit::Title) {
                 game.reform.as_mut().unwrap().frame.start_drag(cursor);
+            }
+            return;
+        }
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(hit) = game.refine.as_ref().and_then(|window| window.hit(cursor))
+        {
+            if hit == refine::Hit::Title(TitleHit::Title) {
+                game.refine.as_mut().unwrap().frame.start_drag(cursor);
             }
             return;
         }
