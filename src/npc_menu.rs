@@ -68,8 +68,8 @@ pub fn buttons(count: usize) -> [[f32; 2]; 2] {
 /// The list's fill, pixel (14, 10) of colorchip.bmp (white without it), and the selected row's band, a grey on it. The
 /// game has the two the other way round.
 pub struct Assets {
-    list: Texture,
-    band: Texture,
+    pub list: Texture,
+    pub band: Texture,
 }
 
 impl Assets {

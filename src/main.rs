@@ -2590,6 +2590,13 @@ enum Picking {
     Merge,
 }
 
+impl Picking {
+    /// Esc does not close Repair, Upgrade Weapon and making lists.
+    pub fn escapable(&self) -> bool {
+        !matches!(self, Self::Repair | Self::Upgrade | Self::Make)
+    }
+}
+
 /// The talking state an NPC packet sets, for that NPC: a page, Next or a menu holds the player; the script's close
 /// frees them. Other packets (the input boxes among them) leave it.
 fn npc_holds(event: &MapEvent) -> Option<(u32, bool)> {
@@ -6920,5 +6927,16 @@ mod tests {
         let now = Instant::now();
         bar.push("announcement".to_owned(), CHAT_REFINE_ANNOUNCEMENT, announce::SIZE, now);
         assert_eq!(bar.entries(), [("announcement", [0xFF, 0xB0, 0x62], announce::SIZE)]);
+    }
+
+    #[test]
+    fn empty_lists_give_424_box_and_no_packet() {
+        assert_eq!(NOTHING_TO_MAKE, 424);
+        assert!(!Picking::Repair.escapable());
+        assert!(!Picking::Upgrade.escapable());
+        assert!(!Picking::Make.escapable());
+        assert!(Picking::Arrow.escapable());
+        assert!(Picking::Identify.escapable());
+        assert!(Picking::Spell.escapable());
     }
 }

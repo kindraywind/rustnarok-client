@@ -2655,7 +2655,7 @@ impl Game {
         push(OtherEquipment, self.viewing.is_some());
         push(Bank, self.bank.is_some());
         push(CashShop, self.cashshop.is_some());
-        push(PickList, self.pick.is_some());
+        push(PickList, self.pick.as_ref().is_some_and(|(_, picking)| picking.escapable()));
         push(CardPicture, self.card_view.is_some());
         push(ItemInfo, self.item_window.is_some());
         push(CardInfo, self.card_window.is_some());
@@ -2726,6 +2726,9 @@ impl Game {
         }
         if self.pick.as_ref().is_some_and(|(list, _)| list.merging) {
             names.push("ItemMerge".into());
+        }
+        if self.pick.as_ref().is_some_and(|(_, picking)| !picking.escapable()) {
+            names.push("PickList".into());
         }
         if self.reason_box.is_some() {
             names.push("GuildReason".into());
@@ -3015,7 +3018,7 @@ impl Game {
                 self.bank = None;
             }
             CashShop => self.close_cashshop(),
-            PickList => self.answer_pick(None),
+            PickList => self.answer_pick(pick_list::PickChoice::Cancel),
             // Only while typing the zeny: Esc stops that, the deal stays.
             Trade => {
                 if let Some(trade) = &mut self.trade {
@@ -3267,10 +3270,16 @@ impl Game {
         self.deal_frame.drop_drag();
     }
 
-    /// The answer to a pick list: the row picked, or None to cancel.
-    pub(crate) fn answer_pick(&mut self, answer: Option<usize>) {
+    /// The answer to a pick list: the row picked, Cancel, or Close.
+    pub(crate) fn answer_pick(&mut self, choice: pick_list::PickChoice) {
         let Some((list, picking)) = self.pick.take() else { return };
-        let picked = answer.and_then(|row| list.items.get(row));
+        if matches!(choice, pick_list::PickChoice::Close) {
+            return;
+        }
+        let picked = match choice {
+            pick_list::PickChoice::Pick(row) => list.items.get(row),
+            _ => None,
+        };
         let _ = match (picking, picked) {
             (Picking::Card(card), Some(equip)) => self.session.insert_card(card, equip.index),
             // rathena keeps nothing for a card's list, nor for Arrow Crafting's.
@@ -3286,7 +3295,7 @@ impl Game {
             // Both hold the player until answered; 0 starts nothing.
             (Picking::Spell, skill) => self.session.select_autospell(skill.map_or(0, |skill| skill.id)),
             (Picking::SkillSelect(why), skill) => self.session.select_skill(why, skill.map_or(0, |skill| skill.id as u16)),
-            (Picking::Upgrade, item) => self.session.upgrade_weapon(item.map_or(0, |item| u32::from(item.index))),
+            (Picking::Upgrade, item) => self.session.upgrade_weapon(item.map_or(u32::MAX, |item| u32::from(item.index))),
             // An egg list left unanswered is let go (rathena drops it on the next skill).
             (Picking::Hatch, Some(egg)) => {
                 self.pet_window.egg = Some(egg.id);

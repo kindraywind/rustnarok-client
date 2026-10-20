@@ -12,7 +12,7 @@ use rustnarok_client::text::Font;
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Clicks, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, screen};
-use crate::{inventory, skills};
+use crate::{inventory, npc_menu, skills};
 
 // ponytail: the shop's look (280px, 32px rows), five rows, in the middle of the screen; calibrate against the real
 // client's lists, and give rows other than items (skills, things to make) when a list needs them.
@@ -24,12 +24,44 @@ const LEFT: f32 = 16.0;
 const FOOTER: f32 = 27.0;
 const BUTTON: [f32; 2] = [42.0, 20.0];
 const SELECTED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x80];
+
+const TEXT_HEIGHT: f32 = 150.0;
+const TEXT_LIST_AT: [f32; 2] = [12.0, 22.0];
+const TEXT_LIST_SIZE: [f32; 2] = [256.0, 95.0];
+const TEXT_ROW: f32 = 16.0;
+const TEXT_ROWS: usize = 6;
+const TEXT_BAND: f32 = 15.0;
+const TEXT_X: f32 = 3.0;
+const TEXT_OK: [f32; 2] = [189.0, 126.0];
+const TEXT_CANCEL: [f32; 2] = [234.0, 126.0];
+
+/// Where the 280×150 text list window sits at screen size `screen`.
+pub fn text_position(screen: [f32; 2]) -> [f32; 2] {
+    [((screen[0] - 640.0) / 2.0 + 185.0).floor(), (300.0 * screen[1] / 480.0 - 60.0).floor()]
+}
+
+/// The plain item name for the text lists: identified name without +N, grade, cards or slot count.
+pub fn plain_item_name(items: &HashMap<u32, ItemInfo>, id: u32) -> String {
+    items.get(&id).map_or_else(|| id.to_string(), |info| info.name.clone())
+}
+
 /// Item merge: its title, the hint over the rows (two lines), and its refusals.
 // ponytail: data.grf has no picture for this window; the lines next to its title in msgstringtable.
 pub const MERGE_TITLE: usize = 2169;
 const MERGE_HINT: usize = 2170;
 const HINT: f32 = 28.0;
 const ONE_KIND: usize = 2172;
+
+/// What a pick list answers on click.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum PickChoice {
+    /// A row was picked.
+    Pick(usize),
+    /// Cancelled: send the cancel packet.
+    Cancel,
+    /// Closed without sending any packet.
+    Close,
+}
 
 pub struct Assets {
     pub strip: Texture,
@@ -73,6 +105,8 @@ pub struct PickList {
     pub skills: bool,
     /// Item merge: several rows picked (in the order picked), each with its amount, under a hint.
     pub merging: bool,
+    /// Plain text list (repair, upgrade, making): 280x150 window, 16px rows, #F0F0F0 list.
+    pub text_list: bool,
     picked: Vec<usize>,
     selected: Option<usize>,
     scroll: usize,
@@ -84,7 +118,39 @@ impl PickList {
         let height = TITLE_HEIGHT + PADDING * 2.0 + ROWS as f32 * ROW + FOOTER;
         let mut frame = Frame::new([((screen()[0] - WIDTH) / 2.0).floor(), ((screen()[1] - height) / 2.0).floor()], WIDTH);
         frame.open = true;
-        Self { frame, title, items, making: false, skills: false, merging: false, picked: Vec::new(), selected: None, scroll: 0, clicks: Clicks::default() }
+        Self {
+            frame,
+            title,
+            items,
+            making: false,
+            skills: false,
+            merging: false,
+            text_list: false,
+            picked: Vec::new(),
+            selected: None,
+            scroll: 0,
+            clicks: Clicks::default(),
+        }
+    }
+
+    /// The 280×150 text list window: repair 812, upgrade 910, making 425.
+    pub fn text(title: usize, items: Vec<InventoryItem>) -> Self {
+        let mut frame = Frame::new(text_position(screen()), WIDTH);
+        frame.open = true;
+        let making = title == crate::MAKING_TITLE;
+        Self {
+            frame,
+            title,
+            items,
+            making,
+            skills: false,
+            merging: false,
+            text_list: true,
+            picked: Vec::new(),
+            selected: None,
+            scroll: 0,
+            clicks: Clicks::default(),
+        }
     }
 
     /// The item merge window: the stacks sorted by item, then by index.
@@ -99,10 +165,16 @@ impl PickList {
     }
 
     fn height(&self) -> f32 {
+        if self.text_list {
+            return TEXT_HEIGHT;
+        }
         self.top() + PADDING + ROWS as f32 * ROW + FOOTER
     }
 
     fn buttons(&self) -> ([f32; 2], [f32; 2]) {
+        if self.text_list {
+            return (TEXT_OK, TEXT_CANCEL);
+        }
         let top = self.height() - FOOTER + 4.0;
         ([WIDTH - 62.0 - BUTTON[0], top], [WIDTH - 15.0 - BUTTON[0], top])
     }
@@ -144,6 +216,15 @@ impl PickList {
         if contains(cancel, BUTTON, local) {
             return Some(Hit::Cancel);
         }
+        if self.text_list {
+            if contains(TEXT_LIST_AT, TEXT_LIST_SIZE, local) {
+                let row = ((local[1] - TEXT_LIST_AT[1]) / TEXT_ROW) as usize + self.scroll;
+                if row < self.items.len() {
+                    return Some(Hit::Row(row));
+                }
+            }
+            return Some(Hit::Window);
+        }
         let top = self.top();
         if local[1] >= top && local[1] < top + ROWS as f32 * ROW {
             let row = ((local[1] - top) / ROW) as usize + self.scroll;
@@ -158,24 +239,43 @@ impl PickList {
         self.hit(cursor).is_some()
     }
 
-    /// What a click answers: Some(Some(row)) picks that row's item, Some(None) cancels, None is no answer yet.
-    pub fn click(&mut self, hit: Hit) -> Option<Option<usize>> {
+    /// What a click answers: Some(PickChoice) answers or closes, None is no answer yet.
+    pub fn click(&mut self, hit: Hit) -> Option<PickChoice> {
         match hit {
-            Hit::Title(TitleHit::Close) | Hit::Cancel => return Some(None),
-            Hit::Title(title) => self.frame.click_title(title),
+            Hit::Title(TitleHit::Close) | Hit::Cancel => Some(PickChoice::Cancel),
+            Hit::Title(title) => {
+                self.frame.click_title(title);
+                None
+            }
             Hit::Row(row) => {
                 self.selected = Some(row);
-                if self.clicks.double(row as u16) {
-                    return Some(Some(row));
+                if self.clicks.double(row as u16) { Some(PickChoice::Pick(row)) } else { None }
+            }
+            Hit::Ok => {
+                if let Some(row) = self.selected {
+                    Some(PickChoice::Pick(row))
+                } else if self.text_list {
+                    if self.making {
+                        Some(PickChoice::Close)
+                    } else if self.items.is_empty() {
+                        Some(PickChoice::Cancel)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
             }
-            Hit::Ok => return self.selected.map(Some),
-            Hit::Window => {}
+            Hit::Window => None,
         }
-        None
     }
 
     pub fn scroll_by(&mut self, rows: i32) {
+        if self.text_list {
+            let most = self.items.len().saturating_sub(TEXT_ROWS);
+            self.scroll = (self.scroll as i32 + rows * 3).clamp(0, most as i32) as usize;
+            return;
+        }
         let most = self.items.len().saturating_sub(ROWS);
         self.scroll = (self.scroll as i32 + rows).clamp(0, most as i32) as usize;
     }
@@ -184,6 +284,15 @@ impl PickList {
     pub fn row_boxes(&self) -> Vec<(u32, [f32; 4])> {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
+        }
+        if self.text_list {
+            let rows = self.items.iter().enumerate().skip(self.scroll).take(TEXT_ROWS);
+            return rows
+                .map(|(row, item)| {
+                    let [x, y] = self.frame.at([TEXT_LIST_AT[0], TEXT_LIST_AT[1] + (row - self.scroll) as f32 * TEXT_ROW]);
+                    (item.id, [x, y, TEXT_LIST_SIZE[0], TEXT_ROW])
+                })
+                .collect();
         }
         let top = self.top();
         let rows = self.items.iter().enumerate().skip(self.scroll).take(ROWS);
@@ -206,6 +315,9 @@ impl PickList {
     }
 
     pub fn icons(&self, items: &HashMap<u32, ItemInfo>, skill_info: &HashMap<u16, SkillInfo>) -> Vec<String> {
+        if self.text_list {
+            return Vec::new();
+        }
         self.items.iter().filter_map(|row| self.icon_path(row, items, skill_info)).collect()
     }
 
@@ -222,6 +334,7 @@ impl PickList {
         layer: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
+        npc_menu: &'a npc_menu::Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
         skill_info: &HashMap<u16, SkillInfo>,
@@ -232,6 +345,30 @@ impl PickList {
         let frame = &self.frame;
         frame.draw_title(layer, chrome, messages.get(self.title).map_or("", String::as_str), pointer.0);
         if frame.minimized {
+            return;
+        }
+        if self.text_list {
+            let body_height = TEXT_HEIGHT - TITLE_HEIGHT - FOOTER;
+            layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [WIDTH, body_height]));
+            layer.sprites.push((&chrome.border, frame.at([0.0, TITLE_HEIGHT]), [1.0, body_height]));
+            layer.sprites.push((&chrome.border, frame.at([WIDTH - 1.0, TITLE_HEIGHT]), [1.0, body_height]));
+            layer.sprites.push((&assets.bar, frame.at([0.0, TEXT_HEIGHT - FOOTER]), [WIDTH, FOOTER]));
+            layer.sprites.push((&npc_menu.list, frame.at(TEXT_LIST_AT), TEXT_LIST_SIZE));
+            for (row, item) in self.items.iter().enumerate().skip(self.scroll).take(TEXT_ROWS) {
+                let top = TEXT_LIST_AT[1] + (row - self.scroll) as f32 * TEXT_ROW;
+                if self.selected == Some(row) {
+                    layer.sprites.push((&npc_menu.band, frame.at([TEXT_LIST_AT[0], top]), [TEXT_LIST_SIZE[0], TEXT_BAND]));
+                }
+                let name = plain_item_name(items, item.id);
+                layer.texts.push((window::fit(font, &name, TEXT_LIST_SIZE[0] - TEXT_X * 2.0), frame.at([TEXT_LIST_AT[0] + TEXT_X, top]), [0, 0, 0]));
+            }
+            let hit = self.hit(pointer.0);
+            let look = |target: Hit| {
+                let hovered = hit == Some(target);
+                usize::from(hovered) + usize::from(hovered && pointer.1)
+            };
+            layer.sprites.push((&assets.buttons[0][look(Hit::Ok)], frame.at(TEXT_OK), BUTTON));
+            layer.sprites.push((&assets.buttons[1][look(Hit::Cancel)], frame.at(TEXT_CANCEL), BUTTON));
             return;
         }
         let height = self.height();
@@ -293,11 +430,96 @@ mod tests {
         // OK picks the highlighted row; a double click picks at once; Cancel answers no.
         assert_eq!(list.click(Hit::Ok), None);
         assert_eq!(list.click(row), None);
-        assert_eq!(list.click(Hit::Ok), Some(Some(1)));
+        assert_eq!(list.click(Hit::Ok), Some(PickChoice::Pick(1)));
         assert_eq!(list.click(Hit::Row(0)), None);
-        assert_eq!(list.click(Hit::Row(0)), Some(Some(0)));
-        assert_eq!(list.click(Hit::Cancel), Some(None));
-        assert_eq!(list.click(Hit::Title(TitleHit::Close)), Some(None));
+        assert_eq!(list.click(Hit::Row(0)), Some(PickChoice::Pick(0)));
+        assert_eq!(list.click(Hit::Cancel), Some(PickChoice::Cancel));
+        assert_eq!(list.click(Hit::Title(TitleHit::Close)), Some(PickChoice::Cancel));
+    }
+
+    #[test]
+    fn text_list_place_and_row_hit_test() {
+        assert_eq!(text_position([1024.0, 768.0]), [377.0, 420.0]);
+        let items: Vec<_> = (0..8).map(|i| InventoryItem { index: i, id: 1000 + i as u32, identified: true, ..Default::default() }).collect();
+        let list = PickList::text(crate::REPAIR_TITLE, items);
+        let [wx, wy] = list.frame.position;
+        assert_eq!([wx, wy], [377.0, 420.0]);
+
+        // 16-px rows from y 22:
+        assert_eq!(list.hit([wx + 50.0, wy + 22.0]), Some(Hit::Row(0)));
+        assert_eq!(list.hit([wx + 50.0, wy + 37.9]), Some(Hit::Row(0)));
+        assert_eq!(list.hit([wx + 50.0, wy + 38.0]), Some(Hit::Row(1)));
+        assert_eq!(list.hit([wx + 50.0, wy + 54.0]), Some(Hit::Row(2)));
+        assert_eq!(list.hit([wx + 50.0, wy + 70.0]), Some(Hit::Row(3)));
+        assert_eq!(list.hit([wx + 50.0, wy + 86.0]), Some(Hit::Row(4)));
+        assert_eq!(list.hit([wx + 50.0, wy + 102.0]), Some(Hit::Row(5)));
+
+        // Outside list area:
+        assert_eq!(list.hit([wx + 50.0, wy + 21.9]), Some(Hit::Window));
+        assert_eq!(list.hit([wx + 50.0, wy + 117.0]), Some(Hit::Window));
+        assert_eq!(list.hit([wx + 11.9, wy + 30.0]), Some(Hit::Window));
+        assert_eq!(list.hit([wx + 268.1, wy + 30.0]), Some(Hit::Window));
+
+        // Buttons:
+        assert_eq!(list.hit([wx + 189.0 + 5.0, wy + 126.0 + 5.0]), Some(Hit::Ok));
+        assert_eq!(list.hit([wx + 234.0 + 5.0, wy + 126.0 + 5.0]), Some(Hit::Cancel));
+    }
+
+    #[test]
+    fn text_list_answers() {
+        let item = |index: u16, id: u32| InventoryItem { index, id, identified: true, ..Default::default() };
+
+        // 1. Repair: OK with row -> Pick(row), OK nothing selected -> None, OK no rows -> Cancel, Cancel -> Cancel
+        let mut repair = PickList::text(crate::REPAIR_TITLE, vec![item(1, 1201), item(2, 1202)]);
+        assert_eq!(repair.click(Hit::Ok), None);
+        assert_eq!(repair.click(Hit::Row(0)), None);
+        assert_eq!(repair.click(Hit::Ok), Some(PickChoice::Pick(0)));
+        assert_eq!(repair.click(Hit::Cancel), Some(PickChoice::Cancel));
+        let mut empty_repair = PickList::text(crate::REPAIR_TITLE, Vec::new());
+        assert_eq!(empty_repair.click(Hit::Ok), Some(PickChoice::Cancel));
+
+        // 2. Upgrade: OK with row -> Pick(row), OK nothing selected -> None, OK no rows -> Cancel, Cancel -> Cancel (-1 bytes)
+        let mut upgrade = PickList::text(crate::UPGRADE_TITLE, vec![item(5, 1201)]);
+        assert_eq!(upgrade.click(Hit::Ok), None);
+        assert_eq!(upgrade.click(Hit::Row(0)), None);
+        assert_eq!(upgrade.click(Hit::Ok), Some(PickChoice::Pick(0)));
+        assert_eq!(upgrade.click(Hit::Cancel), Some(PickChoice::Cancel));
+        let mut empty_upgrade = PickList::text(crate::UPGRADE_TITLE, Vec::new());
+        assert_eq!(empty_upgrade.click(Hit::Ok), Some(PickChoice::Cancel));
+        // Upgrade's -1 bytes:
+        assert_eq!(rustnarok_client::net::encode_upgrade(u32::MAX), [0x22, 0x02, 0xFF, 0xFF, 0xFF, 0xFF]);
+
+        // 3. Making: OK with row -> Pick(row), OK nothing selected -> Close, OK no rows -> Close, Cancel -> Cancel
+        let mut make = PickList::text(crate::MAKING_TITLE, vec![item(0, 501)]);
+        assert_eq!(make.click(Hit::Ok), Some(PickChoice::Close));
+        assert_eq!(make.click(Hit::Row(0)), None);
+        assert_eq!(make.click(Hit::Ok), Some(PickChoice::Pick(0)));
+        assert_eq!(make.click(Hit::Cancel), Some(PickChoice::Cancel));
+        let mut empty_make = PickList::text(crate::MAKING_TITLE, Vec::new());
+        assert_eq!(empty_make.click(Hit::Ok), Some(PickChoice::Close));
+    }
+
+    #[test]
+    fn plain_row_name_for_carded_weapon() {
+        let mut items = HashMap::new();
+        items.insert(
+            1201,
+            ItemInfo {
+                name: "Knife".into(),
+                unidentified_name: "Knife".into(),
+                resource: "칼".into(),
+                unidentified_resource: "칼".into(),
+                slots: 3,
+                class_num: 1,
+                description: Vec::new(),
+                unidentified_description: Vec::new(),
+                costume: false,
+            },
+        );
+        // A +7 carded weapon:
+        let weapon = InventoryItem { id: 1201, refine: 7, cards: [4001, 0, 0, 0], grade: 1, identified: true, ..Default::default() };
+        // Plain item name is simply "Knife" (no +7, no grade, no card words, no slot count):
+        assert_eq!(plain_item_name(&items, weapon.id), "Knife");
     }
 
     #[test]
