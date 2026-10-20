@@ -1,0 +1,7 @@
+// A page written with the game's font tags. Loaded and unloaded by scenarios/npc-font-tags.json.
+prontera,160,176,4	script	Tag Clerk	4_M_01,{
+	mes "[Tag Clerk]";
+	mes "<font color = 2ECCFA>Clean</font> through your <font color = DF0101>cramped</font> stomach with a glass of <i>refreshing</i> <b>Ultra-Low Carbonated Soda</b>!";
+	mes "<FONT SIZE=12 COLOR=00AA00>Green</FONT> then plain, and 1 < 2 stays.";
+	close;
+}

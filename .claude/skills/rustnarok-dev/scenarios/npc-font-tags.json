@@ -1,0 +1,54 @@
+{
+  "about": "NPC text with the game's font tags: `<font color = 2ECCFA>` (spaces round the =) and `<FONT SIZE=12 COLOR=00AA00>` colour the words and the tags themselves aren't shown; `<b>` and `<i>` are dropped and a lone `<` stays text. The NPC (npc/font-tags.txt) is loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/font-tags.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/font-tags.txt"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "click_unit": {
+        "kind": "npc",
+        "name": "Tag Clerk"
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "NpcDialog"
+        ]
+      }
+    },
+    {
+      "shot": "npc-font-tags",
+      "crop": [
+        190,
+        90,
+        300,
+        200
+      ],
+      "threshold": 5
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/font-tags.txt"
+    }
+  ]
+}

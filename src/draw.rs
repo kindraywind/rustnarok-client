@@ -1549,8 +1549,11 @@ impl App {
         if let Some(dialog) = &game.dialog {
             // A warp list is the menu alone.
             if dialog.warp.is_none() {
-                let lines: links::LinkedLines =
-                    dialog.lines.iter().flat_map(|line| wrap_linked_by(font, line, game.say.wrap_width(), true, links::Target::npc_color)).collect();
+                let lines: links::LinkedLines = dialog
+                    .lines
+                    .iter()
+                    .flat_map(|line| wrap_linked_by(font, &npc_say::font_tags(line), game.say.wrap_width(), true, links::Target::npc_color))
+                    .collect();
                 let pitch = font.line_height() + npc_say::LINE_GAP;
                 game.say.text_height = lines.len() as f32 * pitch;
                 game.say.scroll_by(0.0);
