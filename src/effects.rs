@@ -1579,7 +1579,16 @@ const PIXELS_PER_UNIT: f32 = 7.0;
 
 /// How many sets of four glints an effect has: Explosion Spirits one, Steel Body four.
 fn glint_sets(effect: u32) -> u32 {
-    if effect == GUMGANG { 1 } else { 4 }
+    match effect {
+        GUMGANG => 1,
+        POWER_UP => 2,
+        _ => 4,
+    }
+}
+
+/// The colour of an effect's glints: Steel Body's and Explosion Spirits' blue, Power Up's red.
+fn glint_color(effect: u32) -> [u8; 3] {
+    if effect == POWER_UP { [0xFF, 0x14, 0x14] } else { GLINT_COLOR }
 }
 
 /// A glint `age` ticks in: its alpha (0–255), and which round it's on (each round a new place, height and texture).
@@ -2025,6 +2034,11 @@ const POISON_BUSTER_FX: u32 = 923;
 const WARMER: u32 = 929;
 const ARRULLO_FX: u32 = 931;
 const ELEMENTAL_ACTION: u32 = 934;
+/// The monsters' Grand Darkness, Power Up and Anti-Magic (`prims::walls`, `glint_sets`, `prims::guard`).
+const GRAND_DARKNESS: u32 = 450;
+const POWER_UP: u32 = 455;
+const POWER_UP_TICKS: u32 = 1500;
+const ANTI_MAGIC: u32 = 675;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
 /// Resurrection's rings and the Call Partner portal's warp (`prims::portal`).
@@ -2724,7 +2738,18 @@ impl Effects {
                 }
                 self.prims.cells.sight(unit, now);
             }
-            (172..=178, Target::Unit(_) | Target::Ground) => {
+            (GRAND_DARKNESS, _) => {
+                self.textures.entry(walls::RING_BLACK.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_BLACK, true).ok());
+                self.prims.walls.grand_darkness(at, now);
+            }
+            (ANTI_MAGIC, Target::Unit(unit)) => {
+                for path in [guard::GUARD_K, guard::GUARD_K2] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
+                self.prims.guard.anti_magic(unit, facing, now);
+            }
+            (172..=179, Target::Unit(_) | Target::Ground) => {
                 let path = cells::sheet_texture(id);
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
                 self.prims.cells.sheet(id, at, now);
@@ -3137,7 +3162,7 @@ impl Effects {
         }
         // Blessing, made in code.
         // A song's puffs and Steel Body's glints, made in code.
-        let kind = song_variant(id).map(PrimKind::Puffs).or((id == 254 || id == GUMGANG).then_some(PrimKind::Glints));
+        let kind = song_variant(id).map(PrimKind::Puffs).or((id == 254 || id == GUMGANG || id == POWER_UP).then_some(PrimKind::Glints));
         if let Some(kind) = kind {
             let paths: &[&str] = if kind == PrimKind::Glints { &GLINT_TEXTURES } else { &[PUFF_TEXTURE] };
             for path in paths {
@@ -3147,6 +3172,11 @@ impl Effects {
             if let (GUMGANG, Target::Unit(unit) | Target::Status(unit, _)) = (id, target) {
                 self.status_prims
                     .retain(|prim| !(prim.effect == GUMGANG && matches!(prim.anchor, Anchor::Unit(each) | Anchor::Status(each, _) if each == unit)));
+            }
+            // Power Up's status removes the unit's running glints first; its use alone only starts a set.
+            if let (POWER_UP, Target::Status(unit, _)) = (id, target) {
+                self.status_prims
+                    .retain(|prim| !(prim.effect == POWER_UP && matches!(prim.anchor, Anchor::Unit(each) | Anchor::Status(each, _) if each == unit)));
             }
             self.status_prims.push(StatusPrim { kind, effect: id, start: now, anchor: anchor(true), seed: random(0.0, 1.0e9) as u32 });
         }
@@ -3765,7 +3795,15 @@ impl Effects {
     /// a camera turned `yaw` radians.
     pub fn advance(&mut self, gpu: &Gpu, now: Instant, yaw: f32) {
         // A song's puffs end with their 400 ticks.
-        self.status_prims.retain(|prim| !matches!(prim.kind, PrimKind::Puffs(_)) || str_frame(now.saturating_duration_since(prim.start)) < PUFF_TICKS);
+        self.status_prims.retain(|prim| {
+            let age = str_frame(now.saturating_duration_since(prim.start));
+            match prim.kind {
+                PrimKind::Puffs(_) => age < PUFF_TICKS,
+                // Power Up's glints last 1 500 ticks a launch.
+                PrimKind::Glints if prim.effect == POWER_UP => age < POWER_UP_TICKS,
+                PrimKind::Glints => true,
+            }
+        });
         // The game checks /mineffect each tick, so turning it on stops a Frost Diver's line.
         if self.min {
             self.prims.stone.stop_lines(now);
@@ -4514,7 +4552,7 @@ impl Effects {
                 let (sin, cos) = ((pick(1) % 360) as f32).to_radians().sin_cos();
                 let height = if round == 0 { (pick(2) % 10) as f32 } else { 3.0 + (pick(2) % 8) as f32 };
                 let place = [at[0] + GLINT_CIRCLE * cos, at[1] + height + lift, at[2] + GLINT_CIRCLE * sin];
-                let [red, green, blue] = GLINT_COLOR.map(|value| f32::from(value) / 255.0);
+                let [red, green, blue] = glint_color(prim.effect).map(|value| f32::from(value) / 255.0);
                 let corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
                 quads.push((texture, place, corners, [red, green, blue, alpha as f32 / 255.0], true, false));
             }
@@ -6973,5 +7011,25 @@ mod tests {
         // Rows: no skill-line copy, the puff stays where it was made, and Power of Gaia restarts a tick before its length.
         assert!(table.skill(8020, "effectId").is_empty() && !table.parts[&959][0].attached && table.lengths[&959] == 60);
         assert_eq!((restart_ticks(1088, 240, 2000), restart_ticks(0, 239, 2000), restart_ticks(0, 9, 2000)), (1999, 1992, 1992));
+    }
+
+    #[test]
+    fn the_monsters_change_poison_grand_darkness_power_up_and_anti_magic_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        assert_eq!(table.lengths[&179], 100);
+        assert!(table.used(166).unwrap().contains(&(Who::Caster, 179)) && !table.sounds.contains_key(&179));
+        // Grand Darkness: one more cross a damage packet, its sound once each, 999 ticks.
+        assert!(table.struck(339).unwrap().contains(&(Who::Caster, GRAND_DARKNESS)));
+        assert_eq!((sounds(GRAND_DARKNESS), table.lengths[&GRAND_DARKNESS]), (vec![("effect\\cru_grand cross", 0, false)], 999));
+        // Power Up: two sets of four glints in red where Steel Body keeps four sets in blue and the Explosion Spirits' one.
+        assert_eq!((4 * glint_sets(POWER_UP), 4 * glint_sets(254), 4 * glint_sets(GUMGANG)), (8, 16, 4));
+        assert_eq!((glint_color(POWER_UP), glint_color(254)), ([0xFF, 0x14, 0x14], GLINT_COLOR));
+        assert!(table.used(349).unwrap().contains(&(Who::Caster, POWER_UP)) && table.status(98).contains(&POWER_UP));
+        assert_eq!((table.lengths[&POWER_UP], POWER_UP_TICKS), (1500, 1500));
+        assert_eq!((table.skill_sounds[&349][0].file.as_str(), table.skill_sounds[&349][0].listener), ("effect\\mon_폭기", true));
+        // Anti-Magic: the dome on the caster for 200 ticks, its sound as before.
+        assert!(table.struck(676).unwrap().contains(&(Who::Caster, ANTI_MAGIC)));
+        assert_eq!((sounds(ANTI_MAGIC), table.lengths[&ANTI_MAGIC]), (vec![("effect\\kyrie_guard", 0, false)], 200));
     }
 }

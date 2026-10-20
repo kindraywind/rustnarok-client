@@ -147,8 +147,9 @@ const ARCS: [([f32; 2], f32); 4] = [([23.0, 23.0], 180.0), ([23.0, -23.0], 90.0)
 /// The arcs are drawn on ages 1…98, the bars on 1…89.
 const ARC_AGES: u32 = 98;
 const BAR_AGES: u32 = 89;
-/// The arcs' tint (#FFAFAF).
+/// The arcs' tint (#FFAFAF), and Grand Darkness' (#323232).
 const ARC_RGB: [f32; 3] = [1.0, 175.0 / 255.0, 175.0 / 255.0];
+const DARK_ARC_RGB: [f32; 3] = [50.0 / 255.0, 50.0 / 255.0, 50.0 / 255.0];
 
 /// A world mesh to draw: its texture, triangles, whether it adds on, and whether it draws even with /effect off.
 pub struct Wall {
@@ -249,6 +250,8 @@ struct Curtains {
 struct Cross {
     at: Vector,
     start: Instant,
+    /// Grand Darkness': black rings, the arcs grey and blended.
+    dark: bool,
 }
 
 #[derive(Default)]
@@ -488,7 +491,8 @@ impl Cross {
             for &([dx, dz], turn) in &ARCS {
                 let centre = [self.at[0] + dx, self.at[1], self.at[2] + dz];
                 let points: Vec<_> = (0..=8).map(|m| ring_point(centre, turn + 10.0 * m as f32, radius, height, 90.0)).collect();
-                walls.push(Wall { texture: RING_WHITE, vertices: vertices(ring_quads(&points, alpha), ARC_RGB), additive: true, forced: false });
+                let (texture, rgb, additive) = if self.dark { (RING_BLACK, DARK_ARC_RGB, false) } else { (RING_WHITE, ARC_RGB, true) };
+                walls.push(Wall { texture, vertices: vertices(ring_quads(&points, alpha), rgb), additive, forced: false });
             }
         }
         if a <= BAR_AGES {
@@ -514,14 +518,15 @@ impl Cross {
                     .map(|(position, uv)| MeshVertex { position, uv, tint: tint([1.0; 3], alpha) });
                     curtain.extend([foot0, top0, foot1, top0, foot1, top1]);
                 }
-                walls.push(Wall { texture: RING_YELLOW, vertices: curtain, additive: false, forced: false });
+                let texture = if self.dark { RING_BLACK } else { RING_YELLOW };
+                walls.push(Wall { texture, vertices: curtain, additive: false, forced: false });
                 // The floor twice, each at half the alpha: v 1 at one end and 0 at the other, then the other way round.
                 for flip in [false, true] {
                     let v = |end: f32| if (end > 0.0) != flip { 1.0 } else { 0.0 };
                     let [a, b, c, d] =
                         [(-width, -length, [0.0, v(-1.0)]), (width, -length, [1.0, v(-1.0)]), (width, length, [1.0, v(1.0)]), (-width, length, [0.0, v(1.0)])]
                             .map(|(across, along, uv)| MeshVertex { position: place(across, along, 0.0), uv, tint: tint([1.0; 3], alpha / 2.0) });
-                    walls.push(Wall { texture: RING_YELLOW, vertices: vec![a, b, c, a, c, d], additive: true, forced: false });
+                    walls.push(Wall { texture, vertices: vec![a, b, c, a, c, d], additive: true, forced: false });
                 }
             }
         }
@@ -630,7 +635,12 @@ impl Walls {
 
     /// A Grand Cross where its caster stood at `at`.
     pub fn grand_cross(&mut self, at: Vector, now: Instant) {
-        self.crosses.push(Cross { at, start: now });
+        self.crosses.push(Cross { at, start: now, dark: false });
+    }
+
+    /// A Grand Darkness (the monsters' dark cross) where its caster stood at `at`.
+    pub fn grand_darkness(&mut self, at: Vector, now: Instant) {
+        self.crosses.push(Cross { at, start: now, dark: true });
     }
 
     /// Runs Venom Dust's puffs up to `now` (a tick at a time, each puff's choices from `rand(n)`: its yaw, lost, then its
@@ -1239,5 +1249,27 @@ mod tests {
         assert_eq!(meshes.len(), 4);
         assert!(meshes.iter().all(|wall| wall.texture == RING_WHITE && !wall.additive && wall.vertices[0].tint[..3] == [1.0; 3]));
         assert!(walls.meshes(start + TICK * 48, |_| Some([0.0; 3])).len() == 4 && walls.meshes(start + TICK * 49, |_| Some([0.0; 3])).is_empty());
+    }
+
+    #[test]
+    fn grand_darkness_draws_a_dark_cross_of_light() {
+        let start = Instant::now();
+        let at = [50.0, 4.0, 60.0];
+        let mut walls = Walls::default();
+        walls.grand_darkness(at, start);
+        let first = walls.meshes(start, |_| None);
+        // Four arcs of 8 quads in #323232, blended, in ring_black; the bars' walls blended white, their floors added on.
+        assert_eq!(first.len(), 4 + 2 * 3);
+        assert!(first[..4].iter().all(|arc| arc.texture == RING_BLACK && !arc.additive && arc.vertices.len() == 6 * 8));
+        assert_eq!(first[0].vertices[0].tint[..3], [50.0 / 255.0; 3]);
+        assert!(first[4..].iter().all(|bar| bar.texture == RING_BLACK));
+        assert_eq!(first[4..].iter().filter(|bar| bar.additive).count(), 4);
+        assert_eq!(first[4].vertices[0].tint[..3], [1.0; 3]);
+        // One more cross for each packet, all where the caster stood, and Grand Cross keeps its look.
+        walls.grand_darkness(at, start);
+        walls.grand_cross(at, start);
+        let all = walls.meshes(start, |_| Some([0.0; 3]));
+        assert_eq!(all.len(), 3 * (4 + 6));
+        assert_eq!(all.iter().filter(|wall| wall.texture == RING_YELLOW || wall.texture == RING_WHITE).count(), 4 + 6);
     }
 }
