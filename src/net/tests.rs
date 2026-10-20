@@ -461,7 +461,11 @@ fn decodes_progress_bars() {
 fn decodes_skill_units() {
     // Captured from rathena: a Fire Wall cell (UNT_FIREWALL) at 156,190, and its going.
     let entry = [0xca, 0x09, 0x17, 0, 0x1a, 0x0d, 0, 0, 0x82, 0x84, 0x1e, 0, 0x9c, 0, 0xbe, 0, 0x7f, 0, 0, 0, 0, 0x01, 0x0a];
-    assert!(matches!(decode_map_packet(&entry), Some(MapEvent::SkillUnit { id: 3354, kind: 127, cell: [156, 190] })));
+    assert!(matches!(decode_map_packet(&entry), Some(MapEvent::SkillUnit { id: 3354, kind: 127, cell: [156, 190], range: 0 })));
+    // The range byte (offset 20) of an entry, here 3.
+    let mut ranged = entry;
+    ranged[20] = 3;
+    assert!(matches!(decode_map_packet(&ranged), Some(MapEvent::SkillUnit { range: 3, .. })));
     assert!(matches!(decode_map_packet(&[0x20, 0x01, 0x1a, 0x0d, 0, 0]), Some(MapEvent::SkillUnitGone { id: 3354 })));
     assert_eq!((packet_length(ZC_SKILL_ENTRY), packet_length(ZC_SKILL_DISAPPEAR)), (Some(23), Some(6)));
 }

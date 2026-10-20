@@ -322,6 +322,10 @@ impl App {
 
         // The map's moving RSM 2 models, posed for now.
         game.world.animate(gpu, now);
+        // The mist and the like that skill units put on a grid of points round their cells.
+        for (effect, at, start) in game.effects.take_areas() {
+            game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, start);
+        }
         // What Escape's copies started on themselves since the last frame.
         let launches: Vec<_> = std::iter::once(&mut game.player).chain(game.units.values_mut()).flat_map(|actor| actor.take_launches()).collect();
         for (effect, at) in launches {

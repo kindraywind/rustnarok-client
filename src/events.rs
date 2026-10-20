@@ -3553,11 +3553,11 @@ impl App {
                     game.arrow_shower(grf, source, [i32::from(cell[0]), i32::from(cell[1])], None);
                 }
             }
-            MapEvent::SkillUnit { id, kind, cell } => {
+            MapEvent::SkillUnit { id, kind, cell, range } => {
                 game.skill_units.insert(id, (kind, cell));
                 if let Some(gpu) = gpu {
                     let at = game.world.cell_position(cell.map(f32::from));
-                    game.effects.play_unit(gpu, grf, table, kind, id, at, Instant::now());
+                    game.effects.play_unit(gpu, grf, table, kind, id, at, range, Instant::now());
                 }
             }
             MapEvent::SkillUnitGone { id } => {
@@ -3747,7 +3747,7 @@ impl App {
                     && let Some(gpu) = gpu
                 {
                     let trigger = game.effects.unit_kind(id).filter(|_| value == FIRED_TRAP).and_then(|old| table.trap(old));
-                    game.effects.play_unit(gpu, grf, table, value, id, at, Instant::now());
+                    game.effects.play_unit(gpu, grf, table, value, id, at, 0, Instant::now());
                     if let Some(effect) = trigger {
                         // Reverberation's tornado goes with the trap; the others stay where it was.
                         let target = if effect == effects::REVERBERATION { effects::Target::Kept(id) } else { effects::Target::Ground };
