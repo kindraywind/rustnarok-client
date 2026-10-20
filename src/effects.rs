@@ -997,7 +997,7 @@ fn screen_offset(offset: Vector, yaw: f32, pitch: f32) -> [f32; 2] {
 /// Whether a status's circle ignores a packet: Song of Mana's (439) and Wug Dance's (441) run out their 400 ticks when the
 /// status goes off, and start again only for an on-packet whose value is exactly 1.
 pub fn circle_ignores(status: u16, on: bool, value: i64) -> bool {
-    matches!(status, 439 | 441) && (!on || value != 1)
+    matches!(status, 439 | 441 | 451) && (!on || value != 1)
 }
 
 /// A cast's aura: one a caster has at a time.
@@ -1874,6 +1874,8 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Sound of Destruction's red music notes (`prims::guard`).
+const SOUND_NOTES: u32 = 869;
 /// Dead Hill Here's Geographers, Poem of Netherworld's note, Randomize Spell's frames and Dance with Warg's Wargs (`prims::crowds`).
 const DEAD_HILL: u32 = 853;
 const MELODY_NOTE: u32 = 860;
@@ -2413,8 +2415,18 @@ impl Effects {
                 self.prims.songs.swing_dance(unit, now, |n| pick(0, n.saturating_sub(1)));
             }
             (HARMONIZE, Target::Unit(unit)) => self.prims.spears.emitter(unit, now),
-            (DEAD_HILL | WARG_DANCE, Target::Unit(unit)) => {
-                let kind = if id == DEAD_HILL { crowds::Kind::Geographers } else { crowds::Kind::Wargs };
+            (SOUND_NOTES, _) => {
+                for path in guard::NOTES {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
+                }
+                self.prims.guard.notes(at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (DEAD_HILL | WARG_DANCE | 868 | 870 | 872 | 874 | 876 | 878, Target::Unit(unit)) => {
+                let kind = match id {
+                    DEAD_HILL => crowds::Kind::Geographers,
+                    WARG_DANCE => crowds::Kind::Wargs,
+                    _ => crowds::Kind::of_song(id).unwrap_or(crowds::Kind::Violy),
+                };
                 self.sprites.entry(kind.sprite().to_owned()).or_insert_with(|| SpriteSet::at(grf, kind.sprite()));
                 self.prims.crowds.plant(kind, unit, now);
             }
@@ -6036,5 +6048,44 @@ mod tests {
         assert!(table.used(2424).unwrap().contains(&(Who::Target, RANDOMIZE)) && table.skill(2424, "effectId").is_empty());
         assert!(!table.floaters.contains_key(&RANDOMIZE));
         assert_eq!(sounds(RANDOMIZE), [("effect\\AB_ancilla", 0, true)]);
+    }
+
+    #[test]
+    fn the_wanderer_and_minstrel_songs_ring_the_target_and_sound_of_destruction_has_its_notes() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // The six songs: one ring a use, from the use only, each sound at the listener at tick 0.
+        let files = [
+            (2427, 868, "effect\\마나의노래"),
+            (2430, 870, "effect\\새터데이나이트피버"),
+            (2431, 872, "effect\\SR_LIGHTNINGWALK"),
+            (2432, 874, "effect\\멜로디오브싱크"),
+            (2433, 876, "effect\\비욘드오브워크라이"),
+            (2434, 878, "effect\\언리미티드허밍보이스"),
+        ];
+        for (skill, effect, file) in files {
+            assert!(table.used(skill).unwrap().contains(&(Who::Target, effect)), "{skill}");
+            assert!(table.skill(skill, "groundEffectId").is_empty(), "{skill}");
+            assert_eq!(sounds(effect), [(file, 0, true)]);
+        }
+        // Lerad's and Saturday Night Fever's circles come from their statuses alone.
+        assert!(table.skill(2430, "effectIdOnCaster").is_empty() && table.skill(2431, "effectIdOnCaster").is_empty());
+        assert!(table.status(76).contains(&871) && table.status(80).contains(&871) && table.status(451).contains(&871));
+        // The status of 451 starts a circle only for an on value of exactly 1; 76 and 80 always start and remove.
+        assert!(!circle_ignores(451, true, 1) && circle_ignores(451, true, 2) && circle_ignores(451, false, 1));
+        assert!(!circle_ignores(76, true, 2) && !circle_ignores(80, false, 0));
+        // Sound of Destruction: the notes and the four sliding copies with the damage; its sounds.
+        let struck = table.struck(2429).unwrap();
+        assert!(struck.contains(&(Who::Target, SOUND_NOTES)) && struck.contains(&(Who::Target, 425)));
+        assert_eq!(
+            sounds(SOUND_NOTES),
+            [
+                ("effect\\metalic", 0, true),
+                ("effect\\복호격", 16, false),
+                ("effect\\복호격", 176, false),
+                ("effect\\복호격", 336, false),
+                ("effect\\복호격", 496, false)
+            ]
+        );
     }
 }

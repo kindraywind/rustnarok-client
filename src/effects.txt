@@ -737,17 +737,9 @@ skill	2420	groundEffectId	879
 skill	2422	effectId	858
 skill	2423	effectId	861
 skill	2427	effectIdOnCaster	865
-skill	2427	groundEffectId	868
 skill	2428	effectIdOnCaster	867
-skill	2430	effectIdOnCaster	871
-skill	2430	groundEffectId	870
-skill	2431	effectIdOnCaster	871
-skill	2431	groundEffectId	872
 skill	2432	effectIdOnCaster	873
-skill	2432	groundEffectId	874
 skill	2433	effectIdOnCaster	875
-skill	2433	groundEffectId	876
-skill	2434	groundEffectId	878
 skill	2443	groundEffectId	920
 skill	2444	groundEffectId	926
 skill	2447	effectId	928
@@ -2042,12 +2034,17 @@ wav	861	effect\순환하는자연의소리	0
 wav	862	effect\AB_ancilla	0	listener
 wav	863	effect\LG_EARTHDRIVE	0	listener
 wav	866	effect\워그와함께춤을	0	listener
-wav	868	effect\마나의노래	0
-wav	870	effect\새터데이나이트피버	0
-wav	872	effect\레라드의이슬	0
-wav	874	effect\멜로디오브싱크	0
-wav	876	effect\비욘드오브워크라이	0
-wav	878	effect\언리미티드허밍보이스	0
+wav	868	effect\마나의노래	0	listener
+wav	869	effect\metalic	0	listener
+wav	869	effect\복호격	16
+wav	869	effect\복호격	176
+wav	869	effect\복호격	336
+wav	869	effect\복호격	496
+wav	870	effect\새터데이나이트피버	0	listener
+wav	872	effect\SR_LIGHTNINGWALK	0	listener
+wav	874	effect\멜로디오브싱크	0	listener
+wav	876	effect\비욘드오브워크라이	0	listener
+wav	878	effect\언리미티드허밍보이스	0	listener
 wav	879	effect\세이렌의목소리	0
 wav	883	effect\ef_readyportal	0
 wav	885	effect\bash3d	0
@@ -4368,6 +4365,7 @@ struck	2327	target	548
 struck	2327	target	550
 struck	2336	target	458
 struck	2426	target	466
+struck	2429	target	425
 used	6	target	67
 used	7	caster	17
 used	8202	caster	17

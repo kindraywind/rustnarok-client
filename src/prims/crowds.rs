@@ -20,11 +20,17 @@ const CROWD_LIFE: u32 = 400;
 const NOTE_LIFE: u32 = 29_999;
 const RUNE_LIFE: u32 = 300;
 
-/// Which crowd: Dead Hill Here's Geographers or Dance with Warg's Wargs.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Which crowd: Dead Hill Here's Geographers, Dance with Warg's Wargs, or the ring of ten of a Wanderer's or Minstrel's song.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     Geographers,
     Wargs,
+    Violy,
+    Succubus,
+    Mineral,
+    Ktullanux,
+    Garm,
+    Miyabi,
 }
 
 /// One sprite put down: the tick it came, where it stands, its scale, ticks a frame, action and life.
@@ -75,16 +81,60 @@ pub struct Crowds {
 }
 
 impl Kind {
+    /// The ring of a song's effect (868, 870, 872, 874, 876, 878).
+    pub fn of_song(effect: u32) -> Option<Self> {
+        Some(match effect {
+            868 => Kind::Violy,
+            870 => Kind::Succubus,
+            872 => Kind::Mineral,
+            874 => Kind::Ktullanux,
+            876 => Kind::Garm,
+            878 => Kind::Miyabi,
+            _ => return None,
+        })
+    }
+
     fn count(self) -> u32 {
         if self == Kind::Geographers { 50 } else { 10 }
     }
 
     pub fn sprite(self) -> &'static str {
-        if self == Kind::Geographers { GEOGRAPHER } else { WARG }
+        match self {
+            Kind::Geographers => GEOGRAPHER,
+            Kind::Wargs => WARG,
+            Kind::Violy => "data\\sprite\\몬스터\\violy",
+            Kind::Succubus => "data\\sprite\\몬스터\\succubus",
+            Kind::Mineral => "data\\sprite\\몬스터\\mineral",
+            Kind::Ktullanux => "data\\sprite\\몬스터\\ktullanux",
+            Kind::Garm => "data\\sprite\\몬스터\\garm",
+            Kind::Miyabi => "data\\sprite\\몬스터\\miyabi_ningyo",
+        }
     }
 
     fn scale(self) -> f32 {
-        if self == Kind::Geographers { 0.7 } else { 0.6 }
+        match self {
+            Kind::Geographers => 0.7,
+            Kind::Wargs => 0.6,
+            _ => 1.0,
+        }
+    }
+
+    /// The angle, distance, ticks a frame and action of the sprite made at tick `e`, the choices from `rand(n)` in the game's order.
+    fn pick(self, e: u32, rand: &mut impl FnMut(u32) -> u32) -> (f32, f32, u32, usize) {
+        if self == Kind::Geographers {
+            let theta = rand(360) as f32;
+            let distance = (5 + rand(45)) as f32;
+            let _ = rand(3);
+            return (theta, distance, 4, 0);
+        }
+        let _ = rand(3);
+        let per_frame = 6 + rand(3);
+        let action = match self {
+            Kind::Succubus => 56 - 8 * rand(3) as usize + rand(8) as usize,
+            Kind::Miyabi => 48 + rand(8) as usize,
+            _ => rand(8) as usize,
+        };
+        (36.0 * e as f32, 40.0, per_frame, action)
     }
 }
 
@@ -172,20 +222,7 @@ impl Crowds {
             while crowd.made < crowd.kind.count() && passes(crowd.start, now) > crowd.made {
                 if let Some(feet) = crowd.last {
                     let e = crowd.made;
-                    let (theta, distance, per_frame, action) = match crowd.kind {
-                        Kind::Geographers => {
-                            let theta = rand(360) as f32;
-                            let distance = (5 + rand(45)) as f32;
-                            let _ = rand(3);
-                            (theta, distance, 4, 0)
-                        }
-                        Kind::Wargs => {
-                            let _ = rand(3);
-                            let per_frame = 6 + rand(3);
-                            let action = rand(8) as usize;
-                            (36.0 * e as f32, 40.0, per_frame, action)
-                        }
-                    };
+                    let (theta, distance, per_frame, action) = crowd.kind.pick(e, &mut rand);
                     let (sin, cos) = theta.to_radians().sin_cos();
                     let (x, z) = (feet[0] + distance * sin, feet[2] + distance * cos);
                     crowd.sprites.push(Planted { born: e, at: [x, ground_at(x, z), z], per_frame, action });
@@ -379,5 +416,50 @@ mod tests {
         assert!(near(rune_levels(49).1, 11.2) && near(rune_levels(90).1, 11.2) && near(rune_levels(91).1, 11.31));
         let radius = rune_levels(49).1;
         assert!(near(3.0 * 0.0 + radius, 11.2) && near(3.0 * 9.0 + radius, 38.2));
+    }
+
+    #[test]
+    fn the_songs_raise_a_ring_of_ten_monsters_each() {
+        let start = Instant::now();
+        let ring = |kind: Kind, script: &[u32]| {
+            let mut crowds = Crowds::default();
+            crowds.plant(kind, None, start);
+            let mut draws = 0;
+            let mut script = script.iter().copied().cycle();
+            for tick in 0..14 {
+                crowds.advance(
+                    start + TICK * tick,
+                    |_| Some([0.0; 3]),
+                    |_, _| 0.0,
+                    |n| {
+                        draws += 1;
+                        script.next().unwrap().min(n - 1)
+                    },
+                );
+            }
+            (crowds.crowds[0].sprites.len(), draws, crowds)
+        };
+        // Ten sprites on ticks 0 to 9; every draw 0: the sprite at e = 3 stands 40 out at 108°, 6 ticks a frame, scale 1.0.
+        let (count, draws, crowds) = ring(Kind::Violy, &[0]);
+        assert_eq!((count, draws), (10, 30));
+        let third = &crowds.crowds[0].sprites[3];
+        let (sin, cos) = 108.0_f32.to_radians().sin_cos();
+        assert!(near(third.at[0], 40.0 * sin) && near(third.at[2], 40.0 * cos) && third.per_frame == 6 && third.action == 0);
+        assert_eq!(Kind::Violy.scale(), 1.0);
+        // The actions: 0 (Violy, Mineral, Ktullanux, Garm), 56 / 48 / 40 for Succubus by k = 0, 1, 2 (four draws), 48 for Miyabi.
+        for kind in [Kind::Mineral, Kind::Ktullanux, Kind::Garm] {
+            assert_eq!(ring(kind, &[0]).2.crowds[0].sprites[0].action, 0);
+        }
+        assert_eq!(ring(Kind::Miyabi, &[0]).2.crowds[0].sprites[0].action, 48);
+        let (_, succubus_draws, succubus) = ring(Kind::Succubus, &[0]);
+        assert_eq!((succubus_draws, succubus.crowds[0].sprites[0].action), (40, 56));
+        // The draws are the unused R(3), the ticks a frame, then (for the Succubus) k and the action: k = 1 and 2 give 48 and 40.
+        let action_for = |k: u32| ring(Kind::Succubus, &[0, 0, k, 0]).2.crowds[0].sprites[0].action;
+        assert_eq!([0, 1, 2].map(action_for), [56, 48, 40]);
+        // The sprites, in the issue's order.
+        assert!(Kind::of_song(868).unwrap().sprite().ends_with("violy") && Kind::of_song(878).unwrap().sprite().ends_with("miyabi_ningyo"));
+        assert!(Kind::of_song(869).is_none());
+        // Alpha for the sprite made at e = 0 at n = 30, 350, 351, 380: 150, 150, 145, 0.
+        assert_eq!([30, 350, 351, 380].map(|n| planted_alpha(n, 400)), [150.0, 150.0, 145.0, 0.0]);
     }
 }
