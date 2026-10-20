@@ -10,6 +10,7 @@ pub mod boomerang;
 pub mod burst;
 pub mod first;
 pub mod huujin;
+pub mod monk;
 pub mod napalm;
 pub mod sage;
 pub mod shards;
@@ -107,6 +108,7 @@ pub struct Prims {
     pub waterballs: waterball::Waterballs,
     pub walls: walls::Walls,
     pub shards: shards::Shards,
+    pub monk: monk::Monk,
 }
 
 /// COLDHIT's shard and smoke textures.

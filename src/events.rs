@@ -3439,6 +3439,7 @@ impl App {
                 if !ok {
                     return;
                 }
+                game.effects.play_skill_sounds(table, skill, Instant::now());
                 // The pitchers throw their item at the target (Potion Pitcher, Berserk Pitcher, Spore Explosion).
                 if let (Some(effect), Some(gpu)) = (effects::thrown_item(skill), gpu) {
                     game.aimed(gpu, grf, table, effect, source, target, 1);

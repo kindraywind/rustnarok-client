@@ -801,6 +801,7 @@ skill	8039	effectId	962
 skill	8041	effectId	964
 skill	8043	effectId	975
 item	501	204
+item	684	261
 item	502	205
 item	503	206
 item	504	207
@@ -1292,7 +1293,6 @@ part	216	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/
 part	217	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;red=0.4;green=0.4;blue=1.0;sizeStart=150.0;sizeEnd=180.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
 part	232	3D	alphaMax=0.5;angle=180;attachedEntity=true;blendMode=2;red=0.1;green=0.1;blue=0.9;duration=100;fadeIn=true;fadeOut=true;file=effect/alpha_center.tga;fromSrc=true;rotateToTarget=true;rotateWithCamera=true;sizeX=5;sizeY=50;zOffset=1;zIndex=1
 part	262	3D	wav=effect/mon_폭기;duplicate=12;timeBetweenDupli=0;file=effect/alpha_center.tga;delayStart=250;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;overlay=true;rotateToTarget=true;rotateWithCamera=true
-part	266	3D	wav=effect/mon_아수라 패황권;duplicate=24;timeBetweenDupli=0;file=effect/lens1.tga;delayStart=100;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;overlay=true;rotateToTarget=true;rotateWithCamera=true
 part	274	2D	overlay=true;file=effect/coin_a.bmp;blendMode=2;alphaMax=0.8;duplicate=30;timeBetweenDupli=50;duration=1500;fadeOut=true;posxEndRand=10;posyEndRand=10;posz=2;size=20;rotateToTarget=true;attachedEntity=true
 part	276	3D	duplicate=20;timeBetweenDupli=0;file=effect/lens1.tga;delayStart=100;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;red=0.1;green=0.1;blue=1.0;overlay=true;rotateToTarget=true;rotateWithCamera=true
 part	298	3D	alphaMax=1;angle=180;attachedEntity=true;duration=300;fadeIn=true;fadeOut=true;file=유저인터페이스/item/염산병.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=0.5;size=30;zOffset=1;zIndex=1
@@ -1482,7 +1482,6 @@ ring	34	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=8;bottomSize=0.8;
 ring	35	alphaMax=0.6;animation=0;attachedEntity=true;blue=1;bottomSize=0.6;duration=25000;fade=true;green=0.7;height=15;red=0.7;rotate=true;textureName=alpha_down;topSize=0.6;wav=effect/ef_readyportal
 ring	61	alphaMax=0.3;animation=3;attachedEntity=true;blendMode=2;blue=1;bottomSize=2;duration=2800;fade=true;green=0.5;height=1.1;red=0.5;rotate=true;textureName=ring_blue;topSize=3.3
 ring	61	alphaMax=0.3;animation=3;attachedEntity=true;blendMode=2;blue=1;bottomSize=1.9;duration=2800;fade=true;green=0.5;height=1.1;red=0.5;rotate=true;textureName=ring_blue;topSize=3.2
-ring	261	alphaMax=0.5;blendMode=8;animation=4;duplicate=4;timeBetweenDupli=100;bottomSize=2;duration=1500;fade=true;height=2;rotate=true;textureName=ring_yellow;topSize=5;attachedEntity=true
 ring	263	alphaMax=0.3;blendMode=8;animation=4;duplicate=4;timeBetweenDupli=100;bottomSize=3;duration=1000;fade=true;height=2;rotate=true;textureName=ring_yellow;topSize=6;attachedEntity=true
 # ponytail: the teleport keeps its rings' shape; violet and purple are the textures' own colours (white).
 ring	313	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=2;red=0.7;rotate=true;textureName=ring_white;topSize=3
@@ -1610,6 +1609,7 @@ func	102	quake	560	650
 func	142	quake	0	650
 func	183	quake	0	200
 func	220	quake	288	200
+func	266	quake	0	200
 func	303	quake	132	650
 func	365	quake	500	650
 func	380	quake	300	650
@@ -1827,15 +1827,14 @@ wav	253	effect\흡기	0
 wav	254	effect\mon_금강불괴	0
 wav	255	_enemy_hit_wind1	160
 wav	256	_enemy_hit_wind1	160
-wav	257	effect\_enemy_hit_wind1	0
-wav	258	_enemy_hit_wind1	0
-wav	261	effect\mon_폭기	0
+wav	257	_enemy_hit_wind1	160
+wav	258	_enemy_hit_wind1	160
 wav	262	effect\mon_폭기	0
 wav	265	effect\mon_탄지신통	0
-wav	266	effect\mon_아수라 패황권	0
+wav	266	effect\mon_아수라 패황권	0	listener
 wav	267	effect\mon_침투경	0
-wav	269	effect\t_벽튕김	0
-wav	270	effect\t_벽튕김	0
+wav	269	effect\복호격	96
+wav	270	effect\복호격	96
 wav	271	effect\t_벽튕김	0
 wav	272	effect\t_벽튕김	0
 wav	273	effect\mon_연환	0
@@ -4140,6 +4139,7 @@ struck	338	target	245
 struck	254	caster	226
 struck	263	caster	329
 struck	266	caster	264
+struck	266	caster	267
 struck	267	caster	265
 struck	271	target	266
 struck	337	caster	494
@@ -4419,6 +4419,7 @@ used	258	caster	250
 used	262	caster	253
 used	268	caster	261
 used	270	caster	203
+used	270	caster	261
 used	276	caster	244
 used	277	target	234
 used	280	target	255
@@ -4511,6 +4512,7 @@ used	465	target	419
 used	470	target	420
 used	471	target	427
 used	472	target	254
+used	472	target	261
 used	475	caster	496
 used	476	target	495
 used	479	target	300
@@ -5046,3 +5048,10 @@ length	988	100
 length	1020	100
 length	920	40
 length	95	150
+# The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
+skillwav	268	effect\mon_맹룡과강	0	listener
+skillquake	268	0	200
+skillwav	270	effect\mon_폭기	0	listener
+skillquake	270	0	200
+skillwav	472	effect\T_방어형	0	listener
+skillquake	472	0	200
