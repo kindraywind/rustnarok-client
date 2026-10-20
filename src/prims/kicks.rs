@@ -12,6 +12,13 @@ use crate::world::{MeshVertex, Vector};
 
 pub const LINE: &str = super::brawl::WHITE;
 pub const FIN: &str = "data\\texture\\effect\\magic_blue.tga";
+/// Running's footprints: the left foot (447) and the right (448).
+pub const FOOT_LEFT: &str = "data\\texture\\effect\\foot_l2.tga";
+pub const FOOT_RIGHT: &str = "data\\texture\\effect\\foot_r2.tga";
+/// A footprint lasts 340 ticks, 6 across to the corner on the ground and 0.2 up.
+const PRINT_LIFE: u32 = 340;
+const PRINT_RADIUS: f32 = 0.9 * 6.0;
+const PRINT_UP: f32 = 0.2;
 const LINE_LIFE: u32 = 200;
 const FIN_LIFE: u32 = 100;
 /// Running's start lasts 9 999 ticks.
@@ -96,7 +103,7 @@ struct Run {
     done: u32,
 }
 
-/// A footprint Running launched (effects 447 and 448 have no look yet): which, where, which way and when.
+/// A footprint Running launched (effects 447 and 448): which, where, which way and when.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Footprint {
     pub effect: u32,
@@ -112,7 +119,13 @@ pub struct Kicks {
     runs: Vec<Run>,
     /// The units that have Running's status on (443).
     running: Vec<Option<u32>>,
-    footprints: Vec<Footprint>,
+    /// The footprints on the ground now.
+    pub prints: Vec<Footprint>,
+}
+
+/// A footprint's alpha at its age n: 150 less 1 for every other tick (0 at 299).
+pub fn print_alpha(n: u32) -> i32 {
+    (150 - n.div_ceil(2) as i32).max(0)
 }
 
 /// A line's alpha at its age n for a start alpha: held to 35, then 5 less a tick.
@@ -249,7 +262,7 @@ impl Kicks {
                     {
                         let heading = (bearing(place[0] - last[0], place[2] - last[2]) as f32 + 135.0).rem_euclid(360.0);
                         let effect = if run.c == 7 { 447 } else { 448 };
-                        self.footprints.push(Footprint { effect, at: place, heading, start: now });
+                        self.prints.push(Footprint { effect, at: place, heading, start: now });
                     }
                     run.last = place.or(run.last);
                     if run.c == 14 {
@@ -259,6 +272,7 @@ impl Kicks {
             }
         }
         self.runs.retain(|run| passes(run.start, now) <= RUN_LIFE);
+        self.prints.retain(|print| passes(print.start, now) <= PRINT_LIFE);
         for fins in &mut self.fins {
             while fins.done < passes(fins.start, now).min(FIN_LIFE) {
                 fins.done += 1;
@@ -291,9 +305,32 @@ impl Kicks {
         }
     }
 
-    /// The footprints launched since this was last asked.
-    pub fn take_footprints(&mut self) -> Vec<Footprint> {
-        std::mem::take(&mut self.footprints)
+    /// The footprints' squares at `now`: a flat dark grey print 0.2 up, fading from 150 by 1 every other tick (gone at 4.8 s), each drawn
+    /// twice and blended.
+    pub fn print_meshes(&self, now: Instant) -> Vec<Wall> {
+        let mut walls = Vec::new();
+        for texture in [FOOT_LEFT, FOOT_RIGHT] {
+            let mut vertices = Vec::new();
+            for print in self.prints.iter().filter(|print| (print.effect == 447) == (texture == FOOT_LEFT)) {
+                let alpha = print_alpha(passes(print.start, now));
+                if alpha <= 0 {
+                    continue;
+                }
+                let tint = [1.0, 1.0, 1.0, alpha as f32 / 255.0];
+                let corner = |j: u32, uv: [f32; 2]| {
+                    let (sin, cos) = (print.heading + 90.0 * j as f32).to_radians().sin_cos();
+                    MeshVertex { position: [print.at[0] + PRINT_RADIUS * cos, print.at[1] + PRINT_UP, print.at[2] + PRINT_RADIUS * sin], uv, tint }
+                };
+                let [a, b, c, d] = [corner(0, [0.0, 1.0]), corner(1, [1.0, 1.0]), corner(2, [1.0, 0.0]), corner(3, [0.0, 0.0])];
+                for _ in 0..2 {
+                    vertices.extend([a, b, c, a, c, d]);
+                }
+            }
+            if !vertices.is_empty() {
+                walls.push(Wall { texture, vertices, additive: false, forced: false });
+            }
+        }
+        walls
     }
 
     /// The arc lines' tubes at `now` over their targets, white-grey with a blue glow, added on.
@@ -464,8 +501,8 @@ mod tests {
         for tick in 0..=40 {
             place.set([tick as f32, 0.0, 0.0]);
             kicks.advance(start + TICK * tick, |_| Some(place.get()), |_| 0);
-            steps.extend(kicks.take_footprints());
         }
+        steps.extend(kicks.prints.clone());
         // The first check (c = 7) only remembers the place and e is not over 7; then 448 at c = 14, 447 at c = 7 again (c goes back to 1).
         assert!(steps.iter().all(|step| step.heading == (bearing(1.0, 0.0) as f32 + 135.0) % 360.0));
         assert_eq!(steps.iter().map(|step| step.effect).collect::<Vec<_>>(), [448, 447, 448, 447, 448]);
@@ -475,7 +512,7 @@ mod tests {
         for tick in 0..=40 {
             idle.advance(start + TICK * tick, |_| Some([0.0; 3]), |_| 0);
         }
-        assert!(idle.take_footprints().is_empty());
+        assert!(idle.prints.is_empty());
         // The status takes a start away and a use with the status on is a stop.
         kicks.status(Some(1), true);
         assert!(kicks.runs.is_empty() && kicks.is_running(Some(1)) && !kicks.is_running(Some(2)));
@@ -518,5 +555,31 @@ mod tests {
         assert!(kicks.fin_meshes(|_| None).is_empty());
         kicks.advance(start + TICK * 101, |_| Some(feet), |_| 0);
         assert!(kicks.fins.is_empty());
+    }
+
+    #[test]
+    fn a_footprint_lies_on_the_ground_and_fades_over_4_8_seconds() {
+        let start = Instant::now();
+        // Alpha at n = 1, 2, 3, 4, 297, 298, 299, 300: 149, 149, 148, 148, 1, 1, 0, 0.
+        assert_eq!([1, 2, 3, 4, 297, 298, 299, 300].map(print_alpha), [149, 149, 148, 148, 1, 1, 0, 0]);
+        let mut kicks = Kicks::default();
+        kicks.prints.push(Footprint { effect: 447, at: [10.0, 1.0, 20.0], heading: 30.0, start });
+        kicks.prints.push(Footprint { effect: 448, at: [12.0, 1.0, 20.0], heading: 0.0, start });
+        let walls = kicks.print_meshes(start);
+        // One wall for each foot's picture, two identical normal-blend quads each, white at the alpha, 0.2 up on radius 5.4.
+        assert_eq!(walls.len(), 2);
+        assert_eq!((walls[0].texture, walls[1].texture), (FOOT_LEFT, FOOT_RIGHT));
+        assert!(walls.iter().all(|wall| !wall.additive && wall.vertices.len() == 12));
+        let vertices = &walls[0].vertices;
+        assert!(vertices[..6].iter().zip(&vertices[6..]).all(|(a, b)| a.position == b.position && a.uv == b.uv && a.tint == b.tint));
+        assert_eq!(vertices[0].tint, [1.0, 1.0, 1.0, 149.0 / 255.0]);
+        assert!((vertices[0].position[1] - 1.2).abs() < 1e-5);
+        let (dx, dz) = (vertices[0].position[0] - 10.0, vertices[0].position[2] - 20.0);
+        assert!((dx.hypot(dz) - 5.4).abs() < 1e-4 && (dz.atan2(dx).to_degrees() - 30.0).abs() < 1e-3);
+        assert_eq!(vertices[0].uv, [0.0, 1.0]);
+        // Nothing once the alpha is 0, and the print is gone after tick 340; it never follows anything.
+        assert!(kicks.print_meshes(start + TICK * 298).is_empty());
+        kicks.advance(start + TICK * 341, |_| Some([99.0; 3]), |_| 0);
+        assert!(kicks.prints.is_empty());
     }
 }

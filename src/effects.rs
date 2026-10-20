@@ -1705,8 +1705,6 @@ pub struct Effects {
     fist_frames: HashMap<(usize, usize, bool), Vec<Placed>>,
     /// The crowds' monsters by sprite, action and frame.
     crowd_frames: HashMap<(&'static str, usize, usize), Vec<Placed>>,
-    /// The footprints Running launched, for effects 447 and 448 when they get a look.
-    pub footprints: Vec<kicks::Footprint>,
     /// The skill units whose effect plays on a grid of points, and the points made and waiting to play.
     areas: Vec<Area>,
     area_queue: Vec<(u32, Vector, Instant)>,
@@ -2119,7 +2117,6 @@ const RUN_STATUS: u32 = 443;
 const RUN_STOP: u32 = 444;
 /// Running's status (133) and how long a footprint lives.
 const RUN_STATUS_EFST: u16 = 133;
-const FOOTPRINT_TICKS: u32 = 333;
 /// The Soul Reaper's dark cast, AGI up, Seven Wind and the blue and red body glows (`aura_look`, `prims::walls`, `prims::brawl`,
 /// `prims::body`).
 const DARK_CASTING: u32 = 454;
@@ -2871,6 +2868,9 @@ impl Effects {
             }
             (RUN_START, Target::Unit(unit)) => {
                 // Running's start leaves footprints; once its status is on, the use is its stop: eight fins shoot out of the feet.
+                for path in [kicks::FOOT_LEFT, kicks::FOOT_RIGHT] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
+                }
                 if self.prims.kicks.is_running(unit) {
                     self.textures.entry(kicks::FIN.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, kicks::FIN, false).ok());
                     self.play_sounds(table, RUN_STOP, at, now);
@@ -3948,12 +3948,11 @@ impl Effects {
         self.prims.sphere.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.petals.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.soul.advance(now, &position_of, self.yaw.to_degrees());
-        // The soul lights (506) the mote launches have no look yet.
-        let _ = self.prims.soul.take_launches();
+        // The soul lights (506) the mote launches along its path.
+        for (unit, offset) in self.prims.soul.take_launches() {
+            self.prims.souls.launch_soul(unit, offset, now, |n| pick(0, n.saturating_sub(1)));
+        }
         self.prims.kicks.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
-        let steps = self.prims.kicks.take_footprints();
-        self.footprints.extend(steps);
-        self.footprints.retain(|step| str_frame(now.saturating_duration_since(step.start)) < FOOTPRINT_TICKS);
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -4630,6 +4629,13 @@ impl Effects {
                 self.prims
                     .soul
                     .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
+                self.prims
+                    .kicks
+                    .print_meshes(now)
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
@@ -7367,8 +7373,8 @@ mod tests {
         assert_eq!(table.sounds[&RUN_STATUS].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\T_벽튕김", 0)]);
         assert_eq!(table.sounds[&RUN_STOP].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\t_효과음1", 0)]);
         assert!(!table.sounds.contains_key(&RUN_START));
-        // The footprints (447 and 448) have no rows of their own.
-        assert!(!table.lengths.contains_key(&447) && !table.parts.contains_key(&448));
+        // The footprints (447 and 448) are drawn in code, with no STR.
+        assert!(!table.parts.contains_key(&447) && !table.parts.contains_key(&448));
     }
 
     #[test]
@@ -7410,5 +7416,12 @@ mod tests {
         assert!(AIMED.contains(&STIN) && table.struck(467).unwrap().contains(&(Who::Caster, STIN)));
         assert_eq!(sounds(STIN), [("effect\\T_바람마법", 160)]);
         assert_eq!([COMFORT, SOUL_LINK_FX, STIN].map(|id| table.lengths[&id]), [400, 500, 200]);
+    }
+
+    #[test]
+    fn the_footprints_and_soul_links_sparkles_have_their_lengths() {
+        let table = Table::load();
+        assert_eq!([447, 448, 506].map(|id| table.lengths[&id]), [340, 340, 100]);
+        assert!([447, 448, 506].iter().all(|id| !table.sounds.contains_key(id)));
     }
 }

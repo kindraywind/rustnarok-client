@@ -95,8 +95,8 @@ pub struct Soul {
     comforts: Vec<Comfort>,
     links: Vec<Link>,
     blades: Vec<Blade>,
-    /// The soul lights (506) the mote launched: where, since the last ask.
-    launched: Vec<Vector>,
+    /// The soul lights (506) the mote launched: on whom and at what offset from the feet, since the last ask.
+    launched: Vec<(Option<u32>, Vector)>,
 }
 
 /// A cone band's alpha at its age n: 5 a tick to 95, held to 110, then 1 less a tick (0 at 205).
@@ -240,7 +240,7 @@ impl Soul {
     }
 
     /// The soul lights launched since this was last asked (they have no look yet).
-    pub fn take_launches(&mut self) -> Vec<Vector> {
+    pub fn take_launches(&mut self) -> Vec<(Option<u32>, Vector)> {
         std::mem::take(&mut self.launched)
     }
 
@@ -261,10 +261,10 @@ impl Soul {
                 let n = e + 1;
                 link.mote_alpha = mote_alpha(n);
                 link.theta = mote_theta(n);
-                if let (true, Some(feet)) = (n < 180, position_of(link.unit)) {
+                if let (true, Some(_)) = (n < 180, position_of(link.unit)) {
                     let (across, height) = mote_offset(link.theta);
                     let (sin, cos) = yaw.to_radians().sin_cos();
-                    lights.push([feet[0] + across * cos, feet[1] + height, feet[2] + across * sin]);
+                    lights.push((link.unit, [across * cos, height, across * sin]));
                 }
                 for letter in &mut link.letters {
                     letter.step();
