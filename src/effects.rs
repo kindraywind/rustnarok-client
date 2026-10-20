@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, brawl, burst, circle, dancer, first, ground, guard, huujin, knight, monk, sage, shafts, shards, sight, sniper, songs,
-    spray, star, stone, tanji, throw, transcend, walls, waterball,
+    balls, blitz, bolts, boomerang, brawl, burst, circle, dancer, first, ground, guard, huujin, knight, mechanic, monk, sage, shafts, shards, sight, sniper,
+    songs, spray, star, stone, tanji, throw, transcend, walls, waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1825,6 +1825,17 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Magnetic Field's arcs, Neutral Barrier's dome and cells, Stealth Field's cells, Repair's spanners, Analyze's mark and Venom
+/// Impress' icon (`prims::mechanic`, `prims::guard`, `prims::sparkle`, `prims::circle`).
+const MAGNETIC_FIELD: u32 = 781;
+const NEUTRAL_BARRIER: u32 = 782;
+const BARRIER_CELL: u32 = 783;
+const STEALTH_CELL: u32 = 784;
+const REPAIR: u32 = 785;
+const ANALYZE: u32 = 786;
+const VENOM_ICON: u32 = 788;
+/// The status Venom Impress gives, which its icon stands for.
+const VENOM_STATUS: u16 = 328;
 /// Poison Smoke's cell, Phantom Menace's crescents, the Mechanic's cast spin, and Acceleration's and Shape Shift's pulse.
 const POISON_SMOKE_CELL: u32 = 772;
 const PHANTOM_RIBBONS: u32 = 773;
@@ -2264,6 +2275,32 @@ impl Effects {
                 self.prims.shafts.play(at, now);
             }
             (CLOAKING, Target::Status(unit, _)) => self.prims.brawl.cloak(unit, now),
+            (MAGNETIC_FIELD, Target::Unit(unit)) => {
+                self.textures.entry(mechanic::ELEC.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, mechanic::ELEC, true).ok());
+                self.prims.mechanic.magnetic_field(unit, now);
+            }
+            (NEUTRAL_BARRIER, Target::Unit(unit)) => {
+                for path in [guard::TILE, guard::HOLY_TILE] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
+                self.prims.guard.neutral_barrier(unit, facing, now);
+            }
+            (REPAIR, Target::Unit(unit)) => {
+                self.textures
+                    .entry(crate::prims::sparkle::SPANNER_PICTURE.to_owned())
+                    .or_insert_with(|| gpu.try_load_texture(grf, crate::prims::sparkle::SPANNER_PICTURE, false).ok());
+                self.prims.spanners(unit, now);
+            }
+            (ANALYZE, Target::Unit(unit)) => {
+                self.textures.entry(circle::TARGET.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, circle::TARGET, true).ok());
+                self.prims.circles.mark(unit, now, |n| pick(0, n.saturating_sub(1)));
+                self.prims.guard.analyze(unit, now);
+            }
+            (VENOM_ICON, Target::Status(unit, _)) => {
+                self.textures.entry(circle::VENOM.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, circle::VENOM, false).ok());
+                self.prims.circles.venom(unit, now);
+            }
             (PHANTOM_RIBBONS, Target::Unit(unit)) => {
                 self.textures.entry(walls::RING_PURPLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_PURPLE, true).ok());
                 self.prims.walls.phantom_menace(unit, now);
@@ -2758,6 +2795,11 @@ impl Effects {
                 let look = if effect == MAGNUS { ground::RING_RED } else { ground::ALPHA_DOWN };
                 self.textures.entry(look.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, look, true).ok());
                 self.prims.ground.keep_box(effect, id, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+            } else if matches!(effect, BARRIER_CELL | STEALTH_CELL) {
+                // Neutral Barrier's and Stealth Field's cells breathe a faint band while their unit stands.
+                let path = if effect == BARRIER_CELL { mechanic::BARRIER_BAND } else { mechanic::STEALTH_BAND };
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                self.prims.mechanic.keep_band(id, effect == STEALTH_CELL, at, now, |n| pick(0, n.saturating_sub(1)));
             } else if effect == POISON_SMOKE_CELL {
                 // Poison Smoke's cells throw violet sparkles over everything while their unit stands.
                 self.sprites.entry(first::POISON_STAR.to_owned()).or_insert_with(|| SpriteSet::at(grf, first::POISON_STAR));
@@ -3047,6 +3089,7 @@ impl Effects {
         self.prims.sniper.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.spray.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.brawl.advance(now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.mechanic.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         }
@@ -3261,6 +3304,9 @@ impl Effects {
         // Camouflage, Stealth Field or Elemental Veil went off: the unit climbs back to opaque.
         if status == 330 {
             self.prims.circles.forget(unit);
+        }
+        if status == VENOM_STATUS {
+            self.prims.circles.forget_venom(unit);
         }
         if matches!(status, 360 | 379 | 1301) {
             self.prims.brawl.uncloak(unit, Instant::now());
@@ -3535,6 +3581,13 @@ impl Effects {
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
             .chain(
+                self.prims
+                    .mechanic
+                    .meshes(now, |n| pick(0, n.saturating_sub(1)))
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
                 self.prims.shafts.meshes(now).into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
             .chain(
@@ -3727,6 +3780,8 @@ impl Effects {
                 quads.push((texture, at, [corner(0), corner(1), corner(2), corner(3)], state.color, state.additive, true));
             }
         }
+        // Venom Impress' icon is force-drawn, over everything.
+        quads.extend(self.prims.circles.venom_quads(now, STR_RISE, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         // The effects made in code are none of them force-drawn.
         if self.only_forced {
             return quads;
@@ -3917,6 +3972,7 @@ impl Effects {
             }
         }
         quads.extend(self.prims.balls.quads(fire_ball, &self.fire_ball, spear, &self.textures, self.yaw));
+        quads.extend(self.prims.circles.mark_quads(now, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads.extend(self.prims.circles.quads(now, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads.extend(self.prims.sparkle_quads(now, self.dim, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         quads
@@ -5514,5 +5570,22 @@ mod tests {
         assert_eq!((sounds(ACCELERATION), sounds(SHAPE_SHIFT)), (vec![("effect\\EF_IncAgility", 0, false)], vec![("effect\\소울 체인지", 0, false)]));
         assert!(table.used(2262).unwrap().contains(&(Who::Caster, ACCELERATION)) && table.used(2268).unwrap().contains(&(Who::Caster, SHAPE_SHIFT)));
         assert!([2263, 2264, 2265].iter().all(|&skill| table.used(skill).unwrap().contains(&(Who::Caster, first::SIDE_SLIDE))));
+    }
+
+    #[test]
+    fn infrared_scan_magnetic_field_neutral_barrier_the_cells_analyze_and_venom_impress_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        assert_eq!(sounds(first::RED_RING), [("effect\\cru_grand cross", 0, false)]);
+        assert_eq!(sounds(MAGNETIC_FIELD), [("effect\\MAGNETICFIELD", 80, false)]);
+        assert_eq!(sounds(NEUTRAL_BARRIER), [("effect\\black_maximize_power_sword_bic", 0, false), ("effect\\mon_금강불괴", 0, true)]);
+        assert_eq!(sounds(ANALYZE), [("effect\\ANALYZE", 0, false)]);
+        assert!(!table.sounds.contains_key(&BARRIER_CELL) && !table.sounds.contains_key(&STEALTH_CELL) && !table.sounds.contains_key(&REPAIR));
+        assert!(table.struck(2270).unwrap().contains(&(Who::Caster, first::RED_RING)) && table.struck(2272).unwrap().contains(&(Who::Caster, MAGNETIC_FIELD)));
+        assert!(table.used(2273).unwrap().contains(&(Who::Caster, NEUTRAL_BARRIER)) && table.used(2275).unwrap().contains(&(Who::Target, REPAIR)));
+        assert!(table.struck(2271).unwrap().contains(&(Who::Target, ANALYZE)));
+        assert_eq!((table.units[&226], table.units[&227]), (BARRIER_CELL, STEALTH_CELL));
+        assert!(table.units_once.contains(&226) && table.units_once.contains(&227));
+        assert!(table.status(328).contains(&VENOM_ICON) && VENOM_STATUS == 328);
     }
 }

@@ -29,6 +29,7 @@ pub const WEAPONS: [&str; 8] = [
 /// Detonator's flush (#9B9BFF).
 const LILAC: [u8; 3] = [0x9B, 0x9B, 0xFF];
 pub const TILE: &str = "data\\texture\\effect\\a01.bmp";
+pub const HOLY_TILE: &str = "data\\texture\\effect\\성체강복.tga";
 /// Fog Wall's box colour (#505050), the dome's three shells (#CDFFCD, #9BFF9B, #E1FFE1).
 const FOG_TINT: f32 = 80.0 / 255.0;
 const SHELLS: [([f32; 3], bool); 3] =
@@ -72,14 +73,16 @@ struct Dome {
     start: Instant,
     /// The facing at tick 0 the dome's first turn comes from.
     facing: f32,
+    /// Neutral Barrier's: its additive shells use a holier tile.
+    holy: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Flicker {
     /// Enchant Deadly Poison's magenta (ticks 0 to 80).
     Poison,
-    /// Preserve's white (ticks 10 to 30).
-    Preserve,
+    /// A white or yellow strobe, added on every other tick from `first` to `last` (Preserve's 10 to 30, Analyze's 10 to 90).
+    Strobe([u8; 3], u32, u32),
     /// Spiral Pierce's cast: outline copies and yellow for its length, at most 141 ticks.
     Pierce(u32),
     /// Memorize's yellow (ticks 10 to 35).
@@ -157,7 +160,7 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
     let even = e.is_multiple_of(2);
     match flicker {
         Flicker::Poison => (e <= 80).then_some(if even { (GLOW_ADDITIVE, Some([0xFF, 0x00, 0xFF])) } else { (0, Some([255; 3])) }),
-        Flicker::Preserve => (10..=30).contains(&e).then_some(if even { (GLOW_ADDITIVE, Some([0xFA; 3])) } else { (0, Some([255; 3])) }),
+        Flicker::Strobe(rgb, first, last) => (first..=last).contains(&e).then_some(if even { (GLOW_ADDITIVE, Some(rgb)) } else { (0, Some([255; 3])) }),
         Flicker::Memorize => (10..=35).contains(&e).then_some(if even { (GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])) } else { (0, Some([255; 3])) }),
         Flicker::DoubleCast => {
             (10..=50).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) })
@@ -242,7 +245,8 @@ impl Dome {
                     vertices.extend([a, b, c, a, c, d]);
                 }
             }
-            walls.push(Wall { texture: TILE, vertices, additive, forced: false });
+            let texture = if self.holy && additive { HOLY_TILE } else { TILE };
+            walls.push(Wall { texture, vertices, additive, forced: false });
         }
         walls
     }
@@ -285,8 +289,19 @@ impl Guard {
 
     /// Preserve's dome on `unit`, facing `facing` degrees.
     pub fn preserve(&mut self, unit: Option<u32>, facing: f32, now: Instant) {
-        self.domes.push(Dome { unit, start: now, facing });
-        self.bodies.push(Body { unit, start: now, flicker: Flicker::Preserve });
+        self.domes.push(Dome { unit, start: now, facing, holy: false });
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Strobe([0xFA; 3], 10, 30) });
+    }
+
+    /// Neutral Barrier's dome on `unit`: Preserve's with another tile, and a yellow strobe.
+    pub fn neutral_barrier(&mut self, unit: Option<u32>, facing: f32, now: Instant) {
+        self.domes.push(Dome { unit, start: now, facing, holy: true });
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Strobe([0xFA, 0xFA, 0], 10, 30) });
+    }
+
+    /// Analyze's white strobe of `unit` (ticks 10 to 90).
+    pub fn analyze(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Strobe([0xFA; 3], 10, 90) });
     }
 
     /// Enchant Deadly Poison's flicker on `unit`.
@@ -411,7 +426,7 @@ impl Guard {
             let e = passes(body.start, now).checked_sub(1)?;
             match body.flicker {
                 Flicker::Poison if e > 80 => fade_back([0xFF, 0x00, 0xFF], e - 80),
-                Flicker::Preserve if e > 30 => fade_back([0xFA; 3], e - 30),
+                Flicker::Strobe(rgb, _, last) if e > last => fade_back(rgb, e - last),
                 Flicker::Outlined(rgb, last) if e > last => fade_back(rgb, e - last),
                 Flicker::Concentration if e > 33 => fade_back(LILAC, e - 33),
                 _ => None,
@@ -636,5 +651,29 @@ mod tests {
         assert_eq!(glow(1), Some((GLOW_OUTLINE, Some([255; 3]))));
         assert!(glow(60).is_some() && glow(61).is_none());
         assert_eq!(guard.body_tint(Some(1), start + TICK * 61), Some([0xA3, 0xA3, 0xFF]));
+    }
+
+    #[test]
+    fn neutral_barrier_uses_a_holier_tile_and_a_yellow_strobe_and_analyze_strobes_white() {
+        use crate::actor::GLOW_ADDITIVE;
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.neutral_barrier(Some(1), 90.4, start);
+        guard.analyze(Some(2), start);
+        // 45 quads: the additive shells (1 and 2) on the holy tile, shell 3 on a01.
+        let walls = guard.meshes(start, |_| Some([0.0; 3]));
+        assert_eq!(walls.iter().map(|wall| wall.texture).collect::<Vec<_>>(), [HOLY_TILE, HOLY_TILE, TILE]);
+        assert!(walls.iter().all(|wall| wall.vertices.len() == 15 * 6));
+        // Yellow on ticks 10 to 30: additive #FAFA00 on the even ones, #FFFFFF on the odd.
+        let yellow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        assert_eq!(yellow(10), Some((GLOW_ADDITIVE, Some([0xFA, 0xFA, 0]))));
+        assert_eq!(yellow(11), Some((0, Some([255; 3]))));
+        assert!(yellow(9).is_none() && yellow(30).is_some() && yellow(31).is_none());
+        // Analyze: ticks 10 to 90 in #FAFAFA; preserve's own white.
+        let white = |tick: u32| guard.glow(Some(2), start + TICK * tick);
+        assert!(white(9).is_none() && white(10) == Some((GLOW_ADDITIVE, Some([0xFA; 3]))) && white(90).is_some() && white(91).is_none());
+        let mut plain = Guard::default();
+        plain.preserve(Some(1), 0.0, start);
+        assert!(plain.meshes(start, |_| Some([0.0; 3])).iter().all(|wall| wall.texture == TILE));
     }
 }

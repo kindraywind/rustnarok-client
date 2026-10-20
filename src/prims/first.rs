@@ -52,6 +52,9 @@ pub const REMOVE_TRAP: u32 = 100;
 pub const DETECTING: u32 = 119;
 /// Hovering's and the Side Slides' pale ring: Detecting's, smaller and earlier fading.
 pub const SIDE_SLIDE: u32 = 778;
+/// Infrared Scan's red ring and Analyze's green one: Detecting's, tinted; the green follows its unit.
+pub const RED_RING: u32 = 780;
+pub const GREEN_RING: u32 = 786;
 pub const ENCHANT_POISON: u32 = 125;
 /// Enchant Deadly Poison: the same sparkles round the caster's tick-0 place, 40 of them, those after tick 80 never drawn.
 pub const ENCHANT_DEADLY_POISON: u32 = 493;
@@ -80,6 +83,8 @@ pub fn makes(effect: u32) -> bool {
             | REMOVE_TRAP
             | DETECTING
             | SIDE_SLIDE
+            | RED_RING
+            | GREEN_RING
             | ENCHANT_POISON
             | ENCHANT_DEADLY_POISON
     )
@@ -99,7 +104,8 @@ fn length(effect: u32) -> u32 {
         ADRENALINE_RUSH => 300,
         FLASHER_FX => 250,
         REMOVE_TRAP => 70,
-        DETECTING | SIDE_SLIDE | ENCHANT_POISON => 250,
+        DETECTING | SIDE_SLIDE | RED_RING | ENCHANT_POISON => 250,
+        GREEN_RING => 100,
         ENCHANT_DEADLY_POISON => 120,
         _ => 50,
     }
@@ -271,7 +277,7 @@ impl First {
                     }
                 }
             }
-            DETECTING | SIDE_SLIDE => seed(0, 0.0, [0.0; 4]),
+            DETECTING | SIDE_SLIDE | RED_RING | GREEN_RING => seed(0, 0.0, [0.0; 4]),
             ENCHANT_POISON => {
                 // A sparkle every 5 ticks: yaw, distance, speed, size.
                 for born in (0..=245).step_by(5) {
@@ -390,6 +396,7 @@ impl First {
                     | REMOVE_TRAP
                     | DETECTING
                     | SIDE_SLIDE
+                    | RED_RING
                     | ENCHANT_POISON
                     | ENCHANT_DEADLY_POISON
             ),
@@ -544,12 +551,18 @@ impl First {
                 }
                 DETECTING => {
                     if let Some(a) = Self::age(effect, now, 0, 57) {
-                        meshes.push((FASHASHA, ring_square(at, detecting_half(a), burst::alpha(a, 254.0, 0.0, 254.0, 40, 57))));
+                        meshes.push((FASHASHA, ring_square(at, detecting_half(a), burst::alpha(a, 254.0, 0.0, 254.0, 40, 57), [1.0; 3])));
                     }
                 }
                 SIDE_SLIDE => {
                     if let Some(a) = Self::age(effect, now, 0, 57) {
-                        meshes.push((FASHASHA, ring_square(at, ring_half(a, 10), burst::alpha(a, 254.0, 0.0, 254.0, 30, 57))));
+                        meshes.push((FASHASHA, ring_square(at, ring_half(a, 10), burst::alpha(a, 254.0, 0.0, 254.0, 30, 57), [1.0; 3])));
+                    }
+                }
+                RED_RING | GREEN_RING => {
+                    if let Some(a) = Self::age(effect, now, 0, 57) {
+                        let rgb = if effect.id == RED_RING { [1.0, 140.0 / 255.0, 140.0 / 255.0] } else { [210.0 / 255.0, 250.0 / 255.0, 210.0 / 255.0] };
+                        meshes.push((FASHASHA, ring_square(at, detecting_half(a), burst::alpha(a, 254.0, 0.0, 254.0, 40, 57), rgb)));
                     }
                 }
                 _ => {}
@@ -874,8 +887,8 @@ fn ring(at: Vector, a: u32, alpha: f32, swell: f32, widest: f32) -> Vec<MeshVert
 }
 
 /// A ring: a square 5 up from the ground, `half` wide, at `alpha` (0 to 255).
-fn ring_square(at: Vector, half: f32, alpha: f32) -> Vec<MeshVertex> {
-    let tint = [1.0, 1.0, 1.0, alpha / 255.0];
+fn ring_square(at: Vector, half: f32, alpha: f32, rgb: [f32; 3]) -> Vec<MeshVertex> {
+    let tint = [rgb[0], rgb[1], rgb[2], alpha / 255.0];
     let corner = |across: f32, along: f32, uv| MeshVertex { position: [at[0] + across * half, at[1] + 5.0, at[2] + along * half], uv, tint };
     let [a, b, c, d] = [corner(1.0, 1.0, [0.0, 0.0]), corner(1.0, -1.0, [1.0, 0.0]), corner(-1.0, 1.0, [0.0, 1.0]), corner(-1.0, -1.0, [1.0, 1.0])];
     vec![a, b, c, d, c, b]
@@ -1429,5 +1442,23 @@ mod tests {
         let alpha = |e: u32| (mesh(e)[0].1[0].tint[3] * 255.0).trunc();
         assert_eq!([0, 29, 30, 56].map(alpha), [254.0, 254.0, 244.0, 0.0]);
         assert!(makes(SIDE_SLIDE));
+    }
+
+    #[test]
+    fn infrared_scan_rings_red_and_analyze_rings_green_following_its_target() {
+        let (red, start) = effect_at(RED_RING, |_| 0, false);
+        // Detecting's ring in #FF8C8C: W 41.893 at age 16 and 48.63 at 56, 57 draws.
+        assert!(near(detecting_half(16), 41.893) && near(detecting_half(56), 48.63));
+        let mesh = |first: &First, e: u32| first.meshes(tick(start, e), |_| Some([5.0; 3]));
+        assert!((0..57).all(|e| mesh(&red, e).len() == 1) && mesh(&red, 57).is_empty());
+        let vertex = &mesh(&red, 0)[0].1[0];
+        assert_eq!(vertex.tint[..3], [1.0, 140.0 / 255.0, 140.0 / 255.0]);
+        // The red ring stays on its cell; the green one follows the target's feet every tick and is #D2FAD2.
+        assert!(near(vertex.position[0], 1.607));
+        let (green, _) = effect_at(GREEN_RING, |_| 0, false);
+        let moved = green.meshes(tick(start, 3), |_| Some([40.0, 0.0, 0.0]));
+        assert!(moved[0].1[0].position[0] > 40.0);
+        assert_eq!(moved[0].1[0].tint[..3], [210.0 / 255.0, 250.0 / 255.0, 210.0 / 255.0]);
+        assert!(makes(RED_RING) && makes(GREEN_RING));
     }
 }
