@@ -2309,6 +2309,11 @@ const FULL_BUSTER: u32 = 584;
 const SPREAD_ATTACK: u32 = 645;
 const GREY_BODY: u32 = 963;
 const KAIZEL_FINS: u32 = 590;
+/// Eswhoo's dark discs, Kaute's pale and dark sparks and Soul Unity's tube.
+const ESWHOO_DISCS: u32 = 1206;
+const KAUTE_PALE: u32 = 1207;
+const KAUTE_DARK: u32 = 1208;
+const SOUL_UNITY: u32 = 1210;
 const KOUENKA: u32 = 618;
 /// Lullaby Deep Sleep's wandering notes (`prims::notes`).
 const LULLABY: u32 = 969;
@@ -2477,10 +2482,12 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 49] = [
+pub const AIMED: [u32; 51] = [
     EF_TETRA,
     STIN,
     CROSS_LINES,
+    ESWHOO_DISCS,
+    SOUL_UNITY,
     PIERCING_LINES,
     KAMAITACHI,
     ESMA_DISCS,
@@ -3406,6 +3413,11 @@ impl Effects {
         match (id, target) {
             (DRAIN_TARGET, Target::Unit(unit)) => self.prims.transcend.drain_target(unit, now),
             (MAGIC_CRASHER, Target::Unit(unit)) => self.prims.transcend.crasher(unit, now, |n| pick(0, n.saturating_sub(1))),
+            (KAUTE_PALE | KAUTE_DARK, Target::Unit(unit)) => {
+                self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
+                self.prims.kaute_sparks(at, now, id == KAUTE_DARK, |n| pick(0, n.saturating_sub(1)));
+                self.prims.transcend.indulge(unit, now);
+            }
             (INDULGE, Target::Unit(unit)) => {
                 self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
                 self.prims.indulge(at, now, |n| pick(0, n.saturating_sub(1)));
@@ -4083,6 +4095,16 @@ impl Effects {
                 self.textures.entry(wheels::BLADE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, wheels::BLADE, false).ok());
                 self.play_sounds(table, id, from, now);
                 self.prims.wheels.throw(caster, from, to, now);
+            }
+            ESWHOO_DISCS => {
+                self.textures.entry(linker::BLADE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, linker::BLADE, false).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.linker.dark_discs(from, (target != own).then_some(target), now);
+            }
+            SOUL_UNITY => {
+                self.textures.entry(transcend::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, transcend::CLOUD, true).ok());
+                // The tube runs from the target to the caster, whose id the packet names.
+                self.prims.transcend.unity((target != own).then_some(target), caster.unwrap_or(own), own, now);
             }
             ESMA_DISCS => {
                 self.textures.entry(linker::BLADE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, linker::BLADE, false).ok());
@@ -8259,5 +8281,19 @@ mod tests {
         assert_eq!(quakes, [(0, 650), (640, 650), (1280, 650)]);
         assert!(table.struck(2218).unwrap().contains(&(Who::Caster, EF_TETRA)));
         assert!(AIMED.contains(&EF_TETRA));
+    }
+
+    #[test]
+    fn eswhoo_kaute_and_soul_unity_have_their_rows() {
+        let table = Table::load();
+        assert!(AIMED.contains(&ESWHOO_DISCS) && table.struck(2604).unwrap().contains(&(Who::Caster, ESWHOO_DISCS)));
+        assert_eq!(
+            table.sounds[&ESWHOO_DISCS].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>(),
+            [80, 320, 560, 800, 1040].map(|delay| ("effect\\T_날라차기", delay, true))
+        );
+        assert!(table.used(2612).unwrap().contains(&(Who::Target, KAUTE_PALE)) && table.used(2612).unwrap().contains(&(Who::Caster, KAUTE_DARK)));
+        assert!(AIMED.contains(&SOUL_UNITY) && table.used(2605).unwrap().contains(&(Who::Target, SOUL_UNITY)));
+        assert!(!table.sounds.contains_key(&KAUTE_PALE) && !table.sounds.contains_key(&KAUTE_DARK) && !table.sounds.contains_key(&SOUL_UNITY));
+        assert_eq!([ESWHOO_DISCS, KAUTE_PALE, KAUTE_DARK, SOUL_UNITY].map(|id| table.lengths[&id]), [200; 4]);
     }
 }

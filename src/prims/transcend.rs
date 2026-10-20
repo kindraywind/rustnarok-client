@@ -48,6 +48,8 @@ struct Link {
     marionette: bool,
     /// Shadow Form's dark grey tube (819): it pulses between alpha 43 and 53 and stays until its status goes.
     shadow: bool,
+    /// Soul Unity's yellow tube with a blue edge (1210): the same pulse, for the effect's 200 ticks.
+    unity: bool,
     caster: Option<u32>,
     /// The id of the target as the game reads it, through a 32-bit float.
     aim: u32,
@@ -169,18 +171,23 @@ impl Transcend {
 
     /// Soul Change's tube from `caster` to the unit named by `target` (the player is `own`).
     pub fn link(&mut self, caster: Option<u32>, target: u32, own: u32, now: Instant) {
-        self.links.push(Link { marionette: false, shadow: false, caster, aim: target, own, start: now, lost: false });
+        self.links.push(Link { marionette: false, shadow: false, unity: false, caster, aim: target, own, start: now, lost: false });
+    }
+
+    /// Soul Unity's tube (1210) from `unit` (the target) to the unit the packet names by the id `aim` (the caster).
+    pub fn unity(&mut self, unit: Option<u32>, aim: u32, own: u32, now: Instant) {
+        self.links.push(Link { marionette: false, shadow: false, unity: true, caster: unit, aim, own, start: now, lost: false });
     }
 
     /// Marionette Control's tube (395): it stays until the status packet of the control (EFST 121) takes it.
     pub fn marionette(&mut self, caster: Option<u32>, target: u32, own: u32, now: Instant) {
-        self.links.push(Link { marionette: true, shadow: false, caster, aim: target, own, start: now, lost: false });
+        self.links.push(Link { marionette: true, shadow: false, unity: false, caster, aim: target, own, start: now, lost: false });
     }
 
     /// Shadow Form's tube (819) from `caster` to the unit the packet names, replacing the caster's last.
     pub fn shadow(&mut self, caster: Option<u32>, target: u32, own: u32, now: Instant) {
         self.links.retain(|link| !(link.shadow && link.caster == caster));
-        self.links.push(Link { marionette: false, shadow: true, caster, aim: target, own, start: now, lost: false });
+        self.links.push(Link { marionette: false, shadow: true, unity: false, caster, aim: target, own, start: now, lost: false });
     }
 
     /// A status packet of the Marionette control (EFST 121), on or off, takes the unit's tube.
@@ -271,7 +278,7 @@ impl Transcend {
         let mut walls = Vec::new();
         for link in self.links.iter().filter(|link| !link.lost) {
             let n = passes(link.start, now);
-            if n == 0 || (!link.marionette && !link.shadow && n > 77) {
+            if n == 0 || (!link.marionette && !link.shadow && !link.unity && n > 77) || (link.unity && n > 199) {
                 continue;
             }
             let target = linked_unit(link.aim, link.own);
@@ -283,7 +290,11 @@ impl Transcend {
             let bearing = super::tanji::bearing(p0[0] - p1[0], p0[2] - p1[2]) as f32;
             let (sin, cos) = ((bearing + 90.0) % 360.0).to_radians().sin_cos();
             let shadow = [(0.4, shadow_alpha(n)), (0.8, shadow_alpha(n))];
-            let tubes = if link.shadow {
+            let tubes = if link.unity {
+                // A thin yellow core and a wider blue edge on the pulse of Shadow Form's.
+                let alpha = shadow_alpha(n);
+                [(0.4, [1.0, 1.0, 0.0], alpha), (0.8, [0.0, 0.0, 1.0], (2.0 * alpha).min(255.0))]
+            } else if link.shadow {
                 shadow.map(|(width, alpha)| (width, [50.0 / 255.0; 3], (alpha / 2.0).floor()))
             } else if link.marionette {
                 let (width, alpha) = (marionette_width(n), marionette_alpha(n));
@@ -309,7 +320,9 @@ impl Transcend {
                     ];
                     vertices.extend([a, b, c, a, c, d]);
                 }
-                walls.push(if link.shadow {
+                walls.push(if link.unity {
+                    Wall { texture: CLOUD, vertices, additive: true, forced: false }
+                } else if link.shadow {
                     Wall { texture: CLOUD, vertices, additive: false, forced: false }
                 } else {
                     Wall { texture: TUBE, vertices, additive: true, forced: false }
@@ -506,5 +519,42 @@ mod tests {
         transcend.shadow(None, 99, 1, start);
         transcend.advance(start + TICK * 2, feet);
         assert!(transcend.meshes(start + TICK * 3, feet).is_empty());
+    }
+
+    #[test]
+    fn soul_unity_links_the_target_to_the_caster_in_a_yellow_tube_with_a_blue_edge() {
+        let start = Instant::now();
+        let mut transcend = Transcend::default();
+        // The target (unit 3) to the caster (unit 4, named by id as a float); the player is 9.
+        transcend.unity(Some(3), 4, 9, start);
+        let feet = |unit: Option<u32>| match unit {
+            Some(3) => Some([0.0, 0.0, 0.0]),
+            Some(4) => Some([100.0, 0.0, 0.0]),
+            _ => None,
+        };
+        // Nothing before the first tick; at n = 1 the alpha is 47 and the far end sin(6°) of the way.
+        let walls = transcend.meshes(start, feet);
+        assert_eq!(walls.len(), 2);
+        assert_eq!([1, 4, 5, 9, 10].map(shadow_alpha), [47.0, 53.0, 51.0, 43.0, 45.0]);
+        assert!(walls.iter().all(|wall| wall.texture == CLOUD && wall.additive && wall.vertices.len() == 60));
+        assert_eq!(walls[0].vertices[0].tint, [1.0, 1.0, 0.0, 47.0 / 255.0]);
+        assert_eq!(walls[1].vertices[0].tint, [0.0, 0.0, 1.0, 94.0 / 255.0]);
+        // The ring radii 0.4 and 0.8; the line grows 0.10, 0.99, 1.0 of its length at n = 1, 14, 15.
+        assert!((walls[0].vertices[0].position[1] - 8.0).abs() <= 0.4 + 1e-4 && (walls[1].vertices[0].position[1] - 8.0).abs() <= 0.8 + 1e-4);
+        assert_eq!([1, 14, 15].map(|n| (tube_growth(n) * 100.0).round() / 100.0), [0.10, 0.99, 1.0]);
+        // Both ends follow their units (the player when the id is its own); the tube goes for good once an end is missing.
+        let far = transcend.meshes(start + TICK * 20, |unit| feet(unit).map(|at| [at[0] + 50.0, at[1], at[2]]));
+        assert!(far[0].vertices.iter().any(|vertex| vertex.position[0] > 140.0));
+        assert!(transcend.meshes(start + TICK * 198, feet).len() == 2 && transcend.meshes(start + TICK * 199, feet).is_empty());
+        transcend.advance(start + TICK * 5, |_| None);
+        assert!(transcend.meshes(start + TICK * 6, feet).is_empty());
+        // Not drawn at all when the caster is not found at the first tick.
+        let mut missing = Transcend::default();
+        missing.unity(Some(3), 7, 9, start);
+        missing.advance(start, feet);
+        assert!(missing.meshes(start + TICK * 2, feet).is_empty());
+        // The effect ends at tick 200.
+        transcend.advance(start + TICK * 201, feet);
+        assert!(transcend.links.is_empty());
     }
 }

@@ -34,6 +34,8 @@ const SPARK_TINT: [f32; 3] = [150.0 / 255.0, 150.0 / 255.0, 250.0 / 255.0];
 const MOVER_LAST: u32 = 198;
 /// The blade's colour #5050FF and the frost's #8282FA.
 const BLADE_TINT: [f32; 3] = [80.0 / 255.0, 80.0 / 255.0, 1.0];
+/// Eswhoo's dark grey discs (#464646), blended, not added on.
+const DARK_TINT: [f32; 3] = [70.0 / 255.0; 3];
 const FROST_TINT: [f32; 3] = [130.0 / 255.0, 130.0 / 255.0, 250.0 / 255.0];
 
 /// What a disc is doing: homing on the target, fading out or curling back home.
@@ -61,6 +63,8 @@ pub struct Disc {
     done: u32,
     age: i32,
     home: Vector,
+    /// Eswhoo's: dark grey, blended.
+    dark: bool,
     pub heading: i32,
     pub state: State,
     pub elements: [Element; 4],
@@ -157,10 +161,10 @@ fn wrap(degrees: i32) -> i32 {
 }
 
 impl Disc {
-    fn new(from: Vector, target: Option<u32>, sense: i32, now: Instant) -> Self {
+    fn new(from: Vector, target: Option<u32>, sense: i32, dark: bool, now: Instant) -> Self {
         let at = [from[0], from[1] + 10.0, from[2]];
         let elements = std::array::from_fn(|k| Element { at, spin: k as f32, alpha: 0, dead: false });
-        Self { start: now, target, sense, done: 0, age: 0, home: from, heading: 0, state: State::Homing, elements }
+        Self { start: now, target, sense, done: 0, age: 0, home: from, dark, heading: 0, state: State::Homing, elements }
     }
 
     fn turn(&self) -> i32 {
@@ -316,8 +320,14 @@ impl Mover {
 impl Linker {
     /// Esma's two discs from the caster's feet `from`, aimed at `target` (None = the player); the left one first.
     pub fn discs(&mut self, from: Vector, target: Option<u32>, now: Instant) {
-        self.discs.push(Disc::new(from, target, 0, now));
-        self.discs.push(Disc::new(from, target, 1, now));
+        self.discs.push(Disc::new(from, target, 0, false, now));
+        self.discs.push(Disc::new(from, target, 1, false, now));
+    }
+
+    /// Eswhoo's two dark grey discs: Esma's, in #464646 with the normal blend.
+    pub fn dark_discs(&mut self, from: Vector, target: Option<u32>, now: Instant) {
+        self.discs.push(Disc::new(from, target, 0, true, now));
+        self.discs.push(Disc::new(from, target, 1, true, now));
     }
 
     /// The frost picture on `unit`.
@@ -445,24 +455,28 @@ impl Linker {
         quads
     }
 
-    /// The discs and their trails: flat blue squares added on.
+    /// The discs and their trails: flat squares, Esma's blue and added on, Eswhoo's dark grey and blended.
     pub fn meshes(&self) -> Vec<Wall> {
-        let mut vertices = Vec::new();
-        for disc in &self.discs {
-            for element in disc.elements.iter().filter(|element| element.alpha > 0) {
-                let tint = [BLADE_TINT[0], BLADE_TINT[1], BLADE_TINT[2], element.alpha as f32 / 255.0];
-                let corner = |angle: f32, uv: [f32; 2]| {
-                    let (sin, cos) = (element.spin + angle).to_radians().sin_cos();
-                    MeshVertex { position: [element.at[0] + 25.0 * cos, element.at[1], element.at[2] + 25.0 * sin], uv, tint }
-                };
-                let [p0, p1, p2, p3] = [corner(90.0, [0.0, 1.0]), corner(180.0, [1.0, 1.0]), corner(270.0, [1.0, 0.0]), corner(360.0, [0.0, 0.0])];
-                vertices.extend([p0, p1, p2, p0, p2, p3]);
+        let mut walls = Vec::new();
+        for dark in [false, true] {
+            let mut vertices = Vec::new();
+            let rgb = if dark { DARK_TINT } else { BLADE_TINT };
+            for disc in self.discs.iter().filter(|disc| disc.dark == dark) {
+                for element in disc.elements.iter().filter(|element| element.alpha > 0) {
+                    let tint = [rgb[0], rgb[1], rgb[2], element.alpha as f32 / 255.0];
+                    let corner = |angle: f32, uv: [f32; 2]| {
+                        let (sin, cos) = (element.spin + angle).to_radians().sin_cos();
+                        MeshVertex { position: [element.at[0] + 25.0 * cos, element.at[1], element.at[2] + 25.0 * sin], uv, tint }
+                    };
+                    let [p0, p1, p2, p3] = [corner(90.0, [0.0, 1.0]), corner(180.0, [1.0, 1.0]), corner(270.0, [1.0, 0.0]), corner(360.0, [0.0, 0.0])];
+                    vertices.extend([p0, p1, p2, p0, p2, p3]);
+                }
+            }
+            if !vertices.is_empty() {
+                walls.push(Wall { texture: BLADE, vertices, additive: !dark, forced: false });
             }
         }
-        if vertices.is_empty() {
-            return Vec::new();
-        }
-        vec![Wall { texture: BLADE, vertices, additive: true, forced: false }]
+        walls
     }
 
     /// The frost pictures over their units' feet, facing the camera.
@@ -492,7 +506,7 @@ mod tests {
 
     /// Runs one disc `ticks` ticks with the target fixed at `target`.
     fn run(sense: i32, target: Option<Vector>, ticks: u32) -> Disc {
-        let mut disc = Disc::new(FEET, Some(1), sense, Instant::now());
+        let mut disc = Disc::new(FEET, Some(1), sense, false, Instant::now());
         for _ in 0..ticks {
             disc.step(target);
         }
@@ -588,6 +602,24 @@ mod tests {
         assert!(near(f32::hypot(first[0] - linker.discs[0].elements[0].at[0], first[2] - linker.discs[0].elements[0].at[2]), 25.0));
         linker.advance(at(201), |_| None, |_| 0);
         assert!(linker.discs.is_empty());
+    }
+
+    #[test]
+    fn eswhoos_discs_are_dark_grey_and_blended() {
+        let start = Instant::now();
+        let mut linker = Linker::default();
+        linker.dark_discs(FEET, Some(1), start);
+        linker.discs(FEET, Some(1), start);
+        linker.advance(start + TICK * 30, |_| Some([300.0, 3.0, 100.0]), |_| 0);
+        // The same numbers as Esma's, two walls: the blue ones added on, the dark ones in #464646 with the normal blend.
+        assert_eq!(linker.discs.len(), 4);
+        let walls = linker.meshes();
+        assert_eq!(walls.len(), 2);
+        let (blue, dark) = (&walls[0], &walls[1]);
+        assert!(blue.additive && !dark.additive && dark.texture == BLADE && !dark.forced);
+        assert!(dark.vertices.iter().all(|vertex| vertex.tint[..3] == [70.0 / 255.0; 3]));
+        assert_eq!(dark.vertices.len(), blue.vertices.len());
+        assert_eq!(linker.discs[0].elements.map(|element| element.alpha), linker.discs[2].elements.map(|element| element.alpha));
     }
 
     #[test]
