@@ -108,6 +108,8 @@ enum Flicker {
     Outlined([u8; 3], u32),
     /// Detonator's lilac flush (ticks 10 to 33).
     Concentration,
+    /// Sonic Wave's blue strobe: outline copies added on in #0505FF on even ticks 4 to 52, white on the odd ones.
+    Sonic,
     /// Deadly Infect's black and white blink: white on the odd ticks, black on the even, ticks 6 to 60.
     Blink,
 }
@@ -183,6 +185,7 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
             (10..=50).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) })
         }
         Flicker::Outlined(rgb, last) => (e <= last).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb)) } else { (GLOW_OUTLINE, Some([255; 3])) }),
+        Flicker::Sonic => (4..=52).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([5, 5, 0xFF])) } else { (0, Some([255; 3])) }),
         Flicker::Blink => (6..=60).contains(&e).then_some((0, Some(if even { [0; 3] } else { [255; 3] }))),
         Flicker::Concentration => (10..=33).contains(&e).then_some((if even { GLOW_ADDITIVE } else { 0 }, Some(LILAC))),
         Flicker::Pierce(length) => {
@@ -352,6 +355,11 @@ impl Guard {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0x9B, 0x9B, 0xFF], 60) });
     }
 
+    /// Sonic Wave's blue strobe of `unit`.
+    pub fn sonic(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Sonic });
+    }
+
     /// Deadly Infect's black and white blink of `unit`.
     pub fn blink(&mut self, unit: Option<u32>, now: Instant) {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Blink });
@@ -493,6 +501,7 @@ impl Guard {
                 Flicker::Outlined(rgb, last) if e > last => fade_back(rgb, e - last),
                 Flicker::Concentration if e > 33 => fade_back(LILAC, e - 33),
                 Flicker::Blink if e > 60 => fade_back([0; 3], e - 60),
+                Flicker::Sonic if e > 52 => fade_back([5, 5, 0xFF], e - 52),
                 _ => None,
             }
         })
@@ -783,5 +792,20 @@ mod tests {
         assert!((first(18)[0] - (centre[0] + 5.0 * cos)).abs() < 1e-3 && (first(18)[2] - (centre[2] + 5.0 * sin)).abs() < 1e-3);
         guard.advance(start + TICK * 301);
         assert!(guard.strips.is_empty());
+    }
+
+    #[test]
+    fn sonic_wave_strobes_the_rune_knight_blue() {
+        use crate::actor::{GLOW_ADDITIVE, GLOW_OUTLINE};
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.sonic(Some(1), start);
+        let glow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        // #0505FF added on with the outline copies on ticks 4, 6 … 52, white on 5, 7 … 51; nothing on 3 and 53.
+        assert!(glow(3).is_none() && glow(53).is_none());
+        assert_eq!(glow(4), Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([5, 5, 0xFF]))));
+        assert_eq!(glow(5), Some((0, Some([255; 3]))));
+        assert!(glow(52).is_some() && glow(51).unwrap().0 == 0);
+        assert_eq!(guard.body_tint(Some(1), start + TICK * 53), Some([13, 13, 255]));
     }
 }
