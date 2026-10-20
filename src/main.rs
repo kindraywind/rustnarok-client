@@ -151,6 +151,7 @@ mod weather;
 mod whisper;
 mod window;
 mod world;
+mod world_str;
 mod worldmap;
 
 use std::collections::{HashMap, HashSet, VecDeque};

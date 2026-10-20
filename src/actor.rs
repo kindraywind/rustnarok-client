@@ -301,6 +301,11 @@ pub fn glint_rise(player: bool, job: u16, option: u32) -> f32 {
     }
 }
 
+/// Whether an option word has its unit riding a mount.
+pub fn rides(option: u32) -> bool {
+    option & MOUNTS != 0
+}
+
 /// Doram jobs live under 도람족 instead of 인간족.
 pub fn is_doram(job: u16) -> bool {
     matches!(job, 4217..=4221 | 4308 | 4315)
