@@ -47,8 +47,8 @@ https://github.com/user-attachments/assets/e4d4f87c-c3b9-4b53-a68e-5e61c5cab667
 </td>
 <td width="50%" valign="top">
 
-**🧪 A mod, as an experiment.** A Diablo IV style interface, every texture painted by code. It lives on the
-[`experiment-d4-ui`](https://github.com/kindraywind/rustnarok-client/tree/experiment-d4-ui) branch, not in `main`.
+**🧪 A mod experiment.** A Diablo IV style interface, on the
+[`experiment-d4-ui`](https://github.com/kindraywind/rustnarok-client/tree/experiment-d4-ui) branch.
 
 https://github.com/user-attachments/assets/0348641a-e5eb-4a96-9f70-b3ce1692e833
 
