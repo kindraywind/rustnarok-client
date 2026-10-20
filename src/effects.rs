@@ -2226,6 +2226,9 @@ const SOUL_LINK_FX: u32 = 503;
 const STIN: u32 = 547;
 /// Estin's and Estun's blue flash (`prims::brawl`), Esma's discs and frost and Estun's mover (`prims::linker`).
 const BLUE_HIT: u32 = 549;
+/// The two spark movers (551, 1204), which leave a trail of open cone rings (552, 1205), and the sparks (556) Estun's leaves.
+const SPARK_MOVER: u32 = 551;
+const SPARK_MOVER_DARK: u32 = 1204;
 const ESMA_DISCS: u32 = 553;
 const ESMA_FROST: u32 = 554;
 const ESTUN_MOVER: u32 = 555;
@@ -3205,6 +3208,10 @@ impl Effects {
             (SKY_NET_SHAKE, Target::Unit(unit)) => self.prims.brawl.shake(unit, now, 31, 50),
             (RED_HIT, Target::Unit(unit)) => self.prims.brawl.red(unit, now),
             (GREY_BODY, Target::Status(unit, _)) => self.prims.guard.grey(unit),
+            (SPARK_MOVER | SPARK_MOVER_DARK, Target::Unit(_)) => {
+                self.textures.entry(linker::RING_BLUE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, linker::RING_BLUE, true).ok());
+                self.prims.linker.spark_mover(id == SPARK_MOVER_DARK, at, now, |n| pick(0, n.saturating_sub(1)));
+            }
             (BLUE_HIT, Target::Unit(unit)) => self.prims.brawl.blue_hit(unit, now),
             (ESMA_FROST, Target::Unit(unit)) => {
                 self.textures.entry(linker::FROST.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, linker::FROST, false).ok());
@@ -3679,6 +3686,14 @@ impl Effects {
         });
     }
 
+    /// A Chase Walk print (326 left, 327 right) where our walker stands, turned `heading` degrees.
+    pub fn chase_print(&mut self, gpu: &Gpu, grf: &Grf, effect: u32, at: Vector, heading: f32, now: Instant) {
+        for path in [kicks::CHASE_LEFT, kicks::CHASE_RIGHT] {
+            self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
+        }
+        self.prims.kicks.chase_print(effect, at, heading, now);
+    }
+
     /// Queues a camera shake starting at `start` for `length` (`QUAKE_SHORT` or `QUAKE_LONG`).
     pub fn start_quake(&mut self, start: Instant, length: Duration) {
         let length = if length == QUAKE_SHORT { QUAKE_SHORT } else { QUAKE_LONG };
@@ -3986,6 +4001,9 @@ impl Effects {
                 self.prims.linker.discs(from, (target != own).then_some(target), now);
             }
             ESTUN_MOVER => {
+                for path in linker::THUNDER {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
                 self.play_sounds(table, id, from, now);
                 self.prims.linker.mover(from, to, now, |n| pick(0, n.saturating_sub(1)));
             }
@@ -4192,10 +4210,8 @@ impl Effects {
         for (unit, offset) in self.prims.soul.take_launches() {
             self.prims.souls.launch_soul(unit, offset, now, |n| pick(0, n.saturating_sub(1)));
         }
-        self.prims.linker.advance(now, &position_of);
+        self.prims.linker.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.wheels.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
-        // Estun's mover launches 556, which has no look yet.
-        let _ = self.prims.linker.take_launches();
         self.prims.kicks.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for blues in &mut self.prims.blues {
             blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
@@ -4912,6 +4928,9 @@ impl Effects {
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
             .chain(self.prims.wheels.meshes().into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
+            .chain(
+                self.prims.linker.cone_meshes().into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
             .chain(self.prims.linker.meshes().into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
             .chain(
                 self.prims
@@ -5215,6 +5234,8 @@ impl Effects {
                     quads.push((texture, draw.at, soul::Soul::corners(draw.half), [red, green, blue, draw.alpha / 255.0], draw.additive, false));
                 }
             }
+            // Estun's electric sparks, facing the camera.
+            quads.extend(self.prims.linker.quads(now, |path| self.textures.get(path).and_then(Option::as_ref)));
             // Lope's motes and petals, facing the camera.
             quads.extend(self.prims.petals.quads(|path| self.textures.get(path).and_then(Option::as_ref)));
             // Lullaby Deep Sleep's notes, over everything (`STR_RISE` is taken off again).
@@ -6267,9 +6288,8 @@ mod tests {
         // Earth Spike shakes the camera; Fire Bolt's arrows fall before each hit.
         assert_eq!(table.quakes[&79], [(Duration::ZERO, QUAKE_SHORT)]);
         assert_eq!(table.skill(19, "beforeHitEffectId"), [31]);
-        // Chase Walk's footprints: the catalog's textures, played on the ground.
-        assert_eq!(table.floaters[&326][0]["file"], "effect/foot_l_b.tga");
-        assert_eq!(table.floaters[&327][0]["file"], "effect/foot_r_b.tga");
+        // Chase Walk's footprints are drawn in code, with no part rows.
+        assert!(!table.floaters.contains_key(&326) && !table.floaters.contains_key(&327));
         // Fire Wall, Safety Wall (its rise once), Pneuma and warp portals on the ground; Ankle Snare's model.
         assert_eq!([127, 126, 133, 129, 128].map(|kind| table.units[&kind]), [25, 315, 141, 316, 317]);
         assert!(table.parts[&315][0].once && !table.parts[&25][0].once);
@@ -7995,5 +8015,32 @@ mod tests {
         assert!(!table.sounds.contains_key(&570));
         assert_eq!(table.skill_sounds[&8005].iter().map(|sound| sound.file.as_str()).collect::<Vec<_>>(), ["effect\\h_castling"]);
         assert_eq!(table.lengths[&570], 100);
+    }
+
+    #[test]
+    fn the_spark_movers_ground_drifts_balls_and_chase_walks_prints_have_their_rows() {
+        let table = Table::load();
+        // No row starts 551 or 1204 (the server's packet does), and 552, 1205 and 556 are launched by the movers only.
+        let launched_by_rows = |effect: u32| {
+            [table.used.values(), table.struck.values(), table.grounds.values()].into_iter().flatten().flatten().any(|&(_, each)| each == effect)
+                || table.skills.values().any(|effects| effects.contains(&effect))
+                || table.units.values().any(|&each| each == effect)
+        };
+        assert!(![SPARK_MOVER, SPARK_MOVER_DARK, 552, 1205, 556].iter().any(|&effect| launched_by_rows(effect)));
+        assert_eq!([SPARK_MOVER, SPARK_MOVER_DARK, 556].map(|id| table.lengths[&id]), [100, 100, 50]);
+        assert!(!table.sounds.contains_key(&SPARK_MOVER) && !table.sounds.contains_key(&556));
+        // Ground Drift's four element balls: Kaensin's pattern, their own sprites, 22 ticks between copies.
+        for (effect, kind, name) in [(639, 191, "블라인드스피어"), (640, 192, "포이즌스피어"), (641, 193, "프리징스피어"), (642, 194, "플레어스피어")]
+        {
+            assert_eq!((table.units[&kind], table.lengths[&effect]), (effect, 23), "{effect}");
+            let part = &table.sprites[&effect][0];
+            assert_eq!((part.file.as_str(), part.attached), (name, false), "{effect}");
+            let animation = Animation::new(part, effect, Instant::now(), Anchor::Lasting(1, [0.0; 3]), true);
+            assert!(animation.repeat && !animation.over && animation.action == Some(0) && animation.offset == [0.0, -7.0], "{effect}");
+            assert_eq!(restart_ticks(effect, kind, 23), 22, "{effect}");
+        }
+        // Chase Walk's prints are drawn in code: no part rows, 340 ticks.
+        assert!(!table.floaters.contains_key(&326) && !table.floaters.contains_key(&327));
+        assert_eq!([326, 327].map(|id| table.lengths[&id]), [340, 340]);
     }
 }

@@ -1472,10 +1472,10 @@ spr	633	일섬	1	delayFrame=32;firstFrame=1;onTop=true;yOffset=-6;frame=0
 spr	634	화염진	1	repeat=true;firstFrame=1;frameTicks=3;frameTicksRan=5;restart=true;yOffset=-1
 spr	637	데스페라도	1	delayFrame=64;firstFrame=1;onTop=true
 spr	638	라이트닝스피어	0	frame=0;repeat=true;yOffset=-7
-spr	639	블라인드스피어	0	-
-spr	640	포이즌스피어	0	-
-spr	641	프리징스피어	0	-
-spr	642	플레어스피어	0	-
+spr	639	블라인드스피어	0	frame=0;repeat=true;yOffset=-7
+spr	640	포이즌스피어	0	frame=0;repeat=true;yOffset=-7
+spr	641	프리징스피어	0	frame=0;repeat=true;yOffset=-7
+spr	642	플레어스피어	0	frame=0;repeat=true;yOffset=-7
 spr	643	래피드샤워	1	delayFrame=64;firstFrame=1;onTop=true
 spr	644	매지컬불릿	1	delayFrame=32;firstFrame=1;onTop=true
 spr	645	스프레드	1	delayFrame=64;firstFrame=1;onTop=true
@@ -1489,12 +1489,6 @@ spr	685	폭죽_생일	1	-
 spr	686	폭죽_크리스마스	1	-
 spr	729	mashofa	1	delayFrame=64;firstFrame=1;onTop=true
 spr	1240	digital_space\digital_space	1	repeat=true
-# 326 EF_FOOT and 327 EF_FOOT2: a chase walk's footprints.
-# ponytail: no sprite file is confirmed (no data.grf here). A public effect catalog lists the textures
-# effect\foot_l_b.tga (326) and effect\foot_r_b.tga (327) as what these ids load; those names would replace a
-# sprite under data\sprite\이팩트\ if one is the real file. How big a print is and how long it stays are estimates.
-part	326	2D	file=effect/foot_l_b.tga;attachedEntity=false;duration=800;fadeOut=true;alphaMax=1;size=32
-part	327	2D	file=effect/foot_r_b.tga;attachedEntity=false;duration=800;fadeOut=true;alphaMax=1;size=32
 func	79	quake	0	200
 func	90	quake	800	650
 func	90	quake	1600	650
@@ -5208,7 +5202,16 @@ length	623	300
 length	624	200
 length	627	300
 length	637	200
+length	326	340
+length	327	340
+length	551	100
+length	556	50
 length	638	23
+length	639	23
+length	640	23
+length	641	23
+length	642	23
+length	1204	100
 length	643	100
 length	644	100
 length	645	100
