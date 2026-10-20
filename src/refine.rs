@@ -170,7 +170,8 @@ impl Assets {
             grades: [1, 2, 3, 4].map(|grade| gpu.load_texture(grf, &format!("{UI}grade_enchant\\grade_icon{grade}.bmp"), false)),
             process_a: std::array::from_fn(|frame| image(&format!("bg_refininga_process_{frame:02}"))),
             process_b: std::array::from_fn(|frame| image(&format!("bg_refiningb_process_{frame:02}"))),
-            process_c: std::array::from_fn(|frame| image(&format!("bg_refining_process_{frame:02}"))),
+            // The hammering's last five frames are numbered 9 to 13.
+            process_c: std::array::from_fn(|frame| image(&format!("bg_refining_process_{:02}", frame + 9))),
             success: (0..SUCCESS_FRAMES).map(|frame| image(&format!("bg_refining_success_{frame:02}"))).collect(),
             fail: (0..FAIL_FRAMES).map(|frame| image(&format!("bg_refining_fail_{frame:02}"))).collect(),
             back: ["success", "fail"].map(|kind| ["normal", "press"].map(|look| image(&format!("bt_refining_return_{kind}_{look}")))),
