@@ -1,5 +1,5 @@
 {
-  "about": "Walking with the mouse (issue #168): the press walks at once; holding the button while the pointer sweeps around keeps walking toward it, no more often than every 300 ms; a click on a wall walks to the nearest open cell (Izlude's 2x3 block at x 141-142, y 106-108: a click on 141,107 from 135,108 goes to 140,107); Shift+click only turns to face the cell (arriving facing south-east, a Shift+click due east, 45° aside, turns only the head: issue #357); a click on the chat log's lines (issue #174) walks too. Izlude rather than Prontera: Prontera's GAT is stored encrypted in data.grf, so it can't be read to pick a wall.",
+  "about": "Walking with the mouse (issue #168): the press walks at once; holding the button while the pointer sweeps around keeps walking toward it, no more often than every 300 ms; a click on a wall walks to the nearest open cell (Izlude's 2x3 block at x 141-142, y 106-108: a click on 141,107 from 135,108 goes to 140,107); Shift+click only turns to face the cell (arriving facing east, a Shift+click on 143,110, 45° aside, turns only the head: issue #357); a click on the chat log's lines (issue #174) walks too. Izlude rather than Prontera: Prontera's GAT is stored encrypted in data.grf, so it can't be read to pick a wall.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -14,8 +14,8 @@
     {"expect": {"state": {"player.walk_goal": [140, 107]}}},
     {"wait": 2000},
     {"expect": {"state": {"player.cell": [140, 107]}}},
-    {"click_on": {"cell": [143, 107]}, "mods": "shift"}, {"wait_for": {"sent": "0x0361", "ms": 3000}}, {"wait": 300},
-    {"expect": {"state": {"player.walk_goal": [140, 107], "player.cell": [140, 107], "player.direction": 7, "player.head_direction": 2}}},
+    {"click_on": {"cell": [143, 110]}, "mods": "shift"}, {"wait_for": {"sent": "0x0361", "ms": 3000}}, {"wait": 300},
+    {"expect": {"state": {"player.walk_goal": [140, 107], "player.cell": [140, 107], "player.direction": 6, "player.head_direction": 2}}},
     {"click": [300, 715]}, {"wait_for": {"sent": "0x035f", "ms": 3000}}, {"wait": 1500},
     {"say": "@warp izlude 140 107"}, {"settle": 1500},
     {"move": [1000, 750]},
