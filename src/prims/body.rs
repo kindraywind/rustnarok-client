@@ -29,6 +29,8 @@ pub enum Change {
     BlueGlow,
     /// The Star Gladiator's warmth: a red glow that rises over 1.4 s and settles.
     RedGlow,
+    /// Comfort of the Sun, Moon and Stars: Soul Link's blue outline swelling for 3.2 s and ebbing for 3.2 s.
+    Comfort,
 }
 
 impl Change {
@@ -39,6 +41,7 @@ impl Change {
             Change::Shrink => 99_999,
             Change::Soul | Change::Stack | Change::RedGlow => 99_999_999,
             Change::BlueGlow => 200,
+            Change::Comfort => 400,
             Change::Drop => 35,
         }
     }
@@ -158,6 +161,9 @@ impl Bodies {
         }
         if let Some(e) = self.tick(unit, Change::Soul, now) {
             return Some((GLOW_SOUL | soul_alpha(e) << PARAM_SHIFT, None));
+        }
+        if let Some(f) = self.tick(unit, Change::Comfort, now).and_then(super::soul::comfort_outline) {
+            return Some((GLOW_SOUL | f << PARAM_SHIFT, None));
         }
         if let Some(e) = self.tick(unit, Change::Stack, now) {
             return Some((GLOW_STACK | stack_counter(e) << PARAM_SHIFT, None));

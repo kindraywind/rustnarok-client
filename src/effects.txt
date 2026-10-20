@@ -1848,6 +1848,7 @@ wav	470	effect\t_바람방출	0
 wav	471	effect\t_바람방출	0
 wav	472	effect\t_바람방출	0
 wav	473	effect\t_바람방출	0
+wav	488	effect\T_안락한마법	80
 wav	493	effect\assasin_enchantpoison	0
 wav	493	effect\assasin_enchantpoison	80
 wav	493	effect\assasin_enchantpoison	176
@@ -1862,6 +1863,8 @@ wav	495	effect\복호격	496
 wav	496	effect\black_maximize_power_sword_bic	0
 wav	501	effect\EF_BeginSpell	0
 wav	502	effect\EF_BeginSpell	0
+wav	503	effect\T_캐스팅	0
+wav	503	effect\T_영혼	2320
 wav	505	effect\priest_suffragium	0
 wav	507	effect\mapae	0
 wav	508	effect\itempokjuk	0
@@ -1883,7 +1886,7 @@ wav	533	effect\priest_slowpoison	0
 wav	534	effect\priest_slowpoison	0
 wav	535	effect\priest_slowpoison	0
 wav	536	effect\priest_slowpoison	0
-wav	547	effect\t_에너지방출	0
+wav	547	effect\T_바람마법	160
 wav	553	effect\t_날라차기	0
 wav	555	effect\t_에너지방출	0
 wav	565	effect\h_moonlight_1	0
@@ -5162,8 +5165,11 @@ length	454	60
 length	455	1500
 length	456	100
 length	461	100
+length	488	400
+length	503	500
 length	542	200
 length	544	99999999
+length	547	200
 length	675	200
 length	850	100
 length	932	100
