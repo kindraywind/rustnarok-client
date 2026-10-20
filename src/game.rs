@@ -3759,13 +3759,16 @@ impl Game {
         let on_player = hit.is_none_or(|actor| !(actor::is_monster_job(actor.job) || actor::is_npc_job(actor.job)));
         // Hits drift diagonally away from where the target faces.
         let drift = hit.map_or([1.0, 1.0], |actor| actor::number_drift(actor.rot, actor.facing_from_server));
-        let amount = act.damage + act.left_damage;
+        // A swing's left-hand damage (a katar's, the second weapon's) is a number of its own after the right hand's.
+        let attacker = if act.source == me { Some(&self.player) } else { self.units.get(&act.source) };
+        let left = left_hand_number(from, act.left_damage, attacker.map(|actor| actor.job));
+        let amount = act.damage;
         let lands = Instant::now() + Duration::from_secs_f32(hit_ms.unwrap_or(act.source_speed.max(0) as f32) / 1000.0);
         let flinch = (amount > 0 && !endured(act.kind, from)).then_some(act.target_speed as f32);
         let kind = match act.kind {
             11 => DamageKind::Lucky,
             10 | 13 => DamageKind::Critical,
-            _ if amount <= 0 => {
+            _ if amount + left.unwrap_or(0) <= 0 => {
                 // MISS shows over the attacker: white when it's a monster or an NPC, red otherwise.
                 let attacker = if act.source == me { Some(&self.player) } else { self.units.get(&act.source) };
                 let red = attacker.is_none_or(|actor| !(actor::is_monster_job(actor.job) || actor::is_npc_job(actor.job)));
@@ -3795,6 +3798,10 @@ impl Game {
                 self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift, source: None });
             }
         }
+        // ponytail: a multi-hit swing's left hand (no total with it); a katar never double-attacks.
+        if let Some(left) = left {
+            self.damages.push(Damage { target, amount: left, start: lands + LEFT_HAND_DELAY, kind, flinch, drift, source: Some(act.source) });
+        }
     }
 }
 
@@ -3822,10 +3829,36 @@ fn shows_total(hits: i32, from: HitFrom) -> bool {
     hits > 1 || from == HitFrom::Unit
 }
 
+/// How long after a swing's first number its left-hand number comes.
+const LEFT_HAND_DELAY: Duration = Duration::from_millis(350);
+
+/// A swing's left-hand number, when its attacker (by job) shows one: the Assassin (12), every job past 4000, and the
+/// NPC (45 – 999) and 10001 – 19998 ranges. Other attackers' left-hand damage isn't shown.
+fn left_hand_number(from: HitFrom, damage: i32, attacker: Option<u16>) -> Option<i32> {
+    let shows = |job: u16| job == 12 || job > 4000 || (45..1000).contains(&job) || (10001..=19998).contains(&job);
+    (from == HitFrom::Attack && damage > 0 && attacker.is_some_and(shows)).then_some(damage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rustnarok_client::map::Gat;
+
+    #[test]
+    fn a_swings_left_hand_is_a_number_of_its_own() {
+        // An Assassin's and an Assassin Cross's katar; a Kagerou's second dagger.
+        assert_eq!(left_hand_number(HitFrom::Attack, 80, Some(12)), Some(80));
+        assert_eq!(left_hand_number(HitFrom::Attack, 80, Some(4013)), Some(80));
+        assert_eq!(left_hand_number(HitFrom::Attack, 80, Some(4211)), Some(80));
+        // Not for a Knight, a Rogue or a monster, without left-hand damage, or for a skill.
+        assert_eq!(left_hand_number(HitFrom::Attack, 80, Some(7)), None);
+        assert_eq!(left_hand_number(HitFrom::Attack, 80, Some(17)), None);
+        assert_eq!(left_hand_number(HitFrom::Attack, 80, Some(1002)), None);
+        assert_eq!(left_hand_number(HitFrom::Attack, 0, Some(12)), None);
+        assert_eq!(left_hand_number(HitFrom::Skill, 80, Some(12)), None);
+        assert_eq!(left_hand_number(HitFrom::Attack, 80, None), None);
+        assert_eq!(LEFT_HAND_DELAY, MULTI_HIT_DELAY + MULTI_HIT_DELAY / 4 + MULTI_HIT_DELAY / 2);
+    }
 
     #[test]
     fn skill_hits_flinch_and_total_as_the_game() {
