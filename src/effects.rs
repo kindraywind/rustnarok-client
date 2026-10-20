@@ -488,6 +488,8 @@ struct Animation {
     scale: f32,
     alpha: f32,
     first: f32,
+    /// Drawn over everything with no depth test.
+    over: bool,
     /// Its images now, from `advance`.
     placed: Vec<Placed>,
     effect: u32,
@@ -498,7 +500,9 @@ struct Animation {
 fn animation_progress(elapsed: f32, frame_ms: f32, frames: f32, first: f32, repeat: bool) -> f32 {
     let pass = frames * frame_ms.max(1.0);
     match (repeat, first > 0.0) {
-        (false, _) => (elapsed / pass).min(1.0),
+        // Played once from a later frame, a frame at a time, and held on the last.
+        (false, true) => ((elapsed / frame_ms.max(1.0)) as u32 as f32 + first).min(frames - 1.0).floor() / frames + 0.5 / frames,
+        (false, false) => (elapsed / pass).min(1.0),
         (true, false) => elapsed % pass / pass,
         (true, true) => (((elapsed / frame_ms.max(1.0)) as u32 as f32 + first) % frames).floor() / frames + 0.5 / frames,
     }
@@ -509,7 +513,7 @@ impl Animation {
         let number = |name: &str| part.parameters.get(name).and_then(|value| value.parse::<f32>().ok());
         let flag = |name: &str| part.parameters.get(name).is_some_and(|value| value == "true");
         let rise = if flag("head") { -100.0 } else { 0.0 };
-        let repeat = flag("repeat") || lasting;
+        let repeat = flag("repeat") || (lasting && !flag("hold"));
         Self {
             sprite: format!("data\\sprite\\이팩트\\{}", part.file),
             start,
@@ -518,11 +522,12 @@ impl Animation {
             action: number("frame").map(|action| action as usize),
             frame_ms: number("delayFrame").map(|ms| ms.max(1.0)),
             repeat,
-            hold: flag("stopAtEnd"),
+            hold: flag("stopAtEnd") || flag("hold"),
             offset: [number("xOffset").unwrap_or(0.0), number("yOffset").unwrap_or(rise)],
             scale: number("scale").unwrap_or(1.0),
             alpha: number("alpha").map_or(1.0, |alpha| alpha / 255.0),
             first: number("firstFrame").unwrap_or(0.0),
+            over: flag("onTop"),
             placed: Vec::new(),
             effect,
         }
@@ -1800,6 +1805,17 @@ const SHIELD_CHAIN: u32 = 520;
 const DOUBLE_CAST: u32 = 521;
 const GRAVITATION: u32 = 522;
 const CHASE_WALK_CAST: u32 = 1195;
+/// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
+/// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
+const NPC_STOP: u32 = 453;
+const QUAKE_BODY: u32 = 458;
+pub const REVERBERATION: u32 = 464;
+const SPINED_BODY: u32 = 466;
+const CAST_SPIN: u32 = 501;
+const GREEN_BODY: u32 = 538;
+const HATED: u32 = 543;
+/// The status Poem of Netherworld gives, which its blot stands for.
+const POEM_STATUS: u16 = 433;
 /// Self-Destruction's streaks, Spirit Recovery's and Blood Sucker's drops, Storm Blast's ribbons and hopping lines, Rage Burst's rays,
 /// Sound of Destruction's copies, Windmill's tornado and Dark Illusion's lines (`prims::brawl`).
 const SELF_DESTRUCTION: u32 = 183;
@@ -1964,7 +1980,7 @@ impl Effects {
             return;
         }
         // Chase Walk's cast spins the caster.
-        if id == CHASE_WALK_CAST {
+        if matches!(id, CHASE_WALK_CAST | CAST_SPIN) {
             self.play_sounds(table, id, at, now);
             self.prims.guard.chase_walk(unit, cast_ms / crate::prims::TICK.as_millis() as u32, now);
             return;
@@ -2061,6 +2077,15 @@ impl Effects {
     /// What effect `id` draws, from `now` on.
     #[allow(clippy::too_many_arguments)]
     fn show(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        // Poem of Netherworld's blot: one to a unit, standing for its status however it is played.
+        if let (NPC_STOP, Target::Unit(unit) | Target::Status(unit, _)) = (id, target) {
+            self.animations.retain(|animation| {
+                !(animation.effect == NPC_STOP && matches!(animation.anchor, Anchor::Unit(each) | Anchor::Status(each, _) if each == unit))
+            });
+            if matches!(target, Target::Unit(_)) {
+                return self.show(gpu, grf, table, id, Target::Status(unit, POEM_STATUS), at, now);
+            }
+        }
         // The Sage's ground looks, drawn in code at the cell.
         if sage::LOOKS.iter().any(|&(look, _)| look == id) {
             self.load_sage(gpu, grf, id);
@@ -2181,6 +2206,22 @@ impl Effects {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
                 }
                 self.prims.brawl.windmill(unit, at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (QUAKE_BODY, Target::Unit(unit)) => self.prims.brawl.shake(unit, now),
+            (SPINED_BODY, Target::Unit(unit)) => self.prims.brawl.swing(unit, now),
+            (GREEN_BODY, Target::Unit(unit)) => self.prims.guard.green(unit, now),
+            (HATED, Target::Unit(unit)) => {
+                for path in crate::prims::sparkle::TEXTURES {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.brawl.blue(unit, now);
+                self.prims.blue_sparkles(unit, now);
+            }
+            (REVERBERATION, Target::Kept(trap)) => {
+                for path in [brawl::STORM, brawl::CLOUD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.brawl.trap_tornado(trap, at, now, |n| pick(0, n.saturating_sub(1)));
             }
             (MEMORIZE, Target::Unit(unit)) => self.prims.guard.memorize(unit, now),
             (DOUBLE_CAST, Target::Unit(unit)) => self.prims.guard.double_cast(unit, now),
@@ -2901,6 +2942,9 @@ impl Effects {
         self.prims.sniper.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.spray.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.brawl.advance(now, |n| pick(0, n.saturating_sub(1)));
+        for blues in &mut self.prims.blues {
+            blues.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        }
         self.prims.monk.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for (file, at) in self.prims.throws.advance(now, &position_of) {
             self.sounds.push((now, file, at));
@@ -3167,7 +3211,7 @@ impl Effects {
 
     /// Whether `unit`'s parts shake now (Close Confine's).
     pub fn shakes(&self, unit: Option<u32>, now: Instant) -> bool {
-        self.prims.songs.shakes(unit, now)
+        self.prims.songs.shakes(unit, now) || self.prims.brawl.shaking(unit, now)
     }
 
     /// Whether effect `effect`'s parts draw: all of them, or with /effect off the force-drawn ones.
@@ -3534,11 +3578,13 @@ impl Effects {
             let Some(Some(sprite)) = self.sprites.get(&animation.sprite) else { continue };
             let [x, y] = animation.offset;
             for &(key, position, size, layer_angle) in &animation.placed {
+                // Over everything, `STR_RISE` is taken off again.
+                let rise = if animation.over { STR_RISE } else { 0.0 };
                 let corners = QUAD_UV.map(|uv| {
                     let [left, top] = world::sprite_corner(position, size, layer_angle, uv).0;
-                    [left * animation.scale + x, top * animation.scale + y]
+                    [left * animation.scale + x, top * animation.scale + y + rise]
                 });
-                quads.push((sprite.texture(key), at, corners, [1.0, 1.0, 1.0, animation.alpha], false, false));
+                quads.push((sprite.texture(key), at, corners, [1.0, 1.0, 1.0, animation.alpha], false, animation.over));
             }
         }
         for playing in self.playing.iter().filter(|playing| playing.start <= now && self.shows(playing.effect)) {
@@ -5215,5 +5261,43 @@ mod tests {
         assert_eq!(sounds(CHEMICAL), [("effect\\G스포어익스플로젼", 0, true)]);
         assert!(table.used(2493).unwrap().contains(&(Who::Caster, CHEMICAL)) && table.struck(2023).unwrap().contains(&(Who::Caster, CHEMICAL)));
         assert!(table.used(2337).unwrap().contains(&(Who::Caster, STORM_KICK)) && table.struck(469).unwrap().contains(&(Who::Target, FOUR_WAY_BODY)));
+    }
+
+    #[test]
+    fn poem_netherworld_dark_illusion_reverberation_marsh_cast_spin_refresh_and_hovering_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // The blot: Close Confine's sprite from frame 1, 192 ms a frame, held, white at alpha 100, over everything.
+        let blot = &table.sprites[&NPC_STOP][0];
+        assert_eq!(blot.file, "cconfine");
+        let animation = Animation::new(blot, NPC_STOP, Instant::now(), Anchor::Status(None, POEM_STATUS), true);
+        assert!(animation.hold && !animation.repeat && animation.over && animation.first == 1.0 && animation.frame_ms == Some(192.0));
+        assert!((animation.alpha * 255.0 - 100.0).abs() < 0.01);
+        // The frame at ages 0, 11, 12, 48 and 500 ticks: 1, 1, 2, 5, 11 (of 12).
+        let frame = |ticks: u32| (animation_progress(16.0 * ticks as f32, 192.0, 12.0, 1.0, false) * 12.0) as usize;
+        assert_eq!([0, 11, 12, 48, 500].map(frame), [1, 1, 2, 5, 11]);
+        // Dark Illusion's kick sound comes at tick 5; Knuckle Arrow's own at the listener; the targets shake.
+        assert_eq!(sounds(457), [("effect\\t_날라차기", 80, false)]);
+        assert_eq!(sounds(893), [("effect\\SR_KNUCKLEARROW", 0, true)]);
+        for skill in [421, 2023, 2336] {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Target, QUAKE_BODY)), "{skill}");
+        }
+        // Reverberation's tornado: its sound at tick 0 on both traps.
+        assert_eq!(sounds(REVERBERATION), [("effect\\REVERBERATION", 0, false)]);
+        assert_eq!((table.trap(218), table.trap(222)), (Some(REVERBERATION), Some(REVERBERATION)));
+        // The swing: Marsh of Abyss, Turn Kick (429 is its other) and Great Echo; its sound at tick 5, Great Echo's at the listener.
+        assert!(table.used(2205).unwrap().contains(&(Who::Target, SPINED_BODY)) && table.struck(2426).unwrap().contains(&(Who::Target, SPINED_BODY)));
+        assert_eq!(sounds(SPINED_BODY), [("effect\\T_돌려차기", 80, false)]);
+        assert_eq!(sounds(863), [("effect\\LG_EARTHDRIVE", 0, true)]);
+        assert_eq!(table.quakes[&863], [(Duration::ZERO, QUAKE_LONG)]);
+        // The cast spin: the begin-spell sound; the casts of Invisibility, Feint Bomb and Teleport have it.
+        assert_eq!(sounds(CAST_SPIN), [("effect\\EF_BeginSpell", 0, false)]);
+        assert!([555, 2290, 2304].iter().all(|&skill| table.cast_aura(skill, 12) == Some(CAST_SPIN)));
+        // Refresh and Abundance: their sounds belong to the use; Hovering and Emergency Cool have none under 543.
+        assert_eq!(table.skill_sounds[&2013][0].file, "_heal_effect");
+        assert_eq!(table.skill_sounds[&2019][0].file, "effect\\흡기");
+        assert!(!table.sounds.contains_key(&HATED));
+        assert_eq!((table.skill_sounds[&2263][0].file.as_str(), table.skill_sounds[&2269][0].file.as_str()), ("effect\\HOVERING", "effect\\ef_decagility"));
+        assert!(table.used(2263).unwrap().contains(&(Who::Caster, HATED)) && table.used(2013).unwrap().contains(&(Who::Caster, GREEN_BODY)));
     }
 }

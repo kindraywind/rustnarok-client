@@ -3721,10 +3721,12 @@ impl App {
                     && let Some(gpu) = gpu
                 {
                     let trigger = game.effects.unit_kind(id).filter(|_| value == FIRED_TRAP).and_then(|old| table.trap(old));
-                    if let Some(effect) = trigger {
-                        game.effects.play(gpu, grf, table, effect, effects::Target::Ground, at, Instant::now());
-                    }
                     game.effects.play_unit(gpu, grf, table, value, id, at, Instant::now());
+                    if let Some(effect) = trigger {
+                        // Reverberation's tornado goes with the trap; the others stay where it was.
+                        let target = if effect == effects::REVERBERATION { effects::Target::Kept(id) } else { effects::Target::Ground };
+                        game.effects.play(gpu, grf, table, effect, target, at, Instant::now());
+                    }
                 }
                 // A job change comes as the player's new look.
                 if id == game.account_id && kind == net::LOOK_JOB {

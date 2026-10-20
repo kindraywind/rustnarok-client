@@ -1514,7 +1514,7 @@ spr	215	smoke	1	-
 spr	302	데몬스트레이션	0	delayFrame=64;scale=1.2;alpha=200;firstFrame=1;repeat=true;yOffset=-7
 spr	363	vallentine	1	-
 spr	373	poisonhit	1	-
-spr	453	스톱	1	-
+spr	453	cconfine	1	delayFrame=192;firstFrame=1;hold=true;alpha=100;onTop=true
 spr	509	05vallentine	1	-
 spr	519	fast	1	-
 spr	570	캐슬링	1	-
@@ -1609,6 +1609,7 @@ func	666	quake	560	650
 func	666	quake	1120	650
 func	668	quake	0	650
 func	732	quake	0	200
+func	863	quake	0	650
 unit	133	141
 rsm	143	외부소품\트랩03_3
 rsm	144	외부소품\트랩02
@@ -1891,7 +1892,9 @@ wav	445	effect\t_회피2	0
 wav	451	effect\ef_soulstrike	0
 wav	454	effect\ef_beginspell	0
 wav	456	effect\mon_폭기	0
-wav	457	effect\t_날라차기	0
+wav	457	effect\t_날라차기	80
+wav	464	effect\REVERBERATION	0
+wav	466	effect\T_돌려차기	80
 wav	467	effect\t_바람방출	0
 wav	468	effect\t_바람방출	0
 wav	469	effect\t_바람방출	0
@@ -1910,6 +1913,7 @@ wav	495	effect\복호격	176
 wav	495	effect\복호격	336
 wav	495	effect\복호격	496
 wav	496	effect\black_maximize_power_sword_bic	0
+wav	501	effect\EF_BeginSpell	0
 wav	502	effect\EF_BeginSpell	0
 wav	505	effect\priest_suffragium	0
 wav	507	effect\mapae	0
@@ -1932,7 +1936,6 @@ wav	533	effect\priest_slowpoison	0
 wav	534	effect\priest_slowpoison	0
 wav	535	effect\priest_slowpoison	0
 wav	536	effect\priest_slowpoison	0
-wav	543	effect\t_보조마법	0
 wav	547	effect\t_에너지방출	0
 wav	553	effect\t_날라차기	0
 wav	555	effect\t_에너지방출	0
@@ -2019,6 +2022,7 @@ wav	858	effect\안식의자장가	0
 wav	860	effect\나락의노래	0
 wav	861	effect\순환하는자연의소리	0
 wav	862	effect\ab_ancilla	0
+wav	863	effect\LG_EARTHDRIVE	0	listener
 wav	866	effect\워그와함께춤을	0
 wav	868	effect\마나의노래	0
 wav	870	effect\새터데이나이트피버	0
@@ -2031,6 +2035,7 @@ wav	883	effect\ef_readyportal	0
 wav	885	effect\bash3d	0
 wav	888	effect\sr_earthshaker	0
 wav	889	effect\mon_아수라 패황권	0
+wav	893	effect\SR_KNUCKLEARROW	0	listener
 wav	906	effect\프레셔	0
 wav	906	effect\lg_shieldpress	500
 wav	908	effect\lg_prestige	0
@@ -4183,6 +4188,7 @@ struck	419	target	430
 struck	2580	target	430
 struck	421	caster	457
 struck	421	caster	439
+struck	421	target	458
 struck	467	caster	547
 struck	468	caster	555
 struck	469	target	425
@@ -4232,6 +4238,7 @@ struck	2012	target	589
 struck	2022	caster	1568
 struck	2023	caster	457
 struck	2023	caster	439
+struck	2023	target	458
 struck	2030	target	770
 struck	2031	caster	768
 struck	2031	target	589
@@ -4335,6 +4342,8 @@ struck	8437	caster	935
 struck	8442	target	944
 struck	2259	target	787
 struck	2259	target	49
+struck	2336	target	458
+struck	2426	target	466
 used	6	target	67
 used	7	caster	17
 used	8202	caster	17
@@ -4592,6 +4601,7 @@ used	2048	target	66
 used	2050	target	719
 used	2054	target	833
 used	2205	target	729
+used	2205	target	466
 used	2207	target	797
 used	2209	caster	799
 used	2230	caster	751
@@ -5078,3 +5088,7 @@ skillwav	366	effect\마법력 증폭	0	listener
 skillwav	482	effect\마법력 증폭	0	listener
 skillwav	2480	effect\S바큠익스트림	0	listener
 skillwav	2464	effect\_heal_effect	0	listener
+skillwav	2013	_heal_effect	0	listener
+skillwav	2019	effect\흡기	0	listener
+skillwav	2263	effect\HOVERING	0	listener
+skillwav	2269	effect\ef_decagility	0	listener

@@ -73,6 +73,8 @@ enum Flicker {
     Memorize,
     /// Double Casting's red strobe in a white glow (ticks 10 to 50).
     DoubleCast,
+    /// Refresh's and Abundance's green flicker in outline copies (ticks 0 to 30).
+    Green,
 }
 
 /// Chase Walk's cast turning its caster.
@@ -145,6 +147,7 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
         Flicker::DoubleCast => {
             (10..=50).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFF, 0, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) })
         }
+        Flicker::Green => (e <= 30).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 0xFF, 0])) } else { (GLOW_OUTLINE, Some([255; 3])) }),
         Flicker::Pierce(length) => {
             (e < length.min(141)).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some([0xFA, 0xFA, 0x64])) } else { (GLOW_OUTLINE, Some([255; 3])) })
         }
@@ -271,6 +274,11 @@ impl Guard {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Memorize });
     }
 
+    /// Refresh's, Abundance's and Phantom Thrust's green flicker on `unit`.
+    pub fn green(&mut self, unit: Option<u32>, now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::Green });
+    }
+
     /// Double Casting's strobe on `unit`.
     pub fn double_cast(&mut self, unit: Option<u32>, now: Instant) {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::DoubleCast });
@@ -364,6 +372,7 @@ impl Guard {
             match body.flicker {
                 Flicker::Poison if e > 80 => fade_back([0xFF, 0x00, 0xFF], e - 80),
                 Flicker::Preserve if e > 30 => fade_back([0xFA; 3], e - 30),
+                Flicker::Green if e > 30 => fade_back([0, 0xFF, 0], e - 30),
                 _ => None,
             }
         })
@@ -526,5 +535,22 @@ mod tests {
         assert_eq!(guard.turned(Some(4), start + TICK * 5, true), 0.0, "another unit");
         guard.advance(start + TICK * 70);
         assert!(guard.walks.is_empty());
+    }
+
+    #[test]
+    fn refresh_flickers_green_in_outline_copies() {
+        let start = Instant::now();
+        let mut guard = Guard::default();
+        guard.green(Some(1), start);
+        use crate::actor::{GLOW_ADDITIVE, GLOW_OUTLINE};
+        let glow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+        // Outline copies on ticks 0 to 30: additive #00FF00 on the even ticks, #FFFFFF on the odd ones; nothing on 31.
+        assert_eq!(glow(0), Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 255, 0]))));
+        assert_eq!(glow(1), Some((GLOW_OUTLINE, Some([255; 3]))));
+        assert_eq!(glow(30), Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 255, 0]))));
+        assert!(glow(31).is_none() && guard.glow(Some(2), start).is_none());
+        // The colour fades back to white by 8 a channel a tick after the last green.
+        assert_eq!(guard.body_tint(Some(1), start + TICK * 31), Some([8, 255, 8]));
+        assert_eq!(guard.body_tint(Some(1), start + TICK * 62), None);
     }
 }

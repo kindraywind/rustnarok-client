@@ -910,7 +910,13 @@ impl App {
                 actor.flicker.set(!was);
                 !was
             });
+            // A swinging head and gear (a player's only) run round their circles.
+            let swing = glow.filter(|(flags, _)| is_player && flags & actor::GLOW_SWING != 0).map(|(flags, _)| flags >> 16);
             for (index, &(key, position, size, angle)) in placements.iter().enumerate() {
+                let position = match swing {
+                    Some(n) => actor::swing_offset(n, sprites.swing_reach(key), position),
+                    None => position,
+                };
                 let texture = sprites.texture(key);
                 let layer = sprite_layer(index, player, flat);
                 if let Some(range) = shake {

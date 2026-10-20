@@ -38,6 +38,8 @@ const SQUARES: [f32; 10] = [40.0, 36.0, 32.4, 29.2, 26.4, 24.0, 22.0, 20.4, 19.2
 const TORNADO_LAST: u32 = 99;
 const WISP_LAST: u32 = 60;
 const SPIN_TICKS: u32 = 48;
+/// Dark Illusion's shake of its target: ticks 0 to 34.
+const SHAKE_TICKS: u32 = 35;
 /// Dark Illusion: 8 prims of 4 pale lines, drawn for ages 1 to 49.
 const STRIP_PRIMS: usize = 8;
 const STRIP_LAST: u32 = 49;
@@ -264,6 +266,9 @@ struct Tornado {
     first: f32,
     turns: Vec<f32>,
     wisps: Vec<Wisp>,
+    /// Reverberation's: red, each square drawn twice, and gone with the trap `kept`.
+    red: bool,
+    kept: Option<u32>,
 }
 
 pub struct Wisp {
@@ -293,8 +298,8 @@ pub fn wisp_alpha(a: u32) -> f32 {
 
 impl Tornado {
     /// Square i at the turn `turn`: a slightly tilted quad standing i·5 under the top.
-    fn square(&self, i: usize, turn: f32, alpha: f32) -> Vec<MeshVertex> {
-        let tint = [50.0 / 255.0, 50.0 / 255.0, 1.0, alpha / 255.0];
+    fn square(&self, i: usize, turn: f32, rgb: [f32; 3], alpha: f32) -> Vec<MeshVertex> {
+        let tint = [rgb[0], rgb[1], rgb[2], alpha / 255.0];
         let height = 50.0 - 5.0 * i as f32;
         let corner = |quarter: f32, rise: f32, uv: [f32; 2]| {
             let (sin, cos) = (45.0 * i as f32 + turn + 90.0 * quarter).to_radians().sin_cos();
@@ -347,6 +352,14 @@ struct Spread {
     start: Instant,
 }
 
+/// A unit whose parts shake (458), swing its head (466) or glow blue (543) from `start`.
+struct Marked {
+    unit: Option<u32>,
+    start: Instant,
+}
+type Swing = Marked;
+type Blue = Marked;
+
 /// A target spinning (435): +30° a tick on ticks 0 to 47.
 struct Spin {
     unit: Option<u32>,
@@ -363,6 +376,9 @@ pub struct Brawl {
     lines: Vec<Lines>,
     spreads: Vec<Spread>,
     spins: Vec<Spin>,
+    shakes: Vec<Marked>,
+    swings: Vec<Swing>,
+    blues: Vec<Blue>,
 }
 
 impl Brawl {
@@ -412,7 +428,22 @@ impl Brawl {
     }
 
     /// Windmill's tornado and wisps where the caster stands (`at`), and its spin, on `unit`.
-    pub fn windmill(&mut self, unit: Option<u32>, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    pub fn windmill(&mut self, unit: Option<u32>, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.tornado(at, now, None, rand);
+        self.spins.push(Spin { unit, start: now, done: 0 });
+    }
+
+    /// Reverberation's red tornado and wisps at a trap's cell `at`, gone with the trap `id`.
+    pub fn trap_tornado(&mut self, id: u32, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.tornado(at, now, Some(id), rand);
+    }
+
+    /// A trap went: its tornado with it.
+    pub fn forget(&mut self, id: u32) {
+        self.tornados.retain(|tornado| tornado.kept != Some(id));
+    }
+
+    fn tornado(&mut self, at: Vector, now: Instant, kept: Option<u32>, mut rand: impl FnMut(u32) -> u32) {
         let first = rand(360) as f32;
         let mut wisps = Vec::new();
         for (height, radius, drop) in [(48.0, 14.0, 5.0), (28.0, 6.0, 5.0)] {
@@ -422,8 +453,7 @@ impl Brawl {
                 wisps.push(Wisp { height: height - drop * k as f32, turn: 90.0 * k as f32, radius: radius - step * k as f32, lean });
             }
         }
-        self.tornados.push(Tornado { at, start: now, first, turns: Vec::new(), wisps });
-        self.spins.push(Spin { unit, start: now, done: 0 });
+        self.tornados.push(Tornado { at, start: now, first, turns: Vec::new(), wisps, red: kept.is_some(), kept });
     }
 
     /// Dark Illusion's 32 lines from the caster's feet `from` toward `to`, each streak's choices from `rand(n)`.
@@ -442,6 +472,26 @@ impl Brawl {
         }
         let heading = bearing(to[0] - from[0], to[2] - from[2]) as f32;
         self.lines.push(Lines { start: now, from, heading, strips });
+    }
+
+    /// Dark Illusion's and Knuckle Arrow's shake of `unit` (35 ticks).
+    pub fn shake(&mut self, unit: Option<u32>, now: Instant) {
+        self.shakes.push(Marked { unit, start: now });
+    }
+
+    /// Whether `unit`'s parts shake now.
+    pub fn shaking(&self, unit: Option<u32>, now: Instant) -> bool {
+        self.shakes.iter().filter(|shake| shake.unit == unit).any(|shake| passes(shake.start, now).checked_sub(1).is_some_and(|t| t < SHAKE_TICKS))
+    }
+
+    /// Marsh of Abyss' and Great Echo's head swing on `unit`.
+    pub fn swing(&mut self, unit: Option<u32>, now: Instant) {
+        self.swings.push(Marked { unit, start: now });
+    }
+
+    /// Hovering's and Emergency Cool's blue copies on `unit`.
+    pub fn blue(&mut self, unit: Option<u32>, now: Instant) {
+        self.blues.push(Marked { unit, start: now });
     }
 
     /// Sound of Destruction's sliding copies on `unit`.
@@ -465,6 +515,9 @@ impl Brawl {
         self.lines.retain(|lines| passes(lines.start, now) <= STRIP_LAST + 1);
         self.spreads.retain(|spread| passes(spread.start, now) <= 100);
         self.spins.retain(|spin| passes(spin.start, now) <= SPIN_TICKS + 1);
+        self.shakes.retain(|shake| passes(shake.start, now) <= SHAKE_TICKS);
+        self.swings.retain(|swing| passes(swing.start, now) <= 50);
+        self.blues.retain(|blue| passes(blue.start, now) <= 200);
     }
 
     /// How many degrees `unit` has turned since this was last asked (30 a tick on ticks 0 to 47).
@@ -486,9 +539,18 @@ impl Brawl {
             let t = passes(spread.start, now).checked_sub(1).filter(|t| (30..100).contains(t))?;
             Some(crate::actor::GLOW_SPREAD | (t - 30) << 16)
         });
-        match (added, spread) {
+        // Marsh of Abyss' swing on ticks 14 to 49 (the age in the upper half) and Hovering's blue copies on ticks 0 to 199 (the alpha).
+        let swing = self.swings.iter().filter(|swing| swing.unit == unit).find_map(|swing| {
+            let t = passes(swing.start, now).checked_sub(1).filter(|t| (14..50).contains(t))?;
+            Some(crate::actor::GLOW_SWING | (t - 14) << 16)
+        });
+        let blue = self.blues.iter().filter(|blue| blue.unit == unit).find_map(|blue| {
+            let t = passes(blue.start, now).checked_sub(1).filter(|&t| t < 200)?;
+            Some(crate::actor::GLOW_BLUE | (crate::actor::blue_alpha(t) as u32) << 16)
+        });
+        match (added, spread.or(swing).or(blue)) {
             (false, None) => None,
-            (added, spread) => Some((if added { crate::actor::GLOW_ADDITIVE } else { 0 } | spread.unwrap_or(0), None)),
+            (added, extra) => Some((if added { crate::actor::GLOW_ADDITIVE } else { 0 } | extra.unwrap_or(0), None)),
         }
     }
 
@@ -533,7 +595,14 @@ impl Brawl {
             let a = t + 1;
             if a <= TORNADO_LAST {
                 let turn = tornado.turn_at(a);
-                let vertices = (0..SQUARES.len()).flat_map(|i| tornado.square(i, turn, tornado_alpha(a))).collect();
+                let alpha = tornado_alpha(a);
+                if tornado.red {
+                    // Each square twice: a white veil of a third of the alpha, then red added on.
+                    let veil = (0..SQUARES.len()).flat_map(|i| tornado.square(i, turn, [1.0; 3], (alpha / 3.0).floor())).collect();
+                    walls.push(Wall { texture: STORM, vertices: veil, additive: false, forced: false });
+                }
+                let rgb = if tornado.red { [1.0, 55.0 / 255.0, 55.0 / 255.0] } else { [50.0 / 255.0, 50.0 / 255.0, 1.0] };
+                let vertices = (0..SQUARES.len()).flat_map(|i| tornado.square(i, turn, rgb, alpha)).collect();
                 walls.push(Wall { texture: STORM, vertices, additive: true, forced: false });
             }
             if a <= WISP_LAST {
@@ -782,5 +851,49 @@ mod tests {
     #[test]
     fn the_game_reads_angles_from_its_table() {
         assert_eq!([-2, -1, 0, 360, 361, 379, 424].map(table), [-1.0, 0.0, 0.0, 360.0, 180.0, 198.0, 243.0]);
+    }
+
+    #[test]
+    fn dark_illusion_shakes_marsh_of_abyss_swings_and_hovering_glows() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.shake(Some(1), start);
+        brawl.swing(Some(2), start);
+        brawl.blue(Some(3), start);
+        // The shake is on ticks 0 to 34 only, for its unit.
+        assert!(brawl.shaking(Some(1), start) && brawl.shaking(Some(1), start + TICK * 34));
+        assert!(!brawl.shaking(Some(1), start + TICK * 35) && !brawl.shaking(Some(2), start));
+        // The swing is set on ticks 14 to 49 with its age n = t − 14.
+        let swing = |tick: u32| brawl.glow(Some(2), start + TICK * tick);
+        assert!(swing(13).is_none() && swing(50).is_none());
+        assert_eq!(swing(14), Some((crate::actor::GLOW_SWING, None)));
+        assert_eq!(swing(49), Some((crate::actor::GLOW_SWING | 35 << 16, None)));
+        // The blue copies: ticks 0 to 199, the alpha in the upper half.
+        let blue = |tick: u32| brawl.glow(Some(3), start + TICK * tick);
+        assert_eq!(blue(0), Some((crate::actor::GLOW_BLUE, None)));
+        assert_eq!(blue(11), Some((crate::actor::GLOW_BLUE | 160 << 16, None)));
+        assert!(blue(199).is_some() && blue(200).is_none());
+    }
+
+    #[test]
+    fn reverberation_draws_each_square_twice_and_goes_with_its_trap() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.trap_tornado(7, [10.0, 1.0, 10.0], start, |_| 0);
+        for tick in 0..=60 {
+            brawl.advance(start + TICK * tick, |_| 0);
+        }
+        // At age 60: a white veil at a third of the alpha, then red added on; the wisps beside them (8 bands).
+        let walls = brawl.meshes(start + TICK * 59, |_| None);
+        let storm: Vec<_> = walls.iter().filter(|wall| wall.texture == STORM).collect();
+        assert_eq!(storm.len(), 2);
+        assert!(!storm[0].additive && storm[0].vertices[0].tint == [1.0, 1.0, 1.0, 13.0 / 255.0]);
+        assert!(storm[1].additive && storm[1].vertices[0].tint == [1.0, 55.0 / 255.0, 55.0 / 255.0, 40.0 / 255.0]);
+        assert_eq!(walls.iter().filter(|wall| wall.texture == CLOUD).count(), 8);
+        // Nothing is made later, and the trap going takes it away.
+        brawl.forget(8);
+        assert_eq!(brawl.meshes(start + TICK * 59, |_| None).len(), 10);
+        brawl.forget(7);
+        assert!(brawl.meshes(start + TICK * 59, |_| None).is_empty());
     }
 }
