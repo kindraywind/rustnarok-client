@@ -683,14 +683,14 @@ fn launch_kept(worlds: &mut Worlds, kept: &[Kept], min: bool, mut load: impl FnM
     }
 }
 
-/// A frame's layers, each with its ACT alpha.
-type Layers = Vec<(Placed, f32)>;
+/// A frame's layers, each with the colour and alpha its ACT gives it (0 to 255).
+type Layers = Vec<(Placed, [f32; 4])>;
 
-/// A sprite frame's layers plain white, each with the alpha the ACT gives it.
+/// A sprite frame's layers plain white, each with the colour and alpha the ACT gives it.
 fn plain_layers(gpu: &Gpu, sprite: &mut SpriteSet, action: usize, frame: usize, frames: usize) -> Layers {
     let timing = Timing::Span((frame as f32 + 0.5) / frames as f32);
-    let alphas: Vec<f32> = sprite.frame_at(gpu, action, 0, timing).iter().map(|(key, ..)| f32::from(key.3[3])).collect();
-    sprite.frame_plain(gpu, action, timing).into_iter().enumerate().map(|(index, placed)| (placed, alphas.get(index).copied().unwrap_or(255.0))).collect()
+    let colours: Vec<[f32; 4]> = sprite.frame_at(gpu, action, 0, timing).iter().map(|(key, ..)| key.3.map(f32::from)).collect();
+    sprite.frame_plain(gpu, action, timing).into_iter().enumerate().map(|(index, placed)| (placed, colours.get(index).copied().unwrap_or([255.0; 4]))).collect()
 }
 
 /// How often a ground unit's effect starts again, in ticks: 8 before its length ends (Quagmire's 20), by the skill unit's type 1
@@ -2759,6 +2759,12 @@ const DEMONIC_FIRE: u32 = 916;
 const DEMONIC_FIRE_3: u32 = 918;
 const VACUUM_EXTREME: u32 = 921;
 const POISON_BUSTER_FX: u32 = 923;
+/// Fire Wave's fireballs, Water Screw's spouts, Typhoon Missile's fists and Blood Lust's drop.
+const FIRE_WAVE_FX: u32 = 901;
+const WATER_SCREW_FX: u32 = 941;
+const TYPHOON_MISSILE: u32 = 935;
+#[cfg(test)]
+const BLOOD_LUST: u32 = 571;
 /// Warmer's Imps, Arrullo's spirals and Elemental Action's crescents (`prims::cells`, `prims::spears`, `prims::walls`).
 const WARMER: u32 = 929;
 const ARRULLO_FX: u32 = 931;
@@ -3025,7 +3031,7 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 71] = [
+pub const AIMED: [u32; 72] = [
     EF_TETRA,
     CANNON_LINES,
     STIN,
@@ -3052,6 +3058,7 @@ pub const AIMED: [u32; 71] = [
     SONIC_RINGS,
     SHADOW_LINK,
     BOOST_KNUCKLE,
+    TYPHOON_MISSILE,
     RELEASE,
     SPEAR_FLASH,
     BLOOD_DRAIN,
@@ -4349,6 +4356,11 @@ impl Effects {
                 self.prims.walls.elemental_action(unit, now);
                 self.prims.guard.elemental(unit, now);
             }
+            (FIRE_WAVE_FX | WATER_SCREW_FX, Target::Unit(unit)) => {
+                let blast = if id == FIRE_WAVE_FX { cells::BLAST } else { cells::WATER_BLAST };
+                self.sprites.entry(blast.to_owned()).or_insert_with(|| SpriteSet::at(grf, blast));
+                if id == FIRE_WAVE_FX { self.prims.cells.fire_wave(unit, now) } else { self.prims.cells.water_screw(unit, now) }
+            }
             (POISON_BUSTER_FX, Target::Unit(unit)) => {
                 self.sprites.entry(cells::BLAST.to_owned()).or_insert_with(|| SpriteSet::at(grf, cells::BLAST));
                 self.prims.cells.poison_buster(unit, now);
@@ -5587,6 +5599,11 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.balls.boost_knuckle(from, to, self.yaw.to_degrees().floor() as i32, now);
             }
+            TYPHOON_MISSILE => {
+                self.sprites.entry(balls::FIST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, balls::FIST_SPRITE));
+                self.play_sounds(table, id, from, now);
+                self.prims.balls.typhoon_missile(from, to, self.yaw.to_degrees().floor() as i32, now);
+            }
             RELEASE => {
                 self.sprites.entry(balls::FIRE_BALL_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, balls::FIRE_BALL_SPRITE));
                 self.play_sounds(table, id, from, now);
@@ -5734,7 +5751,7 @@ impl Effects {
         }
         // The tree, the whirlwinds and the blasts: plain frames, each layer with the alpha its ACT gives it.
         let standing = self.prims.cells.stands(now).into_iter().map(|draw| (draw.sprite, draw.action, draw.steps as usize));
-        let blasts = self.prims.cells.blast_frames(now).into_iter().map(|frame| (cells::BLAST, 0, frame));
+        let blasts = self.prims.cells.blast_frames(now).into_iter().map(|(sprite, frame)| (sprite, 0, frame));
         for (path, action, steps) in standing.chain(blasts) {
             if let Some(Some(sprite)) = self.sprites.get_mut(path) {
                 let frames = sprite.frames(action).max(1);
@@ -6788,29 +6805,38 @@ impl Effects {
                     quads.push((sprite.texture(key), draw.at, corners, [red, green, blue, draw.alpha / 255.0], true, false));
                 }
             }
-            // Poison Buster's blasts: each layer in #3737FF at 0.85 of its alpha, and a halo 4 pixels bigger on every side at 0.5.
-            if let Some(Some(sprite)) = self.sprites.get(cells::BLAST) {
-                for draw in self.prims.cells.blasts(now, &position_of) {
-                    for &((key, position, size, layer_angle), alpha) in self.cell_frames.get(&(cells::BLAST, 0, draw.frame)).into_iter().flatten() {
-                        let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0);
-                        let (low, high) = corners.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(low, high), corner| {
-                            ([low[0].min(corner[0]), low[1].min(corner[1])], [high[0].max(corner[0]), high[1].max(corner[1])])
-                        });
-                        let middle = [(low[0] + high[0]) / 2.0, (low[1] + high[1]) / 2.0];
-                        let grown = corners.map(|[x, y]| [x + if x <= middle[0] { -4.0 } else { 4.0 }, y + if y <= middle[1] { -4.0 } else { 4.0 }]);
-                        let (body, halo) = cells::blast_alphas(alpha);
-                        quads.push((sprite.texture(key), draw.at, corners, [55.0 / 255.0, 55.0 / 255.0, 1.0, body / 255.0], true, false));
-                        quads.push((sprite.texture(key), draw.at, grown, [55.0 / 255.0, 55.0 / 255.0, 1.0, halo / 255.0], true, false));
-                    }
+            // The blasts: each layer in Poison Buster's #3737FF or the sprite's own colours at 0.85 of its alpha, and a halo 4 pixels
+            // bigger on every side at 0.5 (in #3737FF, or the layer's red with 55 and 55).
+            for draw in self.prims.cells.blasts(now, &position_of) {
+                let Some(Some(sprite)) = self.sprites.get(draw.kind.sprite()) else { continue };
+                for &((key, position, size, layer_angle), colour) in self.cell_frames.get(&(draw.kind.sprite(), 0, draw.frame)).into_iter().flatten() {
+                    let alpha = colour[3];
+                    let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0);
+                    let (low, high) = corners.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(low, high), corner| {
+                        ([low[0].min(corner[0]), low[1].min(corner[1])], [high[0].max(corner[0]), high[1].max(corner[1])])
+                    });
+                    let middle = [(low[0] + high[0]) / 2.0, (low[1] + high[1]) / 2.0];
+                    let grown = corners.map(|[x, y]| [x + if x <= middle[0] { -4.0 } else { 4.0 }, y + if y <= middle[1] { -4.0 } else { 4.0 }]);
+                    let (body, halo) = cells::blast_alphas(alpha);
+                    let (body_colour, halo_colour) = match draw.kind {
+                        cells::BlastKind::Poison => ([55.0 / 255.0, 55.0 / 255.0, 1.0], [55.0 / 255.0, 55.0 / 255.0, 1.0]),
+                        _ => ([colour[0] / 255.0, colour[1] / 255.0, colour[2] / 255.0], [colour[0] / 255.0, 55.0 / 255.0, 55.0 / 255.0]),
+                    };
+                    let [red, green, blue] = body_colour;
+                    quads.push((sprite.texture(key), draw.at, corners, [red, green, blue, body / 255.0], true, false));
+                    let [red, green, blue] = halo_colour;
+                    quads.push((sprite.texture(key), draw.at, grown, [red, green, blue, halo / 255.0], true, false));
                 }
             }
             // Boost Knuckle's fists: the first as the sprite colours it, the three after it white ghosts.
             if let Some(Some(sprite)) = self.sprites.get(balls::FIST_SPRITE) {
                 for draw in self.prims.balls.fist_draws() {
-                    let tint = [1.0, 1.0, 1.0, draw.ghost.map_or(1.0, |alpha| alpha / 255.0)];
+                    let alpha = draw.ghost.map_or(1.0, |alpha| alpha / 255.0);
+                    // Typhoon Missile's after-fists are #69FF69 and everything is added on.
+                    let tint = if draw.green && draw.ghost.is_some() { [105.0 / 255.0, 1.0, 105.0 / 255.0, alpha] } else { [1.0, 1.0, 1.0, alpha] };
                     for &(key, position, size, layer_angle) in self.fist_frames.get(&(draw.action, draw.frame, draw.ghost.is_some())).into_iter().flatten() {
                         let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle, uv).0);
-                        quads.push((sprite.texture(key), draw.at, corners, tint, false, false));
+                        quads.push((sprite.texture(key), draw.at, corners, tint, draw.green, false));
                     }
                 }
             }
@@ -11342,5 +11368,33 @@ mod tests {
         let torch = &table.floaters[&47];
         assert_eq!(torch.len(), 1);
         assert_eq!((torch[0]["angle"].as_str(), torch[0]["repeat"].as_str()), ("0", "true"));
+    }
+
+    #[test]
+    fn blood_lust_fire_wave_typhoon_missile_and_water_screw_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Blood Lust: 2 ticks a frame from frame 1, once, over everything; frames 1, 1, 2, 15 at ages 0, 1, 2, 29, ending at 30.
+        let part = &table.sprites[&BLOOD_LUST][0];
+        let animation = Animation::new(part, BLOOD_LUST, Instant::now(), Anchor::Unit(Some(1)), false);
+        assert!(animation.over && !animation.repeat && animation.frame_ms == Some(32.0) && animation.first == 1.0);
+        let frame = |age: u32| (animation_progress(16.0 * age as f32, 32.0, 16.0, 1.0, false) * 16.0) as usize;
+        assert_eq!([0, 1, 2, 29].map(frame), [1, 1, 2, 15]);
+        assert_eq!((16.0 - 1.0) * 2.0, 30.0);
+        assert!(table.used(8008).unwrap().contains(&(Who::Caster, BLOOD_LUST)));
+        assert_eq!(sounds(BLOOD_LUST), [("effect\\h_blood_lust", 0, false)]);
+        // Fire Wave (and Spore Explosion's packet): the target, 500 ticks, the sound belongs to the packet at the listener.
+        for skill in [8428, 2481] {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Target, FIRE_WAVE_FX)), "{skill}");
+            assert_eq!((table.hit_sounds[&skill][0].file.as_str(), table.hit_sounds[&skill][0].listener), ("effect\\폭염룡", true), "{skill}");
+        }
+        assert!(!table.sounds.contains_key(&FIRE_WAVE_FX) && !table.sounds.contains_key(&WATER_SCREW_FX));
+        assert!(table.struck(8428).unwrap().contains(&(Who::Target, 17)) && table.struck(8431).unwrap().contains(&(Who::Target, WATER_SCREW_FX)));
+        // Typhoon Missile: aimed from the elemental, Boost Knuckle's sound at the listener.
+        assert!(AIMED.contains(&TYPHOON_MISSILE) && table.struck(8437).unwrap().contains(&(Who::Caster, TYPHOON_MISSILE)));
+        assert_eq!(sounds(TYPHOON_MISSILE), [("effect\\맹호경파산", 0, true)]);
+        assert_eq!([BLOOD_LUST, FIRE_WAVE_FX, TYPHOON_MISSILE, WATER_SCREW_FX].map(|id| table.lengths[&id]), [100, 500, 100, 500]);
+        // The colour rule: the body at 0.85 and the halo at 0.5 of the layer's alpha, whole numbers.
+        assert_eq!(cells::blast_alphas(255.0), (216.0, 127.0));
     }
 }

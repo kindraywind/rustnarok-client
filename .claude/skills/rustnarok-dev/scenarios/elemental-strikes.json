@@ -1,0 +1,27 @@
+{
+  "about": "The elementals' strikes and Blood Lust (issue #816), from npc/elemental-strikes.txt with a training dummy 4 cells east: the player casts Fire Wave on it, eight orange fireball bursts drifting out round it with reddish halos (901); Water Screw, eight water spouts round it (941); Typhoon Missile, a glowing fist and two pale green after-fists flying from the player to it (935). Then an Amistr's Blood Lust: a dark blood drop over it bursting into a red ring with two red wings (571). None of them drew anything before. RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's homunculus, or @makehomun is refused.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp moc_fild12 160 160"}, {"settle": 1500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/elemental-strikes.txt"}, {"wait": 1500},
+    {"expect": {"state": {"player.cell": [160, 160]}}},
+    {"move": [1000, 750]},
+    {"say": "@heal"}, {"wait": 2000},
+    {"key": "Tab"}, {"type": "npc:RustnarokStrikes"}, {"key": "Tab"}, {"type": "fire"}, {"key": "Enter"}, {"wait_for": {"packet": "0x01de", "pause": true, "ms": 8000}}, {"cmd": {"cmd": "clock", "action": "step", "ms": 400}}, {"shot": "fire-wave-bursts", "crop": [312, 134, 500, 400], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 2000},
+    {"say": "@heal"}, {"wait": 2000},
+    {"type": "water"}, {"key": "Enter"}, {"wait_for": {"packet": "0x01de", "pause": true, "ms": 8000}}, {"cmd": {"cmd": "clock", "action": "step", "ms": 250}}, {"shot": "water-screw-spouts", "crop": [312, 134, 500, 400], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 2000},
+    {"say": "@heal"}, {"wait": 2000},
+    {"type": "typhoon"}, {"key": "Enter"}, {"wait_for": {"packet": "0x01de", "pause": true, "ms": 8000}}, {"cmd": {"cmd": "clock", "action": "step", "ms": 160}}, {"shot": "typhoon-missile-fists", "crop": [312, 134, 500, 400], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 2000},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/elemental-strikes.txt"}, {"wait": 300},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@makehomun 6002"}, {"wait": 1500},
+    {"say": "@homlevel 98"}, {"wait": 3000},
+    {"say": "@useskill 8008 1 {first}"}, {"wait_for": {"packet": "0x09cb", "pause": true, "ms": 8000}}, {"cmd": {"cmd": "clock", "action": "step", "ms": 200}}, {"shot": "blood-lust-burst", "crop": [312, 134, 400, 400], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 1000},
+    {"say": "@heal"}, {"wait": 500}
+  ]
+}
