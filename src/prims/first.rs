@@ -50,6 +50,8 @@ pub const ADRENALINE_RUSH: u32 = 98;
 pub const FLASHER_FX: u32 = 99;
 pub const REMOVE_TRAP: u32 = 100;
 pub const DETECTING: u32 = 119;
+/// Hovering's and the Side Slides' pale ring: Detecting's, smaller and earlier fading.
+pub const SIDE_SLIDE: u32 = 778;
 pub const ENCHANT_POISON: u32 = 125;
 /// Enchant Deadly Poison: the same sparkles round the caster's tick-0 place, 40 of them, those after tick 80 never drawn.
 pub const ENCHANT_DEADLY_POISON: u32 = 493;
@@ -77,6 +79,7 @@ pub fn makes(effect: u32) -> bool {
             | FLASHER_FX
             | REMOVE_TRAP
             | DETECTING
+            | SIDE_SLIDE
             | ENCHANT_POISON
             | ENCHANT_DEADLY_POISON
     )
@@ -96,7 +99,7 @@ fn length(effect: u32) -> u32 {
         ADRENALINE_RUSH => 300,
         FLASHER_FX => 250,
         REMOVE_TRAP => 70,
-        DETECTING | ENCHANT_POISON => 250,
+        DETECTING | SIDE_SLIDE | ENCHANT_POISON => 250,
         ENCHANT_DEADLY_POISON => 120,
         _ => 50,
     }
@@ -268,7 +271,7 @@ impl First {
                     }
                 }
             }
-            DETECTING => seed(0, 0.0, [0.0; 4]),
+            DETECTING | SIDE_SLIDE => seed(0, 0.0, [0.0; 4]),
             ENCHANT_POISON => {
                 // A sparkle every 5 ticks: yaw, distance, speed, size.
                 for born in (0..=245).step_by(5) {
@@ -386,6 +389,7 @@ impl First {
                     | FLASHER_FX
                     | REMOVE_TRAP
                     | DETECTING
+                    | SIDE_SLIDE
                     | ENCHANT_POISON
                     | ENCHANT_DEADLY_POISON
             ),
@@ -540,7 +544,12 @@ impl First {
                 }
                 DETECTING => {
                     if let Some(a) = Self::age(effect, now, 0, 57) {
-                        meshes.push((FASHASHA, detecting_ring(at, a)));
+                        meshes.push((FASHASHA, ring_square(at, detecting_half(a), burst::alpha(a, 254.0, 0.0, 254.0, 40, 57))));
+                    }
+                }
+                SIDE_SLIDE => {
+                    if let Some(a) = Self::age(effect, now, 0, 57) {
+                        meshes.push((FASHASHA, ring_square(at, ring_half(a, 10), burst::alpha(a, 254.0, 0.0, 254.0, 30, 57))));
                     }
                 }
                 _ => {}
@@ -864,10 +873,9 @@ fn ring(at: Vector, a: u32, alpha: f32, swell: f32, widest: f32) -> Vec<MeshVert
         .collect()
 }
 
-/// Detecting's ring: a square 5 up from the ground, half-width `detecting_half(a)`, alpha 254 to age 39 then fading to 0 at 56.
-fn detecting_ring(at: Vector, a: u32) -> Vec<MeshVertex> {
-    let half = detecting_half(a);
-    let tint = [1.0, 1.0, 1.0, burst::alpha(a, 254.0, 0.0, 254.0, 40, 57) / 255.0];
+/// A ring: a square 5 up from the ground, `half` wide, at `alpha` (0 to 255).
+fn ring_square(at: Vector, half: f32, alpha: f32) -> Vec<MeshVertex> {
+    let tint = [1.0, 1.0, 1.0, alpha / 255.0];
     let corner = |across: f32, along: f32, uv| MeshVertex { position: [at[0] + across * half, at[1] + 5.0, at[2] + along * half], uv, tint };
     let [a, b, c, d] = [corner(1.0, 1.0, [0.0, 0.0]), corner(1.0, -1.0, [1.0, 0.0]), corner(-1.0, 1.0, [0.0, 1.0]), corner(-1.0, -1.0, [1.0, 1.0])];
     vec![a, b, c, d, c, b]
@@ -876,9 +884,14 @@ fn detecting_ring(at: Vector, a: u32) -> Vec<MeshVertex> {
 /// Detecting's half-width at age `a`: each tick the rate gains a 14th of 1.5 (from 1.5), then the width grows by it; from
 /// age 17 the rate is 0.1 and gains a 30th of that.
 fn detecting_half(a: u32) -> f32 {
+    ring_half(a, 17)
+}
+
+/// The same with the slower rate from age `slow`.
+fn ring_half(a: u32, slow: u32) -> f32 {
     let (mut half, mut rate, mut gain) = (0.0_f32, 1.5_f32, 1.5_f32 / 14.0);
     for age in 0..=a {
-        if age == 17 {
+        if age == slow {
             (rate, gain) = (0.1, 0.1 / 30.0);
         }
         rate += gain;
@@ -1402,5 +1415,19 @@ mod tests {
         // Alpha 10 a tick to 200 at a = 19, held to 29, 0 at 49.
         let alpha = |a: u32| blades([0.0; 3], &seed, a)[0].tint[3] * 255.0;
         assert!(near(alpha(0), 10.0) && near(alpha(19), 200.0) && near(alpha(29), 200.0) && near(alpha(49), 0.0));
+    }
+
+    #[test]
+    fn the_side_slide_ring_is_a_smaller_earlier_fading_detecting() {
+        let (first, start) = effect_at(SIDE_SLIDE, |_| 0, false);
+        // W after ages 9, 10, 15, 30, 56: 20.893, 20.996, 21.563, 23.763, 29.353.
+        assert!(near(ring_half(0, 10), 1.607) && near(ring_half(9, 10), 20.893) && near(ring_half(10, 10), 20.996));
+        assert!(near(ring_half(15, 10), 21.563) && near(ring_half(30, 10), 23.763) && near(ring_half(56, 10), 29.353));
+        // Alpha 254 to age 29, 244 at 30, 0 at 56; 57 draws; it stays on its cell.
+        let mesh = |e: u32| first.meshes(tick(start, e), |_| None);
+        assert!((0..57).all(|e| mesh(e).len() == 1) && mesh(57).is_empty());
+        let alpha = |e: u32| (mesh(e)[0].1[0].tint[3] * 255.0).trunc();
+        assert_eq!([0, 29, 30, 56].map(alpha), [254.0, 254.0, 244.0, 0.0]);
+        assert!(makes(SIDE_SLIDE));
     }
 }

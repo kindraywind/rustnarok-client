@@ -1825,6 +1825,12 @@ const CHASE_WALK_CAST: u32 = 1195;
 /// Poem of Netherworld's blot (a held sprite), the Dark Illusion shake, Reverberation's red tornado, the head swing, the cast spin,
 /// the green flicker and Hovering's blue glow (`prims::brawl`, `prims::sparkle`, `prims::guard`).
 const NPC_STOP: u32 = 453;
+/// Poison Smoke's cell, Phantom Menace's crescents, the Mechanic's cast spin, and Acceleration's and Shape Shift's pulse.
+const POISON_SMOKE_CELL: u32 = 772;
+const PHANTOM_RIBBONS: u32 = 773;
+const CAST_SPIN2: u32 = 775;
+const ACCELERATION: u32 = 777;
+const SHAPE_SHIFT: u32 = 779;
 /// Detonator's flush, Release's spheres, Oratio's status circle, Enchant Blade's tint, the poisons' magenta and Weapon Crush's weapons.
 const CONCENTRATION2: u32 = 750;
 const RELEASE: u32 = 751;
@@ -2022,7 +2028,7 @@ impl Effects {
             return;
         }
         // Chase Walk's cast spins the caster.
-        if matches!(id, CHASE_WALK_CAST | CAST_SPIN) {
+        if matches!(id, CHASE_WALK_CAST | CAST_SPIN | CAST_SPIN2) {
             self.play_sounds(table, id, at, now);
             self.prims.guard.chase_walk(unit, cast_ms / crate::prims::TICK.as_millis() as u32, now);
             return;
@@ -2258,6 +2264,15 @@ impl Effects {
                 self.prims.shafts.play(at, now);
             }
             (CLOAKING, Target::Status(unit, _)) => self.prims.brawl.cloak(unit, now),
+            (PHANTOM_RIBBONS, Target::Unit(unit)) => {
+                self.textures.entry(walls::RING_PURPLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_PURPLE, true).ok());
+                self.prims.walls.phantom_menace(unit, now);
+            }
+            (ACCELERATION | SHAPE_SHIFT, Target::Unit(unit)) => {
+                self.textures.entry(walls::STREAK.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::STREAK, true).ok());
+                self.prims.guard.pulse(unit, now);
+                self.prims.walls.pulse(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
             (CONCENTRATION2, Target::Unit(unit)) => self.prims.guard.concentration(unit, now),
             (PURPLE_BODY, Target::Unit(unit)) => self.prims.guard.purple(unit, now),
             (MAGIC_CIRCLE, Target::Status(unit, _)) => {
@@ -2743,6 +2758,10 @@ impl Effects {
                 let look = if effect == MAGNUS { ground::RING_RED } else { ground::ALPHA_DOWN };
                 self.textures.entry(look.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, look, true).ok());
                 self.prims.ground.keep_box(effect, id, at, now, self.min, |n| pick(0, n.saturating_sub(1)));
+            } else if effect == POISON_SMOKE_CELL {
+                // Poison Smoke's cells throw violet sparkles over everything while their unit stands.
+                self.sprites.entry(first::POISON_STAR.to_owned()).or_insert_with(|| SpriteSet::at(grf, first::POISON_STAR));
+                self.prims.walls.keep_smoke(id, at, now);
             } else if matches!(effect, FIRE_PILLAR | VENOM_DUST) {
                 // The Fire Pillar's funnels and Venom Dust's puffs stand with their unit, drawn in code.
                 self.textures.entry(walls::MAGIC_RED.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::MAGIC_RED, true).ok());
@@ -3876,6 +3895,17 @@ impl Effects {
                 let alpha = if self.dim { square.alpha.min(100.0) } else { square.alpha };
                 let [red, green, blue] = square.tint.map(|channel| f32::from(channel) / 255.0);
                 quads.push((texture, square.at, corners, [red, green, blue, alpha.trunc().clamp(0.0, 255.0) / 255.0], true, false));
+            }
+            // Poison Smoke's sparkles: the sprite particles again, over everything with no depth test.
+            for particle in self.prims.walls.smoke_particles(now) {
+                let Some(Some(sprite)) = self.sprites.get(particle.sprite) else { continue };
+                for &(key, position, size, layer_angle) in self.stars.get(particle.sprite).into_iter().flatten() {
+                    let corners = QUAD_UV.map(|uv| {
+                        let [x, y] = world::sprite_corner(position, size, layer_angle + particle.spin, uv).0;
+                        [x * particle.scale, y * particle.scale + STR_RISE]
+                    });
+                    quads.push((sprite.texture(key), particle.at, corners, [1.0, 1.0, 1.0, particle.alpha.trunc().clamp(0.0, 255.0) / 255.0], false, true));
+                }
             }
             // The first jobs' sparkles and sparks.
             for particle in self.prims.first.particles(now, &position_of).into_iter().chain(self.prims.walls.particles(now)) {
@@ -5463,5 +5493,26 @@ mod tests {
         // Weapon Crush: four sounds on the target.
         assert_eq!(sounds(WEAPON_CRUSH), [16, 176, 336, 496].map(|ms| ("effect\\복호격", ms, false)));
         assert!(table.struck(2030).unwrap().contains(&(Who::Target, WEAPON_CRUSH)));
+    }
+
+    #[test]
+    fn poisoning_weapon_poison_smoke_phantom_menace_the_mechanic_spin_vulcan_arm_and_acceleration_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Two sounds at tick 1 at the listener.
+        assert_eq!(sounds(771), [("effect\\assasin_enchantpoison", 16, true), ("effect\\EF_PoisonAttack", 16, true)]);
+        // Poison Smoke's cells keep 772 with their unit; Phantom Menace's crescents come with the damage.
+        assert_eq!(table.units[&225], POISON_SMOKE_CELL);
+        assert!(table.units_once.contains(&225));
+        assert!(table.struck(2034).unwrap().contains(&(Who::Caster, PHANTOM_RIBBONS)));
+        // The Mechanic's cast spin: 2267 and 2280, the begin-spell sound; Vulcan Arm's sound at tick 45.
+        assert!([2267, 2280].iter().all(|&skill| table.cast_aura(skill, 12) == Some(CAST_SPIN2)));
+        assert_eq!(sounds(CAST_SPIN2), [("effect\\EF_BeginSpell", 0, false)]);
+        assert!(table.struck(2258).unwrap().contains(&(Who::Caster, 776)));
+        assert_eq!(sounds(776), [("effect\\데스페라도", 720, true)]);
+        // Acceleration and Shape Shift: their sounds at tick 0; the Side Slides' ring after Hovering.
+        assert_eq!((sounds(ACCELERATION), sounds(SHAPE_SHIFT)), (vec![("effect\\EF_IncAgility", 0, false)], vec![("effect\\소울 체인지", 0, false)]));
+        assert!(table.used(2262).unwrap().contains(&(Who::Caster, ACCELERATION)) && table.used(2268).unwrap().contains(&(Who::Caster, SHAPE_SHIFT)));
+        assert!([2263, 2264, 2265].iter().all(|&skill| table.used(skill).unwrap().contains(&(Who::Caster, first::SIDE_SLIDE))));
     }
 }

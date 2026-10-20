@@ -2015,6 +2015,12 @@ wav	770	effect\복호격	16
 wav	770	effect\복호격	176
 wav	770	effect\복호격	336
 wav	770	effect\복호격	496
+wav	771	effect\assasin_enchantpoison	16	listener
+wav	771	effect\EF_PoisonAttack	16	listener
+wav	775	effect\EF_BeginSpell	0
+wav	776	effect\데스페라도	720	listener
+wav	777	effect\EF_IncAgility	0
+wav	779	effect\소울 체인지	0
 wav	799	effect\wl_stasis	0
 wav	802	effect\wl_whiteimprison	0
 wav	803	effect\wl_recognizedspell	0
@@ -4268,6 +4274,7 @@ struck	2227	target	51
 struck	2228	target	147
 struck	2237	caster	750
 struck	2256	caster	806
+struck	2258	caster	776
 struck	2270	caster	780
 struck	2270	caster	794
 struck	2271	target	786
@@ -4627,6 +4634,7 @@ used	2209	caster	799
 used	2230	caster	751
 used	2262	caster	777
 used	2263	caster	543
+used	2263	caster	778
 used	2264	caster	778
 used	2265	caster	778
 used	2268	caster	779
