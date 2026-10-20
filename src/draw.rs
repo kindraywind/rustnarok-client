@@ -932,7 +932,10 @@ impl App {
                 let (part, copies) = actor::glow_copies(flags, body_tint, group, breath, spread, grow_unit, is_player);
                 let corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|uv| world::sprite_corner(position, size, angle, uv).0);
                 let times = |color: [f32; 4]| std::array::from_fn(|channel| tint[channel] * color[channel]);
-                glows.extend(copies.iter().map(|copy| (texture, *feet, corners, times(copy.color), copy.additive, copy.grow)));
+                glows.extend(copies.iter().map(|copy| {
+                    let moved = corners.map(|corner| [corner[0] + copy.offset[0], corner[1] + copy.offset[1]]);
+                    (texture, *feet, moved, times(copy.color), copy.additive, copy.grow)
+                }));
                 if flicker_copy && group == actor::PartGroup::Weapon {
                     glows.push((texture, *feet, corners, times([1.0; 4]), true, 0.0));
                 }

@@ -12,8 +12,8 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, bolts, boomerang, burst, dancer, first, ground, guard, huujin, knight, monk, sage, shards, sight, sniper, songs, spray, star, stone, tanji,
-    throw, transcend, walls, waterball,
+    balls, blitz, bolts, boomerang, brawl, burst, dancer, first, ground, guard, huujin, knight, monk, sage, shards, sight, sniper, songs, spray, star, stone,
+    tanji, throw, transcend, walls, waterball,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -1800,6 +1800,16 @@ const SHIELD_CHAIN: u32 = 520;
 const DOUBLE_CAST: u32 = 521;
 const GRAVITATION: u32 = 522;
 const CHASE_WALK_CAST: u32 = 1195;
+/// Self-Destruction's streaks, Spirit Recovery's and Blood Sucker's drops, Storm Blast's ribbons and hopping lines, Rage Burst's rays,
+/// Sound of Destruction's copies, Windmill's tornado and Dark Illusion's lines (`prims::brawl`).
+const SELF_DESTRUCTION: u32 = 183;
+const BLOOD_DRAIN: u32 = 216;
+const STORM_BLAST: u32 = 263;
+const HIT_LINE: u32 = 330;
+const RAGE_BURST: u32 = 377;
+const FOUR_WAY_BODY: u32 = 425;
+const STORM_KICK: u32 = 435;
+const CHEMICAL: u32 = 439;
 const FOG_WALL: u32 = 405;
 const METEOR_ASSAULT: u32 = 409;
 const ENCHANT_DEADLY_POISON: u32 = 493;
@@ -1869,7 +1879,9 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 26] = [
+pub const AIMED: [u32; 28] = [
+    BLOOD_DRAIN,
+    CHEMICAL,
     MARIONETTE_LINK,
     SHARP_SHOOTING,
     ARROW_VULCAN,
@@ -1943,6 +1955,14 @@ impl Effects {
     /// its sound), any other effect plays as it is.
     #[allow(clippy::too_many_arguments)]
     pub fn play_cast_aura(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, unit: Option<u32>, at: Vector, cast_ms: u32, now: Instant) {
+        // Spirit Recovery's cast throws three drops round the caster; one with no cast time shows nothing.
+        if id == BLOOD_DRAIN {
+            if cast_ms > 0 {
+                self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
+                self.prims.blood_drain(at, at, now);
+            }
+            return;
+        }
         // Chase Walk's cast spins the caster.
         if id == CHASE_WALK_CAST {
             self.play_sounds(table, id, at, now);
@@ -2137,6 +2157,31 @@ impl Effects {
         }
         // Memorize and Double Casting flicker the body; Cart Termination's dots, Shield Chain's shields and Gravitation Field's spikes.
         match (id, target) {
+            (SELF_DESTRUCTION, Target::Unit(unit)) => {
+                for path in brawl::LENS {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.brawl.flares(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (STORM_BLAST, Target::Unit(unit)) => {
+                self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
+                self.prims.walls.storm_blast(unit, now);
+            }
+            (HIT_LINE, Target::Unit(_)) => {
+                self.textures.entry(brawl::WHITE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::WHITE, true).ok());
+                self.prims.brawl.hops(at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (RAGE_BURST, Target::Unit(unit)) => {
+                self.textures.entry(brawl::RAY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::RAY, true).ok());
+                self.prims.brawl.rays(unit, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            (FOUR_WAY_BODY, Target::Unit(unit)) => self.prims.brawl.spread(unit, now),
+            (STORM_KICK, Target::Unit(unit)) => {
+                for path in [brawl::STORM, brawl::CLOUD] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.brawl.windmill(unit, at, now, |n| pick(0, n.saturating_sub(1)));
+            }
             (MEMORIZE, Target::Unit(unit)) => self.prims.guard.memorize(unit, now),
             (DOUBLE_CAST, Target::Unit(unit)) => self.prims.guard.double_cast(unit, now),
             (CART_TERMINATION, Target::Unit(unit)) => {
@@ -2811,6 +2856,16 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.waterballs.throw(from, to, now);
             }
+            BLOOD_DRAIN => {
+                self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
+                // The drops leave the target for the caster: `to` is the one hit.
+                self.prims.blood_drain(to, from, now);
+            }
+            CHEMICAL => {
+                self.textures.entry(brawl::STRIP.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::STRIP, true).ok());
+                self.play_sounds(table, id, LISTENER, now);
+                self.prims.brawl.lines(from, to, now, |n| pick(0, n.saturating_sub(1)));
+            }
             GRIMTOOTH => {
                 self.textures.entry(stone::STONE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, stone::STONE, true).ok());
                 self.play_sounds(table, id, from, now);
@@ -2845,6 +2900,7 @@ impl Effects {
         self.prims.transcend.advance(now, &position_of);
         self.prims.sniper.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.spray.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        self.prims.brawl.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.monk.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         for (file, at) in self.prims.throws.advance(now, &position_of) {
             self.sounds.push((now, file, at));
@@ -3095,11 +3151,12 @@ impl Effects {
             .or_else(|| self.prims.transcend.glow(unit, now))
             .or_else(|| self.prims.sniper.glow(unit, now))
             .or_else(|| self.prims.guard.glow(unit, now))
+            .or_else(|| self.prims.brawl.glow(unit, now))
     }
 
     /// How many degrees `unit` has been turned since this was last asked (Falcon Assault's spin, Chase Walk's cast while it stands).
     pub fn turned(&mut self, unit: Option<u32>, now: Instant, standing: bool) -> f32 {
-        self.prims.sniper.turned(unit, now) + self.prims.guard.turned(unit, now, standing)
+        self.prims.sniper.turned(unit, now) + self.prims.guard.turned(unit, now, standing) + self.prims.brawl.turned(unit, now)
     }
 
     /// A cast cut off: Twilight Alchemy's icons go.
@@ -3125,6 +3182,14 @@ impl Effects {
         if !self.only_forced {
             let rings = self.prims.first.top_meshes(now);
             meshes.extend(rings.into_iter().filter_map(|(path, triangles)| Some((self.textures.get(path)?.as_ref()?, triangles, false))));
+            // Dark Illusion's lines, with no depth test.
+            meshes.extend(
+                self.prims
+                    .brawl
+                    .top_meshes(now)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            );
             // Raid's streaks, with no depth test.
             meshes.extend(
                 self.prims.monk.meshes(now, true).into_iter().filter_map(|(path, vertices)| Some((self.textures.get(path)?.as_ref()?, vertices, true))),
@@ -3303,6 +3368,13 @@ impl Effects {
             .chain(
                 self.prims
                     .knight
+                    .meshes(now, &position_of)
+                    .into_iter()
+                    .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
+            )
+            .chain(
+                self.prims
+                    .brawl
                     .meshes(now, &position_of)
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
@@ -3920,8 +3992,8 @@ mod tests {
         assert_eq!([5401, 5507, 6001, 6006, 6525, 6606].map(|skill| table.cast_aura(skill, 12)), [None; 6]);
         assert_eq!([5400, 6007, 6607].map(|skill| table.cast_aura(skill, 12)).len(), 3);
         // The table's rows, as the issue lists them: 766 skills and 5 None rows.
-        assert_eq!(table.casts.len(), 771);
-        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 771);
+        assert_eq!(table.casts.len(), 772);
+        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 772);
     }
 
     #[test]
@@ -5111,5 +5183,37 @@ mod tests {
         let s155 = table.sounds.get(&155).and_then(|s| s.first()).expect("155 wav");
         assert_eq!(s155.file, "effect\\bs_refinefailed");
         assert_eq!(s155.delay_ms, 80);
+    }
+
+    #[test]
+    fn self_destruction_blood_drain_storm_blast_rage_burst_windmill_and_dark_illusion_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Self-Destruction: three quakes of 200 ms at ticks 3, 7 and 9, none at 0.
+        assert_eq!(table.quakes[&183], [48, 112, 144].map(|ms| (Duration::from_millis(ms), QUAKE_SHORT)));
+        // Blood Drain, Storm Blast's ribbons and Rage Burst's rays are made in code: no part or ring rows.
+        assert!(!table.floaters.contains_key(&BLOOD_DRAIN) && !table.rings.contains_key(&STORM_BLAST) && !table.rings.contains_key(&RAGE_BURST));
+        assert!(AIMED.contains(&BLOOD_DRAIN) && AIMED.contains(&CHEMICAL));
+        // Blood Sucker throws from its target; Spirit Recovery from the caster's cast; both with their sounds.
+        assert!(table.used(2480).unwrap().contains(&(Who::Target, BLOOD_DRAIN)) && table.cast_aura(2464, 0) == Some(BLOOD_DRAIN));
+        assert_eq!((table.skill_sounds[&2480][0].file.as_str(), table.skill_sounds[&2464][0].file.as_str()), ("effect\\S바큠익스트림", "effect\\_heal_effect"));
+        // Storm Blast and Combo Finish: the ribbons and the hopping lines, with the sound and a long shake.
+        let combo_finish = table.struck(273).unwrap();
+        assert!(combo_finish.contains(&(Who::Target, STORM_BLAST)) && combo_finish.contains(&(Who::Target, HIT_LINE)));
+        let used = table.used(2017).unwrap();
+        assert!(used.contains(&(Who::Caster, 17)) && used.contains(&(Who::Target, STORM_BLAST)) && used.contains(&(Who::Target, HIT_LINE)));
+        assert_eq!(sounds(HIT_LINE), [("effect\\mon_맹룡과강", 0, true)]);
+        assert_eq!(table.quakes[&HIT_LINE], [(Duration::ZERO, QUAKE_LONG)]);
+        // Chain Combo, Tiger Fist and Chain Crush Combo keep their other effects.
+        assert!(table.struck(272).unwrap().contains(&(Who::Target, STORM_BLAST)) && table.struck(272).unwrap().contains(&(Who::Target, 262)));
+        let tiger = table.struck(371).unwrap();
+        assert!(tiger.contains(&(Who::Target, STORM_BLAST)) && tiger.contains(&(Who::Target, RAGE_BURST)));
+        assert!(table.struck(372).unwrap().contains(&(Who::Target, STORM_BLAST)) && table.struck(372).unwrap().contains(&(Who::Target, 512)));
+        // Rage Burst's sound comes at tick 5 (80 ms) at the unit; Windmill's too; Dark Illusion's at the listener, Sling Item too.
+        assert_eq!(sounds(RAGE_BURST), [("effect\\mon_맹룡과강", 80, false)]);
+        assert_eq!(sounds(STORM_KICK), [("effect\\T_회오리차기", 80, false)]);
+        assert_eq!(sounds(CHEMICAL), [("effect\\G스포어익스플로젼", 0, true)]);
+        assert!(table.used(2493).unwrap().contains(&(Who::Caster, CHEMICAL)) && table.struck(2023).unwrap().contains(&(Who::Caster, CHEMICAL)));
+        assert!(table.used(2337).unwrap().contains(&(Who::Caster, STORM_KICK)) && table.struck(469).unwrap().contains(&(Who::Target, FOUR_WAY_BODY)));
     }
 }

@@ -7,6 +7,7 @@ pub mod balls;
 pub mod blitz;
 pub mod bolts;
 pub mod boomerang;
+pub mod brawl;
 pub mod burst;
 pub mod dancer;
 pub mod first;
@@ -164,6 +165,7 @@ pub struct Prims {
     pub dancer: dancer::Dancer,
     pub guard: guard::Guard,
     pub spray: spray::Spray,
+    pub brawl: brawl::Brawl,
 }
 
 /// COLDHIT's shard and smoke textures.
@@ -498,6 +500,31 @@ impl Prims {
         }
     }
 
+    /// Blood Drain (EF_BLOODDRAIN) from the feet `from` toward `aim`: three red drops fanned −90°, 0° and 90°, each flying out past
+    /// the aim and back (a drop's forward speed 2 · D / 60, D the distance), every one at once.
+    pub fn blood_drain(&mut self, from: Vector, aim: Vector, now: Instant) {
+        let (dx, dz) = (aim[0] - from[0], aim[2] - from[2]);
+        let distance = f32::hypot(dx, dz);
+        let forward = flight_direction(dx, dz);
+        for angle in [-90.0, 0.0, 90.0] {
+            self.ghosts.push(Ghost::from_spec(GhostSpec {
+                start: now,
+                lead: 1,
+                life: 60,
+                trail_from: from,
+                base: [from[0], from[1] + GHOST_RISE, from[2]],
+                forward,
+                speed: distance / 30.0,
+                slow: 2.0,
+                turn: lookup(angle),
+                trail_len: 7,
+                scale: 1.7,
+                tint: [250.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0],
+                red: false,
+            }));
+        }
+    }
+
     /// Indulge (EF_ENERGYDRAIN3) round the caster's feet `at`: three sparks on each of five ticks, each flying out against a
     /// heading of its own and back; their choices from `rand(n)` in the order the game draws them.
     pub fn indulge(&mut self, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
@@ -572,6 +599,7 @@ impl Prims {
         shapes.extend(self.bursts.iter().filter(|burst| burst.fixed.is_none()).flat_map(|burst| burst.shapes(now)));
         shapes.extend(self.napalms.iter().flat_map(|napalm| napalm.shapes(now)));
         shapes.extend(self.first.shapes(now));
+        shapes.extend(self.brawl.shapes(now));
         shapes
     }
 
@@ -937,5 +965,28 @@ mod tests {
         prims.sparkle(Some(55), [0.0; 3], start, |_| 0);
         prims.forget(55);
         assert!(prims.sparkles.is_empty());
+    }
+
+    #[test]
+    fn blood_drain_throws_three_drops_out_past_the_aim_and_back() {
+        let start = Instant::now();
+        let at = |ticks: u32| {
+            let mut prims = Prims::default();
+            prims.blood_drain([0.0, 0.0, 0.0], [0.0, 0.0, -15.0], start);
+            prims.advance(start + TICK * (ticks - 1));
+            (prims.ghosts.len(), prims.ghosts[0].along, prims.ghosts[0].bulge, prims.ghosts[0].trail_len)
+        };
+        // D = 15: the drops are 3 at once with 7 trail copies; forward −14 at t = 30 and 32 at t = 60 (2D + 2); the arc −31 at 30.
+        let (count, along, bulge, trail) = at(30);
+        assert!(count == 3 && trail == 7 && (along + 14.0).abs() < 0.01 && (bulge + 31.0).abs() < 0.01);
+        assert!((at(60).1 - 32.0).abs() < 0.01);
+        // Round the caster itself (D = 0): out to −29 and back to 2.
+        let mut near_self = Prims::default();
+        near_self.blood_drain([5.0, 0.0, 5.0], [5.0, 0.0, 5.0], start);
+        near_self.advance(start + TICK * 59);
+        assert!((near_self.ghosts[0].along - 2.0).abs() < 0.01);
+        // The fan: the drops turn −89, 0 and 90 degrees round the line; in #FA6464 at scale 1.7.
+        assert_eq!(near_self.ghosts.iter().map(|ghost| ghost.turn).collect::<Vec<_>>(), [-89.0, 0.0, 90.0]);
+        assert!(near_self.ghosts.iter().all(|ghost| ghost.scale == 1.7 && ghost.tint == [250.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0]));
     }
 }

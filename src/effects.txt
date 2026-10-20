@@ -1285,7 +1285,6 @@ part	93	3D	fileList=effect/thunder_ball_a.bmp,effect/thunder_ball_b.bmp,effect/t
 part	94	3D	file=effect/thunder_pang.bmp;duration=100;sizeStart=0;sizeEnd=25;blendMode=2;rotateToTarget=true;fadeOut=true;overlay=true;attachedEntity=true
 part	94	3D	fileList=effect/thunder_plazma_blast_a.bmp,effect/thunder_plazma_blast_b.bmp,effect/thunder_ball_d.bmp,effect/thunder_ball_e.bmp,effect/thunder_ball_f.bmp;frameDelay=10;duration=300;size=75;blendMode=2;overlay=true;attachedEntity=true
 part	116	3D	duration=500;fileList=effect/water_out_a.bmp,effect/water_out_b.bmp,effect/water_out_c.bmp;fadeOut=true;posxRand=1.5;poszRand=1.5;posyStart=0;posyEnd=3;posySmooth=true;size=30.5;rotateWithCamera=true;blendMode=2;attachedEntity=true;wav=effect/wizard_waterball_chulung
-part	216	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;red=1.0;green=0.4;blue=0.4;sizeStart=150.0;sizeEnd=180.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
 part	217	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;red=0.4;green=0.4;blue=1.0;sizeStart=150.0;sizeEnd=180.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
 part	232	3D	alphaMax=0.5;angle=180;attachedEntity=true;blendMode=2;red=0.1;green=0.1;blue=0.9;duration=100;fadeIn=true;fadeOut=true;file=effect/alpha_center.tga;fromSrc=true;rotateToTarget=true;rotateWithCamera=true;sizeX=5;sizeY=50;zOffset=1;zIndex=1
 part	262	3D	wav=effect/mon_폭기;duplicate=12;timeBetweenDupli=0;file=effect/alpha_center.tga;delayStart=250;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;overlay=true;rotateToTarget=true;rotateWithCamera=true
@@ -1463,7 +1462,6 @@ ring	34	alphaMax=0.5;animation=5;attachedEntity=true;blendMode=8;bottomSize=0.8;
 ring	35	alphaMax=0.6;animation=0;attachedEntity=true;blue=1;bottomSize=0.6;duration=25000;fade=true;green=0.7;height=15;red=0.7;rotate=true;textureName=alpha_down;topSize=0.6;wav=effect/ef_readyportal
 ring	61	alphaMax=0.3;animation=3;attachedEntity=true;blendMode=2;blue=1;bottomSize=2;duration=2800;fade=true;green=0.5;height=1.1;red=0.5;rotate=true;textureName=ring_blue;topSize=3.3
 ring	61	alphaMax=0.3;animation=3;attachedEntity=true;blendMode=2;blue=1;bottomSize=1.9;duration=2800;fade=true;green=0.5;height=1.1;red=0.5;rotate=true;textureName=ring_blue;topSize=3.2
-ring	263	alphaMax=0.3;blendMode=8;animation=4;duplicate=4;timeBetweenDupli=100;bottomSize=3;duration=1000;fade=true;height=2;rotate=true;textureName=ring_yellow;topSize=6;attachedEntity=true
 # ponytail: the teleport keeps its rings' shape; violet and purple are the textures' own colours (white).
 ring	313	alphaMax=0.3;animation=1;attachedEntity=true;blendMode=2;blue=0.7;bottomSize=1.1;duration=1500;fade=true;green=1;height=2;red=0.7;rotate=true;textureName=ring_white;topSize=3
 ring	316	alphaMax=0.4;animation=4;attachedEntity=true;blendMode=2;renderBeforeEntities=true;blue=1;bottomSize=2.4;duration=500;fadeOut=true;green=1;height=0.1;posZ=0.1;red=1;rotate=true;textureName=ring_blue;repeat=true;repeatDelay=-300;topSize=3.9;wav=effect/ef_readyportal
@@ -1483,8 +1481,6 @@ ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.45
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.52;topSize=2.52;height=2.1;alphaMax=32;blendMode=2;rotateWithCamera=true;angleY=10;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=26.6;duration=20000;attachedEntity=true
 ring	374	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.6;topSize=2.6;height=2.0;alphaMax=15;blendMode=2;rotateWithCamera=true;angleY=79.8;duration=20000;attachedEntity=true
-ring	377	textureName=alpha_center;alphaMax=0.6;duration=175;delayStart=50;duplicate=8;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=4.5;animation=2;zIndex=1.1;attachedEntity=true
-ring	377	textureName=alpha_center;alphaMax=0.6;duration=175;duplicate=8;delayStart=50;timeBetweenDupli=0;totalCircleSides=30;circleSides=1;fade=true;angleX=-90;angleZRandom=360;fixedPerspective=true;posZ=1.5;height=0;bottomSize=0.01;topSize=7.2;animation=2;zIndex=1.2;attachedEntity=true
 ring	454	alphaMax=0.8;animation=2;attachedEntity=true;blendMode=2;blue=1;bottomSize=1;duration=900;fade=true;green=1;height=4;red=1;rotate=true;textureName=ring_black;topSize=5;wav=effect/ef_beginspell
 ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=4.5;height=-4;duration=800
 ring	510	textureName=ring_white;fade=true;animation=2;attachedEntity=true;blendMode=2;bottomSize=1;topSize=2.5;height=-4;duration=800
@@ -1575,10 +1571,13 @@ func	90	quake	3200	650
 func	92	quake	640	650
 func	102	quake	560	650
 func	142	quake	0	650
-func	183	quake	0	200
+func	183	quake	48	200
+func	183	quake	112	200
+func	183	quake	144	200
 func	220	quake	288	200
 func	266	quake	0	200
 func	303	quake	132	650
+func	330	quake	0	650
 func	365	quake	528	650
 func	380	quake	480	650
 func	522	quake	0	650
@@ -1857,12 +1856,13 @@ wav	363	effect\vallentine	0
 wav	365	effect\프레셔	48
 wav	366	effect\세크리파이스	352
 wav	223	effect\EF_FireWall	0	listener
+wav	330	effect\mon_맹룡과강	0	listener
 wav	367	effect\오라 블레이드	0
 wav	368	effect\버서크	0
 wav	369	effect\knight_twohandquicken	0
 wav	371	levelup	0
 wav	376	effect\맹호경파산	0
-wav	377	effect\mon_폭기	0
+wav	377	effect\mon_맹룡과강	80
 wav	380	effect\매직 크래쉬	400
 wav	384	effect\소울 체인지	0
 wav	386	effect\hunter_detecting	0
@@ -1883,6 +1883,8 @@ wav	401	effect\EF_NapalmBeat	960
 wav	403	effect\swordman_provoke	400
 wav	409	effect\메테오 어썰트	0
 wav	426	effect\복호격	0
+wav	435	effect\T_회오리차기	80
+wav	439	effect\G스포어익스플로젼	0	listener
 wav	440	effect\아숨프티오	0
 wav	444	effect\t_효과음1	0
 wav	445	effect\t_회피2	0
@@ -4104,6 +4106,7 @@ cast	2222	-1
 cast	2223	-1
 cast	2224	-1
 cast	2229	-1
+cast	2464	216
 struck	13	caster	15
 struck	340	caster	451
 struck	14	target	26
@@ -4143,6 +4146,11 @@ struck	266	caster	264
 struck	266	caster	267
 struck	267	caster	265
 struck	271	target	266
+struck	272	target	262
+struck	272	target	263
+struck	272	target	273
+struck	273	target	263
+struck	273	target	330
 struck	337	caster	494
 struck	339	caster	450
 struck	341	caster	93
@@ -4153,6 +4161,10 @@ struck	346	target	270
 struck	365	target	380
 struck	367	target	365
 struck	368	caster	366
+struck	371	target	263
+struck	371	target	377
+struck	372	target	263
+struck	372	target	512
 struck	379	caster	361
 struck	381	target	387
 struck	382	caster	388
@@ -4567,6 +4579,7 @@ used	2015	caster	756
 used	2018	caster	756
 used	2017	caster	17
 used	2017	target	263
+used	2017	target	330
 used	2019	caster	538
 used	2026	target	21
 used	2027	caster	771
@@ -4646,6 +4659,7 @@ used	2461	caster	934
 used	2476	caster	1365
 used	2480	target	216
 used	2493	caster	886
+used	2493	caster	439
 used	2494	caster	911
 used	2495	caster	911
 used	2496	caster	911
@@ -5062,3 +5076,5 @@ skillwav	329	effect\행운의	0	listener
 skillwav	330	effect\당신을 위한 서비스	0	listener
 skillwav	366	effect\마법력 증폭	0	listener
 skillwav	482	effect\마법력 증폭	0	listener
+skillwav	2480	effect\S바큠익스트림	0	listener
+skillwav	2464	effect\_heal_effect	0	listener
