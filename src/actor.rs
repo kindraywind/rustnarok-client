@@ -426,270 +426,89 @@ pub fn drawn_cell(position: [f32; 2]) -> [i32; 2] {
     position.map(|value| (value + 0.5).floor() as i32)
 }
 
-/// The attack motion for a player's job and weapon type: action 5, 10 or 11.
-pub fn attack_action(job: u16, sex: u8, weapon_type: u32) -> usize {
-    // Weapon types (the client's Weapon_IDs, rathena's weapon_type).
-    const DAGGER: u32 = 1;
-    const SWORD: u32 = 2;
-    const TWO_HAND_SWORD: u32 = 3;
-    const SPEAR: u32 = 4;
-    const TWO_HAND_SPEAR: u32 = 5;
-    const AXE: u32 = 6;
-    const TWO_HAND_AXE: u32 = 7;
-    const MACE: u32 = 8;
-    const TWO_HAND_MACE: u32 = 9;
-    const ROD: u32 = 10;
-    const BOW: u32 = 11;
-    const KNUCKLE: u32 = 12;
-    const INSTRUMENT: u32 = 13;
-    const WHIP: u32 = 14;
-    const BOOK: u32 = 15;
-    const KATAR: u32 = 16;
-    const REVOLVER: u32 = 17;
-    const RIFLE: u32 = 18;
-    const GATLING: u32 = 19;
-    const SHOTGUN: u32 = 20;
-    const GRENADE: u32 = 21;
-    const HUUMA: u32 = 22;
-    const TWO_HAND_ROD: u32 = 23;
-    let female = sex == 0;
-    let w = weapon_type;
-    let blade_or_blunt = |w: u32| matches!(w, SWORD | TWO_HAND_SWORD | AXE | TWO_HAND_AXE | MACE | TWO_HAND_MACE);
-    let rod = |w: u32| matches!(w, ROD | TWO_HAND_ROD);
-    // Rebirth and third jobs swing like the class they grew from.
-    let base = match job {
-        4001..=4007 => job - 4001,
-        4008 => 7,
-        4009 => 8,
-        4010 => 9,
-        4011 => 10,
-        4012 => 11,
-        4013 => 12,
-        4014 => 13,
-        4015 => 14,
-        4016 => 15,
-        4017 => 16,
-        4018 => 17,
-        4019 => 18,
-        4020 => 19,
-        4021 => 20,
-        4054 => 7,
-        4055 => 9,
-        4056 => 11,
-        4057 => 8,
-        4058 => 10,
-        4059 => 12,
-        4066 => 14,
-        4067 => 16,
-        4068 => 19,
-        4069 => 20,
-        4070 => 15,
-        4071 => 18,
-        4072 => 17,
-        // Soul Linkers swing like wizards.
-        4049 => 27,
-        job => job,
-    };
-    let motion = match base {
-        0 if female => {
-            if w == DAGGER {
-                2
-            } else if rod(w) || blade_or_blunt(w) {
-                1
-            } else {
-                0
-            }
-        }
-        0 => {
-            if w == DAGGER {
-                1
-            } else if rod(w) || blade_or_blunt(w) {
-                2
-            } else {
-                0
-            }
-        }
-        1 | 7 | 13 | 14 | 21 => {
-            if matches!(w, SPEAR | TWO_HAND_SPEAR) {
-                2
-            } else if w == DAGGER || blade_or_blunt(w) {
-                1
-            } else {
-                0
-            }
-        }
-        2 => {
-            if rod(w) {
-                1
-            } else if w == DAGGER {
-                2
-            } else {
-                0
-            }
-        }
-        3 => {
-            if w == BOW {
-                1
-            } else if w == DAGGER {
-                2
-            } else {
-                0
-            }
-        }
-        4 => {
-            if rod(w) || matches!(w, MACE | TWO_HAND_MACE) {
-                1
-            } else {
-                0
-            }
-        }
-        5 => {
-            if w == DAGGER {
-                2
-            } else if blade_or_blunt(w) {
-                1
-            } else {
-                0
-            }
-        }
-        6 | 17 => {
-            if w == BOW {
-                2
-            } else if matches!(w, SWORD | TWO_HAND_SWORD | DAGGER) {
-                1
-            } else {
-                0
-            }
-        }
-        8 => {
-            if w == BOOK {
-                2
-            } else if rod(w) || matches!(w, MACE | TWO_HAND_MACE) {
-                1
-            } else {
-                0
-            }
-        }
-        9 | 27 if female => {
-            if rod(w) {
-                2
-            } else if w == DAGGER {
-                1
-            } else {
-                0
-            }
-        }
-        9 | 27 => {
-            if w == DAGGER {
-                2
-            } else if rod(w) {
-                1
-            } else {
-                0
-            }
-        }
-        10 | 18 => {
-            if w == DAGGER {
-                1
-            } else if blade_or_blunt(w) {
-                2
-            } else {
-                0
-            }
-        }
-        11 => {
-            if w == BOW {
-                2
-            } else if w == DAGGER {
-                1
-            } else {
-                0
-            }
-        }
-        12 => {
-            if w == KATAR || w >= 25 {
-                2
-            } else if matches!(w, AXE | SWORD | DAGGER) {
-                1
-            } else {
-                0
-            }
-        }
-        15 => {
-            if w == KNUCKLE {
-                2
-            } else if rod(w) || matches!(w, MACE | TWO_HAND_MACE) {
-                1
-            } else {
-                0
-            }
-        }
-        16 => {
-            if rod(w) || w == BOOK {
-                2
-            } else if w == DAGGER {
-                1
-            } else {
-                0
-            }
-        }
-        19 => {
-            if w == BOW {
-                2
-            } else if matches!(w, DAGGER | INSTRUMENT) {
-                1
-            } else {
-                0
-            }
-        }
-        20 => {
-            if w == BOW {
-                2
-            } else if w == WHIP {
-                1
-            } else {
-                0
-            }
-        }
-        23 if female => {
-            if w == DAGGER {
-                2
-            } else if rod(w) || matches!(w, AXE | TWO_HAND_AXE | MACE | TWO_HAND_MACE | SWORD) {
-                1
-            } else {
-                0
-            }
-        }
-        23 => {
-            if w == DAGGER {
-                1
-            } else if rod(w) || matches!(w, AXE | TWO_HAND_AXE | MACE | TWO_HAND_MACE | SWORD) {
-                2
-            } else {
-                0
-            }
-        }
-        25 => {
-            if w == HUUMA {
-                2
-            } else if w == DAGGER {
-                1
-            } else {
-                0
-            }
-        }
-        24 => {
-            if matches!(w, GATLING | RIFLE | GRENADE) {
-                2
-            } else if matches!(w, 0 | REVOLVER | SHOTGUN) {
-                1
-            } else {
-                0
-            }
-        }
+/// Drawn jobs that hold a weapon in each hand (the Assassin line).
+pub fn dual_wielder(job: u16) -> bool {
+    matches!(job, 12 | 4013 | 4035 | 4059 | 4065 | 4101 | 4254)
+}
+
+/// A shield's item id.
+pub fn shield_id(item: u32) -> bool {
+    matches!(item, 2101..=2199 | 28901..=28998 | 460000..=469999)
+}
+
+/// The combined weapon type of a right- and left-hand weapon (item ids): 25 – 30 for the pairs, else the right
+/// one's dagger 1, sword 2 or axe 6, or 0. An empty right hand takes the left hand's item.
+pub fn dual_wield_type(right: u32, left: u32) -> u32 {
+    let kind = |item: u32| match item {
+        1200..=1249 | 13000..=13099 | 28700..=28899 | 510000..=519999 => 1,
+        1100..=1149 | 13400..=13499 | 500000..=509999 => 2,
+        1300..=1349 | 520000..=529999 => 6,
         _ => 0,
     };
-    [5, 10, 11][motion]
+    let (right, left) = if right == 0 { (left, 0) } else { (right, left) };
+    match (kind(right), kind(left)) {
+        (2, 2) => 26,
+        (2, 1) | (1, 2) => 28,
+        (2, 6) => 30,
+        (1, 1) => 25,
+        (1, 6) => 29,
+        (6, 6) => 27,
+        (right, _) => right,
+    }
+}
+
+/// The attack motion for a player's drawn job and weapon type: action 11 for the types its row lists, else 10. A
+/// player never swings with action 5 (it has no weapon pictures).
+pub fn attack_action(job: u16, sex: u8, weapon_type: u32) -> usize {
+    let female = sex == 0;
+    let types: &[u32] = match job {
+        0 | 23 | 4001 | 4023 | 4045 | 4190 | 4191 | 4307 if female => &[1],
+        0 | 23 | 4001 | 4023 | 4045 | 4190 | 4191 | 4307 => &[2, 3, 6, 7, 8, 9, 10, 23],
+        1
+        | 7
+        | 13
+        | 14
+        | 21
+        | 4002
+        | 4008
+        | 4014
+        | 4015
+        | 4022
+        | 4024
+        | 4030
+        | 4036
+        | 4037
+        | 4044
+        | 4054
+        | 4060
+        | 4066
+        | 4073
+        | 4080..=4083
+        | 4088..=4096
+        | 4102
+        | 4109
+        | 4110
+        | 4252
+        | 4258
+        | 4280
+        | 4281 => &[4, 5],
+        2 | 5 | 4003 | 4006 | 4025 | 4028 => &[1],
+        // Every type but the bow.
+        3 | 4004 | 4026 => return if weapon_type == 11 { 10 } else { 11 },
+        6 | 11 | 17 | 19 | 20 | 4007 | 4012 | 4018 | 4020 | 4021 | 4029 | 4034 | 4040 | 4042 | 4043 | 4056 | 4062 | 4068 | 4069 | 4072 | 4075 | 4076 | 4079
+        | 4084 | 4085 | 4098 | 4104 | 4105 | 4108 | 4111 | 4257 | 4260 | 4263 | 4264 | 4278 => &[11],
+        8 | 4009 | 4031 | 4057 | 4063 | 4099 | 4256 => &[15],
+        9 | 4010 | 4032 | 4049 | 4055 | 4061 | 4097 | 4227 | 4240 | 4242 | 4255 | 4303 if female => &[10, 23],
+        9 | 4010 | 4032 | 4049 | 4055 | 4061 | 4097 | 4227 | 4240 | 4242 | 4255 | 4303 => &[1],
+        10 | 18 | 4011 | 4019 | 4033 | 4041 | 4058 | 4064 | 4071 | 4078 | 4086 | 4087 | 4100 | 4107 | 4112 | 4253 | 4259 | 4279 => &[2, 6, 7, 8],
+        job if dual_wielder(job) => &[16, 25, 26, 27, 28, 29, 30],
+        15 | 4016 | 4038 | 4070 | 4077 | 4106 | 4262 => &[0, 12],
+        16 | 4017 | 4039 | 4067 | 4074 | 4103 | 4261 => &[5, 10, 15, 23],
+        24 | 4215 | 4228 | 4229 | 4306 => &[18, 19, 20, 21],
+        25 | 4211 | 4212 | 4222 | 4223 | 4224 | 4304 | 4305 => &[22],
+        _ => &[],
+    };
+    if types.contains(&weapon_type) { 11 } else { 10 }
 }
 
 /// Identifies a decoded image: layer, image kind, index, the layer's tint, and how it was turned ahead of time for a
@@ -2784,7 +2603,13 @@ impl Actor {
 
     /// Its attack action: a player's swing for its weapon.
     pub fn attack_motion(&self, tables: &LookTables) -> usize {
-        self.look.as_ref().map_or(combat_actions(self.kind).0, |look| attack_action(look.job, look.sex, tables.weapon_type(look.weapon)))
+        self.look.as_ref().map_or(combat_actions(self.kind).0, |look| {
+            let job = sprite_job(look.job, look.option);
+            // ponytail: the dual-wield pair's motion only; 0 → 2 on these jobs swings the same, so it's left out.
+            let left_weapon = !shield_id(look.shield) && tables.item_views.get(&look.shield).is_some_and(|&view| view > 0);
+            let kind = if dual_wielder(job) && left_weapon { dual_wield_type(look.weapon, look.shield) } else { tables.weapon_type(look.weapon) };
+            attack_action(job, look.sex, kind)
+        })
     }
 
     /// A player holding a bow: its swings play at an uncapped pace and land with their arrow.
@@ -3164,6 +2989,54 @@ impl Actor {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn players_swing_with_action_10_or_11() {
+        let (male, female) = (1, 0);
+        let (dagger, sword_2h, spear, rod, bow, katar, shotgun) = (1, 3, 4, 10, 11, 16, 20);
+        // Archer: a bow is 10, anything else 11; a Hunter's bow is 11.
+        assert_eq!(attack_action(3, male, bow), 10);
+        assert_eq!(attack_action(3, male, dagger), 11);
+        assert_eq!(attack_action(3, male, 0), 11);
+        assert_eq!(attack_action(11, male, bow), 11);
+        assert_eq!(attack_action(4257, male, bow), 11);
+        // The Assassin line: a katar 11, a dagger 10.
+        assert_eq!(attack_action(12, male, katar), 11);
+        assert_eq!(attack_action(12, male, dagger), 10);
+        assert_eq!(attack_action(4254, male, katar), 11);
+        assert_eq!(attack_action(7, male, 0), 10);
+        // Wizards and Novices differ by sex.
+        assert_eq!(attack_action(9, female, rod), 11);
+        assert_eq!(attack_action(9, male, rod), 10);
+        assert_eq!(attack_action(0, female, dagger), 11);
+        assert_eq!(attack_action(0, male, dagger), 10);
+        assert_eq!(attack_action(10, male, sword_2h), 10);
+        assert_eq!(attack_action(24, male, shotgun), 11);
+        // Jobs without a row: a Swordman on a Peco, a Summoner.
+        assert_eq!(attack_action(4116, male, spear), 10);
+        assert_eq!(attack_action(4218, female, 0), 10);
+        for job in (0..=30).chain(4001..=4320) {
+            for sex in [male, female] {
+                for kind in 0..=30 {
+                    assert_ne!(attack_action(job, sex, kind), 5);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn two_weapons_combine_into_one_type() {
+        assert_eq!(dual_wield_type(1201, 1201), 25);
+        assert_eq!(dual_wield_type(1101, 1201), 28);
+        assert_eq!(dual_wield_type(1201, 1101), 28);
+        assert_eq!(dual_wield_type(1101, 1301), 30);
+        assert_eq!(dual_wield_type(1301, 1101), 6);
+        assert_eq!(dual_wield_type(0, 1201), 1);
+        assert_eq!(dual_wield_type(1250, 0), 0);
+        assert!([2101, 2199, 28901, 460000].into_iter().all(shield_id) && !shield_id(1201));
+        // Two daggers on an Assassin swing with action 11.
+        assert_eq!(attack_action(12, 1, dual_wield_type(1201, 1201)), 11);
+    }
 
     #[test]
     fn draws_parts_again_for_statuses() {
