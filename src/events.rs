@@ -3440,6 +3440,17 @@ impl App {
                     return;
                 }
                 game.effects.play_skill_sounds(table, skill, Instant::now());
+                // A Bard's Frost Joke and a Dancer's Scream say a line from the game's data in the chat.
+                if let Some(line) = crate::talk::says(
+                    skill,
+                    source == game.account_id,
+                    ok,
+                    net::langtype(),
+                    |path| grf.read(path).ok(),
+                    |n| effects::pick(0, n.saturating_sub(1)),
+                ) {
+                    let _ = game.session.chat(&game.me.name, &line);
+                }
                 // The pitchers throw their item at the target (Potion Pitcher, Berserk Pitcher, Spore Explosion).
                 if let (Some(effect), Some(gpu)) = (effects::thrown_item(skill), gpu) {
                     game.aimed(gpu, grf, table, effect, source, target, 1);

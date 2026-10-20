@@ -142,6 +142,7 @@ mod status_tip;
 mod storage;
 mod storage_log;
 mod stylist;
+mod talk;
 mod taming;
 mod trade;
 mod vend;
@@ -4409,9 +4410,9 @@ impl App {
         let (server, version) = self.login_server();
         // The connection's langtype (RUSTNAROK_CLIENT_LANGTYPE overrides it) picks the code page of chat and names.
         let langtype = std::env::var("RUSTNAROK_CLIENT_LANGTYPE").ok().and_then(|langtype| langtype.parse().ok());
-        net::set_codepage(rustnarok_client::clientinfo::codepage(
-            langtype.unwrap_or_else(|| self.connections.get(self.connection).map_or(0, |connection| connection.langtype)),
-        ));
+        let langtype = langtype.unwrap_or_else(|| self.connections.get(self.connection).map_or(0, |connection| connection.langtype));
+        net::set_codepage(rustnarok_client::clientinfo::codepage(langtype));
+        net::set_langtype(langtype);
         std::thread::spawn(move || {
             let _ = proxy.send_event(NetEvent::Login(net::login(&server, version, &id, &password)));
         });

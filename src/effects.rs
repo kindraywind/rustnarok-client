@@ -11,7 +11,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
-use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, monk, sage, shards, sight, stone, tanji, throw, walls, waterball};
+use crate::prims::{balls, blitz, bolts, boomerang, burst, first, huujin, monk, sage, shards, sight, star, stone, tanji, throw, walls, waterball};
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
 
@@ -1691,6 +1691,11 @@ const REFLECT_SHIELD: u32 = 252;
 const ABSORB_SPIRITS: u32 = 253;
 /// Investigate's sparks and claw slash and Asura Strike's streaks (`prims::monk`); Steel Body's ribbons (`prims::walls`).
 const INVESTIGATE_SPARKS: u32 = 264;
+/// Steal Coin's coins (`prims::shards`), Back Stab's sparks and Raid's streaks (`prims::monk`), Chemical Protection's star (`prims::star`).
+const STEAL_COIN: u32 = 274;
+const BACK_STAB: u32 = 275;
+const RAID: u32 = 276;
+const CHEMICAL_PROTECTION: u32 = 300;
 const CLAW_SLASH: u32 = 267;
 const ASURA_STRIKE: u32 = 266;
 const RIBBONS: u32 = 261;
@@ -1713,7 +1718,8 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 16] = [
+pub const AIMED: [u32; 17] = [
+    BACK_STAB,
     INVESTIGATE_SPARKS,
     CLAW_SLASH,
     WATER_BALL,
@@ -1942,6 +1948,22 @@ impl Effects {
         if let (RIBBONS, Target::Unit(unit)) = (id, target) {
             self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
             self.prims.walls.ribbons(unit, now);
+        }
+        // Steal Coin's coins fly out round the target's feet, Raid's streaks round the user's, Chemical Protection's star flashes.
+        match id {
+            STEAL_COIN => {
+                self.textures.entry(shards::COIN_TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, shards::COIN_TEXTURE, true).ok());
+                self.prims.shards.coins(at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            RAID => {
+                self.textures.entry(monk::LENS_RAID.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, monk::LENS_RAID, true).ok());
+                self.prims.monk.raid(at, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            CHEMICAL_PROTECTION => {
+                self.textures.entry(star::TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, star::TEXTURE, true).ok());
+                self.prims.stars.play(at, now);
+            }
+            _ => {}
         }
         // Intimidate's shards burst round the spot, for good.
         if id == INTIMIDATE {
@@ -2374,6 +2396,11 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.balls.thunder(from, to, now);
             }
+            BACK_STAB => {
+                self.textures.entry(first::THUNDER_CENTER.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, first::THUNDER_CENTER, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.monk.back_stab(caster, to, now, |n| pick(0, n.saturating_sub(1)));
+            }
             INVESTIGATE_SPARKS => {
                 self.textures.entry(first::THUNDER_CENTER.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, first::THUNDER_CENTER, true).ok());
                 self.prims.monk.investigate(caster, to, now, |n| pick(0, n.saturating_sub(1)));
@@ -2666,6 +2693,10 @@ impl Effects {
         if !self.only_forced {
             let rings = self.prims.first.top_meshes(now);
             meshes.extend(rings.into_iter().filter_map(|(path, triangles)| Some((self.textures.get(path)?.as_ref()?, triangles, false))));
+            // Raid's streaks, with no depth test.
+            meshes.extend(
+                self.prims.monk.meshes(now, true).into_iter().filter_map(|(path, vertices)| Some((self.textures.get(path)?.as_ref()?, vertices, true))),
+            );
         }
         let Some(Some(texture)) = self.textures.get(BLESSING_GLOW).filter(|_| self.shows(42)) else { return meshes };
         let glows = self.blessings.iter().filter(|blessing| blessing.start <= now).filter_map(|blessing| {
@@ -2831,8 +2862,8 @@ impl Effects {
             .chain(sage)
             .chain(burst_rings)
             .chain(other_walls)
-            .chain(self.textures.get(monk::LENS).and_then(Option::as_ref).map(|texture| (texture, self.prims.monk.mesh(now), true)))
-            .chain(self.textures.get(shards::TEXTURE).and_then(Option::as_ref).map(|texture| (texture, self.prims.shards.mesh(now), true)))
+            .chain(self.prims.monk.meshes(now, false).into_iter().filter_map(|(path, vertices)| Some((self.textures.get(path)?.as_ref()?, vertices, true))))
+            .chain(self.prims.shards.meshes(now).into_iter().filter_map(|(path, vertices)| Some((self.textures.get(path)?.as_ref()?, vertices, true))))
             .filter(|_| !self.only_forced);
         rings.chain(models).chain(hits).chain(auras).chain(forced_walls).chain(prims).collect()
     }
@@ -3062,6 +3093,12 @@ impl Effects {
                         });
                         quads.push((sprite.texture(key), draw.at, corners, [1.0, 1.0, 1.0, monk::CLAW_ALPHA / 255.0], false, true));
                     }
+                }
+            }
+            // Chemical Protection's star: rays facing the camera, added on.
+            if let Some(Some(texture)) = self.textures.get(star::TEXTURE) {
+                for triangle in self.prims.stars.triangles(now) {
+                    quads.push((texture, triangle.at, triangle.corners, triangle.tint, true, false));
                 }
             }
             // Water Ball's balls and their tails, white with their alpha.
@@ -4280,5 +4317,29 @@ mod tests {
         assert!(AIMED.contains(&264) && AIMED.contains(&267) && !AIMED.contains(&266));
         assert_eq!(table.struck(271), Some(&[(Who::Target, 266)][..]));
         assert!(force_drawn(261) && !force_drawn(266));
+    }
+
+    #[test]
+    fn strips_coins_back_stab_raid_and_chemical_protection_play_as_the_game() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        // The strips' sound at tick 6, Back Stab's at tick 20; the coins' and the star's stay at 0.
+        assert_eq!((sounds(271), sounds(272)), (vec![("effect\\복호격", 96)], vec![("effect\\복호격", 96)]));
+        assert_eq!(
+            (sounds(275), sounds(274), sounds(300)),
+            (vec![("effect\\rog_back stap", 320)], vec![("effect\\rog_steal coin", 0)], vec![("apocalips_attack", 0)])
+        );
+        // Coins and Raid's streaks are made in code, with no sound for Raid.
+        assert!(!table.floaters.contains_key(&274) && !table.floaters.contains_key(&276) && !table.sounds.contains_key(&276));
+        assert_eq!((table.used(211), table.used(214)), (Some(&[(Who::Target, 274)][..]), Some(&[(Who::Caster, 276)][..])));
+        // Back Stab's sparks fly from the caster to the target.
+        assert_eq!(table.struck(212), Some(&[(Who::Caster, 275)][..]));
+        assert!(AIMED.contains(&275));
+        // Chemical Protection on the target of all five skills.
+        for skill in [234, 235, 236, 237, 479] {
+            assert!(table.used(skill).unwrap().contains(&(Who::Target, 300)), "{skill}");
+        }
+        // Frost Joke and Scream have no picture of their own to draw.
+        assert_eq!((table.used(318), table.used(326)), (Some(&[(Who::Caster, 295)][..]), Some(&[(Who::Caster, 296)][..])));
     }
 }

@@ -1,5 +1,6 @@
 //! The monk and assassin skills' code-made shapes: Investigate's 20 blue sparks (EF_TEIHIT2, the game's prim kind 45) and
-//! its claw slash (EF_CHIMTO, kind 46), and Asura Strike's 96 white streaks (EF_TEIHIT1X, kind 44).
+//! its claw slash (EF_CHIMTO, kind 46), Back Stab's 80 sparks (EF_BACKSTAP), Asura Strike's 96 white streaks (EF_TEIHIT1X,
+//! kind 44) and Raid's 80 cyan ones (EF_TEIHIT3).
 //!
 //! A shape's count n starts below 0 and goes up one a tick: n = counter0 + t + 1 at tick t of its effect.
 
@@ -11,15 +12,54 @@ use crate::world::{MeshVertex, Vector};
 
 /// Asura Strike's streak texture; the claw slash's sprite.
 pub const LENS: &str = "data\\texture\\effect\\lens1.tga";
+pub const LENS_RAID: &str = "data\\texture\\effect\\lens2.tga";
 pub const CLAW: &str = "data\\sprite\\이팩트\\침투경_";
-/// Investigate's sparks: 5 prims of 4, lifted 8 units, coloured #8282FA.
-const SPARKS: usize = 20;
+/// Investigate's sparks are 5 prims of 4, Back Stab's 20; lifted 8 units, coloured #8282FA.
+const INVESTIGATE_SPARKS: usize = 20;
+const BACK_STAB_SPARKS: usize = 80;
 const SPARK_RISE: f32 = 8.0;
 const SPARK_TINT: [u8; 3] = [0x82, 0x82, 0xFA];
-/// Asura Strike's streaks: 24 prims of 4, half-width 0.7 and length factor 24, so 16.8 either side of the centre.
-const STREAKS: usize = 96;
-const STREAK_HALF: f32 = 0.7;
-const STREAK_LENGTH: f32 = 24.0 * STREAK_HALF;
+
+/// What tells Asura Strike's streaks from Raid's.
+pub struct StreakLook {
+    texture: &'static str,
+    count: usize,
+    /// Each streak's count starts at −`counter_from` − R(`counter_span`).
+    counter_from: i32,
+    counter_span: u32,
+    /// How far out the centre moves a tick, and the strip's half-width and half-length.
+    step: f32,
+    half_width: f32,
+    half_length: f32,
+    tint: [f32; 3],
+    /// Drawn over everything, with no depth test.
+    over: bool,
+}
+
+/// Asura Strike's: 24 prims of 4, half-width 0.7 and length factor 24, so 16.8 either side of the centre.
+const ASURA: StreakLook = StreakLook {
+    texture: LENS,
+    count: 96,
+    counter_from: 10,
+    counter_span: 25,
+    step: 3.0,
+    half_width: 0.7,
+    half_length: 24.0 * 0.7,
+    tint: [1.0; 3],
+    over: false,
+};
+/// Raid's: 20 prims of 4, half-width 1 and half-length 16, in #41B8F0.
+const RAID: StreakLook = StreakLook {
+    texture: LENS_RAID,
+    count: 80,
+    counter_from: 20,
+    counter_span: 10,
+    step: 2.0,
+    half_width: 1.0,
+    half_length: 16.0,
+    tint: [65.0 / 255.0, 184.0 / 255.0, 240.0 / 255.0],
+    over: true,
+};
 /// The claw slash lasts 15 draws, 2 ticks to a frame from frame 1; it is drawn 2.5 times as big, in white at alpha 200.
 const CLAW_TICKS: u32 = 15;
 pub const CLAW_SCALE: f32 = 2.5;
@@ -48,6 +88,7 @@ struct Streak {
 }
 
 struct Starburst {
+    look: &'static StreakLook,
     at: Vector,
     start: Instant,
     min: bool,
@@ -97,21 +138,21 @@ pub fn streak_alpha(n: i32, min: bool) -> f32 {
     if n <= 20 { up } else { (top - 5.0 * (n - 20) as f32).max(0.0) }
 }
 
-/// How far a streak's centre is from the target at count n.
-pub fn streak_distance(n: i32) -> f32 {
-    -10.0 + 3.0 * n as f32
+/// How far a streak's centre is from where it bursts at count n.
+fn streak_distance(look: &StreakLook, n: i32) -> f32 {
+    -10.0 + look.step * n as f32
 }
 
 /// A streak's corners over `at` at distance `r`: along the vertical plane at `yaw`, pointing at `angle` in it.
-fn streak_corners(at: Vector, r: f32, yaw: f32, angle: f32) -> [Vector; 4] {
+fn streak_corners(look: &StreakLook, at: Vector, r: f32, yaw: f32, angle: f32) -> [Vector; 4] {
     let (sin_a, cos_a) = angle.to_radians().sin_cos();
     let (sin_b, cos_b) = yaw.to_radians().sin_cos();
     let corner = |d: f32, w: f32| {
         let x = d * cos_a - w * sin_a;
         [at[0] + x * cos_b, at[1] - (d * sin_a + w * cos_a), at[2] + x * sin_b]
     };
-    let (inner, outer) = (r - STREAK_LENGTH, r + STREAK_LENGTH);
-    [corner(outer, -STREAK_HALF), corner(outer, STREAK_HALF), corner(inner, STREAK_HALF), corner(inner, -STREAK_HALF)]
+    let (inner, outer) = (r - look.half_length, r + look.half_length);
+    [corner(outer, -look.half_width), corner(outer, look.half_width), corner(inner, look.half_width), corner(inner, -look.half_width)]
 }
 
 /// The claw slash's action for d, the camera's longitude plus the direction to the caster, whole degrees.
@@ -132,8 +173,17 @@ pub fn claw_frame(t: u32) -> usize {
 impl Monk {
     /// Investigate's sparks, flying from `aim` (the target's place) after the caster `caster`; each spark's choices from
     /// `rand(n)` (0 to n − 1): its count, size, speed and fall.
-    pub fn investigate(&mut self, caster: Option<u32>, aim: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
-        let sparks = (0..SPARKS)
+    pub fn investigate(&mut self, caster: Option<u32>, aim: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.spark(INVESTIGATE_SPARKS, caster, aim, now, rand);
+    }
+
+    /// Back Stab's 80 sparks, the same way.
+    pub fn back_stab(&mut self, caster: Option<u32>, aim: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.spark(BACK_STAB_SPARKS, caster, aim, now, rand);
+    }
+
+    fn spark(&mut self, count: usize, caster: Option<u32>, aim: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let sparks = (0..count)
             .map(|_| {
                 let counter = rand(10) as i32 - 40;
                 let size = 0.1 + 0.05 * rand(16) as f32;
@@ -146,16 +196,25 @@ impl Monk {
     }
 
     /// Asura Strike's streaks over `at`: per streak its count, yaw and angle.
-    pub fn asura(&mut self, at: Vector, now: Instant, min: bool, mut rand: impl FnMut(u32) -> u32) {
-        let streaks = (0..STREAKS)
+    pub fn asura(&mut self, at: Vector, now: Instant, min: bool, rand: impl FnMut(u32) -> u32) {
+        self.burst(&ASURA, at, now, min, rand);
+    }
+
+    /// Raid's streaks over the user's feet `at`.
+    pub fn raid(&mut self, at: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.burst(&RAID, at, now, false, rand);
+    }
+
+    fn burst(&mut self, look: &'static StreakLook, at: Vector, now: Instant, min: bool, mut rand: impl FnMut(u32) -> u32) {
+        let streaks = (0..look.count)
             .map(|_| {
-                let counter = -10 - rand(25) as i32;
+                let counter = -look.counter_from - rand(look.counter_span) as i32;
                 let yaw = rand(360) as f32;
                 let angle = rand(360) as f32;
                 Streak { counter, yaw, angle }
             })
             .collect();
-        self.starbursts.push(Starburst { at, start: now, min, streaks });
+        self.starbursts.push(Starburst { look, at, start: now, min, streaks });
     }
 
     /// A claw slash at the target's feet `to`, the caster at `from`, the camera at `longitude` degrees.
@@ -207,26 +266,34 @@ impl Monk {
         squares
     }
 
-    /// Asura Strike's streaks at `now`, six vertices each: the texture runs from the streak's outer end (v 1 at one side).
-    pub fn mesh(&self, now: Instant) -> Vec<MeshVertex> {
-        let mut vertices = Vec::new();
-        for burst in &self.starbursts {
-            let Some(t) = passes(burst.start, now).checked_sub(1) else { continue };
-            for streak in &burst.streaks {
-                let n = streak.counter + t as i32 + 1;
-                if !(11..=49).contains(&n) {
-                    continue;
-                }
-                let alpha = streak_alpha(n, burst.min);
-                if alpha <= 0.0 {
-                    continue;
-                }
-                let tint = [1.0, 1.0, 1.0, alpha.trunc() / 255.0];
-                let [c0, c1, c2, c3] = streak_corners(burst.at, streak_distance(n), streak.yaw, streak.angle);
-                let corner = |position, uv| MeshVertex { position, uv, tint };
-                let [a, b, c, d] = [corner(c0, [0.0, 1.0]), corner(c1, [1.0, 1.0]), corner(c2, [1.0, 0.0]), corner(c3, [0.0, 0.0])];
-                vertices.extend([a, b, c, d, c, a]);
+    /// The streaks at `now`, six vertices each, by texture: the ones drawn over everything (`over`) or the others.
+    pub fn meshes(&self, now: Instant, over: bool) -> Vec<(&'static str, Vec<MeshVertex>)> {
+        let mut meshes: Vec<(&'static str, Vec<MeshVertex>)> = Vec::new();
+        for burst in self.starbursts.iter().filter(|burst| burst.look.over == over) {
+            let vertices = Self::streaks(burst, now);
+            match meshes.iter_mut().find(|(texture, _)| *texture == burst.look.texture) {
+                Some((_, all)) => all.extend(vertices),
+                None => meshes.push((burst.look.texture, vertices)),
             }
+        }
+        meshes
+    }
+
+    /// One burst's streaks: the texture runs from a streak's outer end (v 1 at one side).
+    fn streaks(burst: &Starburst, now: Instant) -> Vec<MeshVertex> {
+        let Some(t) = passes(burst.start, now).checked_sub(1) else { return Vec::new() };
+        let mut vertices = Vec::new();
+        for streak in &burst.streaks {
+            let n = streak.counter + t as i32 + 1;
+            let alpha = streak_alpha(n, burst.min);
+            if !(11..=49).contains(&n) || alpha <= 0.0 {
+                continue;
+            }
+            let tint = [burst.look.tint[0], burst.look.tint[1], burst.look.tint[2], alpha.trunc() / 255.0];
+            let [c0, c1, c2, c3] = streak_corners(burst.look, burst.at, streak_distance(burst.look, n), streak.yaw, streak.angle);
+            let corner = |position, uv| MeshVertex { position, uv, tint };
+            let [a, b, c, d] = [corner(c0, [0.0, 1.0]), corner(c1, [1.0, 1.0]), corner(c2, [1.0, 0.0]), corner(c3, [0.0, 0.0])];
+            vertices.extend([a, b, c, d, c, a]);
         }
         vertices
     }
@@ -300,7 +367,7 @@ mod tests {
         monk.asura(at, start, false, |_| 0);
         assert_eq!(monk.starbursts[0].streaks.len(), 96);
         // Every draw 0: counter −10, so n = 11 at tick 20; alpha 15 there, 150 at n = 20, 145 at 21, 0 at 50.
-        let mesh = |tick: u32| monk.mesh(start + TICK * tick);
+        let mesh = |tick: u32| monk.meshes(start + TICK * tick, false).into_iter().next().map(|(_, vertices)| vertices).unwrap_or_default();
         assert!(mesh(19).is_empty());
         assert_eq!(mesh(20).len(), 96 * 6);
         assert_eq!([11, 20, 21, 49, 50].map(|n| streak_alpha(n, false)), [15.0, 150.0, 145.0, 5.0, 0.0]);
@@ -308,9 +375,9 @@ mod tests {
         assert_eq!((mesh(29)[0].tint[3] * 255.0).round(), 150.0);
         assert!(mesh(58).len() == 96 * 6 && mesh(59).is_empty(), "drawn for n = 11…49");
         // r = 23 at n = 11, 137 at n = 49.
-        assert_eq!([11, 49].map(streak_distance), [23.0, 137.0]);
+        assert_eq!([11, 49].map(|n| streak_distance(&ASURA, n)), [23.0, 137.0]);
         // For A = 0, B = 0 at r = 23: the corners (39.8, 0.7, 0), (39.8, −0.7, 0), (6.2, −0.7, 0), (6.2, 0.7, 0) (x, height, z).
-        let corners = streak_corners([0.0; 3], 23.0, 0.0, 0.0);
+        let corners = streak_corners(&ASURA, [0.0; 3], 23.0, 0.0, 0.0);
         let want = [[39.8, 0.7, 0.0], [39.8, -0.7, 0.0], [6.2, -0.7, 0.0], [6.2, 0.7, 0.0]];
         assert!((0..4).all(|k| (0..3).all(|axis| near(corners[k][axis], want[k][axis]))), "{corners:?}");
         // Under /mineffect the rise is 8 a tick: 80 at n = 20 and gone at 36.
@@ -350,5 +417,38 @@ mod tests {
         let mut fourth = Monk::default();
         fourth.claw([0.0, 0.0, -5.0], [0.0; 3], 180, start);
         assert_eq!((fourth.claws(start)[0].action, fourth.claws(start)[0].turn, fourth.claws(start)[0].mirrored), (1, 35.0, false));
+    }
+
+    #[test]
+    fn back_stab_sprays_80_sparks_and_raid_shoots_80_cyan_streaks() {
+        let start = Instant::now();
+        // Back Stab: the same sparks, 20 prims of 4.
+        let mut monk = Monk::default();
+        monk.back_stab(Some(1), [10.0, 3.0, 0.0], start, |_| 0);
+        assert_eq!(monk.investigations[0].sparks.len(), 80);
+        monk.advance(start + TICK * 40, |_| Some([0.0; 3]), |_| 0);
+        assert_eq!(monk.squares(start + TICK * 41).len(), 80);
+        assert_eq!(monk.squares(start + TICK * 41)[0].alpha, 15.0);
+        assert!(monk.squares(start + TICK * 94).is_empty());
+        // Raid: counter −20 − R(10), so with every draw 0 n = 11 at tick 30; r = −10 + 2n.
+        let at = [5.0, 1.0, 5.0];
+        let mut raid = Monk::default();
+        raid.raid(at, start, |_| 0);
+        assert_eq!(raid.starbursts[0].streaks.len(), 80);
+        let over = |tick: u32| raid.meshes(start + TICK * tick, true).into_iter().next().unwrap_or(("", Vec::new()));
+        assert!(over(29).1.is_empty());
+        let (texture, vertices) = over(30);
+        assert_eq!((texture, vertices.len()), (LENS_RAID, 80 * 6));
+        assert!(raid.meshes(start + TICK * 30, false).is_empty(), "no depth test: not among the plain ones");
+        assert_eq!([11, 20, 49, 50].map(|n| streak_alpha(n, false)), [15.0, 150.0, 5.0, 0.0]);
+        assert_eq!([11, 49].map(|n| streak_distance(&RAID, n)), [12.0, 88.0]);
+        // #41B8F0; the first alpha 15; drawn to n = 49 (tick 68).
+        assert_eq!(vertices[0].tint[..3], [65.0 / 255.0, 184.0 / 255.0, 240.0 / 255.0]);
+        assert_eq!((vertices[0].tint[3] * 255.0).round(), 15.0);
+        assert_eq!((over(68).1.len(), over(69).1.len()), (80 * 6, 0));
+        // The strip for A = 0, B = 0 at r = 12: (28, 1), (28, −1), (−4, −1), (−4, 1) along, height.
+        let corners = streak_corners(&RAID, [0.0; 3], 12.0, 0.0, 0.0);
+        let want = [[28.0, 1.0], [28.0, -1.0], [-4.0, -1.0], [-4.0, 1.0]];
+        assert!((0..4).all(|k| near(corners[k][0], want[k][0]) && near(corners[k][1], want[k][1]) && near(corners[k][2], 0.0)), "{corners:?}");
     }
 }

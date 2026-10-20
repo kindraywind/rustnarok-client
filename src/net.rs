@@ -353,6 +353,17 @@ pub fn codepage() -> &'static encoding_rs::Encoding {
     *CODEPAGE.read().unwrap()
 }
 
+/// The connection's langtype, for the few things that read a file by it.
+static LANGTYPE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub fn set_langtype(langtype: u8) {
+    LANGTYPE.store(langtype, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn langtype() -> u8 {
+    LANGTYPE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Text in the code page.
 pub fn encode_text(text: &str) -> Vec<u8> {
     encode_in(codepage(), text)
