@@ -1550,6 +1550,7 @@ impl App {
                 let [x, y] = item.cell;
                 // Sixteenths of a cell from its low corner (8 is the middle).
                 let [sub_x, sub_y] = item.sub.map(|sub| f32::from(sub) / 16.0);
+                let cell = [f32::from(x) - 0.5 + sub_x, f32::from(y) - 0.5 + sub_y];
                 game.ground.insert(
                     item.id,
                     FloorItem {
@@ -1557,14 +1558,14 @@ impl App {
                         identified: item.identified,
                         amount: item.amount,
                         at: [i32::from(x), i32::from(y)],
-                        cell: [f32::from(x) - 0.5 + sub_x, f32::from(y) - 0.5 + sub_y],
+                        cell,
                         seen: Instant::now(),
                         dropped: item.falling.then(Instant::now),
                     },
                 );
                 // The item's light pillar, from the fall packet's drop effect and the item info's own effect number.
                 if let Some(gpu) = gpu {
-                    let at = game.world.ground_under(game.world.cell_position([f32::from(x) - 0.5 + sub_x, f32::from(y) - 0.5 + sub_y]));
+                    let at = game.world.ground_under(game.world.cell_position(cell));
                     let info = self.items.get(&item.item).and_then(|info| info.effect_id);
                     game.effects.item_dropped(gpu, grf, table, item.id, info, (item.show_effect, item.effect_mode), at, Instant::now());
                 }

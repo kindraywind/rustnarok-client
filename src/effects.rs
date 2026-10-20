@@ -2801,7 +2801,12 @@ impl Effects {
     /// (`world_fx::drops::launches`). A pillar stands while the item lies; any other effect plays once at the item.
     #[allow(clippy::too_many_arguments)]
     pub fn item_dropped(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, item: u32, info: Option<u32>, (show, mode): (bool, u16), at: Vector, now: Instant) {
-        for drop in world_fx::drops::launches(info, show, mode) {
+        let drops = world_fx::drops::launches(info, show, mode);
+        // A fall packet for an item already standing in a pillar replaces it.
+        if !drops.is_empty() {
+            self.item_gone(item);
+        }
+        for drop in drops {
             match drop {
                 world_fx::drops::Drop::Pillar(effect) => {
                     let (fx, mut assets) = self.fx_assets(gpu, grf);
