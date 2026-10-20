@@ -2265,8 +2265,9 @@ impl Effects {
 
     /// Plays effect `id` from `now` on `target` at `at`; parts that don't follow units stay there.
     pub fn play(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
-        // An STR world effect: its own sounds and shakes come with it.
-        if table.world(id).is_some() {
+        // An STR world effect that names its file (the hat rows and the launcher-given ones play from their launchers): its own
+        // sounds and shakes come with it.
+        if table.world(id).is_some_and(|row| matches!(row.file, world_str::Source::Named(_))) {
             let owner = match target {
                 Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
                 _ => None,

@@ -132,6 +132,7 @@ pub fn ping_pong(c: i32, count: i32) -> i32 {
         return 0;
     }
     let sweep = count - 1;
+    let c = c.max(0);
     let q = c / sweep;
     if q % 2 == 1 { (q + 1) * sweep - c } else { c - q * sweep }
 }
