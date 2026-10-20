@@ -2653,3 +2653,32 @@ fn encodes_standing_resurrection() {
     assert_eq!(encode_standing_resurrection(), [0x92, 0x02]);
     assert_eq!(packet_length(0x0292), Some(2));
 }
+
+#[test]
+fn decodes_effect_with_and_without_number() {
+    // 0x0284 ZC_NOTIFY_EFFECT3: AID.L, effect.L, num.L (14 bytes)
+    let mut effect3 = Vec::new();
+    effect3.extend_from_slice(&ZC_NOTIFY_EFFECT3.to_le_bytes());
+    effect3.extend_from_slice(&2000001u32.to_le_bytes());
+    effect3.extend_from_slice(&657u32.to_le_bytes());
+    effect3.extend_from_slice(&1234i32.to_le_bytes());
+    let Some(MapEvent::Effect { id, effect, num }) = decode_map_packet(&effect3) else { panic!("effect3 not decoded") };
+    assert_eq!((id, effect, num), (2000001, 657, Some(1234)));
+
+    // Negative number
+    let mut effect3_neg = Vec::new();
+    effect3_neg.extend_from_slice(&ZC_NOTIFY_EFFECT3.to_le_bytes());
+    effect3_neg.extend_from_slice(&2000002u32.to_le_bytes());
+    effect3_neg.extend_from_slice(&659u32.to_le_bytes());
+    effect3_neg.extend_from_slice(&(-50i32).to_le_bytes());
+    let Some(MapEvent::Effect { id, effect, num }) = decode_map_packet(&effect3_neg) else { panic!("effect3_neg not decoded") };
+    assert_eq!((id, effect, num), (2000002, 659, Some(-50)));
+
+    // 0x01f3 ZC_NOTIFY_EFFECT2: AID.L, effect.L (10 bytes) - no number
+    let mut effect2 = Vec::new();
+    effect2.extend_from_slice(&ZC_NOTIFY_EFFECT2.to_le_bytes());
+    effect2.extend_from_slice(&2000001u32.to_le_bytes());
+    effect2.extend_from_slice(&312u32.to_le_bytes());
+    let Some(MapEvent::Effect { id, effect, num }) = decode_map_packet(&effect2) else { panic!("effect2 not decoded") };
+    assert_eq!((id, effect, num), (2000001, 312, None));
+}

@@ -3462,7 +3462,7 @@ impl App {
                         target: (target != me).then_some(target),
                         amount,
                         start: Instant::now(),
-                        kind: DamageKind::Heal { sp: !heal },
+                        kind: DamageKind::Heal { color: if !heal { HEAL_BLUE } else { HEAL_GREEN } },
                         flinch: None,
                         drift: [0.0; 2],
                         source: None,
@@ -3653,7 +3653,7 @@ impl App {
                     target: None,
                     amount,
                     start: Instant::now(),
-                    kind: DamageKind::Heal { sp: kind == net::STATUS_SP },
+                    kind: DamageKind::Heal { color: if kind == net::STATUS_SP { HEAL_BLUE } else { HEAL_GREEN } },
                     flinch: None,
                     drift: [0.0; 2],
                     source: None,
@@ -3779,7 +3779,7 @@ impl App {
             }
             // Weather comes as effects on the player: it shows until the map changes.
             // A sky effect on the player (the clouds, clouds2 and fog weather among them) builds its sky type's puffs.
-            MapEvent::Effect { id, effect } if id == game.account_id && sky::sky_type_of(effect).is_some() => {
+            MapEvent::Effect { id, effect, .. } if id == game.account_id && sky::sky_type_of(effect).is_some() => {
                 if weather::is_weather(effect) {
                     let at = game.world.cell_position(game.player.cell.map(|cell| cell as f32));
                     game.weather.start(effect, control::now(), at);
@@ -3790,12 +3790,29 @@ impl App {
                     game.sky.add(sky_type, &map, player, &sky::ground_of(&game.world.gat));
                 }
             }
-            MapEvent::Effect { id, effect } if id == game.account_id && weather::is_weather(effect) => {
+            MapEvent::Effect { id, effect, .. } if id == game.account_id && weather::is_weather(effect) => {
                 let at = game.world.cell_position(game.player.cell.map(|cell| cell as f32));
                 game.weather.start(effect, control::now(), at);
             }
-            MapEvent::Effect { id, effect } => {
-                if let Some(gpu) = gpu {
+            MapEvent::Effect { id, effect, num } => {
+                let is_player = id == game.account_id;
+                if !is_player && !game.units.contains_key(&id) {
+                    return;
+                }
+                if let Some((target, amount, color)) = effect_number(id, effect, num, game.account_id, &|id| game.units.contains_key(&id)) {
+                    game.damages.push(Damage {
+                        target,
+                        amount,
+                        start: Instant::now(),
+                        kind: DamageKind::Heal { color },
+                        flinch: None,
+                        drift: [0.0; 2],
+                        source: None,
+                    });
+                }
+                if !matches!(effect, 657..=664)
+                    && let Some(gpu) = gpu
+                {
                     if effects::aimed_at_centre(effect) {
                         game.aimed_at_centre(gpu, grf, table, effect, id);
                     } else if effect == 451 {
