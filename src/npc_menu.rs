@@ -23,7 +23,7 @@ const BAND: f32 = 15.0;
 /// The list: at (12, 26), the window's size less 24 across and 55 down.
 const LIST_AT: [f32; 2] = [12.0, 26.0];
 const LIST_LESS: [f32; 2] = [24.0, 55.0];
-const LIST_FILL: [u8; 4] = [0xF0, 0xF0, 0xF0, 0xFF];
+const BAND_FILL: [u8; 4] = [0xF0, 0xF0, 0xF0, 0xFF];
 /// The text's left inside the list.
 const TEXT_X: f32 = 3.0;
 /// OK and Cancel, this far left of the window's right edge and up from its bottom.
@@ -65,7 +65,8 @@ pub fn buttons(count: usize) -> [[f32; 2]; 2] {
     [[width - OK_LEFT, height - BUTTONS_UP], [width - CANCEL_LEFT, height - BUTTONS_UP]]
 }
 
-/// The list's fill and the selected row's band: pixel (14, 10) of colorchip.bmp, white without it.
+/// The list's fill, pixel (14, 10) of colorchip.bmp (white without it), and the selected row's band, a grey on it. The
+/// game has the two the other way round.
 pub struct Assets {
     list: Texture,
     band: Texture,
@@ -75,7 +76,7 @@ impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let chip = crate::render::load_image(grf, &format!("{UI}colorchip.bmp")).ok().and_then(|image| image.get_pixel_checked(14, 10).map(|pixel| pixel.0));
         let [red, green, blue, _] = chip.unwrap_or([255; 4]);
-        Self { list: gpu.solid(LIST_FILL), band: gpu.solid([red, green, blue, 255]) }
+        Self { list: gpu.solid([red, green, blue, 255]), band: gpu.solid(BAND_FILL) }
     }
 }
 

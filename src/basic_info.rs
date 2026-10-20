@@ -32,12 +32,12 @@ const MINI_MIN_MARGIN: f32 = 6.0;
 const WEIGHT_MARGIN: f32 = 3.0;
 const ZENY_MARGIN: f32 = 5.0;
 const WEIGHT_GAP: f32 = 10.0;
-/// The menu window under the basic info: the toggle bar (219 by 9) 4 down, the menu's back 13 down, and its buttons
-/// (32 by 34) from (9, 23), 42 and 43 apart, five to a row.
-const TOGGLE_AT: f32 = 4.0;
+/// The menu strip under the basic info, joined to its bottom edge: the toggle bar (219 by 9) there, the menu's back 9
+/// down, and its buttons (32 by 34) from (9, 19), 42 and 43 apart, five to a row.
+const TOGGLE_AT: f32 = 0.0;
 const TOGGLE_HEIGHT: f32 = 9.0;
-const MENU_AT: f32 = 13.0;
-const MENU_BUTTONS: [f32; 2] = [9.0, 23.0];
+const MENU_AT: f32 = 9.0;
+const MENU_BUTTONS: [f32; 2] = [9.0, 19.0];
 const MENU_STEP: [f32; 2] = [42.0, 43.0];
 const MENU_BUTTON_SIZE: [f32; 2] = [32.0, 34.0];
 const MENU_COLUMNS: usize = 5;
@@ -426,8 +426,8 @@ impl BasicInfo {
         if self.menu_open { self.button_corner(0)[1] + visible().len().div_ceil(MENU_COLUMNS) as f32 * MENU_STEP[1] } else { self.menu_top() }
     }
 
-    /// The menu is its own strip at the window's bottom edge (minimised or not): its toggle bar 4 down, the menu's
-    /// back 13 down.
+    /// The menu is its own strip at the window's bottom edge (minimised or not): its toggle bar at the edge, the menu's
+    /// back 9 down.
     fn toggle_top(&self) -> f32 {
         self.body() + TOGGLE_AT
     }
@@ -699,12 +699,12 @@ mod tests {
                 "probability",
             ]
         );
-        // Five a row, 42 and 43 apart, from (9, 23) under the window.
+        // Five a row, 42 and 43 apart, from (9, 19) under the window.
         let mut window = BasicInfo::default();
         let first = window.button_corner(0);
         assert_eq!(
             (first, window.button_corner(4), window.button_corner(5), window.button_corner(13)),
-            ([9.0, 157.0], [177.0, 157.0], [9.0, 200.0], [135.0, 243.0])
+            ([9.0, 153.0], [177.0, 153.0], [9.0, 196.0], [135.0, 239.0])
         );
         // The last two in the fifth row at x 9 and 51, 172 below the first.
         assert_eq!(window.button_corner(20), [9.0, first[1] + 172.0]);
@@ -714,24 +714,26 @@ mod tests {
         let corner = window.button_corner(6);
         assert_eq!(window.hit(window.frame.at([corner[0] + 5.0, corner[1] + 5.0])), Some(Hit::Menu("quest")));
         assert_eq!(window.menu_boxes().len(), 22);
-        assert_eq!(window.height(), 134.0 + 23.0 + 5.0 * 43.0);
+        assert_eq!(window.height(), 134.0 + 19.0 + 5.0 * 43.0);
         window.fourth = true;
-        assert_eq!(window.button_corner(0), [9.0, 172.0]);
+        assert_eq!(window.button_corner(0), [9.0, 168.0]);
     }
 
     #[test]
     fn keeps_the_menu_under_the_minimised_window() {
         let mut window = BasicInfo::default();
         window.frame.minimized = true;
-        // The toggle 4 under the 55-tall window, the buttons from (9, 23) under it; 71 for a 4th job.
-        assert_eq!(window.toggle_box(), Some([0.0, 59.0, WIDTH, TOGGLE_HEIGHT]));
-        assert_eq!(window.hit(window.frame.at([100.0, 62.0])), Some(Hit::MenuToggle));
+        // The toggle joined to the 55-tall window's bottom, the buttons from (9, 19) under it; 71 for a 4th job.
+        assert_eq!(window.toggle_box(), Some([0.0, 55.0, WIDTH, TOGGLE_HEIGHT]));
+        assert_eq!(window.hit(window.frame.at([100.0, 55.0])), Some(Hit::MenuToggle));
+        assert_eq!(window.hit(window.frame.at([100.0, 63.0])), Some(Hit::MenuToggle));
+        assert_ne!(window.hit(window.frame.at([100.0, 54.0])), Some(Hit::MenuToggle));
         window.menu_open = true;
-        assert_eq!((window.button_corner(0), window.menu_boxes().len()), ([9.0, 78.0], 22));
+        assert_eq!((window.button_corner(0), window.menu_boxes().len()), ([9.0, 74.0], 22));
         let corner = window.button_corner(6);
         assert_eq!(window.hit(window.frame.at([corner[0] + 5.0, corner[1] + 5.0])), Some(Hit::Menu("quest")));
         window.fourth = true;
-        assert_eq!(window.button_corner(0), [9.0, 94.0]);
+        assert_eq!(window.button_corner(0), [9.0, 90.0]);
     }
 
     #[test]
