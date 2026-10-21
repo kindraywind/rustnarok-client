@@ -1993,6 +1993,10 @@ pub struct GroundItem {
     pub amount: u16,
     /// Just dropped: it falls into place.
     pub falling: bool,
+    /// The fall packet's show drop effect byte: the item stands under a light pillar (an item already on the ground has none).
+    pub show_effect: bool,
+    /// The fall packet's drop effect mode: 0 the item info's effect only, 1 blue, 2 yellow, 3 purple, 4 green, 5 red.
+    pub effect_mode: u16,
 }
 
 /// An item or skill on the hotkey bar.

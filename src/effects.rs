@@ -2797,6 +2797,31 @@ impl Effects {
         world_fx::footprints::hats(fx, Some(owner), on, hats, &mut assets);
     }
 
+    /// A fall packet's drop effects for ground item `item` lying at `at`: the item info's effect number and the mode's colour
+    /// (`world_fx::drops::launches`). A pillar stands while the item lies; any other effect plays once at the item.
+    #[allow(clippy::too_many_arguments)]
+    pub fn item_dropped(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, item: u32, info: Option<u32>, (show, mode): (bool, u16), at: Vector, now: Instant) {
+        let drops = world_fx::drops::launches(info, show, mode);
+        // A fall packet for an item already standing in a pillar replaces it.
+        if !drops.is_empty() {
+            self.item_gone(item);
+        }
+        for drop in drops {
+            match drop {
+                world_fx::drops::Drop::Pillar(effect) => {
+                    let (fx, mut assets) = self.fx_assets(gpu, grf);
+                    world_fx::drops::stand(fx, effect, item, at, &mut assets);
+                }
+                world_fx::drops::Drop::Effect(effect) => self.play(gpu, grf, table, effect, Target::Ground, at, now),
+            }
+        }
+    }
+
+    /// A ground item taken or gone: its pillars go.
+    pub fn item_gone(&mut self, item: u32) {
+        self.fx.remove_all_of(Some(Some(item)));
+    }
+
     /// The world objects' faces by draw list; `depth_of` sorts the translucent and adding lists.
     pub fn fx_lists(&self, seen: &world_fx::Seen, depth_of: impl Fn(Vector) -> f32) -> world_fx::Lists<EffectMesh<'_>> {
         world_fx::Lists::sort(self.fx.faces(seen), depth_of).map(|face| {
@@ -2844,8 +2869,8 @@ impl Effects {
             }
             return;
         }
-        // A registered world object; the footprint classes come only with a hat effect.
-        if self.fx.registered(id) && !world_fx::footprints::is_class(id) {
+        // A registered world object; the footprint classes come only with a hat effect, the pillars with a dropped item.
+        if self.fx.registered(id) && !world_fx::footprints::is_class(id) && !world_fx::drops::is_pillar(id) {
             let owner = match target {
                 Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
                 _ => None,
