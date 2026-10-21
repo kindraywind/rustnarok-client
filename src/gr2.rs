@@ -2,11 +2,13 @@
 //! relocations, the self-describing type tree, and the meshes of a model (positions, normals, texture coordinates,
 //! triangles and the texture each uses). Animations, skeletons and morph targets are not read: a mesh is its bind pose.
 
+mod bink;
 mod oodle0;
 
 use std::collections::HashMap;
 use std::io;
 
+pub use bink::Image;
 pub use oodle0::decompress;
 
 const MAGIC: [u8; 16] = [0xb8, 0x67, 0xb0, 0xca, 0xf8, 0x6d, 0xb1, 0x0f, 0x84, 0x72, 0x8c, 0x7e, 0x5e, 0x19, 0x00, 0x1e];
@@ -122,6 +124,8 @@ pub struct Mesh {
 #[derive(Clone, Debug, Default)]
 pub struct Model {
     pub meshes: Vec<Mesh>,
+    /// The textures the file carries, by the file name the exporter wrote (what `Mesh::groups` name), decoded.
+    pub textures: Vec<(String, Image)>,
     /// The meter in the model's units, and the file's up, right and back axes (as the exporter wrote them).
     pub units_per_meter: f32,
     pub axes: [[f32; 3]; 3],
@@ -335,6 +339,17 @@ impl<'a> Object<'a> {
         Some((layout, count, self.file.pointer_at(at.plus(8))?))
     }
 
+    /// The bytes of an array member of bytes (`Pixels`).
+    fn bytes(&self, name: &str) -> Option<&'a [u8]> {
+        let (member, at) = self.at(name)?;
+        if member.kind != kind::REFERENCE_TO_ARRAY {
+            return None;
+        }
+        let count = self.file.u32_at(at)? as usize;
+        let first = self.file.pointer_at(at.plus(4))?;
+        self.file.sections.get(first.section as usize)?.get(first.offset as usize..(first.offset as usize).checked_add(count)?)
+    }
+
     /// An int array member (`Indices`) as numbers; the elements are int32 or int16 by the member's type.
     fn numbers(&self, name: &str) -> Option<Vec<u32>> {
         let (member, at) = self.at(name)?;
@@ -384,6 +399,16 @@ impl Model {
         for mesh in root.array("Meshes") {
             if let Some(read) = read_mesh(&mesh) {
                 model.meshes.push(read);
+            }
+        }
+        for texture in root.array("Textures") {
+            let (Some(name), Some(width), Some(height)) = (texture.string("FromFileName"), texture.int("Width"), texture.int("Height")) else { continue };
+            if texture.int("Encoding") != Some(3) {
+                continue;
+            }
+            let pixels = texture.array("Images").first().and_then(|image| image.array("MIPLevels").first().and_then(|level| level.bytes("Pixels")));
+            if let Some(image) = pixels.and_then(|pixels| bink::decode(pixels, width.max(0) as usize, height.max(0) as usize).ok()) {
+                model.textures.push((name, image));
             }
         }
         if model.meshes.is_empty() {

@@ -2,8 +2,8 @@
 //! still mesh in its bind pose, standing on its cell, turned by its facing, lit by the map's light and depth-tested like
 //! the map's own models.
 //!
-//! ponytail: no animation (the flag doesn't wave), no skeleton; the textures some of these meshes name are not all in the
-//! data, and a mesh whose texture is missing is drawn in plain grey; the guild flag's emblem plate isn't the guild's emblem.
+//! ponytail: no animation (the flag doesn't wave), no skeleton; the guild flag's emblem plate isn't the guild's emblem (the
+//! file's own picture of it is blank).
 
 use rustnarok_client::gr2::{self, Model};
 use rustnarok_client::grf::Grf;
@@ -70,8 +70,8 @@ pub fn parts(model: &Model) -> Vec<(String, Vec<Corner>)> {
                     parts[index].1.push(Corner {
                         position: to_world(vertex.position).map(|value| value * SCALE),
                         normal: to_world(vertex.normal),
-                        // The exporter counts v up from the bottom.
-                        uv: [vertex.uv[0], 1.0 - vertex.uv[1]],
+                        // v counts down from the top of the picture, as the pictures decode.
+                        uv: vertex.uv,
                     });
                 }
             }
@@ -102,7 +102,16 @@ impl Prop {
         let parts = parts(&model)
             .into_iter()
             .map(|(file, corners)| {
-                let texture = texture_paths(&file).iter().find_map(|path| gpu.try_load_texture(grf, path, true).ok()).unwrap_or_else(|| gpu.solid(GREY));
+                // The picture the file carries first, then a bitmap of the same name in the data, then grey.
+                let embedded = model
+                    .textures
+                    .iter()
+                    .find(|(name, _)| *name == file)
+                    .and_then(|(_, image)| image::RgbaImage::from_raw(image.width as u32, image.height as u32, image.rgba.clone()));
+                let texture = embedded
+                    .map(|image| gpu.texture(&image, true))
+                    .or_else(|| texture_paths(&file).iter().find_map(|path| gpu.try_load_texture(grf, path, true).ok()))
+                    .unwrap_or_else(|| gpu.solid(GREY));
                 (texture, corners)
             })
             .collect::<Vec<_>>();
