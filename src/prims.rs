@@ -15,6 +15,7 @@ pub mod chi;
 pub mod circle;
 pub mod crowds;
 pub mod dancer;
+pub mod elemental;
 pub mod emblems;
 pub mod first;
 pub mod ground;
@@ -189,6 +190,7 @@ pub struct Prims {
     pub transcend: transcend::Transcend,
     pub sniper: sniper::Sniper,
     pub dancer: dancer::Dancer,
+    pub elemental: elemental::Elemental,
     pub guard: guard::Guard,
     pub spray: spray::Spray,
     pub brawl: brawl::Brawl,

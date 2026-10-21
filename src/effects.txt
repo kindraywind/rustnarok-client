@@ -1490,6 +1490,11 @@ spr	685	폭죽_생일	1	-
 spr	686	폭죽_크리스마스	1	-
 spr	729	mashofa	1	delayFrame=64;firstFrame=1;onTop=true
 spr	1240	digital_space\digital_space	1	repeat=true
+spr	947	거스트	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	948	블래스트	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	949	아쿠아플레이	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	950	업히벌	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	951	와일드스톰	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
 func	79	quake	0	200
 func	90	quake	800	650
 func	90	quake	1600	650
@@ -2070,6 +2075,10 @@ wav	922	effect\s사이킥웨이브	0
 wav	928	effect\wl_jackfrost	0
 wav	929	effect\s워머	0	listener
 wav	930	effect\프레셔	0
+wav	942	effect\wizard_waterball_chulung	0	listener
+wav	943	effect\기공포	0	listener
+wav	944	effect\매직 크래쉬	16	listener
+wav	949	effect\EF_FrostDiver2	0	listener
 wav	1042	effect\all_full_throttle	0
 wav	1043	effect\sr_flashcombo	0
 wav	1046	effect\so_elemental_shield	0
@@ -5195,6 +5204,14 @@ length	804	600
 length	959	60
 length	975	40
 length	987	100
+length	942	100
+length	943	2000
+length	944	100
+length	947	100
+length	948	100
+length	949	100
+length	950	100
+length	951	100
 length	988	100
 length	1020	100
 length	920	40

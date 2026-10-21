@@ -1,0 +1,30 @@
+// The elementals' skills (issue #818): a training dummy 2 cells east of prt_fild06 180,180, which can't cast. Whisper
+// npc:RustnarokElemental "wind" or "stone" and the player casts EL_WIND_SLASH or EL_STONE_RAIN on the dummy; "tidal",
+// "gust", "blast", "aqua", "upheaval" or "storm" plays Tidal Weapon's effect (942) or the sprite effect (947 - 951) on the
+// player, since those skills only cast from an elemental. Loaded and unloaded by scenarios/elemental-skills.json.
+prt_fild06,1,1,0	script	RustnarokElemental	-1,{
+	end;
+OnInit:
+	monster "prt_fild06", 182, 180, "--ja--", 2408, 1;
+	.gid = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "wind") {
+		unitskilluseid getcharid(3), "EL_WIND_SLASH", 1, .gid;
+	} else if (@whispervar0$ == "stone") {
+		unitskilluseid getcharid(3), "EL_STONE_RAIN", 1, .gid;
+	} else if (@whispervar0$ == "tidal") {
+		specialeffect2 942;
+	} else if (@whispervar0$ == "gust") {
+		specialeffect2 947;
+	} else if (@whispervar0$ == "blast") {
+		specialeffect2 948;
+	} else if (@whispervar0$ == "aqua") {
+		specialeffect2 949;
+	} else if (@whispervar0$ == "upheaval") {
+		specialeffect2 950;
+	} else if (@whispervar0$ == "storm") {
+		specialeffect2 951;
+	}
+	end;
+}
