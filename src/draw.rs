@@ -643,6 +643,10 @@ impl App {
                 }
             }
         }
+        // Skill units on the ground stand on their cell: the numbers of hits on an Ice Wall or a trap, effects on them.
+        for (&id, &(_, cell)) in &game.skill_units {
+            feet_of.entry(id).or_insert_with(|| game.world.cell_position(cell.map(f32::from)));
+        }
         if let Some(audio) = audio {
             for (sound, volume) in sounds {
                 audio.play(grf, &sound, volume);

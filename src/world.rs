@@ -1840,19 +1840,6 @@ impl WorldPass for WorldFrame<'_> {
                 pass.draw(0..batch.count, 0..1);
             }
         }
-        // Hit numbers over the ground, walls and models. Digits sort in front of their burst.
-        if let Some(buffer) = &number_buffer {
-            pass.set_vertex_buffer(0, buffer.slice(..));
-            let draw = |pass: &mut wgpu::RenderPass, index: usize| {
-                let first = index as u32 * 6;
-                pass.set_bind_group(1, self.numbers[index].0.bind_group(), &[]);
-                pass.draw(first..first + 6, 0..1);
-            };
-            for pipeline in &world.number_pipelines {
-                pass.set_pipeline(pipeline);
-                number_order.iter().for_each(|&index| draw(&mut pass, index));
-            }
-        }
         if let Some(buffer) = &mesh_buffer {
             pass.set_vertex_buffer(0, buffer.slice(..));
             // The world objects' translucent faces, blended, then the effect shapes.
@@ -1881,6 +1868,21 @@ impl WorldPass for WorldFrame<'_> {
                 pass.set_bind_group(1, texture.bind_group(), &[]);
                 pass.draw(first..first + count, 0..1);
                 first += count;
+            }
+        }
+
+        // Hit numbers over the ground, walls, models and the effects (an Ice Wall's spikes, the STRs), as the game draws them
+        // with no depth test after its STR and wall list. Digits sort in front of their burst.
+        if let Some(buffer) = &number_buffer {
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            let draw = |pass: &mut wgpu::RenderPass, index: usize| {
+                let first = index as u32 * 6;
+                pass.set_bind_group(1, self.numbers[index].0.bind_group(), &[]);
+                pass.draw(first..first + 6, 0..1);
+            };
+            for pipeline in &world.number_pipelines {
+                pass.set_pipeline(pipeline);
+                number_order.iter().for_each(|&index| draw(&mut pass, index));
             }
         }
 
