@@ -8092,14 +8092,13 @@ mod tests {
     #[test]
     fn reverberations_cell_note_and_ice_mines_crystals_have_their_rows() {
         let table = Table::load();
-        // Reverberation's cell: the unit starts the note, every 29 991 ticks; its sound at the listener; no part, no skill start.
+        // Reverberation's cell: the unit starts the note (again every 29 991 ticks, `prims::crowds`); its sound at the listener; no part, no skill start.
         assert_eq!(table.units[&218], crowds::CELL_NOTE);
         assert!(!table.units_once.contains(&218) && !table.floaters.contains_key(&crowds::CELL_NOTE));
         assert!(!table.parts.contains_key(&crowds::CELL_NOTE) && table.skill(2414, "groundEffectId").is_empty());
         let sounds = table.sounds[&crowds::CELL_NOTE].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
         assert_eq!(sounds, [("effect\\reverberation", 0, true)]);
         assert_eq!(table.lengths[&crowds::CELL_NOTE], 29_999);
-        assert_eq!(restart_ticks(crowds::CELL_NOTE, 218, 29_999), 29_991);
         // Ice Mine's cell: the looped crystals, 10 ticks a frame from frame 1, 1 up, depth tested, again every 998 ticks.
         assert_eq!(table.units[&254], 1026);
         assert!(!table.units_once.contains(&254) && !table.sounds.contains_key(&1026) && table.lengths[&1026] == 999);

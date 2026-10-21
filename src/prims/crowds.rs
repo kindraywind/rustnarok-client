@@ -277,15 +277,18 @@ impl Crowds {
             }
         }
         self.crowds.retain(|crowd| passes(crowd.start, now) <= CROWD_LIFE);
-        // A cell note starts the next one on its age `NOTE_AGAIN` and plays out its last ticks.
+        // A cell note starts the next one on its age `NOTE_AGAIN` and plays out its last ticks; after a stall, every copy due is
+        // made, with one sound.
         let mut next = Vec::new();
-        for note in self.notes.iter_mut().filter(|note| note.again) {
-            if passes(note.start, now) > NOTE_AGAIN {
-                note.again = false;
-                let start = note.start + TICK * NOTE_AGAIN;
-                next.push(Note { id: note.id, at: note.at, start, bob: rand(360) as f32, reverb: None, cell: true, again: true });
-                self.restarts.push(CELL_NOTE);
+        for note in self.notes.iter_mut().filter(|note| note.again && passes(note.start, now) > NOTE_AGAIN) {
+            note.again = false;
+            let mut start = note.start + TICK * NOTE_AGAIN;
+            while passes(start, now) > NOTE_AGAIN {
+                next.push(Note { id: note.id, at: note.at, start, bob: rand(360) as f32, reverb: None, cell: true, again: false });
+                start += TICK * NOTE_AGAIN;
             }
+            next.push(Note { id: note.id, at: note.at, start, bob: rand(360) as f32, reverb: None, cell: true, again: true });
+            self.restarts.push(CELL_NOTE);
         }
         self.notes.extend(next);
         self.notes.retain(|note| passes(note.start, now) <= if note.reverb.is_some() { REVERB_LIFE } else { NOTE_LIFE });
@@ -525,6 +528,11 @@ mod tests {
         // Its unit going takes every copy.
         crowds.forget(3);
         assert!(crowds.notes.is_empty());
+        // After a stall of three periods the copy of the period it is in stands, with one sound.
+        crowds.cell_note(3, [0.0; 3], start, |_| 0);
+        crowds.advance(start + TICK * (3 * 29_991 + 5), |_| None, |_, _| 0.0, |_| 0);
+        assert!(crowds.notes.iter().any(|note| note.again && note.start == start + TICK * (3 * 29_991)));
+        assert_eq!(crowds.take_restarts(), [CELL_NOTE]);
     }
 
     #[test]
