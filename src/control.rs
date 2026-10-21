@@ -1566,6 +1566,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "homunculus": game.homunculus.as_ref().map(|homunculus| homunculus_state(homunculus, game.homunculus_id, game.homunculus_steering.following)),
         "pet": game.pet.as_ref().map(|pet| json!({"id": game.pet_id, "name": pet.name, "level": pet.level, "hunger": pet.hunger, "intimacy": pet.intimacy, "accessory": pet.accessory, "renamed": pet.renamed})),
         "ground_items": ground,
+        // The world objects running (`world_fx`): how many copies of each id.
+        "world_objects": game.effects.world_object_counts(),
         "inventory_items": game.inventory.items.len(),
         "skills": game.skills.len(),
         "status_icons": game.status_icons.iter().map(|(id, _, ends)| json!({"id": id, "left_ms": ends.map(|end| end.saturating_duration_since(now).as_millis() as u64)})).collect::<Vec<_>>(),

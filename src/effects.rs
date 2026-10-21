@@ -2019,6 +2019,8 @@ pub struct Effects {
     black: Option<Texture>,
     /// The world objects that build their pictures in code (`world_fx`); they tick with the STR world copies.
     fx: WorldFx,
+    /// The units (None = the player) whose Shadow Exceed double just ended: they start leaving afterimages.
+    afterimages: Vec<Option<u32>>,
 }
 
 /// What the world objects load, through the effects' caches.
@@ -2897,9 +2899,12 @@ impl Effects {
         self.worlds.remove_owner(owner);
     }
 
-    /// The owners (None = the player) whose body the head rule of a running copy needs.
+    /// The owners (None = the player) whose body the head rule of a running copy needs, or Shadow Exceed's facing.
     pub fn world_head_owners(&self) -> Vec<Option<u32>> {
-        self.worlds.head_owners()
+        let mut owners = self.worlds.head_owners();
+        // Shadow Exceed's double stands behind the way its owner faces.
+        owners.extend(self.fx.iter().filter(|object| object.fx.id == world_fx::status4::SHADOW_EXCEED).filter_map(|object| object.fx.owner));
+        owners
     }
 
     fn fx_assets<'a>(&'a mut self, gpu: &'a Gpu, grf: &'a Grf) -> (&'a mut WorldFx, FxAssets<'a>) {
@@ -2924,6 +2929,7 @@ impl Effects {
                 match fired {
                     world_str::Fired::Sound(file, at) => self.sounds.push((now, file, at)),
                     world_str::Fired::Quake => self.quakes.push((now, QUAKE_LONG)),
+                    world_str::Fired::Afterimage(unit) => self.afterimages.push(unit),
                 }
             }
         }
@@ -3076,8 +3082,8 @@ impl Effects {
         self.launch_fx(gpu, grf, &world_fx::jobs3::shot(world_fx::jobs3::AXE_BOOMERANG, Some(caster), from, (target, at), self.min, 0));
     }
 
-    /// A cast start of `skill` by `unit` (None = the player) standing at `at`: Competentia's sparkles, or Nipelheim Requiem's
-    /// cast STR (cut at the cast's end) and its funnel.
+    /// A cast start of `skill` by `unit` (None = the player) standing at `at`: Competentia's sparkles, Nipelheim Requiem's
+    /// cast STR (cut at the cast's end) and its funnel, or Servant Weapon Sign's shot.
     #[allow(clippy::too_many_arguments)]
     pub fn fourth_job_cast(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, skill: u16, unit: Option<u32>, at: Vector, cast_ms: u32) {
         use world_fx::area4;
@@ -3087,6 +3093,7 @@ impl Effects {
                     self.launch_fx(gpu, grf, &launch);
                 }
             }
+            world_fx::status4::SIGN_SKILL => self.servant_sign(gpu, grf, unit),
             area4::NIPELHEIM_SKILL => {
                 if let Some(copy) =
                     self.launch_world(gpu, grf, table, area4::NIPELHEIM_CAST, Some(unit), at, false, 0).and_then(|serial| self.worlds.get_mut(serial))
@@ -3117,6 +3124,69 @@ impl Effects {
             _ => return,
         };
         self.launch_fx(gpu, grf, &launch);
+    }
+
+    /// A status of `unit` (None = the player) standing at `at` turning on with its value, or off: its fourth-job object
+    /// (`world_fx::status4::status`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn status_object(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, at: Vector, status: u16, on: bool, value: i32) {
+        let min = self.min;
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        world_fx::status4::status(fx, Some(unit), at, (status, on, value), min, &mut assets);
+    }
+
+    /// The spirit count of `unit` (None = the player) of `job` standing at `at`: the Abyss Chaser's balls or the Dragon
+    /// Knight's swords.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spirit_objects(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, job: u16, count: u16, seen: bool, at: Vector) {
+        let min = self.min;
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        world_fx::status4::spirits(fx, Some(unit), job, count, seen, at, min, &mut assets)
+    }
+
+    /// The cast start of Servant Weapon Sign by `unit` (None = the player): a sword flies off.
+    pub fn servant_sign(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>) {
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        world_fx::status4::sign_cast(fx, Some(unit), &mut assets);
+    }
+
+    /// A damage packet of Attack Machine from `caster` (None = the player) on a target standing at `at`: the caster's drone
+    /// fires, and the hit sounds at the target.
+    pub fn a_machine_hit(&mut self, gpu: &Gpu, grf: &Grf, caster: Option<u32>, at: Vector, now: Instant) {
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        if let world_str::Fired::Sound(file, at) = world_fx::status4::a_machine_hit(fx, Some(caster), at, &mut assets) {
+            self.sounds.push((now, file, at));
+        }
+    }
+
+    /// The use packet of Eternal Slash or Shadow Exceed from `source` (None = the player) standing at `at`.
+    pub fn status4_used(&mut self, gpu: &Gpu, grf: &Grf, skill: u16, source: Option<u32>, at: Vector) {
+        if let Some(launch) = world_fx::status4::used(skill, Some(source), at, self.min) {
+            self.launch_fx(gpu, grf, &launch);
+        }
+    }
+
+    /// How many copies of each world object id are running (for the test driver).
+    pub fn world_object_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        let mut counts = std::collections::BTreeMap::new();
+        for object in self.fx.iter() {
+            *counts.entry(object.fx.id.to_string()).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    /// The units whose Shadow Exceed double ended since the last call.
+    pub fn take_afterimages(&mut self) -> Vec<Option<u32>> {
+        std::mem::take(&mut self.afterimages)
+    }
+
+    /// The frostbite frame's texture while the player is frost-bitten and /effect shows it.
+    pub fn frost_frame(&self) -> Option<&Texture> {
+        let id = world_fx::status4::FROST_FRAME;
+        if !self.fx.running(Some(None), id) || !self.shows(id) {
+            return None;
+        }
+        self.textures.get(world_fx::status4::FROST_TEXTURE)?.as_ref()
     }
 
     /// A ground item taken or gone: its pillars go.
@@ -3207,7 +3277,12 @@ impl Effects {
         }
         // A registered world object; the footprint classes come only with a hat effect, the heal objects only with a packet,
         // the pillars with a dropped item.
-        if self.fx.registered(id) && !world_fx::footprints::is_class(id) && !world_fx::heal::is_class(id) && !world_fx::drops::is_pillar(id) {
+        if self.fx.registered(id)
+            && !world_fx::footprints::is_class(id)
+            && !world_fx::heal::is_class(id)
+            && !world_fx::drops::is_pillar(id)
+            && !world_fx::status4::is_class(id)
+        {
             let owner = match target {
                 Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
                 _ => None,
@@ -8520,7 +8595,7 @@ mod tests {
         assert!(table.used(8051).unwrap().contains(&(Who::Caster, 2339)) && table.used(5065).unwrap().contains(&(Who::Caster, 1142)));
         assert!([1654, 2339, 1142].iter().all(|id| table.world(*id).is_some() && !table.has_str(*id)));
         // The head rule: the skill unit's tree 38 units up, the others from a body 27.2 high.
-        let body = world_str::Body { height: 27.2, scale: 1.0, rides: false, doram: false };
+        let body = world_str::Body { height: 27.2, scale: 1.0, rides: false, doram: false, rot: 0.0 };
         assert_eq!(world_str::head_offset(1654, 0.0, -3.0, world_str::Body::skill_unit()), Some([0.0, 38.0]));
         let up = |id, adjust| world_str::head_offset(id, 0.0, adjust, body).map(|[_, up]| (up * 10.0).round() / 10.0);
         assert_eq!((up(2339, -4.0), up(1142, -6.0)), (Some(34.2), Some(32.2)));
@@ -9890,6 +9965,22 @@ mod tests {
         assert!(table.struck(jobs3::AXE_SKILL).unwrap().contains(&(Who::Target, 1660)));
         let sounds: Vec<_> = table.sounds[&jobs3::SHIELD_SHOOTING].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect();
         assert_eq!(sounds, [("effect\\IG_SHIELD_SHOOTING", 0, false)]);
+    }
+
+    #[test]
+    fn the_fourth_job_status_objects_have_their_rows() {
+        use world_fx::status4;
+        let table = Table::load();
+        let fx = WorldFx::default();
+        for id in [1800, 1839, 1912, 1913, 2109, 2272, 2355, 2460, 2461, 2467] {
+            assert!(fx.registered(id) && status4::is_class(id), "{id}");
+        }
+        // The statuses' rows name their objects; frostbite's thaw is not one of them: it plays as the status ends.
+        assert_eq!(table.status(status4::CLIMAX_STATUS), [status4::CLIMAX]);
+        assert_eq!(table.status(status4::A_MACHINE_STATUS), [status4::A_MACHINE]);
+        assert_eq!(table.status(status4::SLASH_COUNT_STATUS), [status4::SLASH_COUNT]);
+        assert_eq!(table.status(status4::FROSTBITE_STATUS), [2270, status4::FROST_FRAME]);
+        assert!(table.world(status4::FROSTBITE_END).is_some());
     }
 
     #[test]

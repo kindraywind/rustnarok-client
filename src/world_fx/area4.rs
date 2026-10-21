@@ -737,7 +737,7 @@ mod tests {
                 .iter()
                 .filter_map(|(age, event)| match event {
                     Event::Sound { file, .. } => Some((*age, file.clone())),
-                    Event::Quake => None,
+                    Event::Quake | Event::Afterimage => None,
                 })
                 .collect()
         }

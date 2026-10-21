@@ -1,0 +1,516 @@
+{
+  "about": "The fourth-job status and counter objects (issue #855) on open grass at prt_fild08 170,360, from npc/fourth-job-statuses.txt: on the player, each ended before the next: Climax 3's light and green ground glow (1800), Eternal Slash's count 3 (1913), the frostbite frame round the screen (2272), the four god marks circling (2355) and Charging Pierce's seven orbs (2461); as a Dragon Knight, Servant Weapon's five swords (2460, the sphere stand-in gone); as an Abyss Chaser, the five shadow balls (2109); then the training dummy 2 cells east uses Eternal Slash (its burst, 1912) and a Poring 4 cells west and 3 south Shadow Exceed (the double behind it, 2467). The A-Machine drone (1839) is not here: rathena never sends its status.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/fourth-job-statuses.txt"
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/fourth-job-statuses.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            170,
+            360
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokStatus4"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "climax"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "world_objects.1800": 1
+        }
+      }
+    },
+    {
+      "shot": "climax",
+      "crop": [
+        212,
+        0,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "type": "count"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "StatusIcon",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 100
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 100
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 100
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 100
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 100
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 100
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 100
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 100
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "world_objects.1913": 1
+        }
+      }
+    },
+    {
+      "shot": "slash-count",
+      "crop": [
+        212,
+        0,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "type": "frost"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "state": {
+          "world_objects.2272": 1
+        }
+      }
+    },
+    {
+      "shot": "frostbite-frame",
+      "threshold": 30
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "type": "gods"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "world_objects.2355": 1
+        }
+      }
+    },
+    {
+      "shot": "god-marks",
+      "crop": [
+        212,
+        0,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "type": "pierce"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "expect": {
+        "state": {
+          "world_objects.2461": 1
+        }
+      }
+    },
+    {
+      "shot": "pierce-orbs",
+      "crop": [
+        212,
+        0,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "say": "@job 4252"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "type": "servant"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 5000
+    },
+    {
+      "expect": {
+        "state": {
+          "world_objects.2460": 1
+        }
+      }
+    },
+    {
+      "shot": "servant-swords",
+      "crop": [
+        212,
+        0,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "say": "@job 4260"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "type": "abyss"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "expect": {
+        "state": {
+          "world_objects.2109": 1
+        }
+      }
+    },
+    {
+      "shot": "shadow-balls",
+      "crop": [
+        212,
+        0,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "type": "slash"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 9000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 100
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 100
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "world_objects.1912": 1
+        }
+      }
+    },
+    {
+      "shot": "eternal-slash",
+      "crop": [
+        212,
+        0,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "type": "exceed"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 9000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 150
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 150
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 150
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 150
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 150
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 150
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "world_objects.2467": 1
+        }
+      }
+    },
+    {
+      "shot": "shadow-exceed",
+      "crop": [
+        112,
+        0,
+        700,
+        640
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/fourth-job-statuses.txt"
+    },
+    {
+      "say": "@killmonster2"
+    }
+  ]
+}

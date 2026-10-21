@@ -2553,6 +2553,11 @@ impl Actor {
         }
     }
 
+    /// Whether it leaves Kagemusya's copies.
+    pub fn shadowing(&self) -> bool {
+        self.shadowing
+    }
+
     /// Kagemusya (EFST 656) comes on or goes off: a grey copy every tick.
     pub fn shadow(&mut self, on: bool) {
         self.shadowing = on;

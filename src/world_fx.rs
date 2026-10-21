@@ -11,6 +11,7 @@ pub mod drops;
 pub mod footprints;
 pub mod heal;
 pub mod jobs3;
+pub mod status4;
 pub mod summoner;
 
 use std::collections::HashMap;
@@ -522,8 +523,7 @@ impl StrPart {
     }
 
     /// Its layers' faces now (layer 0 is never drawn). On the screen each STR px is a sprite px about the point, moved by
-    /// the step offset; in the world (3-D) a camera-facing quad whose STR px are `scale` world units, with real depth and
-    /// the effect flags.
+    /// the step offset; in the world (3-D) a camera-facing quad whose STR px are `scale` world units, with real depth.
     pub fn faces<'a>(&'a self, eye: &Eye, out: &mut Vec<Face<'a>>) {
         let (Some(loaded), Some(frame)) = (&self.loaded, self.shown) else { return };
         // The 3-D draw's size is the scale in world units; the 2-D draw's is the scale in sprite px.
@@ -532,7 +532,6 @@ impl StrPart {
         } else {
             (PIXEL, Controls { offset: [self.controls.offset[0] + self.offset[0], self.controls.offset[1] + self.offset[1]], ..self.controls })
         };
-        let flags = if self.world { FLAGS_EFFECT } else { self.flags };
         let point = eye.nearer(self.point, self.bias);
         for (index, layer) in loaded.animation.layers.iter().enumerate().skip(1) {
             let Some(state) = layer.state(frame as f32) else { continue };
@@ -547,7 +546,12 @@ impl StrPart {
             let mut tint = state.color;
             tint[3] = (tint[3] * 255.0 * self.controls.alpha).trunc() / 255.0;
             let uv = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
-            out.push(Face { texture: Tex::Str(loaded, index, state.texture), vertices: triangles(corners, uv, tint), additive: state.additive, flags });
+            out.push(Face {
+                texture: Tex::Str(loaded, index, state.texture),
+                vertices: triangles(corners, uv, tint),
+                additive: state.additive,
+                flags: self.flags,
+            });
         }
     }
 }
@@ -603,6 +607,8 @@ pub enum Event {
     Sound { file: String, listener: bool },
     /// The 650 ms camera shake.
     Quake,
+    /// The owner starts leaving Kagemusya's afterimages (Shadow Exceed's end).
+    Afterimage,
 }
 
 /// What every object has.
@@ -761,6 +767,7 @@ impl Default for WorldFx {
         footprints::register(&mut fx);
         heal::register(&mut fx);
         jobs3::register(&mut fx);
+        status4::register(&mut fx);
         summoner::register(&mut fx);
         fx
     }
@@ -866,6 +873,7 @@ impl WorldFx {
                     _ if *age != fx.age => {}
                     Event::Sound { file, listener } => fired.push(Fired::Sound(file.clone(), if *listener { scene.player } else { fx.position })),
                     Event::Quake => fired.push(Fired::Quake),
+                    Event::Afterimage => fired.extend(fx.owner.map(Fired::Afterimage)),
                 }
             }
             class.update(fx, scene, assets);

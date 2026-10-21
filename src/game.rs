@@ -1378,14 +1378,53 @@ impl Game {
 
     /// The spirit count of `unit`: a Rebellion's or a Night Watch's coins, none while it is out of sight.
     pub(crate) fn coins(&mut self, gpu: &Gpu, grf: &Grf, unit: u32, count: u16) {
+        if let Some((_, seen, at)) = self.spirit_owner(unit, crate::world_fx::jobs3::object_coins) {
+            self.effects.coins(gpu, grf, (unit != self.account_id).then_some(unit), count, at, seen);
+        }
+    }
+
+    /// The spirit count of `unit`: the Abyss Chaser's shadow balls or the Dragon Knight's swords.
+    pub(crate) fn spirit_objects(&mut self, gpu: &Gpu, grf: &Grf, unit: u32, count: u16) {
+        if let Some((job, seen, at)) = self.spirit_owner(unit, crate::world_fx::status4::object_spheres) {
+            self.effects.spirit_objects(gpu, grf, (unit != self.account_id).then_some(unit), job, count, seen, at);
+        }
+    }
+
+    /// A unit in sight whose job `shows` its spirits as world objects: its job, whether it is seen (not hidden or cloaked)
+    /// and its feet.
+    fn spirit_owner(&self, unit: u32, shows: fn(u16) -> bool) -> Option<(u16, bool, world::Vector)> {
         let actor = if unit == self.account_id { Some(&self.player) } else { self.units.get(&unit) };
         let job = if unit == self.account_id { Some(self.me.job) } else { actor.map(|actor| actor.job) };
-        if !job.is_some_and(crate::world_fx::jobs3::object_coins) {
-            return;
-        }
+        let job = job.filter(|&job| shows(job))?;
         let seen = actor.is_some_and(|actor| actor.hide_option & actor::UNSEEN_OPTIONS == 0);
-        if let Some(at) = self.feet(unit, control::now()) {
-            self.effects.coins(gpu, grf, (unit != self.account_id).then_some(unit), count, at, seen);
+        Some((job, seen, self.feet(unit, control::now())?))
+    }
+
+    /// The use packet of Eternal Slash or Shadow Exceed from `source`; nothing for a caster not in sight.
+    pub(crate) fn status4_used(&mut self, gpu: &Gpu, grf: &Grf, skill: u16, source: u32) {
+        if let Some(at) = self.feet(source, control::now()) {
+            self.effects.status4_used(gpu, grf, skill, (source != self.account_id).then_some(source), at);
+        }
+    }
+
+    /// A damage packet of Attack Machine from `source` on `target`: the caster's drone fires, the hit sounds at the target.
+    pub(crate) fn a_machine_hit(&mut self, gpu: &Gpu, grf: &Grf, source: u32, target: u32) {
+        if let Some(at) = self.feet(target, control::now()) {
+            self.effects.a_machine_hit(gpu, grf, (source != self.account_id).then_some(source), at, Instant::now());
+        }
+    }
+
+    /// The players whose Shadow Exceed double just ended start leaving Kagemusya's afterimages, unless they already do or
+    /// the status is already over.
+    // ponytail: a monster's Shadow Exceed status is never sent, so nothing would end its afterimages: monsters leave none.
+    // Kagemusya's own status going off ends these afterimages too: they share the unit's one switch.
+    pub(crate) fn exceed_afterimages(&mut self) {
+        for key in self.effects.take_afterimages().into_iter().filter(|key| self.exceed_on.contains(key)) {
+            let actor = if key.is_none() { Some(&mut self.player) } else { key.and_then(|id| self.units.get_mut(&id)) };
+            if let Some(actor) = actor.filter(|actor| !actor.shadowing() && !actor::is_monster_job(actor.job)) {
+                actor.shadow(true);
+                self.exceed_shadows.insert(key);
+            }
         }
     }
 
@@ -1537,6 +1576,33 @@ impl Game {
         if let (Some(slot), Some(gpu)) = (crate::world_fx::jobs3::sphere_slot(status), gpu) {
             self.effects.sphere(gpu, grf, key, slot, on, value as i32);
         }
+        // The fourth-job status objects take the status's value; frostbite thaws as it ends.
+        // A unit not in sight starts none; going off only removes.
+        if let Some(gpu) = gpu {
+            let at = self.feet(unit, control::now());
+            if let Some(at) = at.or((!on).then_some([0.0; 3])) {
+                self.effects.status_object(gpu, grf, key, at, status, on, value as i32);
+            }
+            if let Some(at) = at.filter(|_| !on) {
+                for &effect in crate::world_fx::status4::end_effects(status) {
+                    self.effects.play(gpu, grf, table, effect, effects::Target::Unit(key), at, Instant::now());
+                }
+            }
+        }
+        // Shadow Exceed's afterimages last as long as its status.
+        if status == crate::world_fx::status4::SHADOW_EXCEED_STATUS {
+            if on {
+                self.exceed_on.insert(key);
+            } else {
+                self.exceed_on.remove(&key);
+                if self.exceed_shadows.remove(&key) {
+                    let actor = if key.is_none() { Some(&mut self.player) } else { key.and_then(|id| self.units.get_mut(&id)) };
+                    if let Some(actor) = actor {
+                        actor.shadow(false);
+                    }
+                }
+            }
+        }
         // Song of Mana's and Wug Dance's circle runs out its ticks when the status goes off.
         if effects::circle_ignores(status, on, value) {
             return;
@@ -1581,6 +1647,7 @@ impl Game {
             for &effect in shown
                 .iter()
                 .filter(|&&effect| !matches!(effect, actor::AFTERIMAGE | actor::STRIKING | actor::HALLUCINATION_WALK | actor::KAGEMUSYA | actor::CLOUD_POISON))
+                .filter(|&&effect| !crate::world_fx::status4::is_class(effect))
             {
                 // Manhole's body is for the other units only; a monster in the hole only sounds.
                 if effect == effects::MANHOLE_BODY && monster {
