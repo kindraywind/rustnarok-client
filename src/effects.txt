@@ -2091,6 +2091,7 @@ wav	1565	effect\ef_beginspell	0
 wav	1656	effect\EF_BeginSpell	0
 wav	1664	effect\ef_beginspell	0
 wav	1677	effect\ef_beginspell	0
+wav	1709	effect\ef_beginspell	0
 wav	1569	effect\REVERBERATION	0	listener
 wav	1286	effect\EF_BeginSpell	0
 wav	1286	effect\EF_BeginSpell	0

@@ -2118,6 +2118,10 @@ pub struct Actor {
     hallucination: bool,
     hallu_age: u32,
     hallu_due: bool,
+    /// Cloud Kill's poison (EFST 1318, effect 2277): the ticks each running copy has run; the unit is dark grey while any runs.
+    clouds: Vec<u32>,
+    /// When the map this unit is on finished loading (the player's), so the server's replay of its statuses is told apart.
+    pub loaded_at: Option<Instant>,
     last_feet: Option<[f32; 3]>,
     launches: Vec<(u32, [f32; 3])>,
     /// What statuses do to how its own parts are drawn: by status, the body flags and colour (`status_body`).
@@ -2136,6 +2140,13 @@ pub const STRIKING: u32 = 925;
 /// Hallucination Walk's copies and tint (#FAFAFA, effect 792, EFST 334 and 869).
 pub const HALLU_TINT: [u8; 3] = [250, 250, 250];
 pub const HALLUCINATION_WALK: u32 = 792;
+/// Cloud Kill's poison (EFST 1318): the whole unit drawn #696969, blended, while a copy of effect 2277 runs (99 999 ticks).
+pub const CLOUD_POISON: u32 = 2277;
+const CLOUD_TINT: [u8; 3] = [105; 3];
+const CLOUD_TICKS: u32 = 99_999;
+/// How long after a map load a status-on for the player is the server's replay of it.
+// ponytail: an estimate; the replay comes right after the load is acknowledged.
+pub const REPLAY_WINDOW: Duration = Duration::from_secs(2);
 /// Kagemusya's grey copies (EFST 656): a frozen copy every tick, 5 units behind the unit.
 pub const KAGEMUSYA: u32 = 1004;
 /// The tint of Kagemusya's copies (#C0C0C0), and where they stand: 5 units straight behind.
@@ -2497,6 +2508,8 @@ impl Actor {
             hallucination: false,
             hallu_age: 0,
             hallu_due: false,
+            clouds: Vec::new(),
+            loaded_at: None,
             last_feet: None,
             launches: Vec::new(),
             glows: Vec::new(),
@@ -2568,6 +2581,19 @@ impl Actor {
         self.hallu_due = false;
     }
 
+    /// Cloud Kill's poison comes on or goes off: every on starts a copy beside the others (`replay`, the server's replay after a map
+    /// load, only when none runs) and every off ends one.
+    pub fn cloud_poison(&mut self, on: bool, replay: bool) {
+        if !on {
+            // ponytail: the oldest copy ends first.
+            if !self.clouds.is_empty() {
+                self.clouds.remove(0);
+            }
+        } else if !replay || self.clouds.is_empty() {
+            self.clouds.push(0);
+        }
+    }
+
     /// Escape (5010) is used: the unit is tinted yellow for 20 ticks and a copy is left at the aim every 5th, the aim closing on the
     /// unit. A second use while one runs does nothing.
     pub fn escape(&mut self) {
@@ -2601,6 +2627,10 @@ impl Actor {
         *clock += Duration::from_millis(u64::from(whole) * 16);
         for _ in 0..whole {
             self.shadow_due |= self.shadowing;
+            for cloud in &mut self.clouds {
+                *cloud += 1;
+            }
+            self.clouds.retain(|&ticks| ticks < CLOUD_TICKS);
             if self.striking {
                 self.strike_due |= self.strike_age.is_multiple_of(5);
                 self.strike_age += 1;
@@ -2636,7 +2666,9 @@ impl Actor {
             }
             if self.blurs.is_empty() && self.snap_left == 0 {
                 self.blur_age = 0;
-                self.blur_colour = self.blur_colour.map(|channel| channel.saturating_add(BLUR_DRIFT));
+                // Cloud Kill's poison holds its grey; after it the colour drifts back.
+                // ponytail: a blur's own colour wins over the poison's.
+                self.blur_colour = if self.clouds.is_empty() { self.blur_colour.map(|channel| channel.saturating_add(BLUR_DRIFT)) } else { CLOUD_TINT };
                 continue;
             }
             let status = self.blurs.last().copied().filter(|_| self.snap_left == 0);
@@ -4927,6 +4959,43 @@ mod tests {
         assert_eq!([55, 130, 131, 199].map(|f| alpha(&stack(f), 0)), [0.0, 75.0, 104.0, 36.0]);
         assert_eq!([0, 1, 2, 3, 4].map(|ring| alpha(&stack(199), ring)), [36.0, 26.0, 16.0, 6.0, 0.0]);
         assert!(glow_copies(GLOW_STACK | 100 << PARAM_SHIFT, None, PartGroup::Body, 0.0, 0.0, 1.0, true).1.is_empty());
+    }
+
+    #[test]
+    fn cloud_kills_poison_greys_the_unit_while_a_copy_runs() {
+        let start = Instant::now();
+        let tick = |ticks: u64| start + Duration::from_millis(16 * ticks);
+        let mut actor = Actor::new("Royal Guard".into(), None, [0, 0], 0, 150);
+        actor.step_blur(tick(0), || false);
+        // One copy: #696969, no body flags.
+        actor.cloud_poison(true, false);
+        actor.step_blur(tick(1), || false);
+        assert_eq!((actor.body_tint(), actor.glow_flags().0), (Some([105; 3]), 0));
+        // Two on packets, one off: still grey; the second off ends it.
+        actor.cloud_poison(true, false);
+        actor.cloud_poison(false, false);
+        actor.step_blur(tick(2), || false);
+        assert_eq!(actor.body_tint(), Some([105; 3]));
+        actor.cloud_poison(false, false);
+        // Back to white by 8 a channel a tick: 113, 249, 255 at 1, 18 and 19 ticks.
+        let mut after = Vec::new();
+        for t in 1..=19 {
+            actor.step_blur(tick(2 + t), || false);
+            after.push(actor.body_tint().map_or(255, |tint| tint[0]));
+        }
+        assert_eq!([after[0], after[17], after[18]], [113, 249, 255]);
+        // An off with no copy does nothing.
+        actor.cloud_poison(false, false);
+        assert!(actor.clouds.is_empty());
+        // The replay after a map load starts none while one runs, one when none does.
+        actor.cloud_poison(true, true);
+        actor.cloud_poison(true, true);
+        assert_eq!(actor.clouds.len(), 1);
+        // A copy runs out after 99 999 ticks.
+        actor.step_blur(tick(30), || false);
+        actor.clouds[0] = CLOUD_TICKS - 1;
+        actor.step_blur(tick(31), || false);
+        assert!(actor.clouds.is_empty());
     }
 
     #[test]

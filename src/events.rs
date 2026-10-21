@@ -773,6 +773,7 @@ impl App {
                 (game.pet_id, game.pet) = (None, None);
                 game.put_after_warp(position);
                 let _ = game.session.loaded();
+                game.player.loaded_at = Some(Instant::now());
             }
             Err(error) => game.chat_line(format!("맵을 불러올 수 없습니다: {map} ({error})"), CHAT_ERROR),
         }
@@ -1421,6 +1422,7 @@ impl App {
                     game.skill_units.clear();
                     game.ground.clear();
                     let _ = game.session.loaded();
+                    game.player.loaded_at = Some(Instant::now());
                 } else {
                     self.show_loading(LoadTarget::Change { map, position });
                 }
