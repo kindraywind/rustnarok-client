@@ -1235,7 +1235,11 @@ impl App {
             fn put<'a>(kind: DamageKind, parts: Vec<Billboard<'a>>, heals: &mut Vec<Billboard<'a>>, over: &mut Vec<Billboard<'a>>) {
                 if crate::number_depth_tested(kind) { heals.extend(parts) } else { over.extend(parts) }
             }
+            let numbers_hidden = game.map_property.is_some_and(|(_, flags)| versus::numbers_hidden(flags));
             for (index, damage) in game.damages.iter().enumerate().filter(|(_, damage)| damage.start <= now) {
+                if numbers_hidden && matches!(damage.kind, DamageKind::Hit { .. } | DamageKind::Heal { .. } | DamageKind::Combo) {
+                    continue;
+                }
                 let Some(feet) = damage.target.map_or(Some(player_feet), |id| feet_of.get(&id).copied()) else { continue };
                 let elapsed = now.duration_since(damage.start).as_secs_f32();
                 let posed = message_frames.get(index).map(Vec::as_slice).unwrap_or_default();
@@ -1286,7 +1290,9 @@ impl App {
                                 )
                             }));
                         }
-                        parts.extend(number(actor::hit_number(ticks, true), [1.0, 1.0, 0.0]));
+                        if !numbers_hidden {
+                            parts.extend(number(actor::hit_number(ticks, true), [1.0, 1.0, 0.0]));
+                        }
                         put(damage.kind, parts, &mut billboards, &mut over_numbers);
                     }
                     DamageKind::Miss { red } => {

@@ -27,6 +27,11 @@ pub fn siege(flags: u32) -> bool {
     flags & MAP_SIEGE != 0 && flags & MAP_BATTLEFIELD == 0
 }
 
+/// Hit, heal and total numbers aren't drawn on a siege map or a battleground (MISS and Lucky still are).
+pub fn numbers_hidden(flags: u32) -> bool {
+    flags & (MAP_SIEGE | MAP_BATTLEFIELD) != 0
+}
+
 impl Side {
     fn party_member(&self, account: u32) -> bool {
         self.party.contains(&account)
@@ -193,5 +198,13 @@ mod tests {
         assert_eq!(click(WOE | MAP_NO_LOCK_ON, false, false, 1, 2), Click::Swing, "a castle during WoE: one swing a click");
         assert_eq!(click(PVP, true, true, 1, 1), Click::Walk, "never ourselves");
         assert!(companion_cursor(PVP) && !companion_cursor(TOWN) && !companion_cursor(GVG | MAP_NO_LOCK_ON));
+    }
+
+    #[test]
+    fn hides_numbers_on_siege_maps_and_battlegrounds() {
+        assert!(numbers_hidden(WOE));
+        assert!(numbers_hidden(BATTLEGROUND));
+        assert!(!numbers_hidden(TOWN));
+        assert!(!numbers_hidden(PVP), "a PvP map still shows them");
     }
 }
