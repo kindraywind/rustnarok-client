@@ -1,0 +1,25 @@
+// The elementals' sprites and Silent Breeze (issue #819). Whisper npc:RustnarokElemSpr one of "chilly", "cursed",
+// "cooler", "tropic", "pyro", "petrology", "heater" or "breeze" and it plays that effect (952 - 958, 961) on the player, since
+// those only come from an elemental's or a homunculus's skill. Loaded and unloaded by scenarios/elemental-sprites.json.
+prt_fild06,1,1,0	script	RustnarokElemSpr	-1,{
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "chilly") {
+		specialeffect2 952;
+	} else if (@whispervar0$ == "cursed") {
+		specialeffect2 953;
+	} else if (@whispervar0$ == "cooler") {
+		specialeffect2 954;
+	} else if (@whispervar0$ == "tropic") {
+		specialeffect2 955;
+	} else if (@whispervar0$ == "pyro") {
+		specialeffect2 956;
+	} else if (@whispervar0$ == "petrology") {
+		specialeffect2 957;
+	} else if (@whispervar0$ == "heater") {
+		specialeffect2 958;
+	} else if (@whispervar0$ == "breeze") {
+		specialeffect2 961;
+	}
+	end;
+}
