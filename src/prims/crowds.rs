@@ -1,11 +1,11 @@
 //! Dead Hill Here's Geographers (853), Dance with Warg's Wargs (866), Poem of Netherworld's floating note (860), Reverberation's white
-//! note (1569) and Randomize Spell's ten nested rune frames (862), a 16 ms tick at a time.
+//! note (1569) and its cell's note (856), and Randomize Spell's ten nested rune frames (862), a 16 ms tick at a time.
 //!
 //! A shape's own age n counts from 1 at its first tick; e is the ticks since the effect started.
 
 use std::time::Instant;
 
-use super::passes;
+use super::{TICK, passes};
 use crate::render::Texture;
 use crate::world::{EffectQuad, Vector};
 
@@ -21,6 +21,10 @@ const PIXELS_PER_UNIT: f32 = 7.0;
 const CROWD_LIFE: u32 = 400;
 /// The note lives 29 999 ticks, Reverberation's 150, the frames 300.
 const NOTE_LIFE: u32 = 29_999;
+/// Reverberation's cell starts its next note 8 ticks before the last one's life ends.
+const NOTE_AGAIN: u32 = NOTE_LIFE - 8;
+/// Reverberation's cell note, whose restarts `take_restarts` reports.
+pub const CELL_NOTE: u32 = 856;
 const REVERB_LIFE: u32 = 150;
 const RUNE_LIFE: u32 = 300;
 
@@ -74,6 +78,9 @@ struct Note {
     bob: f32,
     /// Reverberation's note: white, added on, and following this unit (its picture by /mineffect).
     reverb: Option<(Option<u32>, bool)>,
+    /// Reverberation's cell note: white copies, and the next note starting `NOTE_AGAIN` ticks in until `again` is spent.
+    cell: bool,
+    again: bool,
 }
 
 struct Runes {
@@ -86,6 +93,7 @@ pub struct Crowds {
     crowds: Vec<Crowd>,
     notes: Vec<Note>,
     runes: Vec<Runes>,
+    restarts: Vec<u32>,
 }
 
 impl Kind {
@@ -167,12 +175,18 @@ pub fn note_height(tau: f32) -> f32 {
     6.0 - 3.0 * tau.to_radians().sin()
 }
 
-/// A note's five quads: the note, then four copies 0.2 along the world x and z, as place, tint and whether added on. Poem of
-/// Netherworld's is white and blended with blue copies; Reverberation's is all white and added on.
-fn note_layers(white: bool, centre: Vector) -> [(Vector, [f32; 4], bool); 5] {
+/// A note's spin σ and bob phase τ on its `n`th drawn tick, from its first bob phase: 5° and 1° a tick.
+pub fn note_phase(bob: f32, n: u32) -> (f32, f32) {
+    ((5 * n % 360) as f32, (bob + n as f32) % 360.0)
+}
+
+/// A note's five quads: the note (added on if `added`), then four copies 0.2 along the world x and z, as place, tint and whether
+/// added on. Poem of Netherworld's is white and blended with blue copies; Reverberation's is all white and added on; Reverberation's
+/// cell's is white and blended with white copies.
+fn note_layers(added: bool, white: bool, centre: Vector) -> [(Vector, [f32; 4], bool); 5] {
     let copy = if white { [1.0, 1.0, 1.0, 60.0 / 255.0] } else { [5.0 / 255.0, 5.0 / 255.0, 1.0, 60.0 / 255.0] };
     let shifted = |x: f32, z: f32| ([centre[0] + x, centre[1], centre[2] + z], copy, true);
-    [(centre, [1.0, 1.0, 1.0, 120.0 / 255.0], white), shifted(0.2, 0.0), shifted(-0.2, 0.0), shifted(0.0, 0.2), shifted(0.0, -0.2)]
+    [(centre, [1.0, 1.0, 1.0, 120.0 / 255.0], added), shifted(0.2, 0.0), shifted(-0.2, 0.0), shifted(0.0, 0.2), shifted(0.0, -0.2)]
 }
 
 /// Randomize Spell's frame levels V1 to V10 and radius after tick `n`.
@@ -212,12 +226,23 @@ impl Crowds {
 
     /// A note over the cell `at` of the skill unit `id`; its bob phase from `rand(n)`.
     pub fn note(&mut self, id: u32, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
-        self.notes.push(Note { id, at, start: now, bob: rand(360) as f32, reverb: None });
+        self.notes.push(Note { id, at, start: now, bob: rand(360) as f32, reverb: None, cell: false, again: false });
+    }
+
+    /// Reverberation's note with white copies over the cell `at` of the skill unit `id`, a new one every `NOTE_AGAIN` ticks
+    /// while it stands; its bob phase from `rand(n)`.
+    pub fn cell_note(&mut self, id: u32, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        self.notes.push(Note { id, at, start: now, bob: rand(360) as f32, reverb: None, cell: true, again: true });
+    }
+
+    /// The effects whose next copy started since this was last asked.
+    pub fn take_restarts(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.restarts)
     }
 
     /// Reverberation's white note over `unit`, for 150 ticks; its bob phase from `rand(n)`, `min` is /mineffect.
     pub fn reverb_note(&mut self, unit: Option<u32>, min: bool, now: Instant, mut rand: impl FnMut(u32) -> u32) {
-        self.notes.push(Note { id: 0, at: [0.0; 3], start: now, bob: rand(360) as f32, reverb: Some((unit, min)) });
+        self.notes.push(Note { id: 0, at: [0.0; 3], start: now, bob: rand(360) as f32, reverb: Some((unit, min)), cell: false, again: false });
     }
 
     pub fn forget(&mut self, id: u32) {
@@ -252,6 +277,17 @@ impl Crowds {
             }
         }
         self.crowds.retain(|crowd| passes(crowd.start, now) <= CROWD_LIFE);
+        // A cell note starts the next one on its age `NOTE_AGAIN` and plays out its last ticks.
+        let mut next = Vec::new();
+        for note in self.notes.iter_mut().filter(|note| note.again) {
+            if passes(note.start, now) > NOTE_AGAIN {
+                note.again = false;
+                let start = note.start + TICK * NOTE_AGAIN;
+                next.push(Note { id: note.id, at: note.at, start, bob: rand(360) as f32, reverb: None, cell: true, again: true });
+                self.restarts.push(CELL_NOTE);
+            }
+        }
+        self.notes.extend(next);
         self.notes.retain(|note| passes(note.start, now) <= if note.reverb.is_some() { REVERB_LIFE } else { NOTE_LIFE });
         self.runes.retain(|runes| passes(runes.start, now) <= RUNE_LIFE);
     }
@@ -306,7 +342,7 @@ impl Crowds {
                 },
                 None => note.at,
             };
-            let (sigma, tau) = ((5 * n % 360) as f32, (note.bob + n as f32) % 360.0);
+            let (sigma, tau) = note_phase(note.bob, n);
             let half = note_half(sigma) * PIXELS_PER_UNIT;
             let c0 = tau;
             let c1 = (c0 + 85.0 + rand(16) as f32) % 360.0;
@@ -317,7 +353,7 @@ impl Crowds {
                 [half * cos, half * sin]
             });
             let centre = [at[0], at[1] + note_height(tau), at[2]];
-            for (place, tint, additive) in note_layers(note.reverb.is_some(), centre) {
+            for (place, tint, additive) in note_layers(note.reverb.is_some(), note.reverb.is_some() || note.cell, centre) {
                 quads.push((texture, place, corners, tint, additive, false));
             }
         }
@@ -354,7 +390,6 @@ impl Crowds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prims::TICK;
 
     fn near(got: f32, want: f32) -> bool {
         (got - want).abs() < 0.01
@@ -439,11 +474,11 @@ mod tests {
     fn reverberation_floats_a_white_added_note_over_its_target_for_150_ticks() {
         let centre = [10.0, 4.0, 20.0];
         // Poem of Netherworld's: a blended white note with four blue copies added on.
-        let poem = note_layers(false, centre);
+        let poem = note_layers(false, false, centre);
         assert_eq!((poem[0].0, poem[0].1, poem[0].2), (centre, [1.0, 1.0, 1.0, 120.0 / 255.0], false));
         assert!(poem[1..].iter().all(|layer| layer.1 == [5.0 / 255.0, 5.0 / 255.0, 1.0, 60.0 / 255.0] && layer.2));
         // Reverberation's: #FFFFFF added on at alpha 120, then the four copies #FFFFFF at 60 shifted ±0.2 along x and z.
-        let white = note_layers(true, centre);
+        let white = note_layers(true, true, centre);
         assert_eq!((white[0].0, white[0].1, white[0].2), (centre, [1.0, 1.0, 1.0, 120.0 / 255.0], true));
         assert!(white[1..].iter().all(|layer| layer.1 == [1.0, 1.0, 1.0, 60.0 / 255.0] && layer.2));
         assert_eq!(white[1..].iter().map(|layer| layer.0).collect::<Vec<_>>(), [[10.2, 4.0, 20.0], [9.8, 4.0, 20.0], [10.0, 4.0, 20.2], [10.0, 4.0, 19.8]]);
@@ -462,6 +497,42 @@ mod tests {
         crowds.note(7, [0.0; 3], start, |_| 0);
         crowds.advance(start + TICK * 151, |_| None, |_, _| 0.0, |_| 0);
         assert_eq!(crowds.notes.len(), 1);
+    }
+
+    #[test]
+    fn reverberations_cell_floats_a_note_with_white_copies_and_starts_it_again() {
+        // The first quad white and blended at 120, the four copies white and added on at 60, shifted ±0.2 along x and z.
+        let centre = [10.0, 4.0, 20.0];
+        let cell = note_layers(false, true, centre);
+        assert_eq!((cell[0].0, cell[0].1, cell[0].2), (centre, [1.0, 1.0, 1.0, 120.0 / 255.0], false));
+        assert!(cell[1..].iter().all(|layer| layer.1 == [1.0, 1.0, 1.0, 60.0 / 255.0] && layer.2));
+        assert_eq!(cell[1..].iter().map(|layer| layer.0).collect::<Vec<_>>(), [[10.2, 4.0, 20.0], [9.8, 4.0, 20.0], [10.0, 4.0, 20.2], [10.0, 4.0, 19.8]]);
+        // One note at tick 0; the next 29 991 ticks in, with its sound; the first gone after its 29 999 ticks.
+        let start = Instant::now();
+        let mut crowds = Crowds::default();
+        crowds.cell_note(3, [0.0; 3], start, |_| 0);
+        assert_eq!(crowds.notes.len(), 1);
+        crowds.advance(start + TICK * 29_990, |_| None, |_, _| 0.0, |_| 0);
+        assert!(crowds.notes.len() == 1 && crowds.take_restarts().is_empty());
+        crowds.advance(start + TICK * 29_991, |_| None, |_, _| 0.0, |_| 0);
+        assert_eq!(crowds.notes.len(), 2);
+        assert_eq!(crowds.notes[1].start, start + TICK * 29_991);
+        assert!(crowds.notes.iter().all(|note| note.cell) && crowds.take_restarts() == [CELL_NOTE]);
+        crowds.advance(start + TICK * 29_998, |_| None, |_, _| 0.0, |_| 0);
+        assert_eq!(crowds.notes.len(), 2);
+        crowds.advance(start + TICK * 29_999, |_| None, |_, _| 0.0, |_| 0);
+        assert_eq!((crowds.notes.len(), crowds.notes[0].start), (1, start + TICK * 29_991));
+        // Its unit going takes every copy.
+        crowds.forget(3);
+        assert!(crowds.notes.is_empty());
+    }
+
+    #[test]
+    fn a_notes_spin_bob_and_height_by_tick() {
+        // σ = 0 and τ = R(360) when made, 5° and 1° more each tick; the centre 6 − 3·sin τ up; ρ = 6.3 at σ = 90.
+        assert_eq!([0, 1, 90].map(|ticks| note_phase(0.0, ticks)), [(0.0, 0.0), (5.0, 1.0), (90.0, 90.0)]);
+        assert_eq!(note_phase(300.0, 90), (90.0, 30.0));
+        assert!(near(note_height(note_phase(0.0, 90).1), 3.0) && near(note_half(note_phase(0.0, 18).0), 6.3));
     }
 
     #[test]

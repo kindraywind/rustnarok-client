@@ -713,7 +713,6 @@ skill	2296	effectId	817
 skill	2297	effectId	818
 skill	2298	effectId	820
 skill	2328	effectId	888
-skill	2414	groundEffectId	856
 skill	2417	effectId	863
 skill	2418	effectId	857
 skill	2420	groundEffectId	879
@@ -1383,7 +1382,6 @@ part	767	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=t
 part	767	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터10.tga
 part	767	3D	alphaMax=0.2;blendMode=2;red=0.3;green=0.3;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=260;zIndex=10;file=effect/회전카운터10.tga
 part	767	3D	alphaMax=0.2;blendMode=2;red=0.1;green=0.1;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=280;zIndex=10;file=effect/회전카운터10.tga
-part	856	3D	file=effect/melody_b.bmp;red=1;green=0.6;blue=0.6;alphaMax=0.6;attachedEntity=true;duration=100;size=50;posz=0.5;repeat=true
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=30000;red=0.0001;green=1.0;blue=0.0001;size=400;posz=7;zIndex=1;wav=effect/ef_readyportal;file=effect/ef_epitree.tga
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=990;duplicate=15;timeBetweenDupli=2000;red=0.0001;green=1.0;blue=0.0001;sizeStart=380;sizeEnd=420;posz=7;zIndex=1;file=effect/ef_epitree.tga
 part	883	3D	alphaMax=0.6;attachedEntity=true;blendMode=2;duration=990;duplicate=15;timeBetweenDupli=2000;delayOffset=1000;red=0.0001;green=1.0;blue=0.0001;sizeStart=420;sizeEnd=380;posz=7;zIndex=1;file=effect/ef_epitree.tga
@@ -1472,6 +1470,7 @@ spr	631	다다미	1	delayFrame=96;firstFrame=1;yOffset=-6
 spr	632	안개베기	1	delayFrame=64;firstFrame=1;onTop=true;sideAction=2
 spr	633	일섬	1	delayFrame=32;firstFrame=1;onTop=true;yOffset=-6;frame=0
 spr	634	화염진	1	repeat=true;firstFrame=1;frameTicks=3;frameTicksRan=5;restart=true;yOffset=-1
+spr	1026	icemine	0	repeat=true;firstFrame=1;frameTicks=10;restart=true;yOffset=-1
 spr	637	데스페라도	1	delayFrame=64;firstFrame=1;onTop=true
 spr	638	라이트닝스피어	0	frame=0;repeat=true;yOffset=-7
 spr	639	블라인드스피어	0	frame=0;repeat=true;yOffset=-7
@@ -2025,7 +2024,7 @@ wav	831	effect\EF_BeginSpell	0
 wav	832	effect\기공포	0	listener
 wav	833	effect\AB_duplelight	0	listener
 wav	853	effect\사망의골짜기에서	0	listener
-wav	856	effect\reverberation	0
+wav	856	effect\reverberation	0	listener
 wav	857	effect\rainstorm	0
 wav	858	effect\안식의자장가	0
 wav	860	effect\POEMOFNETHERWORLD	0
@@ -5283,6 +5282,8 @@ length	1032	999
 length	1052	200
 length	850	100
 length	634	23
+length	856	29999
+length	1026	999
 length	932	100
 length	1545	300
 length	1568	300
