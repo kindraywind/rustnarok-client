@@ -179,5 +179,10 @@ fn reads_the_castle_models_of_the_data() {
         let model = Model::parse(&grf.read(&format!("data\\model\\3dmob\\{name}.gr2")).unwrap()).unwrap();
         assert_eq!(model.meshes.len(), meshes, "{name}");
         assert!(model.meshes.iter().all(|mesh| !mesh.triangles.is_empty()), "{name}");
+        // Every picture a mesh names comes with the file.
+        for (_, _, texture) in model.meshes.iter().flat_map(|mesh| &mesh.groups).filter(|group| !group.2.is_empty()) {
+            let image = model.textures.iter().find(|(file, _)| file == texture).map(|(_, image)| image);
+            assert!(image.is_some_and(|image| image.rgba.len() == image.width * image.height * 4), "{name}: {texture}");
+        }
     }
 }

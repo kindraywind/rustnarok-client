@@ -18,18 +18,18 @@ fn bad(what: &str) -> io::Error {
 
 /// One adaptive model: `f` the count of each slot, `symbols` the value of each slot, `sums` the 16 running group sums
 /// (the last is the total), and the group layout those sums use.
-struct Model {
+pub(super) struct Model {
     max_count: usize,
     count: usize,
     f: Vec<u16>,
-    symbols: Vec<u16>,
+    pub(super) symbols: Vec<u16>,
     sums: [u16; 16],
     shift: u32,
     last_group: usize,
 }
 
 impl Model {
-    fn new(max_count: usize) -> Self {
+    pub(super) fn new(max_count: usize) -> Self {
         let mut model = Self { max_count, count: 0, f: vec![0; max_count + 2], symbols: vec![0; max_count + 2], sums: [0; 16], shift: 15, last_group: 0 };
         model.layout(max_count + 1);
         model.add(0, 0x30003);
@@ -164,7 +164,7 @@ impl Model {
 }
 
 /// The arithmetic decoder and its bit source.
-struct Coder<'a> {
+pub(super) struct Coder<'a> {
     words: &'a [u8],
     next: usize,
     buffer: u32,
@@ -175,7 +175,7 @@ struct Coder<'a> {
 }
 
 impl<'a> Coder<'a> {
-    fn new(words: &'a [u8]) -> Self {
+    pub(super) fn new(words: &'a [u8]) -> Self {
         let mut coder = Self { words, next: 0, buffer: 0, left: 0, low: 0, high: 0x7fff_ffff, value: 0 };
         let first = coder.word();
         // The first 31 bits, the first one the most significant; the 32nd is the next bit.
@@ -235,14 +235,14 @@ impl<'a> Coder<'a> {
     }
 
     /// A number below `n`, every one equally likely.
-    fn uniform(&mut self, n: u32) -> Option<u32> {
+    pub(super) fn uniform(&mut self, n: u32) -> Option<u32> {
         let symbol = u32::try_from(self.target(n)?).ok()?;
         self.narrow(symbol, 1, n)?;
         Some(symbol)
     }
 
     /// A symbol of `model`, or a new one: `Err(slot)` is the slot a new symbol's value goes in.
-    fn symbol(&mut self, model: &mut Model) -> Option<Result<u16, usize>> {
+    pub(super) fn symbol(&mut self, model: &mut Model) -> Option<Result<u16, usize>> {
         if model.total() >= 0x4000 {
             model.rescale();
         }
