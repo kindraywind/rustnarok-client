@@ -1467,6 +1467,11 @@ impl Game {
         if shown.contains(&actor::HALLUCINATION_WALK) {
             actor.hallucination(on);
         }
+        // Cloud Kill's poison greys the unit; the player's statuses sent again after a map load start no second copy.
+        if shown.contains(&actor::CLOUD_POISON) {
+            let replay = key.is_none() && actor.loaded_at.is_some_and(|at| at.elapsed() < actor::REPLAY_WINDOW);
+            actor.cloud_poison(on, replay);
+        }
         // Striking leaves white copies behind a player, standing or not.
         if shown.contains(&actor::STRIKING) {
             actor.strike(on && actor.look.is_some());
@@ -1483,7 +1488,9 @@ impl Game {
         let at = self.world.cell_position(actor.cell.map(|value| value as f32));
         let monster = actor::is_monster_job(job);
         if let Some(gpu) = gpu.filter(|_| on) {
-            for &effect in shown.iter().filter(|&&effect| !matches!(effect, actor::AFTERIMAGE | actor::STRIKING | actor::HALLUCINATION_WALK | actor::KAGEMUSYA))
+            for &effect in shown
+                .iter()
+                .filter(|&&effect| !matches!(effect, actor::AFTERIMAGE | actor::STRIKING | actor::HALLUCINATION_WALK | actor::KAGEMUSYA | actor::CLOUD_POISON))
             {
                 // Manhole's body is for the other units only; a monster in the hole only sounds.
                 if effect == effects::MANHOLE_BODY && monster {

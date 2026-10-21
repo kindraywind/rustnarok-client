@@ -1255,6 +1255,7 @@ pub fn is_cast_aura(effect: u32) -> bool {
                 | CLEARANCE_CAST
                 | VARETYR_CAST
                 | EARTH_CAST
+                | EARTH_DRIVE_CAST
                 | CART_CAST
                 | 1872
                 | 1876
@@ -1293,6 +1294,7 @@ pub fn is_banded(effect: u32) -> bool {
                 | CLEARANCE_CAST
                 | VARETYR_CAST
                 | EARTH_CAST
+                | EARTH_DRIVE_CAST
                 | CART_CAST
                 | 1872
                 | 1876
@@ -1413,6 +1415,7 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         CLEARANCE_CAST => ("ring_white", [0xA4, 0xCD, 0xFE], true),
         VARETYR_CAST => ("ring_yellow", [0x54, 0xA9, 0xCD], true),
         EARTH_CAST => ("ring_yellow", [0xFF; 3], false),
+        EARTH_DRIVE_CAST => ("new_earthdrive\\ring_brown", [0xFF; 3], false),
         CART_CAST => ("ring_white", [0xF4, 0xBB, 0x7C], true),
         JACK_CAST => ("ring_ice", [0xC3, 0xC3, 0xFF], false),
         54 => ("ring_blue", [0xC3, 0xC3, 0xFF], false),
@@ -1437,6 +1440,12 @@ fn aura_texture(effect: u32) -> String {
 /// The texture of bloom set `set` of an aura: Aura Blade's second set is ring_yellow, the others' the aura's own.
 fn aura_set_texture(effect: u32, set: usize) -> String {
     if effect == 367 && set == 1 { "data\\texture\\effect\\ring_yellow.tga".to_owned() } else { aura_texture(effect) }
+}
+
+/// The texture an aura's set is drawn with, `min` telling whether /mineffect is on: Earth Drive's cast takes its picture from
+/// the `mineffect` folder then.
+fn aura_drawn_texture(effect: u32, set: usize, min: bool) -> String {
+    if effect == EARTH_DRIVE_CAST && min { format!("data\\texture\\effect\\mineffect\\{}.tga", aura_look(effect).0) } else { aura_set_texture(effect, set) }
 }
 
 /// How many sets of bands an aura draws with their own textures.
@@ -1663,8 +1672,9 @@ impl Banded {
         if is_bloom(self.effect) {
             self.bloom_bands(age).into_iter().map(|(_, band, heights)| (band, heights)).collect()
         } else {
-            // ponytail: earth (56) and poison (59) turn like water, fire and wind; Earth Grave's cast (1664) has its own sheet.
-            let earth = self.effect == EARTH_CAST;
+            // ponytail: earth (56) and poison (59) turn like water, fire and wind; Earth Grave's and Earth Drive's casts (1664,
+            // 1709) have their own sheet.
+            let earth = matches!(self.effect, EARTH_CAST | EARTH_DRIVE_CAST);
             let shape_of: fn(usize, u32, u32) -> Band = if earth { earth_turning } else { turning };
             let wave: fn(usize, f32, u32, usize) -> f32 = if earth { earth_height } else { turning_height };
             (0..4).map(|band| shape_of(band, self.ticks, age)).enumerate().map(|(band, shape)| (shape, heights(band, shape.height, wave))).collect()
@@ -2400,6 +2410,8 @@ const VARETYR_CAST: u32 = 1565;
 const EPICLESIS_CELL: u32 = 1655;
 const SOUL_CAST: u32 = 1656;
 const EARTH_CAST: u32 = 1664;
+/// Earth Drive's cast: Earth Grave's crescents and breathing sheet in brown.
+const EARTH_DRIVE_CAST: u32 = 1709;
 const CART_CAST: u32 = 1677;
 /// Exceed Break's needles, the Dragon Combo's rays, the Sura's chi burst and Moon Slasher's spin (`prims::chi`, `prims::brawl`).
 const PRIME_CHARGE: u32 = 882;
@@ -4140,9 +4152,11 @@ impl Effects {
 
     /// A cast's aura (12 or 54–59) on a unit (None = the player) for a cast of `cast_ms`, replacing its last one.
     pub fn play_aura(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, effect: u32, cast_ms: u32, start: Instant) {
+        // Both pictures, so /mineffect can change while it runs.
         for set in 0..aura_sets(effect) {
-            let texture = aura_set_texture(effect, set);
-            self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+            for texture in [aura_drawn_texture(effect, set, false), aura_drawn_texture(effect, set, true)] {
+                self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+            }
         }
         if effect == BUBBLE_CAST {
             for path in songs::BUBBLES {
@@ -4156,9 +4170,11 @@ impl Effects {
 
     /// A cast aura launched again with a skill's damage: it blooms for its own length, beside any cast's aura.
     pub fn bloom_aura(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, effect: u32, start: Instant) {
+        // Both pictures, so /mineffect can change while it runs.
         for set in 0..aura_sets(effect) {
-            let texture = aura_set_texture(effect, set);
-            self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+            for texture in [aura_drawn_texture(effect, set, false), aura_drawn_texture(effect, set, true)] {
+                self.textures.entry(texture.clone()).or_insert_with(|| gpu.try_load_texture(grf, &texture, true).ok());
+            }
         }
         self.auras.push(Banded {
             effect,
@@ -5292,6 +5308,7 @@ impl Effects {
             let Some(Some(texture)) = self.textures.get(RING_TEXTURE) else { return None };
             Some((texture, hit.ring(hit.tick(now), at), false))
         });
+        let min = self.min;
         let auras = self.auras.iter().filter(|aura| aura.start <= now && self.shows(aura.effect)).flat_map(|aura| {
             let age = (now.duration_since(aura.start).as_secs_f32() * 1000.0 / HIT_TICK_MS) as u32;
             let (_, _, additive) = aura_look(aura.effect);
@@ -5299,14 +5316,20 @@ impl Effects {
             (0..aura_sets(aura.effect)).filter_map(move |set| {
                 let at = at?;
                 // The bubble cast: the picture moves every tick, set 1 blue and added on, set 2 white and blended.
-                let path = if aura.effect == BUBBLE_CAST { songs::BUBBLES[((age + 1) % 27) as usize].to_owned() } else { aura_set_texture(aura.effect, set) };
+                let path =
+                    if aura.effect == BUBBLE_CAST { songs::BUBBLES[((age + 1) % 27) as usize].to_owned() } else { aura_drawn_texture(aura.effect, set, min) };
                 let color = aura_colour(aura.effect, set, age).map(|value| f32::from(value) / 255.0);
                 let (color, additive) = if aura.effect == BUBBLE_CAST {
                     (if set == 0 { [100.0 / 255.0, 100.0 / 255.0, 1.0] } else { [1.0; 3] }, set == 0)
                 } else {
                     (color, additive)
                 };
-                let texture = self.textures.get(&path).and_then(Option::as_ref)?;
+                // A /mineffect picture missing from the data falls back to the usual one.
+                let texture = self
+                    .textures
+                    .get(&path)
+                    .and_then(Option::as_ref)
+                    .or_else(|| self.textures.get(&aura_set_texture(aura.effect, set)).and_then(Option::as_ref))?;
                 let bands = if aura_sets(aura.effect) == 1 { aura.bands(age) } else { aura.bands_in_set(age, set) };
                 let triangles = bands.iter().flat_map(|(band, heights)| band_mesh(at, band, |s| heights[s], color)).collect();
                 Some((texture, triangles, additive))
@@ -8316,6 +8339,40 @@ mod tests {
             near(turning_height(3, 250.0, 30, 10), 125.0) && near(turning_height(3, 250.0, 90, 10), 250.0) && near(turning_height(3, 250.0, 200, 10), 250.0)
         );
         assert!(near(turning_height(3, 250.0, 200, 5), 250.0 * 45.0_f32.to_radians().sin()));
+    }
+
+    #[test]
+    fn earth_drives_cast_turns_brown_crescents_and_a_breathing_sheet() {
+        let table = Table::load();
+        assert_eq!(table.cast_aura(2323, 12), Some(EARTH_DRIVE_CAST));
+        let sounds = table.sounds[&EARTH_DRIVE_CAST].iter().map(|sound| (sound.file.to_lowercase(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        assert_eq!(sounds, [("effect\\ef_beginspell".to_owned(), 0, false)]);
+        assert!(is_cast_aura(EARTH_DRIVE_CAST) && is_banded(EARTH_DRIVE_CAST) && !is_bloom(EARTH_DRIVE_CAST));
+        // At least 70 ticks: 70 without a cast time (or started any other way), 200 for a 3.2 s cast.
+        assert_eq!((aura_ticks(EARTH_DRIVE_CAST, 0), aura_ticks(EARTH_DRIVE_CAST, 3200)), (70, 200));
+        // ring_brown in white, blended; its mineffect folder under /mineffect.
+        assert_eq!(aura_look(EARTH_DRIVE_CAST), ("new_earthdrive\\ring_brown", [0xFF; 3], false));
+        assert_eq!(aura_drawn_texture(EARTH_DRIVE_CAST, 0, false), "data\\texture\\effect\\new_earthdrive\\ring_brown.tga");
+        assert_eq!(aura_drawn_texture(EARTH_DRIVE_CAST, 0, true), "data\\texture\\effect\\mineffect\\new_earthdrive\\ring_brown.tga");
+        assert_eq!(aura_drawn_texture(EARTH_CAST, 0, true), aura_texture(EARTH_CAST));
+        // Earth Grave's bands: the sheet 78 and 100 at n = 1 and 4, the crescents 175 at n = length − 40.
+        let aura = Banded {
+            effect: EARTH_DRIVE_CAST,
+            anchor: Anchor::Unit(None),
+            start: Instant::now(),
+            ticks: 200,
+            turns: [0.0; 3],
+            extra: [0.0; 2],
+            sparkles: Vec::new(),
+        };
+        let at = |n: u32| aura.bands(n - 1);
+        assert_eq!([1, 4].map(|n| at(n)[3].0.alpha), [78.0, 100.0]);
+        assert_eq!(at(160).iter().take(3).map(|(band, _)| band.alpha).collect::<Vec<_>>(), [175.0; 3]);
+        assert_eq!(at(1).len(), 4);
+        // The sheet's height factor at n = 45, 90 and 270: sin 45°, 1.0, then 0.1 once it breathes (its top at s = 10).
+        let near = |got: f32, want: f32| (got - want).abs() < 1e-3;
+        let factor = |n: u32| at(n)[3].1[10] / 250.0;
+        assert!(near(factor(45), 45.0_f32.to_radians().sin()) && near(factor(90), 1.0) && near(factor(270), 0.1));
     }
 
     #[test]
