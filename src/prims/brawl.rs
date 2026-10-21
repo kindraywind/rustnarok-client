@@ -35,6 +35,8 @@ pub const CROSS_PITCH: &str = "data\\texture\\effect\\new_crossimpact\\new_cross
 pub const CROSS_RED: &str = "data\\texture\\effect\\new_crossimpact\\new_crossimpact_line\\line_red.tga";
 pub const CROSS_PITCH_MIN: &str = "data\\texture\\effect\\mineffect\\new_crossimpact\\new_crossimpact_line\\line_pitch.tga";
 pub const CROSS_RED_MIN: &str = "data\\texture\\effect\\mineffect\\new_crossimpact\\new_crossimpact_line\\line_red.tga";
+pub const HELL: &str = "data\\texture\\effect\\new_gateofhell\\line_hell.tga";
+pub const HELL_MIN: &str = "data\\texture\\effect\\mineffect\\new_gateofhell\\line_hell.tga";
 pub const RAY: &str = sniper::RAY;
 pub const CLOUD: &str = sniper::CLOUD;
 
@@ -395,6 +397,8 @@ pub enum LineKind {
     Cross,
     /// Cannon Spear's: the pale lines' numbers in the gold picture.
     Cannon,
+    /// Gate of Hell's pale grey ones: the gold lines exactly, in `line_hell`.
+    Hell,
 }
 
 impl LineKind {
@@ -759,6 +763,11 @@ impl Brawl {
         self.make_lines(LineKind::Cross, min, from, to, now, rand);
     }
 
+    /// Gate of Hell's 32 pale grey lines, the same way as Hundred Spear's; `min` is /mineffect.
+    pub fn hell_lines(&mut self, from: Vector, to: Vector, min: bool, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.make_lines(LineKind::Hell, min, from, to, now, rand);
+    }
+
     /// Piercing Shot's 32 pale green lines, the same way.
     pub fn shot_lines(&mut self, from: Vector, to: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
         self.make_lines(LineKind::Shot, false, from, to, now, rand);
@@ -781,18 +790,18 @@ impl Brawl {
                 let side = (15 + rand(11)) as f32 * if prim % 2 == 0 { -1.0 } else { 1.0 };
                 let phase = rand(200) as f32;
                 let half = match kind {
-                    LineKind::Gold | LineKind::Cross => 0.5 + 0.1 * rand(6) as f32,
+                    LineKind::Gold | LineKind::Cross | LineKind::Hell => 0.5 + 0.1 * rand(6) as f32,
                     LineKind::Shot => 0.4 + 0.1 * rand(4) as f32,
                     _ => 0.3 + 0.1 * rand(4) as f32,
                 };
                 let length = match kind {
-                    LineKind::Gold | LineKind::Cross => (40 + rand(31)) as f32,
+                    LineKind::Gold | LineKind::Cross | LineKind::Hell => (40 + rand(31)) as f32,
                     LineKind::Shot => (30 + rand(31)) as f32,
                     _ => (20 + rand(31)) as f32,
                 };
                 let colour = rand(3) as usize;
                 let (speed, growth) = match kind {
-                    LineKind::Gold | LineKind::Cross => (1.0 + 0.1 * rand(11) as f32, 0.05),
+                    LineKind::Gold | LineKind::Cross | LineKind::Hell => (1.0 + 0.1 * rand(11) as f32, 0.05),
                     LineKind::Knuckle | LineKind::Shot => (1.5 + 0.1 * rand(21) as f32, 0.05),
                     LineKind::Pale | LineKind::Cannon => (1.5 + 0.1 * rand(21) as f32, 0.0),
                 };
@@ -1058,7 +1067,7 @@ impl Brawl {
                 let (head, tail) = (strip.at(a) + strip.length - 100.0, strip.at(a) - 100.0);
                 let place = |along: f32, across: f32| [middle[0] + cos * along - sin * across, middle[1], middle[2] + sin * along + cos * across];
                 let rgb = match lines.kind {
-                    LineKind::Gold | LineKind::Cross => GOLD_TINTS[strip.colour],
+                    LineKind::Gold | LineKind::Cross | LineKind::Hell => GOLD_TINTS[strip.colour],
                     LineKind::Knuckle => KNUCKLE_TINTS[strip.colour],
                     LineKind::Shot => SHOT_TINTS[strip.colour],
                     LineKind::Pale | LineKind::Cannon => STRIP_TINTS[strip.colour],
@@ -1085,6 +1094,8 @@ impl Brawl {
                     LineKind::Gold | LineKind::Shot | LineKind::Cannon => GOLD_STRIP,
                     LineKind::Cross if lines.min => CROSS_PITCH_MIN,
                     LineKind::Cross => CROSS_PITCH,
+                    LineKind::Hell if lines.min => HELL_MIN,
+                    LineKind::Hell => HELL,
                     _ => STRIP,
                 },
                 vertices,
@@ -1489,6 +1500,32 @@ mod tests {
         // Prims 0, 1, 4, 5 take line_pitch and 2, 3, 6, 7 line_red: the red ones are strips 8 to 15 and 24 to 31.
         let reds: Vec<_> = (0..32).filter(|index| index / 4 % 4 >= 2).collect();
         assert_eq!((reds.len(), reds[0], reds[8], reds[15]), (16, 8, 24, 31));
+    }
+
+    #[test]
+    fn gate_of_hell_races_32_pale_grey_lines_in_line_hell() {
+        let start = Instant::now();
+        let mut brawl = Brawl::default();
+        brawl.hell_lines([10.0, 1.0, 10.0], [50.0, 1.0, 10.0], false, start, |_| 0);
+        brawl.hell_lines([10.0, 1.0, 10.0], [50.0, 1.0, 10.0], true, start, |_| 0);
+        let lines = &brawl.lines[0];
+        // 8 prims × 4 streaks; every draw 0: s ∓ 15, t 0, w 0.5, ℓ 40, c 0, speed 1.0.
+        assert_eq!((lines.kind, lines.strips.len(), lines.heading), (LineKind::Hell, 32, 0.0));
+        assert_eq!(lines.strips.iter().filter(|strip| strip.side == -15.0).count(), 16);
+        assert_eq!(lines.strips.iter().filter(|strip| strip.side == 15.0).count(), 16);
+        assert!(lines.strips.iter().all(|strip| strip.phase == 0.0
+            && strip.half == 0.5
+            && strip.length == 40.0
+            && strip.speed == 1.0
+            && strip.colour == 0
+            && strip.growth == 0.05));
+        // Alpha at n = 1, 10, 20, 21, 120: 20, 200, 200, 198, 0; every prim in line_hell, blended, in #FFFFE1; gone after tick 118.
+        assert_eq!([1, 10, 20, 21, 120].map(gold_alpha), [20.0, 200.0, 200.0, 198.0, 0.0]);
+        let walls = brawl.top_meshes(start, |_| Some([0.0; 3]));
+        assert_eq!(walls.iter().map(|wall| wall.texture).collect::<Vec<_>>(), [HELL, HELL_MIN]);
+        assert!(walls.iter().all(|wall| !wall.additive && wall.vertices.len() == 32 * 6));
+        assert_eq!(walls[0].vertices[0].tint, [1.0, 1.0, 225.0 / 255.0, 20.0 / 255.0]);
+        assert!(!brawl.top_meshes(start + TICK * 118, |_| Some([0.0; 3])).is_empty() && brawl.top_meshes(start + TICK * 119, |_| Some([0.0; 3])).is_empty());
     }
 
     #[test]

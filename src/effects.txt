@@ -2109,6 +2109,8 @@ wav	1286	effect\EF_BeginSpell	0
 wav	1286	effect\EF_BeginSpell	0
 wav	1365	effect\T_회오리차기	80
 wav	1409	effect\LG_CANNONSPEAR	0	listener
+wav	1575	effect\SR_GATEOFHELL	0	listener
+wav	1584	effect\metalic	0	listener
 wav	914	effect\G스포어익스플로젼	0
 wav	916	effect\EF_FireWall	0	listener
 wav	917	effect\EF_FireWall	0	listener
@@ -4298,6 +4300,7 @@ struck	716	caster	1032
 struck	742	target	923
 struck	2448	target	923
 struck	2002	caster	832
+struck	2002	caster	1678
 struck	2004	caster	723
 struck	2004	caster	835
 struck	2012	target	589
@@ -5312,6 +5315,10 @@ length	1568	300
 length	1569	150
 length	1365	50
 length	1409	300
+length	1575	300
+length	1584	300
+length	1594	200
+length	1678	1678
 minid	1400	1511
 minid	1401	1512
 minid	1402	1513

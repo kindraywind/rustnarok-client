@@ -1,4 +1,5 @@
-//! Great Echo's white "V" on the ground (863) and the emitters of lights of Harmonize (849) and Arrullo (931), a 16 ms tick at a time.
+//! Great Echo's white "V" on the ground (863), Metallic Sound's brown one (1584) and the emitters of lights of Harmonize (849) and
+//! Arrullo (931), a 16 ms tick at a time.
 //!
 //! A shape's own age n counts from 1 at its first tick.
 
@@ -10,6 +11,8 @@ use super::walls::Wall;
 use crate::world::{MeshVertex, Vector};
 
 pub const LINE: &str = super::brawl::STRIP;
+pub const METAL_LINE: &str = "data\\texture\\effect\\new_metalicsound\\new_metalicsound_line\\met_damege_line_1.tga";
+pub const METAL_LINE_MIN: &str = "data\\texture\\effect\\mineffect\\new_metalicsound\\new_metalicsound_line\\met_damege_line_1.tga";
 /// The wedges' tip length and width, and how many ticks the chevron lasts.
 const TIP_LENGTH: f32 = 50.0;
 const TIP_WIDTH: f32 = 5.0;
@@ -23,6 +26,7 @@ struct Chevron {
     start: Instant,
     at: Vector,
     heading: f32,
+    texture: &'static str,
 }
 
 /// An emitter of lights on a unit: its strength, spiral radius and age. Arrullo's strength falls from age 91 and one of its pair
@@ -89,7 +93,13 @@ impl Spears {
     /// Great Echo's "V" over the caster's place `at` (6 up), toward the aim `to`.
     pub fn chevron(&mut self, at: Vector, to: Vector, now: Instant) {
         let heading = bearing(to[0] - at[0], to[2] - at[2]) as f32;
-        self.chevrons.push(Chevron { start: now, at, heading });
+        self.chevrons.push(Chevron { start: now, at, heading, texture: LINE });
+    }
+
+    /// Metallic Sound's "V": Great Echo's in its own picture (`min` is /mineffect).
+    pub fn metallic(&mut self, at: Vector, to: Vector, min: bool, now: Instant) {
+        let heading = bearing(to[0] - at[0], to[2] - at[2]) as f32;
+        self.chevrons.push(Chevron { start: now, at, heading, texture: if min { METAL_LINE_MIN } else { METAL_LINE } });
     }
 
     /// Harmonize's emitter on `unit`.
@@ -155,7 +165,7 @@ impl Spears {
                         MeshVertex { position: tip, uv: [1.0, 0.0], tint },
                     ]);
                 }
-                walls.push(Wall { texture: LINE, vertices, additive, forced: false });
+                walls.push(Wall { texture: chevron.texture, vertices, additive, forced: false });
             }
         }
         walls
@@ -192,6 +202,27 @@ mod tests {
         // It ends at n = 86 and stays where the caster stood.
         assert!(spears.meshes(start + TICK * 85).is_empty());
         spears.advance(start + TICK * 90);
+        assert!(spears.chevrons.is_empty());
+    }
+
+    #[test]
+    fn metallic_sound_draws_great_echos_v_in_brown() {
+        let start = Instant::now();
+        let mut spears = Spears::default();
+        spears.metallic([10.0, 1.0, 10.0], [10.0, 1.0, 110.0], false, start);
+        spears.metallic([10.0, 1.0, 10.0], [10.0, 1.0, 110.0], true, start);
+        // Alpha at n = 1, 15, 20, 21, 85, 86: 13, 195, 195, 192, 0, ended.
+        assert_eq!([1, 15, 20, 21, 85, 86].map(chevron_alpha), [13.0, 195.0, 195.0, 192.0, 0.0, 0.0]);
+        let walls = spears.meshes(start + TICK * 14);
+        assert_eq!(walls.iter().map(|wall| wall.texture).collect::<Vec<_>>(), [METAL_LINE, METAL_LINE, METAL_LINE_MIN, METAL_LINE_MIN]);
+        assert!(!walls[0].additive && walls[1].additive);
+        assert_eq!(walls[1].vertices[0].tint, [1.0, 1.0, 1.0, 13.0 * 15.0 / 255.0]);
+        // Toward +z: the tip of the wedge at φ + 25° is 50 out that way.
+        let angle = (bearing(0.0, 100.0) as f32 + 25.0).to_radians();
+        let tip = walls[1].vertices[5].position;
+        assert!(near(tip[0] - 10.0, 50.0 * angle.cos()) && near(tip[2] - 10.0, 50.0 * angle.sin()), "{tip:?}");
+        assert!(spears.meshes(start + TICK * 85).is_empty());
+        spears.advance(start + TICK * 87);
         assert!(spears.chevrons.is_empty());
     }
 
