@@ -1,0 +1,203 @@
+{
+  "about": "Long worn item names in the equipment window: both columns left-aligned, wrapped at any character, the second line cut with \"...\", the text centred in its row.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@item2 5145 1 1 9 0 0 0 0 0"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item2 5205 1 1 9 0 0 0 0 0"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item2 2393 1 1 9 0 0 0 0 0"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item2 2145 1 1 9 0 0 0 0 0"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item2 2455 1 1 9 0 0 0 0 0"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item2 2576 1 1 9 0 0 0 0 0"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item2 1201 1 1 9 0 0 0 0 0"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "button": "tab:equip"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "inventory_item": 5145
+      },
+      "count": 2
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "inventory_item": 5205
+      },
+      "count": 2
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "inventory_item": 2393
+      },
+      "count": 2
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "inventory_item": 2145
+      },
+      "count": 2
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "inventory_item": 2455
+      },
+      "count": 2
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "inventory_item": 2576
+      },
+      "count": 2
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "inventory_item": 1201
+      },
+      "count": 2
+    },
+    {
+      "wait": 600
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "key": "Alt+Q"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Equipment"
+        ]
+      }
+    },
+    {
+      "move": [
+        900,
+        650
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "equipment-names",
+      "crop": [
+        183,
+        298,
+        284,
+        192
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Alt+Q"
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    }
+  ]
+}

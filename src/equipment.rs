@@ -36,11 +36,13 @@ const TAB_HEIGHT: f32 = 17.0;
 const TAB_PADDING: f32 = 15.0;
 const ROW: f32 = 26.0;
 const ICON: f32 = 24.0;
-/// A slot's icon at x 6 or 251, top 38 + 26r; its name box 70 wide at x 33 or 172, top 45 + 26r, two lines at most.
+/// A slot's icon at x 6 or 251, top 38 + 26r; its name box 70 wide at x 33 or 172, two lines at most, centred on the row's
+/// line box middle 47 + 26r: the glyphs sit low in their box, so their ink is centred between the row's dividers (the drag oval's top is 45 + 26r).
 const ICON_X: [f32; 2] = [6.0, 251.0];
 const ICON_TOP: f32 = 38.0;
 const NAME_X: [f32; 2] = [33.0, 172.0];
 const NAME_TOP: f32 = 45.0;
+const NAME_MID: f32 = 47.0;
 const NAME_BOX: f32 = 70.0;
 /// The slot rows: from y 37, 26 apart, above y 165. A press takes the icon only, a hover or a right press the icon
 /// and the name: x from and to, left and right.
@@ -374,6 +376,22 @@ pub fn slot_name_color(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> 
         1 => ONE_ENCHANT,
         count => inventory::ENCHANTED[count.min(4) - 1],
     }
+}
+
+/// A worn name in its box: the first line breaks at any character, the second is cut with "..." when the rest doesn't fit.
+fn name_lines(name: &str, width: f32, measure: impl Fn(&str) -> f32) -> Vec<String> {
+    let Some(cut) = name.char_indices().skip(1).find(|&(at, character)| measure(&name[..at + character.len_utf8()]) > width).map(|(at, _)| at) else {
+        return vec![name.to_owned()];
+    };
+    let rest = name[cut..].trim_start();
+    let mut second = rest.to_owned();
+    if measure(rest) > width {
+        while !second.is_empty() && measure(&format!("{second}...")) > width {
+            second.pop();
+        }
+        second.push_str("...");
+    }
+    vec![name[..cut].to_owned(), second]
 }
 
 /// The General slots a dragged item's location (bits 0–9) names: column and row, up to three for a headgear.
@@ -743,12 +761,14 @@ impl Equipment {
         for (place, item) in shown {
             let name = inventory::full_name(items, names.0, messages, names.1, item, false);
             match place {
-                // ponytail: names break where `window::wrap` breaks them, left-aligned in both columns.
+                // Left-aligned in both columns, as the game's.
                 Some((column, row)) => {
                     icon(layer, item, [ICON_X[column], ICON_TOP + row as f32 * ROW]);
                     let color = slot_name_color(item, items);
-                    for (number, line) in window::wrap(font, &name, NAME_BOX, 2).into_iter().enumerate() {
-                        layer.texts.push((line, at([NAME_X[column], NAME_TOP + row as f32 * ROW + number as f32 * NAME_LINE]), color));
+                    let lines = name_lines(&name, NAME_BOX, |text| font.width(text));
+                    let top = NAME_MID + row as f32 * ROW - lines.len() as f32 * NAME_LINE / 2.0;
+                    for (number, line) in lines.into_iter().enumerate() {
+                        layer.texts.push((line, at([NAME_X[column], top + number as f32 * NAME_LINE]), color));
                     }
                 }
                 None => {
@@ -871,6 +891,16 @@ mod tests {
         // The inventory's (the tooltip's) form says #ADFF2F for one; a maker's or a pet's item has none.
         assert_eq!(inventory::name_color(&shirt([0, 4700, 0, 0]), &items), [0xAD, 0xFF, 0x2F]);
         assert_eq!([0x00FF, 0x00FE, 0x0100].map(|mark| slot_name_color(&shirt([mark, 4700, 4700, 0]), &items)), [[0, 0, 0]; 3]);
+    }
+
+    #[test]
+    fn breaks_worn_names_anywhere_and_cuts_the_second_line() {
+        let width = |text: &str| text.chars().count() as f32 * 5.3;
+        assert_eq!(name_lines("Fairy Lamp", 70.0, width), ["Fairy Lamp"]);
+        assert_eq!(name_lines("+9 Khalitzburg Knight Armor", 70.0, width), ["+9 Khalitzbur", "g Knight A..."]);
+        assert_eq!(name_lines("+9 Half Neutral Queen Mask Of Doom", 70.0, width), ["+9 Half Neutr", "al Queen M..."]);
+        assert_eq!(name_lines("Resist Stun Monocle", 70.0, width), ["Resist Stun M", "onocle"]);
+        assert_eq!(name_lines("+9 Half Neutral Queen Mask", 70.0, width), ["+9 Half Neutr", "al Queen Mask"]);
     }
 
     #[test]
