@@ -583,6 +583,7 @@ impl App {
         let our_summons = [game.pet_id, game.homunculus_id, game.mercenary.as_ref().map(|mercenary| mercenary.id)];
         // Talkie Boxes saying their words stand where their traps were.
         let mut feet_of = game.talkie_spots.clone();
+        let mut prop_units: Vec<(u32, u16, world::Vector, f32)> = Vec::new();
         let mut rises = HashMap::from([(None, actor::glint_rise(true, game.player.job, game.player.option))]);
         let mut facings = HashMap::from([(None, game.player.rot)]);
         for (&id, actor) in &mut game.units {
@@ -625,6 +626,12 @@ impl App {
             let scale = unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent) * game.effects.body_scale(Some(id), now);
             if head_owners.contains(&Some(id)) {
                 bodies.insert(Some(id), world_body(gpu, actor, scale));
+            }
+            if actor.sprites.is_none()
+                && let Some(name) = self.job_names.get(&actor.job).filter(|name| props::is_model(name))
+                && game.props.entry(actor.job).or_insert_with(|| props::Prop::load(gpu, grf, name)).is_some()
+            {
+                prop_units.push((id, actor.job, feet, actor.rot));
             }
             if let Some(sprites) = &mut actor.sprites {
                 sprites.set_tint(tint);
@@ -736,6 +743,25 @@ impl App {
                     depth,
                 });
             }
+        }
+
+        // Units drawn as models have no sprite: their pick box is their model's box on screen.
+        for &(id, job, feet, rot) in &prop_units {
+            let Some(Some(prop)) = game.props.get(&job) else { continue };
+            if game.units.get(&id).is_none_or(|actor| actor.remove_at.is_some() || actor.hidden) {
+                continue;
+            }
+            let Some(corners) = prop.box_corners(feet, rot).iter().map(|&point| view.project(point).map(to_screen)).collect::<Option<Vec<_>>>() else {
+                continue;
+            };
+            let sprite = picking::bounds(&corners);
+            let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]) * view.forward[axis]).sum::<f32>();
+            let kind = match game.units.get(&id).map(|actor| actor.kind) {
+                Some(MONSTER) => picking::Kind::Monster,
+                Some(NPC) => picking::Kind::Npc,
+                _ => picking::Kind::Other,
+            };
+            game.hit_boxes.push(picking::Target { owner: Owner::Unit(id), kind, sprite, area: picking::area(sprite, picking::UNIT_MIN), depth });
         }
 
         // The message sprite's frames for critical bursts and Lucky, posed while the sprite can still decode them.
@@ -2899,6 +2925,12 @@ impl App {
         let mut top_meshes = game.effects.top_meshes(now, feet_of_unit);
         // The world objects' faces: the effect list joins the meshes, the lists over everything the top meshes.
         let mut fx_lists = game.effects.fx_lists(&fx_seen, |point| view.depth_of(point));
+        let light = game.world.light();
+        for &(_, job, feet, rot) in &prop_units {
+            if let Some(Some(prop)) = game.props.get(&job) {
+                fx_lists.opaque.extend(prop.meshes(feet, rot, light));
+            }
+        }
         effect_meshes.append(&mut fx_lists.effect);
         top_meshes.append(&mut fx_lists.top_add);
         top_meshes.append(&mut fx_lists.top);

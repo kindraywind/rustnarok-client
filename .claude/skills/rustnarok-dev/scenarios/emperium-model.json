@@ -1,0 +1,120 @@
+{
+  "about": "The Emperium, the guardians and the guild flags are Granny models, not sprites: on a castle during War of Emperium they stand on their cells and can be pointed at, instead of a name over nothing. Hides the player so the guardians leave it alone, and leaves the War of Emperium running with its Emperium, as it found it or started it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "wait": 2500
+    },
+    {
+      "say": "@agitstart"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp prtg_cas02 157 177"
+    },
+    {
+      "settle": 2500
+    },
+    {
+      "say": "@hide"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "map_property": {
+            "flags": 1822,
+            "type": 3
+          }
+        }
+      }
+    },
+    {
+      "move": {
+        "unit": "Emperium"
+      }
+    },
+    {
+      "shot": "emperium-model",
+      "crop": [
+        300,
+        300,
+        424,
+        320
+      ]
+    },
+    {
+      "say": "@monster 1286 1"
+    },
+    {
+      "say": "@monster 1285 1"
+    },
+    {
+      "say": "@monster 1287 1"
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "expect": {
+        "units_at_least": {
+          "monster": 4
+        }
+      }
+    },
+    {
+      "move": {
+        "unit": "Knight Guardian"
+      }
+    },
+    {
+      "shot": "guardians-model"
+    },
+    {
+      "say": "@warp prtg_cas02 157 164"
+    },
+    {
+      "settle": 2000
+    },
+    {
+      "move": {
+        "unit": "Swanhild#16"
+      }
+    },
+    {
+      "shot": "guild-flag-model",
+      "crop": [
+        150,
+        100,
+        724,
+        560
+      ]
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@hide"
+    },
+    {
+      "say": "@agitend"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "say": "@agitstart"
+    },
+    {
+      "wait": 1500
+    }
+  ]
+}

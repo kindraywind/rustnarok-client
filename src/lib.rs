@@ -4,6 +4,7 @@ pub mod booking;
 pub mod bson;
 pub mod clientinfo;
 pub mod effect;
+pub mod gr2;
 pub mod grf;
 pub mod lua;
 pub mod map;
