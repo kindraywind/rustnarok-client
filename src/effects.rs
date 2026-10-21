@@ -12,9 +12,9 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, elemental, emblems, first, ground, guard, holes, huujin, kicks,
-    knight, linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sheet, sight, sniper, snow, songs, soul, souls, spears, sphere,
-    spray, star, stone, tanji, throw, transcend, vortex, walls, waterball, waves, wheels,
+    balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, elemental, emblems, first, gaia, ground, guard, holes, huujin,
+    kicks, knight, linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sheet, sight, sniper, snow, songs, soul, souls, spears,
+    sphere, spray, star, stone, tanji, throw, transcend, vortex, walls, waterball, waves, wheels,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -2698,6 +2698,11 @@ const LINE_LINK: u32 = 384;
 const GANBANTEIN_FX: u32 = 223;
 const SPIRAL_PIERCE: u32 = 339;
 const SOUL_BREAKER: u32 = 361;
+/// The homunculus' Xeno Slasher: Soul Breaker's slashes in green.
+const XENO_SLASHER: u32 = 1082;
+/// Power of Gaia's boxes of flame walls on its unit's cell, and The One Fighter Rises' crescents on the homunculus.
+const POWER_OF_GAIA: u32 = 1088;
+const FIGHTER_RISES: u32 = 2338;
 const PRESSURE: u32 = 365;
 const MARTYR: u32 = 366;
 const SHRINK: u32 = 599;
@@ -2739,7 +2744,7 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 58] = [
+pub const AIMED: [u32; 59] = [
     EF_TETRA,
     CANNON_LINES,
     STIN,
@@ -2777,6 +2782,7 @@ pub const AIMED: [u32; 58] = [
     SOUL_DRAIN,
     LINE_LINK,
     SOUL_BREAKER,
+    XENO_SLASHER,
     PANG_VOICE,
     WINK_OF_CHARM,
     TRIPLE_ATTACK,
@@ -3364,6 +3370,10 @@ impl Effects {
             (STORM_BLAST, Target::Unit(unit)) => {
                 self.textures.entry(walls::RING_YELLOW.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_YELLOW, true).ok());
                 self.prims.walls.storm_blast(unit, now);
+            }
+            (FIGHTER_RISES, Target::Unit(unit)) => {
+                self.textures.entry(walls::FIGHTER_RING.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::FIGHTER_RING, true).ok());
+                self.prims.walls.fighter_rises(unit, now);
             }
             (HIT_LINE, Target::Unit(_)) => {
                 self.textures.entry(brawl::WHITE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::WHITE, true).ok());
@@ -4209,6 +4219,12 @@ impl Effects {
                 self.sounds.push((now, file.clone(), LISTENER));
             }
         }
+        self.prims.gaia.advance(now, position_of(None), |n| pick(0, n.saturating_sub(1)));
+        for at in self.prims.gaia.take_restarts() {
+            for file in self.cell_sounds.get(&POWER_OF_GAIA).into_iter().flatten() {
+                self.sounds.push((now, file.clone(), at));
+            }
+        }
         self.prims.songs.advance(now, position_of(None), &ground_at, |n| pick(0, n.saturating_sub(1)));
         for hit in self.hits.iter_mut().filter(|hit| hit.paths.is_none() && hit.start <= now) {
             let Some(at) = hit.anchor.place(&position_of) else { continue };
@@ -4378,6 +4394,12 @@ impl Effects {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
                 }
                 self.prims.portal.keep(id, at, now, |n| pick(0, n.saturating_sub(1)));
+            } else if effect == POWER_OF_GAIA {
+                // Power of Gaia's nine boxes stand over the cell with their unit, a new copy with its sound every 1 999 ticks.
+                self.textures.entry(gaia::TEXTURE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, gaia::TEXTURE, true).ok());
+                self.cell_sounds.insert(effect, table.sounds.get(&effect).into_iter().flatten().map(|sound| format!("{}.wav", sound.file)).collect());
+                self.play_sounds(table, effect, at, now);
+                self.prims.gaia.keep(id, at, now, |n| pick(0, n.saturating_sub(1)));
             } else if effect == KINGS_GRACE {
                 // King's Grace's four emblems stand round the cell with their unit.
                 self.textures.entry(emblems::EMBLEM.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, emblems::EMBLEM, false).ok());
@@ -4665,6 +4687,11 @@ impl Effects {
                 self.textures.entry(knight::PURPLE_SLASH.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, knight::PURPLE_SLASH, true).ok());
                 self.play_sounds(table, id, from, now);
                 self.prims.knight.breaker(caster, from, to, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            XENO_SLASHER => {
+                self.textures.entry(knight::PURPLE_SLASH.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, knight::PURPLE_SLASH, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.knight.xeno(caster, from, to, now, |n| pick(0, n.saturating_sub(1)));
             }
             PANG_VOICE | WINK_OF_CHARM => {
                 let sprite = if id == PANG_VOICE { monk::FVOICE } else { monk::WINK };
@@ -5558,6 +5585,7 @@ impl Effects {
                     .into_iter()
                     .filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))),
             )
+            .chain(self.prims.gaia.meshes().into_iter().filter_map(|wall| Some((self.textures.get(wall.texture)?.as_ref()?, wall.vertices, wall.additive))))
             .chain(
                 self.prims
                     .holes
@@ -8262,6 +8290,33 @@ mod tests {
         };
         assert_eq!([949, 954, 952].map(picture), [AQUA_PLAY_SPRITE; 3].map(str::to_owned));
         assert_eq!([950, 957, 953].map(picture), [UPHEAVAL_SPRITE; 3].map(str::to_owned));
+    }
+
+    #[test]
+    fn magma_flow_xeno_slasher_power_of_gaia_and_the_one_fighter_rises_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Magma Flow: on the homunculus, 4 ticks a frame from frame 1, once, over everything, gone at a = 92.
+        assert!(table.used(8039).unwrap().contains(&(Who::Caster, 962)) && table.skill(8039, "effectId").contains(&962));
+        let part = &table.sprites[&962][0];
+        let magma = Animation::new(part, 962, Instant::now(), Anchor::Unit(Some(1)), false);
+        assert!(part.attached && magma.over && !magma.repeat && magma.frame_ms == Some(64.0) && magma.first == 1.0);
+        assert_eq!(((magma.end.unwrap() - magma.start).as_secs_f32() * 1000.0).round(), 92.0 * 16.0);
+        let frame = |a: u32| (animation_progress(16.0 * a as f32, 64.0, 24.0, 1.0, false) * 24.0) as usize;
+        assert_eq!([0, 3, 4, 91].map(frame), [1, 1, 2, 23]);
+        assert!(!table.sounds.contains_key(&962) && table.lengths[&962] == 100);
+        // Xeno Slasher: aimed from the homunculus at each hit, the sound at 320 ms where the caster is.
+        assert!(AIMED.contains(&XENO_SLASHER) && table.struck(8025).unwrap().contains(&(Who::Caster, XENO_SLASHER)));
+        assert_eq!(sounds(XENO_SLASHER), [("effect\\기공포", 320, false)]);
+        assert_eq!(table.lengths[&XENO_SLASHER], 300);
+        // Power of Gaia: its unit's effect, again every 1 999 ticks, the fire sound once a copy where it stands.
+        assert_eq!(table.units[&240], POWER_OF_GAIA);
+        assert_eq!(sounds(POWER_OF_GAIA), [("effect\\EF_FireWall", 0, false)]);
+        assert_eq!((table.lengths[&POWER_OF_GAIA], restart_ticks(POWER_OF_GAIA, 240, 2000)), (2000, 1999));
+        // The One Fighter Rises: on the homunculus at the use; nothing for the world effect 2339.
+        assert!(table.used(8051).unwrap().contains(&(Who::Caster, FIGHTER_RISES)) && !table.sounds.contains_key(&FIGHTER_RISES));
+        assert_eq!(table.lengths[&FIGHTER_RISES], 70);
+        assert!(!table.lengths.contains_key(&2339) && !table.sounds.contains_key(&2339));
     }
 
     #[test]

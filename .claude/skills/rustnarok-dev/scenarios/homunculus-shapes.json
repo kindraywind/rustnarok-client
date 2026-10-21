@@ -1,0 +1,32 @@
+{
+  "about": "Magma Flow and The One Fighter Rises (issue #820), from npc/homunculus-shapes.txt: Magma Flow's four flame tongues bursting up over the player (962) and The One Fighter Rises' four grey-brown crescent walls round the player (2338). Xeno Slasher (1082) and Power of Gaia (1088) are left out: on rathena Xeno Slasher's hits come from its skill unit, not the caster, and Power of Gaia's cast makes no skill unit.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild06 180 180"},
+    {"settle": 1500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/homunculus-shapes.txt"},
+    {"wait": 1500},
+    {"expect": {"state": {"player.cell": [180, 180]}}},
+    {"move": [1000, 750]},
+    {"key": "Tab"},
+    {"type": "npc:RustnarokHomun"},
+    {"key": "Tab"},
+    {"type": "magma"},
+    {"key": "Enter"},
+    {"wait_for": {"packet": "0x01f3", "pause": true, "ms": 8000}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 400}},
+    {"shot": "magma-flow", "crop": [312, 84, 400, 450], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}},
+    {"wait": 2000},
+    {"type": "fighter"},
+    {"key": "Enter"},
+    {"wait_for": {"event": "SkillUsed", "pause": true, "ms": 8000}},
+    {"cmd": {"cmd": "clock", "action": "step", "ms": 300}},
+    {"shot": "the-one-fighter-rises", "crop": [312, 134, 400, 400], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}},
+    {"wait": 2000},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/homunculus-shapes.txt"},
+    {"wait": 300}
+  ]
+}

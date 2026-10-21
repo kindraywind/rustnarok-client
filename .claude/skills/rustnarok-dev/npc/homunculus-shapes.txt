@@ -1,0 +1,14 @@
+// Magma Flow and The One Fighter Rises (issue #820). Whisper npc:RustnarokHomun "magma" and it plays Magma Flow's effect (962)
+// on the player, since that only comes from a homunculus; "fighter" and the player casts MH_THE_ONE_FIGHTER_RISES (2338).
+// Loaded and unloaded by scenarios/homunculus-shapes.json.
+prt_fild06,1,1,0	script	RustnarokHomun	-1,{
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "magma") {
+		specialeffect2 962;
+	} else if (@whispervar0$ == "fighter") {
+		percentheal 0, 100;
+		unitskilluseid getcharid(3), "MH_THE_ONE_FIGHTER_RISES", 1;
+	}
+	end;
+}
