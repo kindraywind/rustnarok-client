@@ -1323,6 +1323,21 @@ impl Game {
         }
     }
 
+    /// A cast start of `skill` by `source` with a cast of `cast_ms`: Competentia's and Nipelheim Requiem's objects; nothing for
+    /// a caster not in sight.
+    pub(crate) fn fourth_job_cast(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, skill: u16, source: u32, cast_ms: u32) {
+        if let Some(at) = self.feet(source, control::now()) {
+            self.effects.fourth_job_cast(gpu, grf, table, skill, (source != self.account_id).then_some(source), at, cast_ms);
+        }
+    }
+
+    /// A use packet of Petitio (or its damage) or Gale Storm at `level` on `target`; nothing for a target not in sight.
+    pub(crate) fn fourth_job_used(&mut self, gpu: &Gpu, grf: &Grf, skill: u16, target: u32, level: i32) {
+        if let Some(at) = self.feet(target, control::now()) {
+            self.effects.fourth_job_used(gpu, grf, skill, (target != self.account_id).then_some(target), at, level);
+        }
+    }
+
     /// Frigg's Song's use packet at `level` from `source`; nothing for a caster not in sight.
     pub(crate) fn frigg_song(&mut self, gpu: &Gpu, grf: &Grf, source: u32, level: i32) {
         if let Some(at) = self.feet(source, control::now()) {

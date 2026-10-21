@@ -3320,6 +3320,10 @@ impl App {
                         game.play_effect(gpu, grf, table, extra, source);
                     }
                 }
+                // Competentia's sparkles and Nipelheim Requiem's funnel last the cast.
+                if let Some(gpu) = gpu {
+                    game.fourth_job_cast(gpu, grf, table, skill, source, cast_ms);
+                }
                 let me = game.account_id;
                 // Fallen Angel's jump (cast at once) starts its feathers on the caster.
                 if cast_ms == 0
@@ -3488,6 +3492,10 @@ impl App {
                     if matches!(skill, crate::world_fx::jobs3::TRIANGLE_SKILL | crate::world_fx::jobs3::AXE_SKILL) {
                         game.third_job_hit(gpu, grf, table, skill, act.source, act.target);
                     }
+                    // Petitio's hammer comes with its damage too: rathena sends it no use packet.
+                    if skill == crate::world_fx::area4::PETITIO_SKILL && !splash {
+                        game.fourth_job_used(gpu, grf, skill, act.target, i32::from(level));
+                    }
                     // Not for a splash's other targets: one spear volley or spirit a cast.
                     if matches!(skill, crate::world_fx::summoner::STEM_SPEAR_SKILL | crate::world_fx::summoner::SAVAGE_SKILL) && !splash {
                         game.summoner_shot(gpu, grf, table, skill, act.source, act.target);
@@ -3550,6 +3558,9 @@ impl App {
                     match skill {
                         crate::world_fx::jobs3::FRIGG_SKILL => game.frigg_song(gpu, grf, source, amount),
                         crate::world_fx::jobs3::CART_CANNON_SKILL | crate::world_fx::jobs3::SHIELD_SKILL => game.thrown(gpu, grf, table, skill, source, target),
+                        crate::world_fx::area4::PETITIO_SKILL | crate::world_fx::area4::GALE_STORM_SKILL => {
+                            game.fourth_job_used(gpu, grf, skill, target, amount)
+                        }
                         _ => {}
                     }
                 }
@@ -3712,6 +3723,7 @@ impl App {
             MapEvent::CastCancelled(source) => {
                 let caster = (source != game.account_id).then_some(source);
                 game.effects.cut_twilight();
+                game.effects.fourth_job_cast_cancelled(caster);
                 game.casts.remove(&caster);
                 game.cast_squares.remove(&caster);
             }

@@ -6,6 +6,7 @@
 // The per-skill objects come after this base; until then only the tests launch objects.
 #![allow(dead_code)]
 
+pub mod area4;
 pub mod drops;
 pub mod footprints;
 pub mod heal;
@@ -755,6 +756,7 @@ impl Default for WorldFx {
     /// An empty registry with the classes registered so far.
     fn default() -> Self {
         let mut fx = Self { classes: HashMap::new(), objects: Vec::new(), serial: 0 };
+        area4::register(&mut fx);
         drops::register(&mut fx);
         footprints::register(&mut fx);
         heal::register(&mut fx);
