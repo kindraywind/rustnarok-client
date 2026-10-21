@@ -3836,8 +3836,7 @@ impl Game {
             None => Some(&self.player),
             Some(id) => self.units.get(&id),
         };
-        // Red on anything but monsters and NPCs: players (us too), homunculi, mercenaries.
-        let on_player = hit.is_none_or(|actor| !(actor::is_monster_job(actor.job) || actor::is_npc_job(actor.job)));
+        let on_player = red_number(hit.map(|actor| actor.job), target.is_some_and(|id| self.skill_units.contains_key(&id)));
         // Hits drift diagonally away from where the target faces.
         let drift = hit.map_or([1.0, 1.0], |actor| actor::number_drift(actor.rot, actor.facing_from_server));
         // A swing's left-hand damage (a katar's, the second weapon's) is a number of its own after the right hand's.
@@ -3886,6 +3885,13 @@ impl Game {
     }
 }
 
+/// Whether a hit's number is red: on anything but monsters, NPCs and skill units on the ground (Ice Wall, traps), so on
+/// players (us too), homunculi and mercenaries. `job` is the hit unit's, None when it isn't a unit seen.
+// ponytail: a skill unit's numbers take a monster's white.
+fn red_number(job: Option<u16>, ground_unit: bool) -> bool {
+    !ground_unit && job.is_none_or(|job| !(actor::is_monster_job(job) || actor::is_npc_job(job)))
+}
+
 /// A splash skill's preamble on its first target (Grimtooth's damage −30000, type 6): its hit effects, and no number,
 /// MISS or flinch.
 pub(crate) fn preamble(act: &net::Act) -> bool {
@@ -3923,6 +3929,15 @@ fn left_hand_number(from: HitFrom, damage: i32, attacker: Option<u16>) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hits_on_ice_wall_show_white() {
+        // A player, a monster (Poring), an Ice Wall's unit, and an unknown target.
+        assert!(red_number(Some(0), false));
+        assert!(!red_number(Some(1002), false));
+        assert!(!red_number(None, true));
+        assert!(red_number(None, false));
+    }
     use rustnarok_client::map::Gat;
 
     #[test]
