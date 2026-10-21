@@ -70,8 +70,8 @@ pub fn parts(model: &Model) -> Vec<(String, Vec<Corner>)> {
                     parts[index].1.push(Corner {
                         position: to_world(vertex.position).map(|value| value * SCALE),
                         normal: to_world(vertex.normal),
-                        // The exporter counts v up from the bottom.
-                        uv: [vertex.uv[0], 1.0 - vertex.uv[1]],
+                        // v counts down from the top of the picture, as the pictures decode.
+                        uv: vertex.uv,
                     });
                 }
             }
