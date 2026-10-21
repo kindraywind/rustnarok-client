@@ -43,7 +43,7 @@
 //!   (a `MapEvent`/`CharEvent` variant like "Act", "LoginAccepted"/"LoginRefused", or "Sound <file>" for an effect
 //!   sound played, e.g. "Sound _hit_sword.wav"), waits up to `ms` (10 s by
 //!   default) for one seen since the previous command, so a quick answer isn't missed between two calls. `fresh`
-//!   only counts new ones; `do` is a command to run first (and implies `fresh`); `pause` stops the clock on arrival.
+//!   only counts new ones; `do` is a command to run first (and implies `fresh`); `pause` stops the clock on arrival, after the packet is applied.
 //! - `clock` `{action: "pause"|"resume"|"step", ms?}`: the animation clock; a step freezes it `ms` (16) further on.
 //! - `trace` `{last?, events?}`: the last packets received (20), as `RUSTNAROK_CLIENT_TRACE` prints them; with `events`, the
 //!   events they made in between (`==` lines, with what they say: a disconnection's reason, say).
@@ -616,6 +616,11 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
         Command::Reply { text } => mcp::reply(&mut app.scene, text),
         Command::State => Ok(state(app)),
         Command::Clock { action, ms } => {
+            // A pause lands after the packets that came in before it, as a pause at a packet shows its effect.
+            // ponytail: the log sees a packet before its event is queued; a pause racing that gap misses it, a wait for the event would close it.
+            if matches!(action, ClockAction::Pause) {
+                app.apply_frame_events();
+            }
             let mut frozen = FROZEN.lock().unwrap();
             *frozen = match action {
                 ClockAction::Pause => Some(frozen.unwrap_or_else(Instant::now)),

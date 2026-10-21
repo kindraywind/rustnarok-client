@@ -59,13 +59,18 @@ impl App {
 }
 
 impl App {
-    pub(crate) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
-        // The map packets since the last frame first, before anything moves.
+    /// Applies the map packets that wait for the next frame.
+    pub(crate) fn apply_frame_events(&mut self) {
         for event in std::mem::take(&mut self.frame_events) {
             let event = NetEvent::Map(event);
             control::observe(&event);
             self.net_event(event);
         }
+    }
+
+    pub(crate) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        // The map packets since the last frame first, before anything moves.
+        self.apply_frame_events();
         if self.loading.is_some() {
             return self.draw_loading(event_loop);
         }
