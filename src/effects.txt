@@ -1,13 +1,14 @@
 # Which effect files the client plays for effect, skill and item IDs:
 # str <effect id> <file under data\texture\effect\ without .str> <texture folder or -> <follows the unit 1/0> [random from to] [once]
-#   (once: plays once on a skill's ground unit, where the rest of the effect starts again until the unit goes)
+#   (once: plays once on a skill's ground unit, where the rest of the effect starts again until the unit goes;
+#   hold: after the file's last key its last frame stays drawn until the effect's length, which may be longer than the file)
 # misc <ZC_NOTIFY_EFFECT type> <effect id>; skill <skill id> <when> <effect id>; item <item id> <effect id>
 # part <effect id> <2D|3D> <name=value;...>: a texture (or a sprite) moving from a start to an end over its duration
 # ring <effect id> <name=value;...>: a textured cylinder growing, turning and fading
 # spr <effect id> <sprite under data\sprite\이팩트\ without .spr> <follows the unit 1/0> <name=value;... or ->: a sprite's animation
-#   (frameTicks=<n>;frameTicksRan=<m>: n + a random number below m ticks a frame, drawn at each start; sideAction=<action>: action 0, or this one on a draw of two; restart=true: starts again with its ground unit's effect)
+#   (delay=<ms>: starts that long after the effect does; drawn=<n>: shows for n ticks at most, though its frames go on; frameTicks=<n>;frameTicksRan=<m>: n + a random number below m ticks a frame, drawn at each start; sideAction=<action>: action 0, or this one on a draw of two; restart=true: starts again with its ground unit's effect)
 # func <effect id> quake <delay ms> <duration ms>: what the client does in code for the effect; quake shakes the camera
-# length <effect id> <ticks>: how long an effect's STR plays (16 ms ticks) when shorter than its keys; on a ground unit it starts again 8 ticks before that (Quagmire's 95: 20)
+# length <effect id> <ticks>: how long an effect lasts (16 ms ticks): an STR plays that long when shorter than its keys (a `hold` one, longer); on a ground unit it starts again 8 ticks before that (Quagmire's 95: 20)
 # unit <skill unit type> <effect id> [once]: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there (once: played once and kept, not started again)
 # area <skill unit type> <effect id> <lift>: the effect plays on a grid of points round each such unit's cell (one point at range 0, 6 units apart), now and every length less 20 ticks while it stands; lift is how far below the ground its anchor goes
 # rsm <skill unit type> <model under data\model\ without .rsm, or an .rsm2 with its extension>: the model standing on such a unit's cell (traps)
@@ -179,8 +180,8 @@ str	635	fire dragon	-	1
 str	636	icy	-	1
 str	646	트랙킹	-	1
 str	649	불스아이	-	1
-str	668	dragon_h	-	1
-str	669	wideb	-	1
+str	668	dfear	-	1	hold
+str	669	wideb	-	1	hold
 str	670	dfear	-	1
 str	677	cwound	-	1
 str	682	itempokjuk	-	1
@@ -1441,7 +1442,8 @@ ring	802	textureName=alpha_down;totalCircleSides=4;circleSides=4;bottomSize=2.3;
 spr	53	poisonhit	0	-
 spr	165	크리스마스	1	duration=1000
 spr	212	darkbreath	1	head=true
-spr	215	smoke	1	-
+# ponytail: the puff takes the monster's place at tick 0 (it stands still while it summons), not at tick 35.
+spr	215	smoke	0	delay=560
 spr	302	데몬스트레이션	0	delayFrame=64;scale=1.2;alpha=200;firstFrame=1;repeat=true;yOffset=-7
 spr	363	vallentine	1	-
 spr	373	poisonhit	1	-
@@ -1481,7 +1483,7 @@ spr	644	매지컬불릿	1	delayFrame=32;firstFrame=1;onTop=true
 spr	645	스프레드	1	delayFrame=64;firstFrame=1;onTop=true
 spr	647	트래킹	1	delayFrame=32;firstFrame=1;onTop=true
 spr	648	트리플액션	1	delayFrame=32;firstFrame=1;onTop=true;delayStart=480
-spr	666	어스퀘이크	1	-
+spr	666	어스퀘이크	1	frame=0;delayFrame=64;firstFrame=1;onTop=true;drawn=99
 spr	682	폭죽_러브	1	-
 spr	683	폭죽_화이트데이	1	-
 spr	684	폭죽_발렌타인	1	-
@@ -1534,7 +1536,7 @@ func	563	quake	1520	650
 func	666	quake	0	650
 func	666	quake	560	650
 func	666	quake	1120	650
-func	668	quake	0	650
+func	668	quake	16	650
 func	732	quake	0	200
 func	756	quake	288	200
 func	804	quake	0	650
@@ -1942,8 +1944,8 @@ wav	643	effect\래피드샤워	320
 wav	644	effect\매지컬블릿	0
 wav	648	effect\트리플액션	400	listener
 wav	666	effect\earth_quake	0
-wav	668	effect\dragonfear	0
-wav	669	effect\wideb	0
+wav	668	effect\dragonfear	16
+wav	669	effect\wideb	16
 wav	670	effect\dragonfear	0
 wav	675	effect\kyrie_guard	0
 wav	682	effect\itempokjuk	0
@@ -5160,6 +5162,7 @@ status	1339	2302
 status	1339	2303
 length	22	270
 length	25	40
+length	215	500
 length	568	100
 length	569	60
 length	609	100
@@ -5168,6 +5171,9 @@ length	620	29999
 length	622	100
 length	625	60
 length	626	60
+length	666	100
+length	668	28
+length	669	70
 length	704	100
 length	706	100
 length	709	70

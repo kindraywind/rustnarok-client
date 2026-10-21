@@ -76,6 +76,8 @@ const BASH: Look = Look {
     reload: false,
     band: false,
 };
+/// Summon Slave's rays (EF_SUMMONSLAVE 215): Bash's 20 rays without its disc.
+const SUMMON_SLAVE: Look = Look { disc: false, ..BASH };
 const TURN_UNDEAD: Look = Look {
     life: 20,
     radius: 370.0,
@@ -275,6 +277,11 @@ impl Burst {
         Self::new(&BASH, unit, now, length, rand)
     }
 
+    /// Summon Slave's rays on a unit, Bash's without the disc, in an effect `length` ticks long.
+    pub fn summon_slave(unit: Option<u32>, now: Instant, length: u32, rand: impl FnMut(u32) -> u32) -> Self {
+        Self::new(&SUMMON_SLAVE, unit, now, length, rand)
+    }
+
     /// Sonic Blow's ring, on the caster.
     pub fn sonic_blow(unit: Option<u32>, now: Instant) -> Self {
         Self::new(&SONIC_BLOW, unit, now, LIFE, |_| 0)
@@ -419,6 +426,36 @@ mod tests {
         // A negative whole degree is looked up a degree up.
         assert_eq!(point([0.0; 2], 1.0, -0.5), point([0.0; 2], 1.0, 0.0));
         assert_eq!(point([0.0; 2], 1.0, -1.5), point([0.0; 2], 1.0, 0.0));
+    }
+
+    #[test]
+    fn summon_slave_is_bashs_rays_without_its_disc() {
+        // Each ray's draws in order: angle 360, turn 60, half-width 25, length 40, growth 30.
+        let mut asked = Vec::new();
+        let start = Instant::now();
+        let burst = Burst::summon_slave(Some(4), start, 500, |n| {
+            asked.push(n);
+            0
+        });
+        assert_eq!(asked.len(), 100);
+        assert!(asked.chunks(5).all(|ray| ray == [360, 60, 25, 40, 30]));
+        // Made at tick 0 only: every shape is a ray, 20 of them on every one of the 40 ticks, 0 to 39.
+        for tick in [0, 1, 10, 27, 39] {
+            let shapes = burst.shapes(start + TICK * tick);
+            assert_eq!(shapes.len(), 20, "{tick}");
+            assert!(shapes.iter().all(|shape| shape.0 == RAY && shape.1 == Some(4) && shape.2.len() == 3), "{tick}");
+        }
+        assert!(burst.shapes(start + TICK * 40).is_empty() && burst.alive(start + TICK * 39) && !burst.alive(start + TICK * 40));
+        // The rays' alpha is Bash's: 20 a tick to 200, fading from tick 27, nothing left at age 39.
+        let alpha_at = |tick: u32| burst.shapes(start + TICK * tick)[0].2[0].2[3] * 255.0;
+        assert_eq!([0, 1, 10, 27, 39].map(|tick| alpha_at(tick).round()), [20.0, 40.0, 200.0, 184.0, 0.0]);
+        // The same draws as Bash's give the same rays, centred 40 px over the feet.
+        let mut draws = [100, 20, 5, 10, 10].into_iter();
+        let ray = Ray::new(&SUMMON_SLAVE, |_| draws.next().unwrap());
+        assert_eq!(ray, Ray { angle: 100.0, turn: 3.0, half: 1.0, length: 30.0, growth: 3.0, reload: 0.0 });
+        assert_eq!(burst.shapes(start)[0].2[0].0, [0.0, RISE]);
+        // It is not cut short by a short effect: only a length under its 40 ticks hides it.
+        assert!(Burst::summon_slave(None, start, 30, |_| 0).shapes(start).is_empty());
     }
 
     #[test]
