@@ -1250,6 +1250,9 @@ impl App {
             }
             MapEvent::Spirits { id, count } => {
                 change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.spheres = count);
+                if let Some(gpu) = gpu {
+                    game.coins(gpu, grf, id, count);
+                }
             }
             // A Royal Guard's rage spheres come as shields too.
             MapEvent::Shields { id, count } => {
@@ -1350,6 +1353,8 @@ impl App {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
                     if slide {
+                        // Fallen Angel's feathers fall where the jump lands.
+                        game.effects.snapped((id != game.account_id).then_some(id), game.world.cell_position(cell.map(|value| value as f32)));
                         actor.slide_to(cell, now);
                         // Snap and the jumps blur a player for 100 ticks.
                         if actor.look.is_some() {
@@ -3316,6 +3321,13 @@ impl App {
                     }
                 }
                 let me = game.account_id;
+                // Fallen Angel's jump (cast at once) starts its feathers on the caster.
+                if cast_ms == 0
+                    && skill == crate::world_fx::jobs3::FALLEN_ANGEL_SKILL
+                    && let Some(gpu) = gpu
+                {
+                    game.fallen_angel(gpu, grf, source);
+                }
                 let goal = if target == me { Some(game.player.cell) } else { game.units.get(&target).map(|actor| actor.cell) };
                 let caster = if source == me { Some(&mut game.player) } else { game.units.get_mut(&source) };
                 if let Some(caster) = caster.filter(|_| skill_motions::cast_moves(cast_ms)) {
@@ -3473,6 +3485,9 @@ impl App {
                     if effects::DRAGON_BREATHS.contains(&skill) {
                         game.dragon_breath(gpu, grf, table, skill, act.source, act.target);
                     }
+                    if matches!(skill, crate::world_fx::jobs3::TRIANGLE_SKILL | crate::world_fx::jobs3::AXE_SKILL) {
+                        game.third_job_hit(gpu, grf, table, skill, act.source, act.target);
+                    }
                     // Not for a splash's other targets: one spear volley or spirit a cast.
                     if matches!(skill, crate::world_fx::summoner::STEM_SPEAR_SKILL | crate::world_fx::summoner::SAVAGE_SKILL) && !splash {
                         game.summoner_shot(gpu, grf, table, skill, act.source, act.target);
@@ -3530,6 +3545,13 @@ impl App {
                     |n| effects::pick(0, n.saturating_sub(1)),
                 ) {
                     let _ = game.session.chat(&game.me.name, &line);
+                }
+                if let Some(gpu) = gpu {
+                    match skill {
+                        crate::world_fx::jobs3::FRIGG_SKILL => game.frigg_song(gpu, grf, source, amount),
+                        crate::world_fx::jobs3::CART_CANNON_SKILL | crate::world_fx::jobs3::SHIELD_SKILL => game.thrown(gpu, grf, table, skill, source, target),
+                        _ => {}
+                    }
                 }
                 // Lunatic Carrot Beat's carrots fall round a target in sight, as many as its level says.
                 if let (Some(effect), Some(gpu)) = (crate::world_fx::summoner::carrots_of(skill), gpu) {

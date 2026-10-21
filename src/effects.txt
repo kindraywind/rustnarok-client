@@ -2104,6 +2104,7 @@ wav	1088	effect\EF_FireWall	0
 wav	1104	effect\su_cn_powdering	0
 wav	1110	effect\su_roottwist	0
 wav	1125	effect\su_nyanggrass	0
+wav	2183	effect\IG_SHIELD_SHOOTING	0
 wav	1872	effect\ef_beginspell	0
 wav	1876	effect\ef_beginspell	0
 wav	1902	effect\ef_beginspell	0
@@ -4195,6 +4196,7 @@ cast	5494	812
 cast	5495	1656
 cast	5495	812
 struck	13	caster	15
+struck	2278	target	1660
 struck	340	caster	451
 struck	14	target	26
 struck	15	caster	27
@@ -4969,7 +4971,7 @@ unit	219	1276
 unit	220	920
 unit	221	926
 unit	222	860
-unit	224	1080
+unit	224	1080	once
 unit	225	772	once
 unit	226	783	once
 unit	227	784	once
@@ -4993,6 +4995,7 @@ unit	256	25
 unit	257	1050
 unit	258	1051
 unit	259	1278
+unit	260	1069
 unit	261	1064
 unit	262	1104	once
 unit	263	1125	once
@@ -5358,6 +5361,8 @@ length	1575	300
 length	1584	300
 length	1594	200
 length	1678	1678
+minid	1296	1459
+minid	1297	1460
 minid	1400	1511
 minid	1401	1512
 minid	1402	1513

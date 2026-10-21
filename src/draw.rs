@@ -894,7 +894,8 @@ impl App {
             for (center, near) in orbit(orbs.spheres, SPIRIT_HEIGHT, turned) {
                 let side = &mut spirits[usize::from(near)];
                 if coin_job(job) {
-                    if let Some(sprite) = &game.coin_sprite {
+                    // The Rebellion's and the Night Watch's coins are world objects (1135).
+                    if let Some(sprite) = game.coin_sprite.as_ref().filter(|_| !crate::world_fx::jobs3::object_coins(job)) {
                         side.extend(coin.iter().map(|(key, position, size, angle)| {
                             (sprite.texture(*key), feet, [center[0] + position[0], center[1] + position[1]], *size, [1.0; 4], *angle, orbit_layer(near))
                         }));

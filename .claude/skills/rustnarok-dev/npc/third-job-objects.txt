@@ -1,0 +1,46 @@
+// The third-job objects (issue #850): a training dummy 4 cells east of prt_fild08 170,360 casts them, since a monster
+// needs no weapon, ammunition or items for a skill. Whisper npc:RustnarokThirdJob "frigg" (Frigg's Song on the dummy),
+// "trap" (Bind Trap 5, two cells south of it), "cloud" (Cloud Kill 4 cells west of the player), "angel" (Fallen Angel:
+// a Poring jumps 5 cells north, west of the player), "triangle", "cannon", "axe" or "shield" (Triangle Shot, Cart Cannon, Axe Boomerang or
+// Shield Shooting from the dummy at the player); "spheres" puts fire, water and earth spheres in the player's first three
+// slots, "nospheres" ends them; "leaf" plays Flower Leaf's glints (1013) on the player, which rathena starts with no
+// status. Loaded and unloaded by scenarios/third-job-objects.json.
+prt_fild08,1,1,0	script	RustnarokThirdJob	-1,{
+	end;
+OnInit:
+	monster "prt_fild08", 174, 360, "--ja--", 2408, 1;
+	.gid = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	percentheal 100, 100;
+	if (@whispervar0$ == "frigg") {
+		unitskilluseid .gid, "WM_FRIGG_SONG", 1, .gid;
+	} else if (@whispervar0$ == "trap") {
+		unitskillusepos .gid, "RL_B_TRAP", 5, 174, 358;
+	} else if (@whispervar0$ == "cloud") {
+		unitskillusepos .gid, "SO_CLOUD_KILL", 5, 166, 360;
+	} else if (@whispervar0$ == "angel") {
+		// The dummy can't move: a Poring jumps instead.
+		monster "prt_fild08", 167, 357, "--ja--", 1002, 1;
+		unitskillusepos $@mobid[0], "RL_FALLEN_ANGEL", 1, 167, 362;
+	} else if (@whispervar0$ == "triangle") {
+		unitskilluseid .gid, "SC_TRIANGLESHOT", 10, getcharid(3);
+	} else if (@whispervar0$ == "cannon") {
+		unitskilluseid .gid, "GN_CARTCANNON", 5, getcharid(3);
+	} else if (@whispervar0$ == "axe") {
+		unitskilluseid .gid, "NC_AXEBOOMERANG", 5, getcharid(3);
+	} else if (@whispervar0$ == "shield") {
+		unitskilluseid .gid, "IG_SHIELD_SHOOTING", 5, getcharid(3);
+	} else if (@whispervar0$ == "spheres") {
+		sc_start4 SC_SPHERE_1, 600000, 0x44, 1, 0, 0;
+		sc_start4 SC_SPHERE_2, 600000, 0x46, 1, 0, 0;
+		sc_start4 SC_SPHERE_3, 600000, 0x47, 1, 0, 0;
+	} else if (@whispervar0$ == "nospheres") {
+		sc_end SC_SPHERE_1;
+		sc_end SC_SPHERE_2;
+		sc_end SC_SPHERE_3;
+	} else if (@whispervar0$ == "leaf") {
+		specialeffect2 1013;
+	}
+	end;
+}
