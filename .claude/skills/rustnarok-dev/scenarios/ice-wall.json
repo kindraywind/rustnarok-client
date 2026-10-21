@@ -1,5 +1,5 @@
 {
-  "about": "Attacking Ice Wall (issue #295): a Wizard (@job 9, @allskill) casts Ice Wall from the skill window three cells north on a field (towns have noicewall); pointing at a wall cell shows the attack cursor, and a click attacks the wall (CZ_REQUEST_ACT 0x0437). The cells show three ice spikes each (issue #675). The character is a Novice again at the end.",
+  "about": "Attacking Ice Wall (issue #295): a Wizard (@job 9, @allskill) casts Ice Wall from the skill window three cells north on a field (towns have noicewall); pointing at a wall cell shows the attack cursor, and a click attacks the wall (CZ_REQUEST_ACT 0x0437): the server says it is too far (the Wizard's reach is 1), the player walks up and the hit lands (0x08c8). The cells show three ice spikes each (issue #675). The character is a Novice again at the end.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -14,7 +14,8 @@
     {"shot": "ice-wall-cells", "crop": [262, 134, 500, 450], "threshold": 10},
     {"move": {"cell": [61, 232], "offset": [1, 0]}}, {"wait": 300},
     {"expect": {"state": {"cursor": "Attack"}}},
-    {"click_on": {"cell": [61, 232], "offset": [1, 0]}}, {"wait_for": {"sent": "0x0437", "ms": 3000}}, {"wait": 300},
+    {"click_on": {"cell": [61, 232], "offset": [1, 0]}}, {"wait_for": {"sent": "0x0437", "ms": 3000}},
+    {"wait_for": {"packet": "0x08c8", "ms": 6000}}, {"wait": 300},
     {"shot": "ice-wall-attack", "crop": [262, 134, 500, 450], "threshold": 10},
     {"say": "@job 0"}, {"wait": 500}
   ]

@@ -2825,6 +2825,27 @@ mod tests {
     }
 
     #[test]
+    fn walks_go_round_an_ice_wall_while_it_stands() {
+        // Open ground, 7 wide; a wall of three cells across x = 3 (y 1 … 3) set to type 5 and back.
+        let mut gat = Gat { width: 7, height: 5, cells: vec![([0.0; 4], 0); 35] };
+        let straight = find_unit_path(&gat, [0, 2], [6, 2], 5).unwrap();
+        assert!(straight.contains(&[3, 2]));
+        for y in 1..=3 {
+            gat.set_kind([3, y], 5);
+        }
+        let round = find_unit_path(&gat, [0, 2], [6, 2], 5).unwrap();
+        assert!(round.iter().all(|cell| !(cell[0] == 3 && (1..=3).contains(&cell[1]))), "{round:?}");
+        assert_eq!(round.last(), Some(&[6, 2]));
+        // Gone again: straight through.
+        for y in 1..=3 {
+            gat.set_kind([3, y], 0);
+        }
+        assert_eq!(find_unit_path(&gat, [0, 2], [6, 2], 5).unwrap(), straight);
+        // A cell off the map is left alone.
+        gat.set_kind([9, 9], 5);
+    }
+
+    #[test]
     fn paths_avoid_walls_and_cut_no_corners() {
         // 0 walkable, 1 blocked; y grows upward in GAT, rows listed bottom first.
         let rows = ["00000", "01110", "00010", "00000"];

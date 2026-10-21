@@ -3421,9 +3421,11 @@ struct Attack {
     /// Fixed at the click (`slow_target`): a fast target is chased toward where it's walking to, every CHASE_GAP_MS;
     /// a slow one toward where it's drawn, every ATTACK_GAP_MS.
     fast: bool,
-    /// Ice Wall or a trap (a skill unit on the ground): its own reach and chase (`ground_unit_reach`), and a 0x0139
-    /// ends it.
+    /// Ice Wall or a trap (a skill unit on the ground): its own reach and chase (`ground_unit_reach`).
     ground: bool,
+    /// A ground one the server answered with 0x0139: from then on it is chased to the attack range alone, the reach
+    /// the server checks.
+    told: bool,
 }
 
 /// The attack a 0x0139 brings back on `target`, not sent, fast and slow swapped (anything but fast becomes fast).
@@ -3439,9 +3441,12 @@ fn rearmed(attack: Option<Attack>, was: Option<Attack>, target: u32) -> Attack {
     Attack { held, fast, ..Attack::new(target, continuous) }
 }
 
-/// Whether a 0x0139 for `target` ends the attack instead of bringing it back: one on Ice Wall or a trap.
-fn too_far_ends(attack: Option<Attack>, was: Option<Attack>, target: u32) -> bool {
-    attack.or(was).is_some_and(|attack| attack.ground && attack.target == target)
+/// The attack a 0x0139 brings back on Ice Wall or a trap (`target`): as `rearmed`, still on the ground unit, now
+/// chased to the attack range alone. None when the attack wasn't on one.
+// ponytail: the game drops it here (sent from 5 cells, re-armed as a unit it can't find); rathena checks the plain
+// attack range, so dropping it would leave a wall 2 to 5 cells away never hit.
+fn rearmed_ground(attack: Option<Attack>, was: Option<Attack>, target: u32) -> Option<Attack> {
+    attack.or(was).filter(|attack| attack.ground && attack.target == target).map(|_| Attack { ground: true, told: true, ..rearmed(attack, was, target) })
 }
 
 /// What letting go of the button does to an attack.
@@ -3454,7 +3459,7 @@ enum Release {
 
 impl Attack {
     fn new(target: u32, continuous: bool) -> Self {
-        Self { target, continuous, held: true, sent: false, fast: true, ground: false }
+        Self { target, continuous, held: true, sent: false, fast: true, ground: false, told: false }
     }
 
     fn release(&mut self) -> Release {
@@ -3534,10 +3539,10 @@ fn attack_send(attack: &Attack, last: Option<u64>, now: u64) -> AttackSend {
     }
 }
 
-/// In reach of Ice Wall or a trap: max(5, attack range) cells, flat, from the player's drawn point to the unit's cell
-/// centre.
-fn ground_unit_reach(from: [f32; 2], centre: [f32; 2], attack_range: i32) -> (bool, i32) {
-    let range = attack_range.max(5);
+/// In reach of Ice Wall or a trap: max(5, attack range) cells (the attack range alone once the server has said it's too
+/// far, `told`), flat, from the player's drawn point to the unit's cell centre.
+fn ground_unit_reach(from: [f32; 2], centre: [f32; 2], attack_range: i32, told: bool) -> (bool, i32) {
+    let range = if told { attack_range } else { attack_range.max(5) };
     let [dx, dz] = [centre[0] - from[0], centre[1] - from[1]];
     ((range * 5) as f32 + 5.5 >= (dx * dx + dz * dz).sqrt(), range)
 }
@@ -6538,18 +6543,27 @@ mod tests {
     fn reaches_walls_and_traps_from_their_own_range() {
         // A melee weapon: max(5, 1) cells, 30.5 units, flat, to the cell's centre.
         let from = world::drawn_point([10.0, 10.0]);
-        let reach = |dx: f32, dy: f32| ground_unit_reach(from, world::drawn_point([10.0 + dx, 10.0 + dy]), 1);
+        let reach = |dx: f32, dy: f32| ground_unit_reach(from, world::drawn_point([10.0 + dx, 10.0 + dy]), 1, false);
         assert_eq!(reach(6.0, 0.0), (true, 5));
         assert!(reach(6.0, 1.0).0 && !reach(6.0, 2.0).0);
         // A bow's 9 cells stay 9.
-        assert_eq!(ground_unit_reach(from, world::drawn_point([20.0, 10.0]), 9), (true, 9));
+        assert_eq!(ground_unit_reach(from, world::drawn_point([20.0, 10.0]), 9, false), (true, 9));
+        // Told it's too far: the melee's own 1 cell.
+        assert_eq!(ground_unit_reach(from, world::drawn_point([13.0, 10.0]), 1, true), (false, 1));
+        assert_eq!(ground_unit_reach(from, world::drawn_point([11.0, 10.0]), 1, true), (true, 1));
         // Its walk: 25 units short of the centre, on the line from the player.
         let gat = rustnarok_client::map::Gat { width: 40, height: 40, cells: vec![([0.0; 4], 0); 1600] };
         assert_eq!(world::chase_cell(&gat, from, world::drawn_point([20.0, 10.0]), 5), [15, 10]);
-        // A 0x0139 for it ends it, where a monster's comes back.
+        // A 0x0139 for it brings it back, unsent and told, whether it was still going or had ended.
         let wall = Attack { ground: true, sent: true, ..Attack::new(3354, true) };
-        assert!(too_far_ends(Some(wall), None, 3354) && too_far_ends(None, Some(wall), 3354));
-        assert!(!too_far_ends(Some(Attack::new(5, true)), None, 5) && !too_far_ends(None, None, 3354));
+        for (attack, was) in [(Some(wall), None), (None, Some(wall))] {
+            let again = rearmed_ground(attack, was, 3354).unwrap();
+            assert!(again.ground && again.told && !again.sent && again.target == 3354 && again.continuous);
+        }
+        // Not for a monster, another unit, or nothing.
+        assert_eq!(rearmed_ground(Some(Attack::new(5, true)), None, 5), None);
+        assert_eq!(rearmed_ground(Some(wall), None, 99), None);
+        assert_eq!(rearmed_ground(None, None, 3354), None);
     }
 
     #[test]

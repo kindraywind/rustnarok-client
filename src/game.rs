@@ -251,7 +251,7 @@ impl Game {
         let arrived = self.walk_cell == Some(world::floor_cell(from));
         // Ice Wall and traps: their own range, flat, and a walk whenever the chase cell changes (no timer).
         let (in_reach, range) = if attack.ground {
-            ground_unit_reach(from, drawn, self.attack_range)
+            ground_unit_reach(from, drawn, self.attack_range, attack.told)
         } else {
             let job = self.units.get(&attack.target).map_or(0, |unit| unit.job);
             let distance = reach_to(world::attack_distance(gat, from, drawn), job, self.location_radius(job));
