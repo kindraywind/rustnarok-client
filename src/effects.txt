@@ -1503,6 +1503,7 @@ spr	956	파이로테크닉	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onT
 spr	957	페트롤로지	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
 spr	958	히터	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
 spr	961	silent_brz	1	delayFrame=64;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	962	magma_flow	1	delayFrame=64;firstFrame=1;repeat=false;drawn=92;onTop=true
 func	79	quake	0	200
 func	90	quake	800	650
 func	90	quake	1600	650
@@ -2097,6 +2098,8 @@ wav	1048	effect\wl_telekinesis_intense	0
 wav	1049	effect\gn_illusiondoping	0
 wav	1050	effect\nc_magma_eruption	0
 wav	1062	effect\RL_HAMMER_OF_GOD	0
+wav	1082	effect\기공포	320
+wav	1088	effect\EF_FireWall	0
 wav	1872	effect\ef_beginspell	0
 wav	1876	effect\ef_beginspell	0
 wav	1902	effect\ef_beginspell	0
@@ -5234,6 +5237,10 @@ length	956	100
 length	957	100
 length	958	100
 length	961	100
+length	962	100
+length	1082	300
+length	1088	2000
+length	2338	70
 length	988	100
 length	1020	100
 length	920	40

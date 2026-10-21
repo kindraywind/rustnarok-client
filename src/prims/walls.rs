@@ -20,6 +20,7 @@ pub const RING_PURPLE: &str = "data\\texture\\effect\\ring_purple.tga";
 pub const RING_BLUE: &str = "data\\texture\\effect\\ring_blue.tga";
 pub const RING_RED: &str = "data\\texture\\effect\\ring_red.tga";
 pub const RING_BROWN: &str = "data\\texture\\effect\\ring_brown.tga";
+pub const FIGHTER_RING: &str = "data\\texture\\effect\\the_one_fighter_rises\\the_one_fighter_rises\\the_ring_00.tga";
 pub const ALPHA_DOWN: &str = first::ALPHA_DOWN;
 pub const STREAK: &str = first::STREAK;
 
@@ -154,6 +155,8 @@ pub const ELEMENTAL_CRESCENTS: RibbonLook = RibbonLook { rgb: [1.0; 3], additive
 pub const FIRE_BURST: RibbonLook = RibbonLook { texture: RING_RED, ..ELEMENTAL_CRESCENTS };
 pub const WIND_BURST: RibbonLook = RibbonLook { texture: RING_YELLOW, ..ELEMENTAL_CRESCENTS };
 pub const EARTH_BURST: RibbonLook = RibbonLook { texture: RING_BROWN, ..ELEMENTAL_CRESCENTS };
+/// The One Fighter Rises' (2338): Steel Body's slow crescents in grey-brown, fading 4 a tick, drawn on ages 1 to 59.
+pub const FIGHTER_RISES: RibbonLook = RibbonLook { texture: FIGHTER_RING, fall: 4.0, ticks: 59, forced: false, ..STEEL_BODY_RIBBONS };
 /// Grand Cross's four arcs: where from the caster's spot and the turn they start at.
 const ARCS: [([f32; 2], f32); 4] = [([23.0, 23.0], 180.0), ([23.0, -23.0], 90.0), ([-23.0, -23.0], 0.0), ([-23.0, 23.0], 270.0)];
 /// The arcs are drawn on ages 1…98, the bars on 1…89.
@@ -647,6 +650,11 @@ impl Walls {
         self.ribbons.push(Ribbons { look: &STORM_BLAST, unit, at: None, start: now });
     }
 
+    /// The One Fighter Rises' four grey-brown crescents on `unit`.
+    pub fn fighter_rises(&mut self, unit: Option<u32>, now: Instant) {
+        self.ribbons.push(Ribbons { look: &FIGHTER_RISES, unit, at: None, start: now });
+    }
+
     /// Ganbantein's four white crescents over the cell `at`.
     pub fn ganbantein(&mut self, at: Vector, now: Instant) {
         self.ribbons.push(Ribbons { look: &GANBANTEIN, unit: None, at: Some(at), start: now });
@@ -1125,6 +1133,33 @@ mod tests {
         assert_eq!(at(109).len(), 4, "age 110 is alpha 0 and still drawn");
         assert!(at(110).is_empty());
         walls.advance(start + TICK * 111, |_| 0);
+        assert!(walls.ribbons.is_empty());
+    }
+
+    #[test]
+    fn the_one_fighter_rises_opens_four_slow_crescents() {
+        let start = Instant::now();
+        let mut walls = Walls::default();
+        walls.fighter_rises(Some(1), start);
+        // Alpha 20 a tick to 200 at n = 10, then 4 less: 196 at 11, 4 at 59, 0 at 60.
+        assert_eq!([1, 10, 11, 59, 60].map(|n| ribbon_alpha(&FIGHTER_RISES, n)), [20.0, 200.0, 196.0, 4.0, 0.0]);
+        // Radius k + 1 + 0.1 n, turn 90k + 3 a tick, lean 79 at n = 1 and 30 from n = 50, 25 high.
+        assert!((0..4).all(|k| near(ribbon_shape(&FIGHTER_RISES, k, 1).0, k as f32 + 1.1) && near(ribbon_shape(&FIGHTER_RISES, k, 58).0, k as f32 + 6.8)));
+        assert_eq!((0..4).map(|k| ribbon_shape(&FIGHTER_RISES, k, 0).2).collect::<Vec<_>>(), [0.0, 90.0, 180.0, 270.0]);
+        assert!(near(ribbon_shape(&FIGHTER_RISES, 0, 2).2 - ribbon_shape(&FIGHTER_RISES, 0, 1).2, 3.0));
+        assert!(
+            near(ribbon_shape(&FIGHTER_RISES, 0, 1).1, 79.0)
+                && near(ribbon_shape(&FIGHTER_RISES, 0, 50).1, 30.0)
+                && near(ribbon_shape(&FIGHTER_RISES, 0, 59).1, 30.0)
+        );
+        assert!(near(ribbon_top(&FIGHTER_RISES, 0, 10, 0), 25.0));
+        // Drawn at ticks 0 … 58 (n = 1 … 59) in white, blended, on the unit; nothing after, and gone before its length of 70.
+        let at = |tick: u32| walls.meshes(start + TICK * tick, |_| Some([0.0; 3]));
+        let first = at(0);
+        assert!(first.len() == 4 && first.iter().all(|wall| wall.texture == FIGHTER_RING && !wall.additive && !wall.forced));
+        assert!(first[0].vertices.iter().all(|vertex| vertex.tint[..3] == [1.0; 3]));
+        assert!(at(58).len() == 4 && at(59).is_empty() && at(69).is_empty());
+        walls.advance(start + TICK * 70, |_| 0);
         assert!(walls.ribbons.is_empty());
     }
 

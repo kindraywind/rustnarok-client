@@ -1,6 +1,6 @@
 //! The knight and crusader skills' code-made shapes, a 16 ms tick at a time: Spiral Pierce's ten pairs of cones (339), Soul
-//! Breaker's four slashes (361), Pressure's falling cross (365), Martyr's Reckoning's 20 rays (366) and Head Crush's and Joint Beat's 24
-//! (399, 400).
+//! Breaker's four slashes (361) and Xeno Slasher's green ones (1082), Pressure's falling cross (365), Martyr's Reckoning's 20 rays (366)
+//! and Head Crush's and Joint Beat's 24 (399, 400).
 //!
 //! A shape's own age a counts from 1 at its first tick.
 
@@ -24,6 +24,10 @@ const SPIRAL_LAST: u32 = 54;
 /// Soul Breaker: four slashes, a square 20 from its middle to a corner, speed 0.8, the colour #C8C8FF.
 const SLASH_HALF: f32 = 20.0;
 const SLASH_TINT: [f32; 3] = [200.0 / 255.0, 200.0 / 255.0, 1.0];
+/// Soul Breaker's and Meteor Assault's caster flash (#FF00FF).
+const BREAKER_GLOW: [u8; 3] = [0xFF, 0x00, 0xFF];
+/// Xeno Slasher's slashes and its caster's flash are #00FF00.
+const XENO_TINT: [f32; 3] = [0.0, 1.0, 0.0];
 /// Pressure's cross starts 115 up and lands 19 up on tick 32; its flash waits until tick 27.
 const CROSS_START: f32 = 115.0;
 const CROSS_LAND: u32 = 32;
@@ -48,6 +52,9 @@ struct Breaker {
     start: Instant,
     from: Vector,
     slashes: [Slash; 4],
+    /// The slashes' colour and the caster's flash.
+    tint: [f32; 3],
+    glow: [u8; 3],
 }
 
 struct Pressure {
@@ -221,7 +228,17 @@ impl Knight {
     }
 
     /// Soul Breaker from `from` (the caster's place) toward `aim`: four slashes, their choices from `rand(n)` (0 to n − 1).
-    pub fn breaker(&mut self, caster: Option<u32>, from: Vector, aim: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    pub fn breaker(&mut self, caster: Option<u32>, from: Vector, aim: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.slashes(SLASH_TINT, BREAKER_GLOW, caster, from, aim, now, rand);
+    }
+
+    /// Xeno Slasher: Soul Breaker's slashes and flash in #00FF00.
+    pub fn xeno(&mut self, caster: Option<u32>, from: Vector, aim: Vector, now: Instant, rand: impl FnMut(u32) -> u32) {
+        self.slashes(XENO_TINT, [0x00, 0xFF, 0x00], caster, from, aim, now, rand);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn slashes(&mut self, tint: [f32; 3], glow: [u8; 3], caster: Option<u32>, from: Vector, aim: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
         // Straight at the aim, a whole number of degrees; 180 on the same spot.
         let (dx, dz) = (aim[0] - from[0], aim[2] - from[2]);
         let toward = if dx == 0.0 && dz == 0.0 { 180.0 } else { dz.atan2(dx).to_degrees().trunc() };
@@ -232,7 +249,7 @@ impl Knight {
             headings[k] = (toward + rand(31) as f32 - 15.0).rem_euclid(360.0);
         }
         let slashes = std::array::from_fn(|k| Slash { height: heights[k], heading: headings[k] });
-        self.breakers.push(Breaker { delay: 0, caster, start: now, from, slashes });
+        self.breakers.push(Breaker { delay: 0, caster, start: now, from, slashes, tint, glow });
     }
 
     /// Meteor Assault from the caster's feet `from`: 8 prims of 4 slashes flying out in the compass directions, each prim holding back
@@ -241,7 +258,7 @@ impl Knight {
         for prim in 0..8 {
             let delay = rand(6);
             let slashes = [(); 4].map(|()| Slash { height: 10.0 - rand(5) as f32, heading: 45.0 * prim as f32 });
-            self.breakers.push(Breaker { delay, caster, start: now, from, slashes });
+            self.breakers.push(Breaker { delay, caster, start: now, from, slashes, tint: SLASH_TINT, glow: BREAKER_GLOW });
         }
     }
 
@@ -328,7 +345,7 @@ impl Knight {
                 let (sin, cos) = slash.heading.to_radians().sin_cos();
                 let distance = slash_distance(a as u32);
                 let centre = [breaker.from[0] + distance * cos, breaker.from[1] + slash.height, breaker.from[2] + distance * sin];
-                let tint = [SLASH_TINT[0], SLASH_TINT[1], SLASH_TINT[2], alpha / 255.0];
+                let tint = [breaker.tint[0], breaker.tint[1], breaker.tint[2], alpha / 255.0];
                 let first = (slash.heading + 45.0) % 360.0;
                 let corner = |i: u32, uv: [f32; 2]| {
                     let (sin, cos) = (first + 90.0 * i as f32).to_radians().sin_cos();
@@ -402,12 +419,12 @@ impl Knight {
         crosses
     }
 
-    /// The body flags and colour Soul Breaker (magenta, additive, ticks 0 to 10) and Martyr's Reckoning (pale red outline copies,
+    /// The body flags and colour Soul Breaker (magenta, additive, ticks 0 to 10; Xeno Slasher green) and Martyr's Reckoning (pale red outline copies,
     /// ticks 20 to 40) give `unit` at `now`.
     pub fn glow(&self, unit: Option<u32>, now: Instant) -> Option<(u32, Option<[u8; 3]>)> {
         let breaking = self.breakers.iter().filter(|breaker| breaker.caster == unit).find_map(|breaker| {
             passes(breaker.start, now).checked_sub(1).filter(|&t| t <= 10)?;
-            Some((crate::actor::GLOW_ADDITIVE, Some([0xFF, 0x00, 0xFF])))
+            Some((crate::actor::GLOW_ADDITIVE, Some(breaker.glow)))
         });
         breaking.or_else(|| {
             self.martyrs.iter().filter(|martyr| martyr.unit == unit).find_map(|martyr| {
@@ -492,6 +509,24 @@ mod tests {
         let mut here = Knight::default();
         here.breaker(None, [0.0; 3], [0.0; 3], start, |_| 15);
         assert_eq!(here.breakers[0].slashes[0].heading, 180.0);
+    }
+
+    #[test]
+    fn xeno_slasher_throws_soul_breakers_slashes_in_green() {
+        let start = Instant::now();
+        let mut knight = Knight::default();
+        // Heights from the first four draws: 10 − 0 and 10 − 4; the headings' draws come after.
+        let mut draws = [0, 1, 2, 4, 0, 0, 0, 0].into_iter();
+        knight.xeno(Some(2), [10.0, 1.0, 10.0], [30.0, 1.0, 10.0], start, |_| draws.next().unwrap());
+        assert_eq!(knight.breakers[0].slashes.map(|slash| slash.height), [10.0, 9.0, 8.0, 6.0]);
+        // Seen on ticks 29 − k … 54 − k, the colour #00FF00, the normal blend.
+        let slashes = |tick: u32| knight.meshes(start + TICK * tick, |_| None).len();
+        assert_eq!((slashes(25), slashes(26), slashes(29), slashes(51), slashes(54), slashes(55)), (0, 1, 4, 4, 1, 0));
+        let wall = &knight.meshes(start + TICK * 29, |_| None)[0];
+        assert!(wall.texture == PURPLE_SLASH && !wall.additive && wall.vertices.iter().all(|vertex| vertex.tint[..3] == [0.0, 1.0, 0.0]));
+        // The body green and added on, ticks 0…10 only.
+        assert_eq!(knight.glow(Some(2), start + TICK * 10), Some((crate::actor::GLOW_ADDITIVE, Some([0, 0xFF, 0]))));
+        assert!(knight.glow(Some(2), start + TICK * 11).is_none());
     }
 
     #[test]

@@ -18,6 +18,7 @@ pub mod dancer;
 pub mod elemental;
 pub mod emblems;
 pub mod first;
+pub mod gaia;
 pub mod ground;
 pub mod guard;
 pub mod holes;
@@ -216,6 +217,7 @@ pub struct Prims {
     pub vortex: vortex::Vortex,
     pub snow: snow::Snow,
     pub emblems: emblems::Emblems,
+    pub gaia: gaia::Gaia,
     pub sheets: sheet::Sheets,
     pub portal: portal::Portal,
     pub sphere: sphere::Sphere,
@@ -673,6 +675,7 @@ impl Prims {
         self.cells.forget(unit);
         self.bodies.forget(unit);
         self.emblems.forget(unit);
+        self.gaia.forget(unit);
         self.portal.forget(unit);
         self.souls.forget(unit);
         self.guard.forget(unit);
