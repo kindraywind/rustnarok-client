@@ -2431,6 +2431,11 @@ const CART_CAST: u32 = 1677;
 const PRIME_CHARGE: u32 = 882;
 const DRAGON_RAYS: u32 = 885;
 const CHI_BURST: u32 = 886;
+/// The elementals' fire, wind and earth skills' burst on the elemental (936 to 938, in that order): the chi burst's crescents of their
+/// own ring and its flash in their colour.
+const FIRE_BURST: u32 = 936;
+const ELEMENTAL_BURSTS: [(&walls::RibbonLook, [u8; 3]); 3] =
+    [(&walls::FIRE_BURST, [0xFF, 0, 0]), (&walls::WIND_BURST, [0xFF, 0xFF, 0]), (&walls::EARTH_BURST, [0x50, 0x28, 0])];
 const MOON_SPIN: u32 = 890;
 /// Severe Rainstorm's cast ribbons (`prims::songs`).
 const RAINSTORM_CAST: u32 = 1286;
@@ -3444,11 +3449,19 @@ impl Effects {
             (CHI_BURST, Target::Unit(unit)) => {
                 self.textures.entry(walls::RING_BLUE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_BLUE, true).ok());
                 self.prims.walls.chi_burst(unit, now);
-                self.prims.guard.chi_burst(unit, now);
+                self.prims.guard.chi_burst(unit, [0, 0, 0xFF], now);
                 self.prims.brawl.chi_spread(unit, now);
             }
             (RAMPAGE_BODY, Target::Unit(unit)) => {
-                self.prims.guard.chi_burst(unit, now);
+                self.prims.guard.chi_burst(unit, [0, 0, 0xFF], now);
+                self.prims.brawl.chi_spread(unit, now);
+            }
+            (FIRE_BURST..=938, Target::Unit(unit)) => {
+                let (look, rgb) = ELEMENTAL_BURSTS[(id - FIRE_BURST) as usize];
+                let texture = look.texture();
+                self.textures.entry(texture.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, texture, true).ok());
+                self.prims.walls.elemental_burst(look, unit, now);
+                self.prims.guard.chi_burst(unit, rgb, now);
                 self.prims.brawl.chi_spread(unit, now);
             }
             (REVERB_FX, Target::Unit(unit)) => {
@@ -8310,6 +8323,47 @@ mod tests {
                 ("effect\\복호격", 496, false)
             ]
         );
+    }
+
+    #[test]
+    fn the_elementals_bursts_and_water_barrier_have_their_rows() {
+        let table = Table::load();
+        // Each of the nine skills shows its element's burst on the elemental and no longer Bash's; 300 ticks, no sound of their own.
+        for (effect, skills) in [(936, [8413, 8414, 8415]), (937, [8419, 8420, 8421]), (938, [8422, 8423, 8424])] {
+            assert!(table.lengths[&effect] == 300 && !table.sounds.contains_key(&effect));
+            for skill in skills {
+                assert!(table.struck(skill).unwrap().contains(&(Who::Caster, effect)) && table.caster(skill).is_none(), "{skill}");
+            }
+        }
+        assert_eq!(
+            ELEMENTAL_BURSTS.map(|(look, rgb)| (look.texture(), rgb)),
+            [
+                ("data\\texture\\effect\\ring_red.tga", [0xFF, 0, 0]),
+                ("data\\texture\\effect\\ring_yellow.tga", [0xFF, 0xFF, 0]),
+                ("data\\texture\\effect\\ring_brown.tga", [0x50, 0x28, 0]),
+            ]
+        );
+        // The damage packet's own sound at the listener at once, and the quake for Tropic, Wild Storm and Upheaval only.
+        let files = [
+            (8413, "effect\\EF_FireWall"),
+            (8414, "effect\\ef_firehit"),
+            (8415, "effect\\EF_FireArrow1"),
+            (8419, "effect\\EF_ThunderStorm"),
+            (8420, "effect\\EF_LightBolt1"),
+            (8421, "effect\\EF_LightBolt3"),
+            (8422, "_stonecurse"),
+            (8423, "evil_cloud_hermit_attack"),
+            (8424, "effect\\wizard_earthspike"),
+        ];
+        for (skill, file) in files {
+            let sounds = &table.hit_sounds[&skill];
+            assert!(sounds.len() == 1 && sounds[0].file == file && sounds[0].delay_ms == 0 && sounds[0].listener, "{skill}");
+            let quake = table.hit_quakes.get(&skill).cloned().unwrap_or_default();
+            assert_eq!(quake, if [8415, 8421, 8424].contains(&skill) { vec![(Duration::ZERO, QUAKE_LONG)] } else { vec![] }, "{skill}");
+        }
+        // Water Barrier's cell: once on each skill unit of type 238, for 29 999 ticks, drawn in code.
+        assert!(table.units_once.contains(&238) && table.units[&238] == sage::WATER_BARRIER && table.lengths[&sage::WATER_BARRIER] == 29_999);
+        assert!(sage::LOOPS.iter().any(|&(kept, _)| kept == sage::WATER_BARRIER) && !table.sounds.contains_key(&sage::WATER_BARRIER));
     }
 
     #[test]

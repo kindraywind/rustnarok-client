@@ -137,8 +137,8 @@ enum Flicker {
     Concentration,
     /// Hundred Spear's pale yellow glow: outline copies and #FFFF96, ticks 20 to 100.
     Spear,
-    /// The chi burst's flash: outline copies added on in #0000FF on ticks 0 to 30.
-    ChiBurst,
+    /// The chi burst's flash: outline copies added on in its colour (#0000FF; the elementals' red, yellow or brown) on ticks 0 to 30.
+    ChiBurst([u8; 3]),
     /// Sonic Wave's blue strobe and Wind Slash's green one: outline copies added on in its colour on even ticks 4 to 52, white on
     /// the odd ones.
     OutlineStrobe([u8; 3]),
@@ -230,7 +230,7 @@ fn flicker_at(flicker: Flicker, e: u32) -> Option<(u32, Option<[u8; 3]>)> {
         }
         Flicker::Outlined(rgb, last) => (e <= last).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb)) } else { (GLOW_OUTLINE, Some([255; 3])) }),
         Flicker::Spear => (20..=100).contains(&e).then_some((GLOW_OUTLINE, Some([0xFF, 0xFF, 0x96]))),
-        Flicker::ChiBurst => (e <= 30).then_some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 0, 0xFF]))),
+        Flicker::ChiBurst(rgb) => (e <= 30).then_some((GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb))),
         Flicker::OutlineStrobe(rgb) => (4..=52).contains(&e).then_some(if even { (GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb)) } else { (0, Some([255; 3])) }),
         Flicker::Blink => (6..=60).contains(&e).then_some((0, Some(if even { [0; 3] } else { [255; 3] }))),
         Flicker::Concentration => (10..=33).contains(&e).then_some((if even { GLOW_ADDITIVE } else { 0 }, Some(LILAC))),
@@ -457,9 +457,9 @@ impl Guard {
         self.bodies.push(Body { unit, start: now, flicker: Flicker::Outlined([0x9B, 0x9B, 0xFF], 60) });
     }
 
-    /// The chi burst's blue flash of `unit`.
-    pub fn chi_burst(&mut self, unit: Option<u32>, now: Instant) {
-        self.bodies.push(Body { unit, start: now, flicker: Flicker::ChiBurst });
+    /// The chi burst's flash of `unit` in `rgb`.
+    pub fn chi_burst(&mut self, unit: Option<u32>, rgb: [u8; 3], now: Instant) {
+        self.bodies.push(Body { unit, start: now, flicker: Flicker::ChiBurst(rgb) });
     }
 
     /// Hundred Spear's glow on `unit`.
@@ -640,7 +640,7 @@ impl Guard {
                 Flicker::Concentration if e > 33 => fade_back(LILAC, e - 33),
                 Flicker::Blink if e > 60 => fade_back([0; 3], e - 60),
                 Flicker::Spear if e > 100 => fade_back([0xFF, 0xFF, 0x96], e - 100),
-                Flicker::ChiBurst if e > 30 => fade_back([0, 0, 0xFF], e - 30),
+                Flicker::ChiBurst(rgb) if e > 30 => fade_back(rgb, e - 30),
                 Flicker::OutlineStrobe(rgb) if e > 52 => fade_back(rgb, e - 52),
                 _ => None,
             }
@@ -1054,11 +1054,26 @@ mod tests {
         use crate::actor::{GLOW_ADDITIVE, GLOW_OUTLINE};
         let start = Instant::now();
         let mut guard = Guard::default();
-        guard.chi_burst(Some(1), start);
+        guard.chi_burst(Some(1), [0, 0, 0xFF], start);
         let glow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
         assert_eq!((glow(0), glow(30)), (Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 0, 0xFF]))), Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some([0, 0, 0xFF])))));
         assert!(glow(31).is_none());
         assert_eq!(guard.body_tint(Some(1), start + TICK * 31), Some([8, 8, 255]));
+    }
+
+    #[test]
+    fn the_elementals_bursts_flash_red_yellow_or_brown() {
+        use crate::actor::{GLOW_ADDITIVE, GLOW_OUTLINE};
+        let start = Instant::now();
+        for rgb in [[0xFF, 0, 0], [0xFF, 0xFF, 0], [0x50, 0x28, 0]] {
+            let mut guard = Guard::default();
+            guard.chi_burst(Some(1), rgb, start);
+            let glow = |tick: u32| guard.glow(Some(1), start + TICK * tick);
+            // Additive with the outline copies on e = 0 … 30 only, then drifting back to white by 8 a channel a tick.
+            assert!([0, 30].iter().all(|&e| glow(e) == Some((GLOW_OUTLINE | GLOW_ADDITIVE, Some(rgb)))));
+            assert!(glow(31).is_none());
+            assert_eq!(guard.body_tint(Some(1), start + TICK * 31), Some(rgb.map(|channel| channel.saturating_add(8))));
+        }
     }
 
     #[test]

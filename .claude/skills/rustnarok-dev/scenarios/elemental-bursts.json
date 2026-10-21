@@ -1,0 +1,18 @@
+{
+  "about": "The elementals' fire, wind and earth bursts (issue #817), from npc/elemental-bursts.txt: Pyrotechnic's, Gust's and Petrology's burst played on the player, flashing it red, yellow or brown with four crescent ribbons of red flame, yellow or brown opening from its feet (936 - 938, which drew nothing before).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 172 364"}, {"settle": 1500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/elemental-bursts.txt"}, {"wait": 1500},
+    {"expect": {"state": {"player.cell": [172, 364]}}},
+    {"move": [1000, 750]},
+    {"key": "Tab"}, {"type": "npc:RustnarokBursts"}, {"key": "Tab"}, {"type": "fire"}, {"key": "Enter"}, {"wait_for": {"packet": "0x01f3", "pause": true, "ms": 8000}}, {"cmd": {"cmd": "clock", "action": "step", "ms": 200}}, {"shot": "pyrotechnic-burst", "crop": [312, 184, 400, 400], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 2000},
+    {"type": "wind"}, {"key": "Enter"}, {"wait_for": {"packet": "0x01f3", "pause": true, "ms": 8000}}, {"cmd": {"cmd": "clock", "action": "step", "ms": 200}}, {"shot": "gust-burst", "crop": [312, 184, 400, 400], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 2000},
+    {"type": "earth"}, {"key": "Enter"}, {"wait_for": {"packet": "0x01f3", "pause": true, "ms": 8000}}, {"cmd": {"cmd": "clock", "action": "step", "ms": 200}}, {"shot": "petrology-burst", "crop": [312, 184, 400, 400], "threshold": 30},
+    {"cmd": {"cmd": "clock", "action": "resume"}}, {"wait": 2000},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/elemental-bursts.txt"}, {"wait": 300}
+  ]
+}

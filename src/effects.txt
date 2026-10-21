@@ -3191,17 +3191,18 @@ caster	405	16
 caster	482	16
 caster	691	16
 caster	8206	16
-caster	8414	16
-caster	8415	16
+caster	8413	-1
+caster	8414	-1
+caster	8415	-1
 caster	8416	16
 caster	8417	16
 caster	8418	16
-caster	8419	16
-caster	8420	16
-caster	8421	16
-caster	8422	16
-caster	8423	16
-caster	8424	16
+caster	8419	-1
+caster	8420	-1
+caster	8421	-1
+caster	8422	-1
+caster	8423	-1
+caster	8424	-1
 caster	364	-1
 caster	412	-1
 caster	2015	-1
@@ -5310,6 +5311,10 @@ length	634	23
 length	856	29999
 length	1026	999
 length	932	100
+length	936	300
+length	937	300
+length	938	300
+length	939	29999
 length	1545	300
 length	1568	300
 length	1569	150
@@ -5370,6 +5375,18 @@ skillwav	2028	effect\t_낙법	0	listener
 skillwav	2021	effect\수둔	0	listener
 skillwav	2324	effect\LG_HESPERUSLIT	0	listener
 hitwav	2034	effect\mon_맹룡과강	0	listener
+hitwav	8413	effect\EF_FireWall	0	listener
+hitwav	8414	effect\ef_firehit	0	listener
+hitwav	8415	effect\EF_FireArrow1	0	listener
+hitquake	8415	0	650
+hitwav	8419	effect\EF_ThunderStorm	0	listener
+hitwav	8420	effect\EF_LightBolt1	0	listener
+hitwav	8421	effect\EF_LightBolt3	0	listener
+hitquake	8421	0	650
+hitwav	8422	_stonecurse	0	listener
+hitwav	8423	evil_cloud_hermit_attack	0	listener
+hitwav	8424	effect\wizard_earthspike	0	listener
+hitquake	8424	0	650
 skillwav	2350	effect\스윙댄스	0	listener
 skillwav	2351	effect\연인들을위한심포니	0	listener
 skillwav	2352	effect\AB_judex	0	listener
