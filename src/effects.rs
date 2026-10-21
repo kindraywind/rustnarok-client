@@ -2375,6 +2375,8 @@ const NPC_STOP: u32 = 453;
 /// `prims::brawl`).
 const TIGER_CANNON_FX: u32 = 889;
 const ELBOW_LINES: u32 = 892;
+/// Dark Piercing's dark lines through the target (`prims::sniper`), two launches a packet.
+const DARK_PIERCING: u32 = 1030;
 const KNUCKLE_LINES: u32 = 893;
 const GROUND_SHAKE: u32 = 894;
 /// Hesperus Lit's pillars, Trample's red disc, Shield Press' shield, Pinpoint Attack's shields and swords, the three buffs' needles
@@ -2455,6 +2457,8 @@ const POWER_UP: u32 = 455;
 const WARMTH_GLINTS: u32 = 418;
 const POWER_UP_TICKS: u32 = 1500;
 const ANTI_MAGIC: u32 = 675;
+/// Max Pain's red-orange dome: Anti-Magic's (`prims::guard`).
+const MAX_PAIN: u32 = 1032;
 /// EF_HITDARK's near-black sparks and Lope's motes and petals (`HitSpark`, `prims::petals`).
 pub const HIT_DARK: u32 = 180;
 const LOPE: u32 = 411;
@@ -2604,6 +2608,8 @@ const POEM_STATUS: u16 = 433;
 /// Sound of Destruction's copies, Windmill's tornado and Dark Illusion's lines (`prims::brawl`).
 const SELF_DESTRUCTION: u32 = 183;
 const BLOOD_DRAIN: u32 = 216;
+/// Wide Suck's drop from each victim to the monster.
+const WIDE_SUCK: u32 = 1052;
 const STORM_BLAST: u32 = 263;
 const HIT_LINE: u32 = 330;
 const RAGE_BURST: u32 = 377;
@@ -2680,7 +2686,7 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 52] = [
+pub const AIMED: [u32; 54] = [
     EF_TETRA,
     CANNON_LINES,
     STIN,
@@ -2696,6 +2702,7 @@ pub const AIMED: [u32; 52] = [
     HIT_LINE_COUNTER,
     PINPOINT_FX,
     ELBOW_LINES,
+    DARK_PIERCING,
     KNUCKLE_LINES,
     SPEAR_RUSH,
     GREAT_ECHO_V,
@@ -2705,6 +2712,7 @@ pub const AIMED: [u32; 52] = [
     RELEASE,
     SPEAR_FLASH,
     BLOOD_DRAIN,
+    WIDE_SUCK,
     CHEMICAL,
     MARIONETTE_LINK,
     SHARP_SHOOTING,
@@ -3447,6 +3455,13 @@ impl Effects {
                 }
                 let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
                 self.prims.guard.anti_magic(unit, facing, now);
+            }
+            (MAX_PAIN, Target::Unit(unit)) => {
+                for path in [guard::GUARD_K, guard::GUARD_K2] {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
+                self.prims.guard.max_pain(unit, facing, now);
             }
             (172..=179, Target::Unit(_) | Target::Ground) => {
                 let path = cells::sheet_texture(id);
@@ -4601,6 +4616,18 @@ impl Effects {
                 self.play_sounds(table, id, from, now);
                 self.prims.sniper.elbow(caster, to, now);
             }
+            DARK_PIERCING => {
+                self.textures.entry(sniper::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, sniper::CLOUD, true).ok());
+                // Two launches on the target, each with its own hit sounds; the spear sound at the listener once a packet.
+                self.play_sounds(table, id, to, now);
+                for sound in table.sounds.get(&id).into_iter().flatten().filter(|sound| !sound.listener) {
+                    self.sounds.push((now + Duration::from_millis(sound.delay_ms), format!("{}.wav", sound.file), to));
+                }
+                let target = (target != own).then_some(target);
+                for _ in 0..2 {
+                    self.prims.sniper.dark_piercing(target, from, now);
+                }
+            }
             KNUCKLE_LINES => {
                 self.textures.entry(brawl::STRIP.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::STRIP, true).ok());
                 self.play_sounds(table, id, from, now);
@@ -4660,6 +4687,11 @@ impl Effects {
                 self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
                 // The drops leave the target for the caster: `to` is the one hit.
                 self.prims.blood_drain(to, from, now);
+            }
+            WIDE_SUCK => {
+                self.sprites.entry(crate::prims::GHOST_SPRITE.to_owned()).or_insert_with(|| SpriteSet::at(grf, crate::prims::GHOST_SPRITE));
+                // The drop leaves the victim (`to`) for the monster.
+                self.prims.wide_suck(to, from, now);
             }
             CHEMICAL => {
                 self.textures.entry(brawl::STRIP.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, brawl::STRIP, true).ok());
@@ -9173,5 +9205,21 @@ mod tests {
         assert_eq!(held_frame(&str, true, 5.0), 5.0);
         // Nothing is drawn from the tick after the length.
         assert!(playing_ticks(669, &str, None, true) == 24);
+    }
+
+    #[test]
+    fn dark_piercing_max_pain_and_wide_suck_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Dark Piercing aimed from the caster at its target: two hits 160 and 320 ms in (each launch's), the spear at the listener.
+        assert!(AIMED.contains(&DARK_PIERCING) && table.struck(715).unwrap().contains(&(Who::Target, DARK_PIERCING)));
+        assert_eq!(sounds(DARK_PIERCING), [("effect\\EF_hit2", 160, false), ("effect\\EF_hit4", 320, false), ("effect\\LG_CANNONSPEAR", 0, true)]);
+        // Max Pain's dome on the monster from all four rows, with its sound at once.
+        assert!(!AIMED.contains(&MAX_PAIN) && table.struck(716).unwrap().contains(&(Who::Caster, MAX_PAIN)));
+        assert!([716, 717].iter().all(|&skill| table.used(skill).unwrap().contains(&(Who::Caster, MAX_PAIN))));
+        assert_eq!(sounds(MAX_PAIN), [("effect\\kyrie_guard", 0, false)]);
+        // Wide Suck aimed at each victim, silent.
+        assert!(AIMED.contains(&WIDE_SUCK) && table.used(722).unwrap().contains(&(Who::Target, WIDE_SUCK)) && !table.sounds.contains_key(&WIDE_SUCK));
+        assert_eq!([DARK_PIERCING, MAX_PAIN, WIDE_SUCK].map(|id| table.lengths[&id]), [5000, 999, 200]);
     }
 }

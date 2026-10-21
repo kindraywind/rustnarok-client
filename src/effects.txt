@@ -2052,6 +2052,10 @@ wav	888	effect\sr_earthshaker	0
 wav	889	effect\mon_맹룡과강	80
 wav	892	effect\EF_hit2	160
 wav	892	effect\EF_hit4	320
+wav	1030	effect\EF_hit2	160
+wav	1030	effect\EF_hit4	320
+wav	1030	effect\LG_CANNONSPEAR	0	listener
+wav	1032	effect\kyrie_guard	0
 wav	893	effect\SR_KNUCKLEARROW	0	listener
 wav	905	effect\LG_TRAMPLE	0	listener
 wav	906	effect\프레셔	48
@@ -5274,6 +5278,9 @@ length	553	200
 length	554	200
 length	555	200
 length	675	200
+length	1030	5000
+length	1032	999
+length	1052	200
 length	850	100
 length	634	23
 length	932	100
