@@ -1,0 +1,22 @@
+// Pictures over a head point (issue #836): a training dummy 3 cells east of prt_fild06 180,180. Whisper npc:RustnarokHeads
+// "epiclesis" and it casts AB_EPICLESIS on the bare ground at 187,178 (a monster needs no SP or
+// items), "fighter" and the player casts MH_THE_ONE_FIGHTER_RISES, "cheer" and Cheer Up's word (1142) plays on the player:
+// rathena has no cast for WE_CHEERUP.
+// Loaded and unloaded by scenarios/head-pictures.json.
+prt_fild06,1,1,0	script	RustnarokHeads	-1,{
+	end;
+OnInit:
+	monster "prt_fild06", 183, 180, "--ja--", 2408, 1;
+	.east = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	percentheal 0, 100;
+	if (@whispervar0$ == "epiclesis") {
+		unitskillusepos .east, "AB_EPICLESIS", 1, 187, 178;
+	} else if (@whispervar0$ == "fighter") {
+		unitskilluseid getcharid(3), "MH_THE_ONE_FIGHTER_RISES", 1;
+	} else if (@whispervar0$ == "cheer") {
+		specialeffect2 1142;
+	}
+	end;
+}

@@ -10,6 +10,7 @@
 # func <effect id> quake <delay ms> <duration ms>: what the client does in code for the effect; quake shakes the camera
 # length <effect id> <ticks>: how long an effect lasts (16 ms ticks): an STR plays that long when shorter than its keys (a `hold` one, longer); on a ground unit it starts again 8 ticks before that (Quagmire's 95: 20)
 # unit <skill unit type> <effect id> [once]: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there (once: played once and kept, not started again)
+# unitw <skill unit type> <world id>: the STR world effect (world_str.txt) such a unit also starts once as it comes into sight, owned by the unit (it follows the unit's cell and ends with it)
 # area <skill unit type> <effect id> <lift>: the effect plays on a grid of points round each such unit's cell (one point at range 0, 6 units apart), now and every length less 20 ticks while it stands; lift is how far below the ground its anchor goes
 # rsm <skill unit type> <model under data\model\ without .rsm, or an .rsm2 with its extension>: the model standing on such a unit's cell (traps)
 # wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
@@ -4814,6 +4815,7 @@ used	5014	caster	1042
 used	5071	caster	1042
 used	5023	caster	446
 used	5065	target	408
+used	5065	caster	1142
 used	5313	target	495
 used	5336	caster	58
 used	8002	caster	456
@@ -4828,6 +4830,7 @@ used	8011	caster	564
 used	8026	caster	961
 used	8039	caster	962
 used	8051	caster	2338
+used	8051	caster	2339
 used	8603	target	313
 used	8604	target	253
 used	2556	caster	153
@@ -4951,6 +4954,7 @@ unit	199	1555
 unit	200	671	once
 unit	201	672	once
 unit	202	1655
+unitw	202	1654
 unit	203	142	once
 unit	204	822	once
 unit	205	825
