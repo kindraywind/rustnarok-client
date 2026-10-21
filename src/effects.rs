@@ -87,6 +87,8 @@ pub struct Table {
     units: HashMap<u32, u32>,
     /// Units whose effect plays once and is kept rather than starting again.
     units_once: std::collections::HashSet<u32>,
+    /// The STR world effect a unit of a skill unit type also starts, owned by the unit (`unitw`).
+    unit_worlds: HashMap<u32, u32>,
     /// The units whose effect plays on a grid of points round their cell, again and again: the effect and how far below the ground
     /// its anchor is put (`area`).
     areas: HashMap<u32, (u32, f32)>,
@@ -158,6 +160,7 @@ impl Table {
             hit_quakes: HashMap::new(),
             units: HashMap::new(),
             units_once: std::collections::HashSet::new(),
+            unit_worlds: HashMap::new(),
             areas: HashMap::new(),
             models: HashMap::new(),
             lengths: HashMap::new(),
@@ -224,6 +227,11 @@ impl Table {
                         if fields.get(3) == Some(&"once") {
                             table.units_once.insert(kind);
                         }
+                    }
+                }
+                ["unitw", ..] => {
+                    if let (Some(kind), Some(id)) = (number(1), number(2)) {
+                        table.unit_worlds.insert(kind, id);
                     }
                 }
                 ["minid", ..] => {
@@ -396,6 +404,11 @@ impl Table {
     /// What a ground skill shows, when the table has the skill.
     pub fn ground(&self, skill: u16) -> Option<&[(Who, u32)]> {
         self.grounds.get(&skill).map(Vec::as_slice)
+    }
+
+    /// The STR world effect a unit of this skill unit type starts on itself.
+    pub fn unit_world(&self, kind: u32) -> Option<u32> {
+        self.unit_worlds.get(&kind).copied()
     }
 
     /// What a trap of this skill unit type shows when it goes off.
@@ -1949,6 +1962,8 @@ pub struct Effects {
     sounds: Vec<(Instant, String, Vector)>,
     /// The skill unit type of each ground unit shown, for what it shows when it changes (a trap going off).
     unit_kinds: HashMap<u32, u32>,
+    /// The STR world effect each ground unit started on itself (`unitw`).
+    unit_worlds: HashMap<u32, u32>,
     hits: Vec<HitSpark>,
     auras: Vec<Banded>,
     /// The game's hand-made effects (Soul Strike's ghosts, Fire Ball's balls, spikes…), the ghost sprite's layers, the
@@ -4301,6 +4316,11 @@ impl Effects {
         // The server tells again of units coming back into sight.
         self.forget(id);
         self.unit_kinds.insert(id, kind);
+        // Epiclesis' tree stands on its unit, one copy a unit, looping until the unit goes.
+        if let Some(world) = table.unit_world(kind) {
+            self.launch_world(gpu, grf, table, world, Some(Some(id)), at, false, 0);
+            self.unit_worlds.insert(id, world);
+        }
         // Poison Mist's cells put a puff of mist on a grid round them, now and every length − 20 ticks.
         if let Some(&(effect, lift)) = table.areas.get(&kind) {
             let period = table.lengths.get(&effect).copied().unwrap_or(21).saturating_sub(20).max(1);
@@ -5270,6 +5290,9 @@ impl Effects {
     pub fn forget(&mut self, unit: u32) {
         self.areas.retain(|area| area.id != unit);
         self.worlds.remove_status(Some(unit), None);
+        if let Some(world) = self.unit_worlds.remove(&unit) {
+            self.worlds.remove(Some(Some(unit)), world);
+        }
         self.prims.sage.forget(unit);
         self.prims.stone.forget(unit);
         self.prims.forget(unit);
@@ -8317,6 +8340,61 @@ mod tests {
         assert!(table.used(8051).unwrap().contains(&(Who::Caster, FIGHTER_RISES)) && !table.sounds.contains_key(&FIGHTER_RISES));
         assert_eq!(table.lengths[&FIGHTER_RISES], 70);
         assert!(!table.lengths.contains_key(&2339) && !table.sounds.contains_key(&2339));
+    }
+
+    #[test]
+    fn epiclesis_tree_fighter_shockwave_and_cheer_up_word_start_on_their_units() {
+        let table = Table::load();
+        assert_eq!(table.unit_world(202), Some(1654));
+        assert!(table.used(8051).unwrap().contains(&(Who::Caster, 2339)) && table.used(5065).unwrap().contains(&(Who::Caster, 1142)));
+        assert!([1654, 2339, 1142].iter().all(|id| table.world(*id).is_some() && !table.has_str(*id)));
+        // The head rule: the skill unit's tree 38 units up, the others from a body 27.2 high.
+        let body = world_str::Body { height: 27.2, scale: 1.0, rides: false, doram: false };
+        assert_eq!(world_str::head_offset(1654, 0.0, -3.0, world_str::Body::skill_unit()), Some([0.0, 38.0]));
+        let up = |id, adjust| world_str::head_offset(id, 0.0, adjust, body).map(|[_, up]| (up * 10.0).round() / 10.0);
+        assert_eq!((up(2339, -4.0), up(1142, -6.0)), (Some(34.2), Some(32.2)));
+        // The tree: one copy a unit, looping every 101 ticks, its sound once, gone with its unit.
+        let (mut worlds, unit) = (Worlds::default(), 9);
+        let owner = Some(Some(unit));
+        let start = |worlds: &mut Worlds, id: u32, last: i32| {
+            let launch = world_str::Launch { id, owner, point: [0.0; 3], unique: false, life: 0, min: false, roll: 0 };
+            worlds.launch(table.world(id).unwrap(), &launch, |_| Some(frames(last)))
+        };
+        let tree = start(&mut worlds, 1654, 100);
+        assert_eq!(start(&mut worlds, 1654, 100), tree);
+        assert_eq!(worlds.iter().count(), 1);
+        let mut units = HashMap::from([(unit, [5.0, 0.0, 5.0])]);
+        let sounds = |worlds: &mut Worlds, units: &HashMap<u32, Vector>, count: usize| {
+            let feet = |id: Option<u32>| id.and_then(|id| units.get(&id).copied());
+            let body = |_: Option<u32>| Some(world_str::Body::skill_unit());
+            let scene = world_str::Scene {
+                player: [0.0; 3],
+                feet: &feet,
+                body: &body,
+                longitude: 0.0,
+                right: [1.0, 0.0, 0.0],
+                up: [0.0, 1.0, 0.0],
+                ground: &|_, _| 0.0,
+            };
+            (0..count).flat_map(|_| worlds.tick(&scene)).filter(|fired| matches!(fired, world_str::Fired::Sound(..))).count()
+        };
+        assert_eq!(sounds(&mut worlds, &units, 101), 1);
+        assert_eq!(worlds.iter().next().unwrap().timeline.frame, 101);
+        assert_eq!(sounds(&mut worlds, &units, 201), 0);
+        assert_eq!(worlds.iter().next().unwrap().timeline.frame, 100);
+        units.clear();
+        sounds(&mut worlds, &units, 1);
+        assert_eq!(worlds.iter().count(), 0);
+        // The shockwave and the word: 61 frames each, following their unit, then over.
+        units.insert(unit, [5.0, 0.0, 5.0]);
+        for id in [2339, 1142] {
+            start(&mut worlds, id, 60);
+            sounds(&mut worlds, &units, 61);
+            assert!(worlds.playing(owner, id));
+            assert_eq!(worlds.iter().find(|copy| copy.id == id).unwrap().position, [5.0, 0.0, 5.0]);
+            sounds(&mut worlds, &units, 1);
+            assert!(!worlds.playing(owner, id));
+        }
     }
 
     #[test]
