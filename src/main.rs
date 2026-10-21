@@ -1216,6 +1216,8 @@ struct Game {
     /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
     /// and the charm's pictures, the coin's sprite.
     spirits: HashMap<Option<u32>, Orbs>,
+    /// The last Shadow Scar count each unit was sent with.
+    shadow_scars: HashMap<u32, u16>,
     sphere: Option<Texture>,
     shield: Option<Texture>,
     charm: Option<Texture>,
@@ -4058,6 +4060,13 @@ fn change_orbs(spirits: &mut HashMap<Option<u32>, Orbs>, unit: Option<u32>, chan
     }
 }
 
+/// Stores a unit's new Shadow Scar count; Critical Wound's streaks play on it when the count rises above the last, with effects on.
+// ponytail: the count is kept even when it falls, so a rise after a fall plays again.
+fn shadow_scars_rose(scars: &mut HashMap<u32, u16>, unit: u32, amount: u16, effects_on: bool) -> bool {
+    let last = scars.insert(unit, amount).unwrap_or(0);
+    effects_on && amount > last
+}
+
 /// The Royal Guard line, whose rage spheres rathena sends as shields (and as spheres when one comes into view).
 // ponytail: both packets go into the one sphere count for these jobs.
 fn guard_job(job: u16) -> bool {
@@ -5971,6 +5980,11 @@ mod tests {
         change_orbs(&mut spirits, None, |orbs| orbs.spheres = 0);
         assert!(spirits.is_empty());
         assert!(guard_job(4066) && !guard_job(4054));
+        // Shadow Scars: the counts 1, 2, 2, 3, 1, 2 play the streaks at the 1st, 2nd, 4th and 6th; none with effects off.
+        let mut scars = HashMap::new();
+        let rose = [1, 2, 2, 3, 1, 2].map(|amount| shadow_scars_rose(&mut scars, 7, amount, true));
+        assert_eq!(rose, [true, true, false, true, false, true]);
+        assert!(!shadow_scars_rose(&mut scars, 7, 3, false) && scars[&7] == 3);
         // A glow on black: black goes clear, a dim red stays red, half as opaque.
         let image = render::glow(image::RgbaImage::from_pixel(1, 1, image::Rgba([128, 0, 0, 255])));
         assert_eq!(image.get_pixel(0, 0).0, [255, 0, 0, 128]);

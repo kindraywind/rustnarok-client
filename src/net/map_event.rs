@@ -547,6 +547,11 @@ pub enum MapEvent {
         id: u32,
         count: u16,
     },
+    /// How many Shadow Scars a unit carries.
+    ShadowScars {
+        unit: u32,
+        amount: u16,
+    },
     /// The bank opens (rathena answers in its own words instead where banking is off).
     BankOpened,
     /// What the account keeps.

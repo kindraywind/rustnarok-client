@@ -1,0 +1,22 @@
+// Monster casts (issue #827): a training dummy 2 cells east of prt_fild06 180,180, which can't cast. Whisper
+// npc:RustnarokCasts "slowcast" for Slow Cast's effect on the player (its cast sends no hit packet), "cwound" or "ignition"
+// and the player casts NPC_CRITICALWOUND on the dummy or NPC_IGNITIONBREAK; "scar" gives the player an Enchanting Shadow that
+// leaves a Shadow Scar at every hit for a minute. Loaded and unloaded by scenarios/monster-casts.json.
+prt_fild06,1,1,0	script	RustnarokCasts	-1,{
+	end;
+OnInit:
+	monster "prt_fild06", 182, 180, "--ja--", 2408, 1;
+	.gid = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "slowcast") {
+		specialeffect2 676;
+	} else if (@whispervar0$ == "cwound") {
+		unitskilluseid getcharid(3), "NPC_CRITICALWOUND", 1, .gid;
+	} else if (@whispervar0$ == "ignition") {
+		unitskilluseid getcharid(3), "NPC_IGNITIONBREAK", 1, getcharid(3);
+	} else if (@whispervar0$ == "scar") {
+		sc_start SC_SHADOW_WEAPON, 60000, 100;
+	}
+	end;
+}

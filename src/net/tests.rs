@@ -754,6 +754,14 @@ fn decodes_spirits() {
 }
 
 #[test]
+fn decodes_shadow_scars() {
+    // The unit at 2, an unused u32 at 6, the count at 10.
+    let packet = [&ZC_TARGET_SPIRITS.to_le_bytes()[..], &2_000_002u32.to_le_bytes(), &0u32.to_le_bytes(), &3u16.to_le_bytes()].concat();
+    assert_eq!(Some(packet.len() as i32), packet_length(ZC_TARGET_SPIRITS));
+    let Some(MapEvent::ShadowScars { unit: 2_000_002, amount: 3 }) = decode_map_packet(&packet) else { panic!() };
+}
+
+#[test]
 fn speaks_to_the_bank() {
     assert_eq!(encode_bank_move(true, 2_000_002, 1000)[..2], CZ_REQ_BANKING_DEPOSIT.to_le_bytes());
     assert_eq!(encode_bank_move(false, 2_000_002, 1000), [0xA9, 0x09, 0x82, 0x84, 0x1E, 0x00, 0xE8, 0x03, 0, 0]);
