@@ -341,6 +341,8 @@ PNG), `lua_dump`, `messages`, `job_name`, `act_sounds`, `str_dump`, `map_info`, 
 Open source under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Contributions are
 taken under the same terms.
 
+<img src="assets/ro-fan-made.png" width="120" align="right" alt="RO Fan Made">
+
 **Ragnarok Online belongs to Gravity.** Ragnarok Online, its name, art, sounds, music, data and everything else in the
 game are the property of Gravity Co., Ltd. and its licensors. This is an unofficial, fan-made client: it is not
 official, and it is not affiliated with, endorsed by or sponsored by Gravity. The MIT / Apache-2.0 licenses above cover
