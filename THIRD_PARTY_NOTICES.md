@@ -1,6 +1,7 @@
 # Third-party notices
 
-rustnarok-client's own code is written for this project. One file carries code from elsewhere, under these licenses.
+rustnarok-client's own code is written for this project. One file carries code from elsewhere, under these licenses, and two images are
+Gravity's artwork.
 
 ## src/grf/mixcrypt.rs — GRF "mixcrypt" decryption
 
@@ -27,6 +28,14 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 
 Its `des` module is a copy of parts of the RustCrypto `des` crate (https://github.com/RustCrypto/block-ciphers),
 used under the Apache License, Version 2.0 (full text in [licenses/APACHE-2.0.txt](licenses/APACHE-2.0.txt)).
+
+## assets/ro-fan-made.png, assets/ai-assisted.png — fan-made and AI-assisted symbols
+
+The "RO Fan Made" logo and the "AI-Assisted" symbol are artwork from Gravity's Ragnarok creator pack, used unchanged to
+mark this project as an unofficial fan-made work that is built with AI assistance. They are not covered by this project's MIT / Apache-2.0
+licenses.
+
+© Gravity Co., LTD & Lee MyoungJin(studio DTDS). All Rights Reserved.
 
 ## Thanks: roBrowser Legacy
 
