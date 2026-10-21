@@ -3473,6 +3473,10 @@ impl App {
                     if effects::DRAGON_BREATHS.contains(&skill) {
                         game.dragon_breath(gpu, grf, table, skill, act.source, act.target);
                     }
+                    // Not for a splash's other targets: one spear volley or spirit a cast.
+                    if matches!(skill, crate::world_fx::summoner::STEM_SPEAR_SKILL | crate::world_fx::summoner::SAVAGE_SKILL) && !splash {
+                        game.summoner_shot(gpu, grf, table, skill, act.source, act.target);
+                    }
                     // Moonlight shows one, two or three slashes by the packet's hit count.
                     if skill == effects::MOONLIGHT_SKILL {
                         game.play_effect_hits(gpu, grf, table, effects::moonlight_effect(act.hits), act.target, Instant::now(), act.hits);
@@ -3526,6 +3530,10 @@ impl App {
                     |n| effects::pick(0, n.saturating_sub(1)),
                 ) {
                     let _ = game.session.chat(&game.me.name, &line);
+                }
+                // Lunatic Carrot Beat's carrots fall round a target in sight, as many as its level says.
+                if let (Some(effect), Some(gpu)) = (crate::world_fx::summoner::carrots_of(skill), gpu) {
+                    game.carrots(gpu, grf, effect, target, amount);
                 }
                 // The pitchers throw their item at the target (Potion Pitcher, Berserk Pitcher, Spore Explosion).
                 if let (Some(effect), Some(gpu)) = (effects::thrown_item(skill), gpu) {
@@ -3617,11 +3625,11 @@ impl App {
                     game.arrow_shower(grf, source, [i32::from(cell[0]), i32::from(cell[1])], None);
                 }
             }
-            MapEvent::SkillUnit { id, kind, cell, range } => {
+            MapEvent::SkillUnit { id, kind, cell, range, level } => {
                 game.skill_units.insert(id, (kind, cell));
                 if let Some(gpu) = gpu {
                     let at = game.world.cell_position(cell.map(f32::from));
-                    game.effects.play_unit(gpu, grf, table, kind, id, at, range, Instant::now());
+                    game.effects.play_unit(gpu, grf, table, kind, id, at, (range, level), Instant::now());
                 }
             }
             MapEvent::SkillUnitGone { id } => {
@@ -3817,7 +3825,7 @@ impl App {
                     && let Some(gpu) = gpu
                 {
                     let trigger = game.effects.unit_kind(id).filter(|_| value == FIRED_TRAP).and_then(|old| table.trap(old));
-                    game.effects.play_unit(gpu, grf, table, value, id, at, 0, Instant::now());
+                    game.effects.play_unit(gpu, grf, table, value, id, at, (0, 0), Instant::now());
                     if let Some(effect) = trigger {
                         // Reverberation's tornado goes with the trap; the others stay where it was.
                         let target = if effect == effects::REVERBERATION { effects::Target::Kept(id) } else { effects::Target::Ground };

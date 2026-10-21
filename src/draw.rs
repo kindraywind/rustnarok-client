@@ -2863,8 +2863,9 @@ impl App {
             up: view.up,
             ground: &ground_at,
         };
-        // The world objects draw unless far, /effect hides them, or their owner's body is hidden.
-        let effects_shown = |id: u32| effects_on || effects::force_drawn(id);
+        // The world objects draw unless far, /effect (or /mable, Spirit Marble's) hides them, or their owner's body is hidden.
+        let mable = self.graphics.mable;
+        let effects_shown = |id: u32| (effects_on || effects::force_drawn(id)) && (mable || id != world_fx::summoner::MABLE);
         let hidden = |unit: Option<u32>| {
             let seen = match unit {
                 None => Some(actor::seen(game.player.hide_option, true, clairvoyance)),

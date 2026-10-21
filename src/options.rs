@@ -23,11 +23,13 @@ pub struct GraphicsSettings {
     pub fullscreen: bool,
     /// /fog: the map's depth fog.
     pub fog: bool,
+    /// /mable: Spirit Marble's spirits drawn.
+    pub mable: bool,
 }
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
-        Self { effects_on: true, aura: true, aura_off: false, quake: true, min_effect: false, fullscreen: false, fog: true }
+        Self { effects_on: true, aura: true, aura_off: false, quake: true, min_effect: false, fullscreen: false, fog: true, mable: true }
     }
 }
 
@@ -60,12 +62,14 @@ impl GraphicsSettings {
             min_effect: next(false),
             fullscreen: next(false),
             fog: next(true),
+            mable: next(true),
         }
     }
 
     pub fn save_to(&self, path: &Path) {
-        let text =
-            [self.effects_on, self.aura, self.aura_off, self.quake, self.min_effect, self.fullscreen, self.fog].map(|on| if on { "1" } else { "0" }).join(" ");
+        let text = [self.effects_on, self.aura, self.aura_off, self.quake, self.min_effect, self.fullscreen, self.fog, self.mable]
+            .map(|on| if on { "1" } else { "0" })
+            .join(" ");
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, text));
     }
 }
@@ -105,7 +109,8 @@ mod tests {
     fn graphics_settings_round_trip() {
         let path = temp_settings("graphics");
         let _ = std::fs::remove_file(&path);
-        let settings = GraphicsSettings { effects_on: false, aura: false, aura_off: true, quake: false, min_effect: true, fullscreen: true, fog: false };
+        let settings =
+            GraphicsSettings { effects_on: false, aura: false, aura_off: true, quake: false, min_effect: true, fullscreen: true, fog: false, mable: false };
         settings.save_to(&path);
         assert_eq!(GraphicsSettings::load_from(&path), settings);
         // An older file with only the effects switch keeps the aura's and quake's defaults.

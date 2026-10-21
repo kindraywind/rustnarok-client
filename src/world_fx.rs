@@ -9,6 +9,7 @@
 pub mod drops;
 pub mod footprints;
 pub mod heal;
+pub mod summoner;
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -624,11 +625,34 @@ pub struct Fx {
     pub life: u32,
     pub far: bool,
     pub events: Vec<(u32, Event)>,
+    /// The ground unit it stands for is gone: its pieces finish without new ones.
+    pub released: bool,
     /// Its first update has run.
     updated: bool,
 }
 
 impl Fx {
+    /// A launch's object before its `begin`.
+    fn of(launch: &Launch) -> Self {
+        Self {
+            id: launch.id,
+            owner: launch.owner,
+            position: launch.point,
+            aim: launch.aim,
+            target: launch.target,
+            age: 0,
+            length: LENGTH,
+            a7: launch.a7.unwrap_or(-1),
+            single: false,
+            tag: launch.tag,
+            life: launch.life,
+            far: false,
+            events: Vec::new(),
+            released: false,
+            updated: false,
+        }
+    }
+
     /// Alive while younger than its length.
     pub fn timed(&self) -> bool {
         self.age < self.length
@@ -719,6 +743,7 @@ impl Default for WorldFx {
         drops::register(&mut fx);
         footprints::register(&mut fx);
         heal::register(&mut fx);
+        summoner::register(&mut fx);
         fx
     }
 }
@@ -730,6 +755,11 @@ impl WorldFx {
 
     pub fn registered(&self, id: u32) -> bool {
         self.classes.contains_key(&id)
+    }
+
+    /// Whether a copy of (owner, id) is running.
+    pub fn running(&self, owner: Option<Option<u32>>, id: u32) -> bool {
+        self.objects.iter().any(|object| object.fx.owner == owner && object.fx.id == id)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -748,27 +778,14 @@ impl WorldFx {
     /// launch is unique or that copy is single. None for an id not registered.
     pub fn launch(&mut self, launch: &Launch, assets: &mut dyn Assets) -> Option<u32> {
         let make = *self.classes.get(&launch.id)?;
-        if let Some(running) = self.objects.iter().find(|object| object.fx.owner == launch.owner && object.fx.id == launch.id)
+        if let Some(running) = self.objects.iter_mut().find(|object| object.fx.owner == launch.owner && object.fx.id == launch.id)
             && (launch.unique || running.fx.single)
         {
+            // A ground unit seen again takes back its released copy.
+            running.fx.released &= !launch.unique;
             return Some(running.serial);
         }
-        let mut fx = Fx {
-            id: launch.id,
-            owner: launch.owner,
-            position: launch.point,
-            aim: launch.aim,
-            target: launch.target,
-            age: 0,
-            length: LENGTH,
-            a7: launch.a7.unwrap_or(-1),
-            single: false,
-            tag: launch.tag,
-            life: launch.life,
-            far: false,
-            events: Vec::new(),
-            updated: false,
-        };
+        let mut fx = Fx::of(launch);
         let mut class = make();
         class.begin(&mut fx, assets);
         self.serial += 1;
@@ -784,6 +801,11 @@ impl WorldFx {
     /// Removes the running copy of (owner, id) that was launched with this tag.
     pub fn remove_tagged(&mut self, owner: Option<Option<u32>>, id: u32, tag: u32) {
         self.objects.retain(|object| !(object.fx.owner == owner && object.fx.id == id && object.fx.tag == tag));
+    }
+
+    /// The ground unit `owner` is gone: its objects let their pieces finish.
+    pub fn release(&mut self, owner: Option<Option<u32>>) {
+        self.objects.iter_mut().filter(|object| object.fx.owner == owner).for_each(|object| object.fx.released = true);
     }
 
     pub fn remove_all_of(&mut self, owner: Option<Option<u32>>) {

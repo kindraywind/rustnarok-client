@@ -1,0 +1,43 @@
+// The Summoner objects (issue #848): a training dummy 3 cells east of prt_fild06 180,180. Whisper npc:RustnarokSummoner
+// "mable", "tuna" or "roots" to start Spirit Marble, Tuna Party or Silvervine Root Twist on the player ("clear" ends them);
+// "meteor" or "powder" (given its catnip fruit) and the player casts Catnip Meteor or Catnip Powdering two cells south of
+// the dummy; "meteor2" plays Catnip Meteor 2's full meteor (1112) on the player, which no cast here makes; "grass" and the
+// player casts Nyang Grass 3 cells west and 2 north of them; "carrots", "spear" or "savage" and the player casts Lunatic
+// Carrot Beat, Silvervine Stem Spear or Spirit of Savage on the dummy. Loaded and unloaded by
+// scenarios/summoner-objects.json.
+prt_fild06,1,1,0	script	RustnarokSummoner	-1,{
+	end;
+OnInit:
+	monster "prt_fild06", 183, 180, "--ja--", 2408, 1;
+	.gid = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	percentheal 100, 100;
+	if (@whispervar0$ == "mable") {
+		sc_start SC_SPRITEMABLE, 600000, 1;
+	} else if (@whispervar0$ == "tuna") {
+		sc_start SC_TUNAPARTY, 600000, 1;
+	} else if (@whispervar0$ == "roots") {
+		sc_start SC_SV_ROOTTWIST, 600000, 1;
+	} else if (@whispervar0$ == "clear") {
+		sc_end SC_SPRITEMABLE;
+		sc_end SC_TUNAPARTY;
+		sc_end SC_SV_ROOTTWIST;
+	} else if (@whispervar0$ == "meteor") {
+		unitskillusepos getcharid(3), "SU_CN_METEOR", 5, 183, 178;
+	} else if (@whispervar0$ == "meteor2") {
+		specialeffect2 1112;
+	} else if (@whispervar0$ == "powder") {
+		getitem 11602, 1;
+		unitskillusepos getcharid(3), "SU_CN_POWDERING", 5, 183, 178;
+	} else if (@whispervar0$ == "grass") {
+		unitskillusepos getcharid(3), "SU_NYANGGRASS", 3, 177, 182;
+	} else if (@whispervar0$ == "carrots") {
+		unitskilluseid getcharid(3), "SU_LUNATICCARROTBEAT", 5, .gid;
+	} else if (@whispervar0$ == "spear") {
+		unitskilluseid getcharid(3), "SU_SV_STEMSPEAR", 5, .gid;
+	} else if (@whispervar0$ == "savage") {
+		unitskilluseid getcharid(3), "SU_SVG_SPIRIT", 5, .gid;
+	}
+	end;
+}

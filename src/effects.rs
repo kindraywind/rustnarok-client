@@ -2971,6 +2971,33 @@ impl Effects {
         }
     }
 
+    /// A status going off on `unit` (None = the player): the world objects it shows go.
+    pub fn status_objects_off(&mut self, unit: Option<u32>, shown: &[u32]) {
+        for &effect in shown {
+            self.fx.remove(Some(unit), effect);
+        }
+    }
+
+    /// A damage packet of Silvervine Stem Spear or Spirit of Savage from `caster` at `caster_at` on `target` at
+    /// `target_at` (`world_fx::summoner::shot_starts`).
+    pub fn summoner_shot(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, skill: u16, caster: (Option<u32>, Vector), target: (Option<u32>, Vector)) {
+        for start in world_fx::summoner::shot_starts(skill, caster, target) {
+            match start {
+                world_fx::summoner::Start::Str(id, owner, at) => {
+                    self.launch_world(gpu, grf, table, id, owner, at, false, 0);
+                }
+                world_fx::summoner::Start::Object(launch) => {
+                    self.launch_fx(gpu, grf, &launch);
+                }
+            }
+        }
+    }
+
+    /// Lunatic Carrot Beat's use packet at level `level`: its carrots fall round the target standing at `at`.
+    pub fn carrots(&mut self, gpu: &Gpu, grf: &Grf, effect: u32, at: Vector, level: i32) {
+        self.launch_fx(gpu, grf, &world_fx::Launch { a7: Some(level), ..world_fx::Launch::at(effect, None, at) });
+    }
+
     /// A ground item taken or gone: its pillars go.
     pub fn item_gone(&mut self, item: u32) {
         self.fx.remove_all_of(Some(Some(item)));
@@ -3064,7 +3091,19 @@ impl Effects {
                 Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
                 _ => None,
             };
-            self.launch_fx(gpu, grf, &world_fx::Launch::at(id, owner, at));
+            let mut launch = world_fx::Launch::at(id, owner, at);
+            // A status sent again keeps its copy, but Spirit Marble's spirits start afresh.
+            if matches!(target, Target::Status(..)) {
+                launch.unique = true;
+                if world_fx::summoner::restarts_on_status(id) {
+                    self.fx.remove(owner, id);
+                }
+            }
+            // Its sounds come with a new copy only.
+            if !(launch.unique && self.fx.running(owner, id)) {
+                self.play_sounds(table, id, at, now);
+            }
+            self.launch_fx(gpu, grf, &launch);
             return;
         }
         if id == BASH && self.min {
@@ -4306,9 +4345,10 @@ impl Effects {
         }
     }
 
-    /// Shows what a skill's unit on the ground shows (`kind`: rathena's UNT_ number) until `forget(id)`.
+    /// Shows what a skill's unit on the ground shows (`kind`: rathena's UNT_ number, at its range and skill level) until
+    /// `forget(id)`.
     #[allow(clippy::too_many_arguments)]
-    pub fn play_unit(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, kind: u32, id: u32, at: Vector, range: u8, now: Instant) {
+    pub fn play_unit(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, kind: u32, id: u32, at: Vector, (range, level): (u8, u8), now: Instant) {
         // Epiclesis' rings start once with their unit: a second sight of it leaves them be.
         if table.units.get(&kind) == Some(&EPICLESIS_CELL) && self.prims.holes.stands(id) {
             return;
@@ -4432,6 +4472,14 @@ impl Effects {
             } else if sage::LOOPS.iter().any(|&(kept, _)| kept == effect) {
                 self.load_sage(gpu, grf, effect);
                 self.prims.sage.keep(effect, id, at, now, |n| pick(0, n.saturating_sub(1)));
+            } else if self.fx.registered(effect) {
+                // Catnip Powdering's haze and Nyang Grass' tufts stand with their unit, sized by its level; a unit seen again
+                // keeps its copy, without its sound again.
+                if !self.fx.running(Some(Some(id)), effect) {
+                    self.play_sounds(table, effect, at, now);
+                }
+                let launch = world_fx::Launch { a7: Some(i32::from(level)), unique: true, ..world_fx::Launch::at(effect, Some(Some(id)), at) };
+                self.launch_fx(gpu, grf, &launch);
             } else {
                 let target = if table.units_once.contains(&kind) { Target::Kept(id) } else { Target::Lasting(id) };
                 self.play(gpu, grf, table, effect, target, at, now);
@@ -5289,6 +5337,7 @@ impl Effects {
 
     pub fn forget(&mut self, unit: u32) {
         self.areas.retain(|area| area.id != unit);
+        self.fx.release(Some(Some(unit)));
         self.worlds.remove_status(Some(unit), None);
         if let Some(world) = self.unit_worlds.remove(&unit) {
             self.worlds.remove(Some(Some(unit)), world);

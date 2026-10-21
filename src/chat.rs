@@ -1578,6 +1578,8 @@ pub enum Command {
     MinEffect,
     /// /fog: the map's depth fog on or off.
     Fog,
+    /// /mable: Spirit Marble's spirits shown or hidden.
+    Mable,
     /// /aura: the max-level aura in full or simplified; /aura2: none at all.
     Aura,
     AuraOff,
@@ -1644,6 +1646,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/quake" => Command::Quake,
         "/mineffect" => Command::MinEffect,
         "/fog" => Command::Fog,
+        "/mable" => Command::Mable,
         "/aura" => Command::Aura,
         "/aura2" => Command::AuraOff,
         "/emo" | "/emotion" => Command::EmotionList,
@@ -2236,6 +2239,7 @@ mod tests {
         assert_eq!(command("/quake"), Some(Command::Quake));
         assert_eq!(command("/mineffect"), Some(Command::MinEffect));
         assert_eq!(command("/fog"), Some(Command::Fog));
+        assert_eq!(command("/mable"), Some(Command::Mable));
         assert_eq!(command("/emo"), Some(Command::EmotionList));
         assert_eq!(command("/achievement"), Some(Command::Achievements));
         assert_eq!(command("/emotion"), Some(Command::EmotionList));

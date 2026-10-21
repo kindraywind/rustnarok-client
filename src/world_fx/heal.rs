@@ -669,6 +669,7 @@ mod tests {
             life: 0,
             far: false,
             events: Vec::new(),
+            released: false,
             updated: false,
         }
     }

@@ -1306,6 +1306,23 @@ impl Game {
         self.effects.dragon_breath(gpu, grf, table, skill, (unit(source), caster_at), (unit(target), target_at), phi, Instant::now());
     }
 
+    /// A Silvervine Stem Spear or Spirit of Savage damage packet from `source` on `target` (`Effects::summoner_shot`);
+    /// nothing unless both are in sight.
+    pub(crate) fn summoner_shot(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, skill: u16, source: u32, target: u32) {
+        let now = control::now();
+        let unit = |id: u32| (id != self.account_id).then_some(id);
+        if let (Some(from), Some(to)) = (self.feet(source, now), self.feet(target, now)) {
+            self.effects.summoner_shot(gpu, grf, table, skill, (unit(source), from), (unit(target), to));
+        }
+    }
+
+    /// Lunatic Carrot Beat's carrots (`effect`) round `target` at `level`; nothing for a target not in sight.
+    pub(crate) fn carrots(&mut self, gpu: &Gpu, grf: &Grf, effect: u32, target: u32, level: i32) {
+        if let Some(at) = self.feet(target, control::now()) {
+            self.effects.carrots(gpu, grf, effect, at, level);
+        }
+    }
+
     /// Cold Slower (791): three prims of four snowflakes thrown from caster's feet toward `aim`.
     pub(crate) fn cold_slower(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, source: u32, aim: world::Vector) {
         let key = (source != self.account_id).then_some(source);
@@ -1456,6 +1473,9 @@ impl Game {
         }
         let shown = table.status(status);
         self.effects.forget_status(key, status);
+        if !on {
+            self.effects.status_objects_off(key, shown);
+        }
         let actor = match key {
             None => Some(&mut self.player),
             Some(id) => self.units.get_mut(&id),
@@ -2000,6 +2020,12 @@ impl Game {
             chat::Command::Fog => {
                 graphics.fog = !graphics.fog;
                 self.chat_line(format!("fog: {}", if graphics.fog { "On" } else { "Off" }), CHAT_ITEM);
+                Ok(())
+            }
+            // ponytail: /mable's chat line is unknown; ours reads like /fog's.
+            chat::Command::Mable => {
+                graphics.mable = !graphics.mable;
+                self.chat_line(format!("mable: {}", if graphics.mable { "On" } else { "Off" }), CHAT_ITEM);
                 Ok(())
             }
             // /aura: the max-level aura in full or simplified (its motes only); not while /aura2 has it off.
