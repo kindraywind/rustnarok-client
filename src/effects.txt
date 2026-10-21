@@ -183,7 +183,7 @@ str	649	불스아이	-	1
 str	668	dfear	-	1	hold
 str	669	wideb	-	1	hold
 str	670	dfear	-	1
-str	677	cwound	-	1
+str	677	cwound	-	1	hold
 str	682	itempokjuk	-	1
 str	683	itempokjuk	-	1
 str	684	itempokjuk	-	1
@@ -1948,6 +1948,8 @@ wav	668	effect\dragonfear	16
 wav	669	effect\wideb	16
 wav	670	effect\dragonfear	0
 wav	675	effect\kyrie_guard	0
+wav	676	effect\EF_DecAgility	160
+wav	677	effect\wideb	16
 wav	682	effect\itempokjuk	0
 wav	683	effect\itempokjuk	0
 wav	684	effect\itempokjuk	0
@@ -1957,7 +1959,7 @@ wav	708	effect\wizard_stormgust	0
 wav	717	effect\wewish	0
 wav	718	effect\ab_judex	0
 wav	721	effect\ab_adoramus	0
-wav	722	effect\wl_jackfrost	0
+wav	722	effect\wl_jackfrost	0	listener
 wav	723	hundred	0
 wav	725	effect\priest_benedictio	0
 wav	726	effect\t_에너지방출	0
@@ -5278,6 +5280,8 @@ length	553	200
 length	554	200
 length	555	200
 length	675	200
+length	676	300
+length	677	50
 length	1030	5000
 length	1032	999
 length	1052	200

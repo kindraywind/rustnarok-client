@@ -22,6 +22,8 @@ pub const STAR: &str = "data\\sprite\\이팩트\\particle1";
 pub const POISON_STAR: &str = "data\\sprite\\이팩트\\particle3";
 /// Detecting's soft ring.
 pub const FASHASHA: &str = "data\\texture\\effect\\fashasha.tga";
+/// Slow Cast's clock face.
+pub const CLOCK: &str = "data\\texture\\effect\\blast_mine##clock.bmp";
 pub const GOLD_STAR: &str = "data\\sprite\\이팩트\\particle7";
 pub const CYAN_STAR: &str = "data\\sprite\\이팩트\\particle2";
 pub const PIKAPIKA: &str = "data\\texture\\effect\\pikapika2.bmp";
@@ -57,6 +59,12 @@ pub const RED_RING: u32 = 780;
 pub const GREEN_RING: u32 = 786;
 /// Deadly Infect's dark ring: Hovering's, in near black on the ground.
 pub const DARK_RING: u32 = 812;
+/// The monsters' Ignition Break: Detecting's ring in pale orange, following the monster.
+pub const IGNITION_RING: u32 = 722;
+/// The monsters' Slow Cast: a clock over the target's head.
+pub const SLOW_CAST: u32 = 676;
+/// Slow Cast's clock is drawn this many ticks.
+const CLOCK_LIFE: u32 = 242;
 pub const ENCHANT_POISON: u32 = 125;
 /// Enchant Deadly Poison: the same sparkles round the caster's tick-0 place, 40 of them, those after tick 80 never drawn.
 pub const ENCHANT_DEADLY_POISON: u32 = 493;
@@ -88,6 +96,8 @@ pub fn makes(effect: u32) -> bool {
             | RED_RING
             | GREEN_RING
             | DARK_RING
+            | IGNITION_RING
+            | SLOW_CAST
             | ENCHANT_POISON
             | ENCHANT_DEADLY_POISON
     )
@@ -108,7 +118,8 @@ fn length(effect: u32) -> u32 {
         FLASHER_FX => 250,
         REMOVE_TRAP => 70,
         DETECTING | SIDE_SLIDE | RED_RING | DARK_RING | ENCHANT_POISON => 250,
-        GREEN_RING => 100,
+        GREEN_RING | IGNITION_RING => 100,
+        SLOW_CAST => 300,
         ENCHANT_DEADLY_POISON => 120,
         _ => 50,
     }
@@ -121,7 +132,7 @@ pub type ScreenShape = (&'static str, Option<u32>, Vec<ScreenCorner>);
 pub type Mesh = (&'static str, Vec<MeshVertex>);
 
 /// A camera-facing square: its texture, centre, half-diagonal (world units), spin (degrees), alpha (0 to 255), whether its
-/// texture is mirrored, and the colour it's multiplied by; all of them are added on.
+/// texture is mirrored, the colour it's multiplied by, and whether it's added on (or blended over).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Square {
     pub texture: &'static str,
@@ -131,6 +142,7 @@ pub struct Square {
     pub alpha: f32,
     pub mirrored: bool,
     pub tint: [u8; 3],
+    pub additive: bool,
 }
 
 /// A sparkle's alpha at its age `a` (from 1): 0 at 1, +15 at ages 2…10, then −3 a tick.
@@ -280,7 +292,7 @@ impl First {
                     }
                 }
             }
-            DETECTING | SIDE_SLIDE | RED_RING | GREEN_RING | DARK_RING => seed(0, 0.0, [0.0; 4]),
+            DETECTING | SIDE_SLIDE | RED_RING | GREEN_RING | DARK_RING | IGNITION_RING | SLOW_CAST => seed(0, 0.0, [0.0; 4]),
             ENCHANT_POISON => {
                 // A sparkle every 5 ticks: yaw, distance, speed, size.
                 for born in (0..=245).step_by(5) {
@@ -568,9 +580,13 @@ impl First {
                         meshes.push((FASHASHA, ring_square(at, ring_half(a, 10), burst::alpha(a, 254.0, 0.0, 254.0, 30, 57), [1.0; 3])));
                     }
                 }
-                RED_RING | GREEN_RING => {
+                RED_RING | GREEN_RING | IGNITION_RING => {
                     if let Some(a) = Self::age(effect, now, 0, 57) {
-                        let rgb = if effect.id == RED_RING { [1.0, 140.0 / 255.0, 140.0 / 255.0] } else { [210.0 / 255.0, 250.0 / 255.0, 210.0 / 255.0] };
+                        let rgb = match effect.id {
+                            RED_RING => [1.0, 140.0 / 255.0, 140.0 / 255.0],
+                            GREEN_RING => [210.0 / 255.0, 250.0 / 255.0, 210.0 / 255.0],
+                            _ => [250.0 / 255.0, 210.0 / 255.0, 140.0 / 255.0],
+                        };
                         meshes.push((FASHASHA, ring_square(at, detecting_half(a), burst::alpha(a, 254.0, 0.0, 254.0, 40, 57), rgb)));
                     }
                 }
@@ -614,12 +630,27 @@ impl First {
             .collect()
     }
 
-    /// The camera-facing squares: First Aid's glow, Sprinkle Sand's specks, the undead heal's sparkles.
+    /// The camera-facing squares: First Aid's glow, Sprinkle Sand's specks, the undead heal's sparkles, Slow Cast's clock.
     pub fn squares(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<Square> {
         let mut squares = Vec::new();
-        let _ = &position_of;
         for effect in &self.list {
             match effect.id {
+                SLOW_CAST => {
+                    let (Some(a), Some(feet)) = (Self::age(effect, now, 0, CLOCK_LIFE), Self::place(effect, &position_of)) else { continue };
+                    let n = a + 1;
+                    // Corners at 135, 45, 315, 225 (y up) at uv (0, 1), (1, 1), (1, 0), (0, 0).
+                    // ponytail: flip v if the clock comes out upside down.
+                    squares.push(Square {
+                        texture: CLOCK,
+                        at: [feet[0], feet[1] + 30.0, feet[2]],
+                        radius: 6.0 * (1.0 + 0.05 * trig((2 * n) as f32).0),
+                        spin: 225.0,
+                        alpha: slow_cast_alpha(n),
+                        mirrored: false,
+                        tint: [255; 3],
+                        additive: false,
+                    });
+                }
                 FLASHER_FX => {
                     // The flash: a 40 by 40 square (half-diagonal 20·√2, turned 45°) 10 up, at full strength for ages 0…68.
                     if let Some(a) = Self::age(effect, now, 0, 69) {
@@ -633,6 +664,7 @@ impl First {
                             alpha: 255.0,
                             mirrored: false,
                             tint: [255; 3],
+                            additive: true,
                         });
                     }
                 }
@@ -650,7 +682,7 @@ impl First {
                         };
                         let radius = 10.0 + 10.0 * trig(wobble.floor()).0 * 0.05;
                         let at = [effect.at[0], effect.at[1] + 12.0, effect.at[2]];
-                        squares.push(Square { texture: PIKAPIKA, at, radius, spin: seed.y, alpha, mirrored: false, tint: [0x96, 0x96, 0xFA] });
+                        squares.push(Square { texture: PIKAPIKA, at, radius, spin: seed.y, alpha, mirrored: false, tint: [0x96, 0x96, 0xFA], additive: true });
                     }
                 }
                 SPRINKLE_SAND => {
@@ -669,6 +701,7 @@ impl First {
                             alpha: sparkle_alpha(a),
                             mirrored: true,
                             tint: [0xFA, 0xFA, 0x96],
+                            additive: true,
                         });
                     }
                 }
@@ -689,6 +722,7 @@ impl First {
                             alpha: sparkle_alpha(a),
                             mirrored: true,
                             tint: [0xDC, 0xFA, 0xDC],
+                            additive: true,
                         });
                     }
                 }
@@ -812,6 +846,11 @@ pub fn heal_sparkle_alpha(born: u32, a: u32) -> f32 {
         alpha = (alpha + step).max(0.0);
     }
     alpha
+}
+
+/// Slow Cast's clock alpha after its tick `n` (from 1): +10 a tick while n < 200, up to 220, then −5 a tick.
+pub fn slow_cast_alpha(n: u32) -> f32 {
+    if n < 200 { (10 * n).min(220) as f32 } else { 220u32.saturating_sub(5 * (n - 199)) as f32 }
 }
 
 /// Cart Revolution's ring alpha at age `a`: 12 a tick to 60, then 4 less a tick.
@@ -1213,6 +1252,47 @@ mod tests {
         // It stays on its cell.
         let (other, other_start) = effect_at(DETECTING, |_| 0, false);
         assert!(near(other.meshes(other_start, |_| Some([9.0; 3]))[0].1[0].position[0], 1.607));
+    }
+
+    #[test]
+    fn ignition_break_bursts_a_pale_orange_ring_under_the_monster() {
+        let (first, start) = effect_at(IGNITION_RING, |_| 0, false);
+        // Detecting's ring: 1.607 after age 0, 41.893 at 16, 42.0 at 17, 48.63 at 56; 57 draws.
+        let mesh = |e: u32| first.meshes(tick(start, e), |_| Some([0.0; 3]));
+        assert!((0..57).all(|e| mesh(e).len() == 1) && mesh(57).is_empty());
+        let half = |e: u32| mesh(e)[0].1[0].position[0];
+        assert!(near(half(0), 1.607) && near(half(16), 41.893) && near(half(17), 42.0) && near(half(56), 48.63));
+        let alpha = |e: u32| (mesh(e)[0].1[0].tint[3] * 255.0).round();
+        assert_eq!([39, 40, 55, 56].map(alpha), [254.0, 239.0, 14.0, 0.0]);
+        // #FAD28C, on the fashasha ring, 5 up.
+        let (path, vertices) = &mesh(0)[0];
+        assert!(*path == FASHASHA && vertices.iter().all(|vertex| vertex.position[1] == 5.0));
+        assert_eq!(vertices[0].tint[..3], [250.0 / 255.0, 210.0 / 255.0, 140.0 / 255.0]);
+        // It follows the monster.
+        let moved = first.meshes(tick(start, 3), |_| Some([20.0, 1.0, 0.0]));
+        assert!(near(moved[0].1[0].position[0], 20.0 + half(3)) && moved[0].1[0].position[1] == 6.0);
+    }
+
+    #[test]
+    fn slow_cast_floats_a_clock_over_the_target() {
+        let (first, start) = effect_at(SLOW_CAST, |_| 0, false);
+        let at = |e: u32| first.squares(tick(start, e), |_| Some([0.0; 3]));
+        // One square, drawn for n = 1 … 242.
+        assert_eq!(first.list[0].seeds.len(), 1);
+        assert!((0..242).all(|e| at(e).len() == 1) && at(242).is_empty());
+        let clock = at(0)[0];
+        assert!(clock.texture == CLOCK && !clock.additive && clock.tint == [255; 3] && !clock.mirrored);
+        // Corners at 135, 45, 315, 225 (y up): 225, 315, 45, 135 a quarter turn apart on the screen (y down).
+        assert_eq!(clock.spin, 225.0);
+        // Alpha: +10 a tick to 220 at n = 22, held, −5 a tick from n = 200 (215), 0 at 243.
+        let alpha = |n: u32| at(n - 1).first().map_or(0.0, |square| square.alpha);
+        assert_eq!([1, 22, 199, 200, 242].map(alpha), [10.0, 220.0, 220.0, 215.0, 5.0]);
+        assert_eq!(slow_cast_alpha(243), 0.0);
+        // Half-diagonal 6 (1 + 0.05 sin 2n°): 6.3 at n = 45.
+        assert!(near(at(0)[0].radius, 6.0 * (1.0 + 0.05 * 2.0_f32.to_radians().sin())) && near(at(44)[0].radius, 6.3));
+        // 30 over the feet, read again every tick.
+        assert_eq!(at(0)[0].at, [0.0, 30.0, 0.0]);
+        assert_eq!(first.squares(tick(start, 5), |_| Some([10.0, 2.0, -4.0]))[0].at, [10.0, 32.0, -4.0]);
     }
 
     #[test]

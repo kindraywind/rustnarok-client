@@ -2242,6 +2242,8 @@ const TURN_UNDEAD: u32 = 82;
 const SONIC_BLOW: u32 = 121;
 /// EF_BLEEDING: Wide Bleeding's red wash over the screen (`prims::sheet`, drawn by `cover_quads`), and its STR claws.
 const WIDE_BLEEDING: u32 = 669;
+/// EF_CRITICALWOUND: Critical Wound's claw streaks, also played when a unit's Shadow Scar count rises.
+pub const CRITICAL_WOUND: u32 = 677;
 /// EF_SUMMONSLAVE: twenty white rays, then a smoke puff (`prims::burst`, the `spr` row).
 const SUMMON_SLAVE: u32 = 215;
 
@@ -3219,6 +3221,7 @@ impl Effects {
                 first::POK1,
                 first::POK3,
                 first::FASHASHA,
+                first::CLOCK,
             ] {
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             }
@@ -5995,7 +5998,7 @@ impl Effects {
                     }
                 }
             }
-            // First Aid's glow, Sprinkle Sand's specks and the undead heal's sparkles: camera-facing squares, added on.
+            // First Aid's glow, Sprinkle Sand's specks and the undead heal's sparkles, added on, and Slow Cast's clock: camera-facing squares.
             for square in self.prims.first.squares(now, &position_of).into_iter().chain(self.prims.monk.squares(now)) {
                 let Some(Some(texture)) = self.textures.get(square.texture) else { continue };
                 let pixels = square.radius * 35.0 / world::CELL;
@@ -6007,7 +6010,7 @@ impl Effects {
                 let corners = if square.mirrored { [corner(2), corner(3), corner(0), corner(1)] } else { [corner(3), corner(2), corner(1), corner(0)] };
                 let alpha = if self.dim { square.alpha.min(100.0) } else { square.alpha };
                 let [red, green, blue] = square.tint.map(|channel| f32::from(channel) / 255.0);
-                quads.push((texture, square.at, corners, [red, green, blue, alpha.trunc().clamp(0.0, 255.0) / 255.0], true, false));
+                quads.push((texture, square.at, corners, [red, green, blue, alpha.trunc().clamp(0.0, 255.0) / 255.0], square.additive, false));
             }
             // Poison Smoke's sparkles: the sprite particles again, over everything with no depth test.
             for particle in self.prims.walls.smoke_particles(now) {
@@ -9221,5 +9224,52 @@ mod tests {
         // Wide Suck aimed at each victim, silent.
         assert!(AIMED.contains(&WIDE_SUCK) && table.used(722).unwrap().contains(&(Who::Target, WIDE_SUCK)) && !table.sounds.contains_key(&WIDE_SUCK));
         assert_eq!([DARK_PIERCING, MAX_PAIN, WIDE_SUCK].map(|id| table.lengths[&id]), [5000, 999, 200]);
+    }
+
+    #[test]
+    fn slow_cast_critical_wound_and_ignition_break_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Slow Cast's clock on the target, built in code, with the Decrease AGI sound at tick 10.
+        assert!(first::makes(first::SLOW_CAST) && table.struck(672).unwrap().contains(&(Who::Target, first::SLOW_CAST)));
+        assert_eq!(sounds(first::SLOW_CAST), [("effect\\EF_DecAgility", 160, false)]);
+        assert!(!force_drawn(first::SLOW_CAST));
+        // Critical Wound's held picture with Wide Bleeding's sound at tick 1.
+        assert!(table.struck(673).unwrap().contains(&(Who::Target, CRITICAL_WOUND)));
+        let streaks = &table.parts[&CRITICAL_WOUND];
+        assert!(streaks.len() == 1 && streaks[0].file == "cwound" && streaks[0].attached && streaks[0].hold);
+        assert_eq!(sounds(CRITICAL_WOUND), [("effect\\wideb", 16, false)]);
+        // Ignition Break's ring in code beside its picture; the sound at the listener.
+        assert!(first::makes(first::IGNITION_RING) && table.parts[&first::IGNITION_RING].len() == 1);
+        assert!(table.used(740).unwrap().contains(&(Who::Caster, first::IGNITION_RING)));
+        assert_eq!(sounds(first::IGNITION_RING), [("effect\\wl_jackfrost", 0, true)]);
+        assert_eq!([first::SLOW_CAST, CRITICAL_WOUND].map(|id| table.lengths[&id]), [300, 50]);
+    }
+
+    #[test]
+    fn critical_wounds_last_frame_stays_to_tick_49() {
+        let key = rustnarok_client::effect::Key {
+            frame: 0,
+            kind: 0,
+            position: [320.0, 240.0],
+            corners: [-10.0, 10.0, 10.0, -10.0, -10.0, -10.0, 10.0, 10.0],
+            texture: 0.0,
+            texture_motion: 0,
+            delay: 0.0,
+            angle: 0.0,
+            color: [1.0; 4],
+            source_blend: 2,
+            destination_blend: 2,
+        };
+        let layer = |first: i32, last: i32| rustnarok_client::effect::Layer {
+            textures: Vec::new(),
+            keys: vec![rustnarok_client::effect::Key { frame: first, ..key }, rustnarok_client::effect::Key { frame: last, ..key }],
+        };
+        // The last trio ends at key 47; the effect lasts 50 ticks.
+        let str = Str { fps: 60, frames: 60, layers: vec![layer(0, 45), layer(5, 46), layer(10, 47)] };
+        assert_eq!(playing_ticks(CRITICAL_WOUND, &str, Some(50), true), 50);
+        assert!([47, 48, 49].iter().all(|&frame| held_frame(&str, true, frame as f32) == 47.0));
+        let shown = |frame: u32| str.layers.iter().map(|layer| layer.state(held_frame(&str, true, frame as f32)).is_some()).collect::<Vec<_>>();
+        assert_eq!([47, 48, 49].map(shown), [[false, false, true]; 3]);
     }
 }

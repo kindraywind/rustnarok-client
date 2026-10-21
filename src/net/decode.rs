@@ -419,6 +419,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_MILLENNIUMSHIELD => MapEvent::Shields { id: u32_at(2), count: (u16_at(6) as i16).max(0) as u16 },
         ZC_SPIRITS_ATTRIBUTE => MapEvent::Charms { id: u32_at(2), kind: u16_at(6), count: (u16_at(8) as i16).max(0) as u16 },
         ZC_SOULENERGY => MapEvent::Souls { id: u32_at(2), count: u16_at(6) },
+        ZC_TARGET_SPIRITS => MapEvent::ShadowScars { unit: u32_at(2), amount: u16_at(10) },
         ZC_ACK_OPEN_BANKING => MapEvent::BankOpened,
         ZC_BANKING_CHECK => MapEvent::BankBalance(i64::from_le_bytes(packet[2..10].try_into().unwrap())),
         ZC_ACK_BANKING_DEPOSIT | ZC_ACK_BANKING_WITHDRAW => MapEvent::BankMoved {

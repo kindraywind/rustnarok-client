@@ -324,6 +324,7 @@ impl App {
                         .filter_map(|name| Some((name, SpriteSet::at(&self.grf, &format!("data\\sprite\\이팩트\\{name}"))?)))
                         .collect(),
                     spirits: HashMap::new(),
+                    shadow_scars: HashMap::new(),
                     sphere: gpu.try_load_texture(&self.grf, "data\\texture\\effect\\기구.bmp", true).ok(),
                     shield: render::load_image(&self.grf, "data\\texture\\effect\\shield.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
                     charm: render::load_image(&self.grf, "data\\texture\\effect\\charm.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
@@ -751,6 +752,7 @@ impl App {
                 game.units.clear();
                 game.skill_units.clear();
                 game.spirits.clear();
+                game.shadow_scars.clear();
                 game.ground.clear();
                 game.marks.clear();
                 // rathena sends the quest marks again on arrival.
@@ -1262,9 +1264,18 @@ impl App {
                 });
             }
             MapEvent::Souls { id, count } => change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.souls = count),
+            MapEvent::ShadowScars { unit, amount } => {
+                let effects_on = !game.effects.only_forced;
+                if shadow_scars_rose(&mut game.shadow_scars, unit, amount, effects_on)
+                    && let Some(gpu) = gpu
+                {
+                    game.play_effect(gpu, grf, table, effects::CRITICAL_WOUND, unit);
+                }
+            }
             MapEvent::Vanish { id, reason } => {
                 if id != game.account_id {
                     game.spirits.remove(&Some(id));
+                    game.shadow_scars.remove(&id);
                 }
                 lock_pair(&mut game.locks, id, id, false);
                 game.hold_locked();

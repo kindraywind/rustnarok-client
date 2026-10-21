@@ -329,7 +329,16 @@ impl Monk {
                     investigation.aim[2] + spark.speed * sin * steps,
                 ];
                 let spin = (-5.0 * steps).rem_euclid(360.0);
-                squares.push(Square { texture: THUNDER_CENTER, at, radius: spark.size, spin, alpha: spark_alpha(n), mirrored: false, tint: SPARK_TINT });
+                squares.push(Square {
+                    texture: THUNDER_CENTER,
+                    at,
+                    radius: spark.size,
+                    spin,
+                    alpha: spark_alpha(n),
+                    mirrored: false,
+                    tint: SPARK_TINT,
+                    additive: true,
+                });
             }
         }
         squares
