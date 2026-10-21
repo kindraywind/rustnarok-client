@@ -2009,6 +2009,12 @@ impl App {
     /// The right button: Alt moves stacks to storage, a click on a player opens their menu, a press aims the camera.
     pub(crate) fn right_button(&mut self, state: ElementState) {
         self.right_down = state == ElementState::Pressed;
+        // The release ends the camera drag the press began, whichever click below takes it.
+        if let Scene::Game(game) = &mut self.scene
+            && state == ElementState::Released
+        {
+            game.camera_goal.dragging = None;
+        }
         // A right press lets go of a held drag and closes the box asking how many of an item.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Pressed
@@ -2398,8 +2404,6 @@ impl App {
             } else if state == ElementState::Pressed && (game.targeting.take().is_some() | std::mem::take(&mut game.capturing)) {
             } else if state == ElementState::Pressed {
                 game.camera_goal.press(self.cursor, Instant::now(), self.modifiers.control_key(), self.modifiers.shift_key());
-            } else {
-                game.camera_goal.dragging = None;
             }
         }
     }

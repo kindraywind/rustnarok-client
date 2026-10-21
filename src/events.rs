@@ -1522,19 +1522,20 @@ impl App {
                 // A landed hit sparks on whatever it hit, each hit as it lands.
                 let attacker_job = if act.source == game.account_id { Some(game.player.job) } else { game.units.get(&act.source).map(|actor| actor.job) };
                 let sparks = attack_sparks(act.damage, act.kind, attacker_job.is_some_and(|job| TAEKWON_LINE.contains(&job)));
-                if let Some(gpu) = gpu {
-                    let lands = Instant::now() + Duration::from_millis(act.source_speed.max(0) as u64);
-                    // ponytail: the hits of a double attack 200 ms apart, as a skill's.
-                    for hit in 0..u32::from(act.hits.max(1)) {
-                        for &spark in &sparks {
-                            game.play_effect_from(gpu, grf, table, spark, act.target, lands + Duration::from_millis(200) * hit);
-                        }
-                    }
-                }
+                let (hits, target) = (u32::from(act.hits.max(1)), act.target);
                 if matches!(act.kind, 0 | 4 | 8 | 9 | 10 | 11 | 13) {
                     game.battle_lines(&act, &self.messages);
                 }
-                game.act(act, look_tables, grf);
+                // With the hit's sound and number, not at the end of the swing.
+                let lands = game.act(act, look_tables, grf);
+                if let Some(gpu) = gpu {
+                    // ponytail: the hits of a double attack 200 ms apart, as a skill's.
+                    for hit in 0..hits {
+                        for &spark in &sparks {
+                            game.play_effect_from(gpu, grf, table, spark, target, lands + Duration::from_millis(200) * hit);
+                        }
+                    }
+                }
             }
             MapEvent::Status { id, value } => {
                 let before = game.status.insert(id, value);
