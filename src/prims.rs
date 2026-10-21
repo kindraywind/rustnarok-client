@@ -554,10 +554,20 @@ impl Prims {
     /// Blood Drain (EF_BLOODDRAIN) from the feet `from` toward `aim`: three red drops fanned −90°, 0° and 90°, each flying out past
     /// the aim and back (a drop's forward speed 2 · D / 60, D the distance), every one at once.
     pub fn blood_drain(&mut self, from: Vector, aim: Vector, now: Instant) {
+        self.blood_drops(from, aim, &[-90.0, 0.0, 90.0], now);
+    }
+
+    /// Wide Suck (EF_BLOODDRAIN2) from the victim's feet `from` toward the monster's `aim`: Blood Drain's first drop only.
+    pub fn wide_suck(&mut self, from: Vector, aim: Vector, now: Instant) {
+        self.blood_drops(from, aim, &[-90.0], now);
+    }
+
+    /// Red drops from `from` out past `aim` and back, one for each angle round the line.
+    fn blood_drops(&mut self, from: Vector, aim: Vector, angles: &[f32], now: Instant) {
         let (dx, dz) = (aim[0] - from[0], aim[2] - from[2]);
         let distance = f32::hypot(dx, dz);
         let forward = flight_direction(dx, dz);
-        for angle in [-90.0, 0.0, 90.0] {
+        for &angle in angles {
             self.ghosts.push(Ghost::from_spec(GhostSpec {
                 start: now,
                 lead: 1,
@@ -1132,5 +1142,35 @@ mod tests {
         // The fan: the drops turn −89, 0 and 90 degrees round the line; in #FA6464 at scale 1.7.
         assert_eq!(near_self.ghosts.iter().map(|ghost| ghost.turn).collect::<Vec<_>>(), [-89.0, 0.0, 90.0]);
         assert!(near_self.ghosts.iter().all(|ghost| ghost.scale == 1.7 && ghost.tint == [250.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0]));
+    }
+
+    #[test]
+    fn wide_suck_throws_one_drop_from_the_victim_past_the_monster() {
+        let start = Instant::now();
+        let at = |aim: Vector, ticks: u32| {
+            let mut prims = Prims::default();
+            prims.wide_suck([0.0, 0.0, 0.0], aim, start);
+            for tick in 0..ticks {
+                prims.advance(start + TICK * tick);
+            }
+            let ghost = &prims.ghosts[0];
+            (prims.ghosts.len(), ghost.along, ghost.bulge, ghost.turn, ghost.base, ghost.tint, ghost.scale, ghost.trail_len)
+        };
+        // D = 10: forward −1.6, −19.0, 22.0 and sideways −2, −31, −2 at t = 1, 30, 60.
+        let aim = [0.0, 0.0, -10.0];
+        for (t, forward, sideways) in [(1, -1.6, -2.0), (30, -19.0, -31.0), (60, 22.0, -2.0)] {
+            let (count, along, bulge, ..) = at(aim, t);
+            assert!(count == 1 && (along - forward).abs() < 0.01 && (bulge - sideways).abs() < 0.01, "t = {t}: {along} {bulge}");
+        }
+        // One drop, the first of Blood Drain's fan, 10 up from the victim's feet, #FA6464 at 1.7 with 7 trail copies.
+        let (_, _, _, turn, base, tint, scale, trail) = at(aim, 1);
+        assert!(turn == -89.0 && base == [0.0, 10.0, 0.0] && tint == [250.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0] && scale == 1.7 && trail == 7);
+        // D = 0: forward −29 at t = 30 and 2 at t = 60.
+        assert!((at([0.0; 3], 30).1 + 29.0).abs() < 0.01 && (at([0.0; 3], 60).1 - 2.0).abs() < 0.01);
+        // Drawn 60 ticks; nothing follows a unit.
+        let mut prims = Prims::default();
+        prims.wide_suck([0.0; 3], aim, start);
+        prims.advance(start + TICK * 61);
+        assert!(prims.ghosts.is_empty());
     }
 }

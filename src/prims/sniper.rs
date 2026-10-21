@@ -34,6 +34,8 @@ pub enum Shot {
     ArrowVulcan,
     /// Crescent Elbow's eight blue lines, drawn over everything.
     CrescentElbow,
+    /// Dark Piercing's eight dark lines through the target along the line to the caster, drawn over everything.
+    DarkPiercing,
 }
 
 /// One element of a line prim: when it was made, its wait, and its numbers.
@@ -49,6 +51,7 @@ struct Element {
 
 struct Lines {
     shot: Shot,
+    /// The unit the lines start from: the caster's, or Dark Piercing's target.
     caster: Option<u32>,
     aim: Vector,
     start: Instant,
@@ -132,8 +135,16 @@ pub fn ray_radius(e: u32) -> f32 {
     2.0 + 3.0 * e as f32
 }
 
-/// A shot line's alpha at its age e (drawn for 1 to 14): up to 5 at the first rate, then down at the second.
+/// A shot line's alpha at its age e (drawn for 1 to 14): up to 5 at the first rate, then down at the second. Dark Piercing's:
+/// 8 a tick to 160 at 20, then 2 less a tick (drawn for 1 to 99).
 pub fn line_alpha(shot: Shot, e: u32) -> f32 {
+    if shot == Shot::DarkPiercing {
+        return match e {
+            1..=20 => 8.0 * e as f32,
+            21..=99 => 160.0 - 2.0 * (e - 20) as f32,
+            _ => 0.0,
+        };
+    }
     let (rise, fall) = if shot == Shot::SharpShooting { (2.0, 1.0) } else { (8.0, 4.0) };
     match e {
         1..=5 => rise * e as f32,
@@ -256,6 +267,12 @@ impl Sniper {
         self.lines.push(Lines { shot: Shot::CrescentElbow, caster, aim, start: now, made: 0, last: None, elements: Vec::new() });
     }
 
+    /// Dark Piercing's (1030) lines through `target`, along the line to the caster's feet `aim`: a prim of four elements on
+    /// each of ticks 0 and 1.
+    pub fn dark_piercing(&mut self, target: Option<u32>, aim: Vector, now: Instant) {
+        self.lines.push(Lines { shot: Shot::DarkPiercing, caster: target, aim, start: now, made: 0, last: None, elements: Vec::new() });
+    }
+
     /// Wind Walk's four arcs over the place `at`, each band's radius and lean from `rand(n)`.
     pub fn wind_walk(&mut self, at: Vector, now: Instant, mut rand: impl FnMut(u32) -> u32) {
         let bands = (0..4)
@@ -305,7 +322,7 @@ impl Sniper {
             let prims = match lines.shot {
                 Shot::SharpShooting => SHARP_PRIMS,
                 Shot::ArrowVulcan => VULCAN_PRIMS,
-                Shot::CrescentElbow => 2,
+                Shot::CrescentElbow | Shot::DarkPiercing => 2,
             };
             while lines.made < prims && passes(lines.start, now) > lines.made {
                 if let Some(feet) = lines.last {
@@ -334,14 +351,15 @@ impl Sniper {
         self.bodies.iter().filter(|coloured| coloured.unit == unit).find_map(|coloured| coloured.at(passes(coloured.start, now).checked_sub(1)?).1)
     }
 
-    /// Crescent Elbow's lines at `now`, drawn over everything with no depth test.
+    /// Crescent Elbow's and Dark Piercing's lines at `now`, drawn over everything with no depth test.
     pub fn top_meshes(&self, now: Instant) -> Vec<Wall> {
         let mut walls = Vec::new();
-        for lines in self.lines.iter().filter(|lines| lines.shot == Shot::CrescentElbow) {
+        for lines in self.lines.iter().filter(|lines| matches!(lines.shot, Shot::CrescentElbow | Shot::DarkPiercing)) {
             let Some(t) = passes(lines.start, now).checked_sub(1) else { continue };
+            let last = if lines.shot == Shot::DarkPiercing { 99 } else { 14 };
             for element in &lines.elements {
                 let e = element.age + t as i32 - element.made as i32 + 1;
-                if (1..=14).contains(&e) {
+                if (1..=last).contains(&e) {
                     walls.extend(element.walls(lines.shot, line_alpha(lines.shot, e as u32)));
                 }
             }
@@ -380,7 +398,7 @@ impl Sniper {
             walls.push(Wall { texture: RAY, vertices: thin, additive: true, forced: false });
             walls.push(Wall { texture: RAY, vertices: wide, additive: false, forced: false });
         }
-        for lines in self.lines.iter().filter(|lines| lines.shot != Shot::CrescentElbow) {
+        for lines in self.lines.iter().filter(|lines| matches!(lines.shot, Shot::SharpShooting | Shot::ArrowVulcan)) {
             let Some(t) = passes(lines.start, now).checked_sub(1) else { continue };
             for element in &lines.elements {
                 let e = element.age + t as i32 - element.made as i32 + 1;
@@ -420,6 +438,16 @@ impl Element {
             let (sin, cos) = bearing.to_radians().sin_cos();
             return Self { made, age, start: [x - cos * back, feet[1], z - sin * back], radius: 0.25, height, length, bearing };
         }
+        if shot == Shot::DarkPiercing {
+            // Its wait, then four R(100): x, z, the height and the length; it starts 100 beyond the target, away from the caster.
+            let age = -(rand(20) as i32);
+            let x = feet[0] - 15.0 + 0.3 * rand(100) as f32;
+            let z = feet[2] - 15.0 + 0.3 * rand(100) as f32;
+            let height = 8.0 + 0.04 * rand(100) as f32;
+            let length = 100.0 + 0.5 * rand(100) as f32;
+            let (sin, cos) = bearing.to_radians().sin_cos();
+            return Self { made, age, start: [x - 100.0 * cos, feet[1], z - 100.0 * sin], radius: 0.25, height, length, bearing };
+        }
         let vulcan = shot == Shot::ArrowVulcan;
         let age = if vulcan { -30 - rand(110) as i32 } else { -45 - rand(20) as i32 };
         let x = feet[0] + 0.08 * rand(100) as f32 - 4.0;
@@ -442,8 +470,9 @@ impl Element {
             Shot::SharpShooting => ([1.0; 3], self.radius + 0.25),
             Shot::ArrowVulcan => (pink, 2.0 * self.radius),
             Shot::CrescentElbow => ([55.0 / 255.0, 55.0 / 255.0, 1.0], 0.5),
+            Shot::DarkPiercing => ([55.0 / 255.0; 3], 0.5),
         };
-        let texture = if shot == Shot::CrescentElbow { CLOUD } else { RAY };
+        let texture = if matches!(shot, Shot::CrescentElbow | Shot::DarkPiercing) { CLOUD } else { RAY };
         let tint = [rgb[0], rgb[1], rgb[2], alpha / 255.0];
         let pass = |rho: f32, additive: bool| {
             let ring = |at: Vector, s: u32| {
@@ -661,5 +690,66 @@ mod tests {
         let across = |wall: &Wall| wall.vertices.iter().map(|vertex| (vertex.position[2] - element.start[2]).abs()).fold(0.0, f32::max);
         assert!(across(&walls[0]) <= 0.251 && across(&walls[1]) <= 0.501 && across(&walls[1]) > 0.3);
         assert_eq!(sniper.top_meshes(start + TICK * 1).len(), 2 * 8);
+    }
+
+    #[test]
+    fn dark_piercing_leaves_eight_dark_lines_through_the_target() {
+        let start = Instant::now();
+        let feet = [100.0, 1.0, 100.0];
+        // The caster stands due east: u = (1, 0, 0).
+        let aim = [130.0, 1.0, 100.0];
+        let make = |draw: u32| {
+            let mut sniper = Sniper::default();
+            sniper.dark_piercing(Some(1), aim, start);
+            for tick in 0..4 {
+                sniper.advance(start + TICK * tick, |_| Some(feet), |n| draw.min(n - 1));
+            }
+            sniper
+        };
+        // Two prims of four, made on ticks 0 and 1 only: 8 lines a launch, 16 for a packet's two.
+        let low = make(0);
+        assert_eq!(low.lines[0].elements.len(), 8);
+        assert_eq!(low.lines[0].elements.iter().map(|element| element.made).collect::<Vec<_>>(), [0, 0, 0, 0, 1, 1, 1, 1]);
+        // The draws in order: the age from R(20), then x, z, h, L from R(100).
+        let mut asked = Vec::new();
+        let mut sniper = Sniper::default();
+        sniper.dark_piercing(Some(1), aim, start);
+        sniper.advance(
+            start,
+            |_| Some(feet),
+            |n| {
+                asked.push(n);
+                0
+            },
+        );
+        assert_eq!(asked[..5], [20, 100, 100, 100, 100]);
+        // Every draw 0: age 0, P0 = (E.x − 15, E.y, E.z − 15) − 100 u, 8 up, 100 long, toward the caster.
+        let element = &low.lines[0].elements[0];
+        assert!(element.age == 0 && near(element.start[0], -15.0) && element.start[1] == 1.0 && near(element.start[2], 85.0));
+        assert!(element.height == 8.0 && element.radius == 0.25 && near(element.length, 100.0) && element.bearing == 0.0);
+        // Every R(100) draw 99 (and R(20) 19): 29.7 more in x and z, 11.96 up, 149.5 long, the age −19.
+        let high = make(99);
+        let element = &high.lines[0].elements[0];
+        assert!(element.age == -19 && near(element.start[0], 14.7) && near(element.start[2], 114.7));
+        assert!(near(element.height, 11.96) && near(element.length, 149.5));
+        // Alpha at n = 1, 20, 21, 99, 100: 8, 160, 158, 2, 0.
+        assert_eq!([1, 20, 21, 99, 100].map(|n| line_alpha(Shot::DarkPiercing, n)), [8.0, 160.0, 158.0, 2.0, 0.0]);
+        // Nothing while the age is ≤ 0; over everything, thin and blended (0.25), then 0.5 and added on, in #373737 on cloud11.
+        assert!(high.top_meshes(start).is_empty() && high.meshes(start, |_| Some(feet)).is_empty());
+        let walls = low.top_meshes(start);
+        assert_eq!(walls.len(), 2 * 4);
+        assert!(!walls[0].additive && walls[1].additive && walls.iter().all(|wall| wall.texture == CLOUD && wall.vertices.len() == 30));
+        assert_eq!(walls[0].vertices[0].tint[..3], [55.0 / 255.0; 3]);
+        assert_eq!((walls[0].vertices[0].tint[3] * 255.0).round(), 8.0);
+        let across = |wall: &Wall| wall.vertices.iter().map(|vertex| (vertex.position[2] - 85.0).abs()).fold(0.0, f32::max);
+        assert!(across(&walls[0]) <= 0.251 && across(&walls[1]) <= 0.501 && across(&walls[1]) > 0.3);
+        // Drawn to n = 99: a line made on tick 0 with age 0 shows on tick 98, not 99.
+        assert_eq!(low.top_meshes(start + TICK * 98).len(), 2 * 8);
+        assert_eq!(low.top_meshes(start + TICK * 99).len(), 2 * 4, "the second prim's lines");
+        assert!(low.top_meshes(start + TICK * 100).is_empty());
+        // The lines stay where they were made when the target moves.
+        let mut moved = make(0);
+        moved.advance(start + TICK * 10, |_| Some([0.0; 3]), |_| 0);
+        assert_eq!(moved.top_meshes(start + TICK * 10)[0].vertices[0].position, low.top_meshes(start + TICK * 10)[0].vertices[0].position);
     }
 }
