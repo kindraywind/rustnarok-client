@@ -3898,7 +3898,11 @@ impl App {
                         source: None,
                     });
                 }
-                if !matches!(effect, 657..=664)
+                if crate::world_fx::heal::is_class(effect) {
+                    if let Some(gpu) = gpu {
+                        game.heal_object(gpu, grf, table, effect, id);
+                    }
+                } else if !matches!(effect, 657..=664)
                     && let Some(gpu) = gpu
                 {
                     if effects::aimed_at_centre(effect) {

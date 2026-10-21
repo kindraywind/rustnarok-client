@@ -8,6 +8,7 @@
 
 pub mod drops;
 pub mod footprints;
+pub mod heal;
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -657,6 +658,8 @@ pub struct Seen<'a> {
     pub size: &'a dyn Fn(Option<u32>) -> f32,
     /// The ground's height (world y) under a world x and z.
     pub ground: &'a dyn Fn(f32, f32) -> f32,
+    /// On ecl_fild01, where the cut-down alphas of some objects apply.
+    pub dim: bool,
 }
 
 /// One kind of world object.
@@ -715,6 +718,7 @@ impl Default for WorldFx {
         let mut fx = Self { classes: HashMap::new(), objects: Vec::new(), serial: 0 };
         drops::register(&mut fx);
         footprints::register(&mut fx);
+        heal::register(&mut fx);
         fx
     }
 }
@@ -935,7 +939,7 @@ mod tests {
     }
 
     fn seen<'a>(shows: &'a dyn Fn(u32) -> bool, hidden: &'a dyn Fn(Option<u32>) -> bool) -> Seen<'a> {
-        Seen { eye: Eye::at(45.0, 0.0), shows, hidden, size: &|_| 1.0, ground: &|_, _| 0.0 }
+        Seen { eye: Eye::at(45.0, 0.0), shows, hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false }
     }
 
     #[test]

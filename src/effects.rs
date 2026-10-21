@@ -2822,6 +2822,14 @@ impl Effects {
         world_fx::footprints::hats(fx, Some(owner), on, hats, &mut assets);
     }
 
+    /// A heal object (an effect packet's or a script's 253, 312, 313, 320, 325, 1143, 1144) on `unit` (None = the player): a
+    /// new copy each time, with the table's sounds for the id.
+    #[allow(clippy::too_many_arguments)]
+    pub fn heal_object(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, unit: Option<u32>, id: u32, at: Vector, now: Instant) {
+        self.play_sounds(table, id, at, now);
+        self.launch_fx(gpu, grf, &world_fx::Launch::at(id, Some(unit), at));
+    }
+
     /// A fall packet's drop effects for ground item `item` lying at `at`: the item info's effect number and the mode's colour
     /// (`world_fx::drops::launches`). A pillar stands while the item lies; any other effect plays once at the item.
     #[allow(clippy::too_many_arguments)]
@@ -2894,8 +2902,9 @@ impl Effects {
             }
             return;
         }
-        // A registered world object; the footprint classes come only with a hat effect, the pillars with a dropped item.
-        if self.fx.registered(id) && !world_fx::footprints::is_class(id) && !world_fx::drops::is_pillar(id) {
+        // A registered world object; the footprint classes come only with a hat effect, the heal objects only with a packet,
+        // the pillars with a dropped item.
+        if self.fx.registered(id) && !world_fx::footprints::is_class(id) && !world_fx::heal::is_class(id) && !world_fx::drops::is_pillar(id) {
             let owner = match target {
                 Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
                 _ => None,
@@ -6479,6 +6488,24 @@ mod tests {
         assert_eq!([table.lengths[&25], table.lengths[&95], table.lengths[&920]], [40, 150, 40]);
         // (Electric Walk's wave, 221, loops every 30 ticks now.)
         assert!([130, 136].iter().all(|kind| table.units_once.contains(kind)) && !table.units_once.contains(&221));
+    }
+
+    #[test]
+    fn the_heal_objects_have_their_sounds_and_stay_out_of_a_skills_heal() {
+        let table = Table::load();
+        let sound = |id: u32| table.sounds.get(&id).map(|sounds| sounds.iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>());
+        assert_eq!(sound(253), Some(vec![("effect\\흡기", 0)]));
+        for id in [312, 313, 320, 325] {
+            assert_eq!(sound(id), Some(vec![("_heal_effect", 0)]), "{id}");
+        }
+        assert_eq!((sound(1143), sound(1144)), (None, None));
+        // The object is registered for all seven ids; `play` leaves them to the packet's own entry, so a skill's heal (Banded,
+        // `heal_effect`) goes on through the table.
+        let fx = WorldFx::default();
+        for id in [253, 312, 313, 320, 325, 1143, 1144] {
+            assert!(fx.registered(id) && world_fx::heal::is_class(id), "{id}");
+        }
+        assert!(!world_fx::heal::is_class(311));
     }
 
     #[test]

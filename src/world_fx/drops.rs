@@ -180,7 +180,7 @@ mod tests {
         // The data's force-drawn rule: the pillar ids are always shown.
         let shows = move |id: u32| !effects_off || crate::effects::force_drawn(id);
         let hidden = |_: Option<u32>| false;
-        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0 };
+        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false };
         Lists::sort(fx.faces(&seen), |_| 0.0)
     }
 
