@@ -670,6 +670,8 @@ mod tests {
             far: false,
             events: Vec::new(),
             released: false,
+            min: false,
+            delay: 0,
             updated: false,
         }
     }

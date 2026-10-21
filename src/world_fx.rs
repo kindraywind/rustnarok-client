@@ -9,6 +9,7 @@
 pub mod drops;
 pub mod footprints;
 pub mod heal;
+pub mod jobs3;
 pub mod summoner;
 
 use std::collections::HashMap;
@@ -627,6 +628,10 @@ pub struct Fx {
     pub events: Vec<(u32, Event)>,
     /// The ground unit it stands for is gone: its pieces finish without new ones.
     pub released: bool,
+    /// /mineffect was on at launch.
+    pub min: bool,
+    /// Its start delay in ms, for the classes that hold for one.
+    pub delay: i32,
     /// Its first update has run.
     updated: bool,
 }
@@ -649,6 +654,8 @@ impl Fx {
             far: false,
             events: Vec::new(),
             released: false,
+            min: launch.min,
+            delay: launch.delay,
             updated: false,
         }
     }
@@ -697,6 +704,10 @@ pub trait Class {
     fn alive(&self, fx: &Fx, _scene: &Scene) -> bool {
         fx.timed()
     }
+    /// The class itself, for a launcher that changes a running object (`WorldFx::class_mut`).
+    fn any(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
 }
 
 /// Makes a class's object.
@@ -715,11 +726,15 @@ pub struct Launch {
     pub unique: bool,
     pub life: u32,
     pub tag: u32,
+    /// /mineffect is on.
+    pub min: bool,
+    /// The start delay in ms.
+    pub delay: i32,
 }
 
 impl Launch {
     pub fn at(id: u32, owner: Option<Option<u32>>, point: Vector) -> Self {
-        Self { id, owner, point, target: None, aim: point, a7: None, unique: false, life: 0, tag: 0 }
+        Self { id, owner, point, target: None, aim: point, a7: None, unique: false, life: 0, tag: 0, min: false, delay: 0 }
     }
 }
 
@@ -743,6 +758,7 @@ impl Default for WorldFx {
         drops::register(&mut fx);
         footprints::register(&mut fx);
         heal::register(&mut fx);
+        jobs3::register(&mut fx);
         summoner::register(&mut fx);
         fx
     }
@@ -755,6 +771,12 @@ impl WorldFx {
 
     pub fn registered(&self, id: u32) -> bool {
         self.classes.contains_key(&id)
+    }
+
+    /// The class of the running copy of (owner, one of `ids`), when it is a `T`.
+    pub fn class_mut<T: 'static>(&mut self, owner: Option<Option<u32>>, ids: &[u32]) -> Option<(&mut Fx, &mut T)> {
+        let object = self.objects.iter_mut().find(|object| object.fx.owner == owner && ids.contains(&object.fx.id))?;
+        Some((&mut object.fx, object.class.any()?.downcast_mut::<T>()?))
     }
 
     /// Whether a copy of (owner, id) is running.

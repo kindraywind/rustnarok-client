@@ -1323,6 +1323,50 @@ impl Game {
         }
     }
 
+    /// Frigg's Song's use packet at `level` from `source`; nothing for a caster not in sight.
+    pub(crate) fn frigg_song(&mut self, gpu: &Gpu, grf: &Grf, source: u32, level: i32) {
+        if let Some(at) = self.feet(source, control::now()) {
+            self.effects.frigg_song(gpu, grf, at, level);
+        }
+    }
+
+    /// A use packet of Cart Cannon or Shield Shooting from `source` on `target`; nothing unless both are in sight.
+    pub(crate) fn thrown(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, skill: u16, source: u32, target: u32) {
+        let now = control::now();
+        let unit = |id: u32| (id != self.account_id).then_some(id);
+        if let (Some(from), Some(to)) = (self.feet(source, now), self.feet(target, now)) {
+            self.effects.thrown(gpu, grf, table, skill, (unit(source), from), (unit(target), to), Instant::now());
+        }
+    }
+
+    /// A damage packet of Triangle Shot (its arrow after the caster's shot) or Axe Boomerang from `source` on `target`;
+    /// nothing unless both are in sight.
+    pub(crate) fn third_job_hit(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, skill: u16, source: u32, target: u32) {
+        let now = control::now();
+        let unit = |id: u32| (id != self.account_id).then_some(id);
+        let (Some(from), Some(to)) = (self.feet(source, now), self.feet(target, now)) else { return };
+        if skill == crate::world_fx::jobs3::AXE_SKILL {
+            self.effects.axe_boomerang(gpu, grf, (unit(source), from), (unit(target), to));
+            return;
+        }
+        let caster = if source == self.account_id { Some(&self.player) } else { self.units.get(&source) };
+        let delay = effects::cannon_delay_ms(caster.and_then(|actor| actor.sprites.as_ref()).map_or(4.0, actor::SpriteSet::current_delay));
+        self.effects.triangle_shot(gpu, grf, table, from, (unit(target), to), delay);
+    }
+
+    /// The spirit count of `unit`: a Rebellion's or a Night Watch's coins, none while it is out of sight.
+    pub(crate) fn coins(&mut self, gpu: &Gpu, grf: &Grf, unit: u32, count: u16) {
+        let actor = if unit == self.account_id { Some(&self.player) } else { self.units.get(&unit) };
+        let job = if unit == self.account_id { Some(self.me.job) } else { actor.map(|actor| actor.job) };
+        if !job.is_some_and(crate::world_fx::jobs3::object_coins) {
+            return;
+        }
+        let seen = actor.is_some_and(|actor| actor.hide_option & actor::UNSEEN_OPTIONS == 0);
+        if let Some(at) = self.feet(unit, control::now()) {
+            self.effects.coins(gpu, grf, (unit != self.account_id).then_some(unit), count, at, seen);
+        }
+    }
+
     /// Cold Slower (791): three prims of four snowflakes thrown from caster's feet toward `aim`.
     pub(crate) fn cold_slower(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, source: u32, aim: world::Vector) {
         let key = (source != self.account_id).then_some(source);
@@ -1466,6 +1510,10 @@ impl Game {
         if key.is_none() && status == effects::DEEP_BLIND {
             self.deep_blind = on;
             self.note_blind(control::now());
+        }
+        // A Warlock's spheres: one a slot, by the element its value names.
+        if let (Some(slot), Some(gpu)) = (crate::world_fx::jobs3::sphere_slot(status), gpu) {
+            self.effects.sphere(gpu, grf, key, slot, on, value as i32);
         }
         // Song of Mana's and Wug Dance's circle runs out its ticks when the status goes off.
         if effects::circle_ignores(status, on, value) {

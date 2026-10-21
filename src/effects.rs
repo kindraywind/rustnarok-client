@@ -2998,6 +2998,84 @@ impl Effects {
         self.launch_fx(gpu, grf, &world_fx::Launch { a7: Some(level), ..world_fx::Launch::at(effect, None, at) });
     }
 
+    /// Frigg's Song's use packet at level `level` from a caster standing at `at`: its nine light columns.
+    pub fn frigg_song(&mut self, gpu: &Gpu, grf: &Grf, at: Vector, level: i32) {
+        for point in world_fx::jobs3::frigg_points(at, level) {
+            self.launch_fx(gpu, grf, &world_fx::Launch::at(world_fx::jobs3::FRIGG, None, point));
+        }
+    }
+
+    /// The spirit count of a Rebellion or a Night Watch (`unit`, None = the player) standing at `at`: its coins, none for 0
+    /// or a unit out of sight.
+    pub fn coins(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, count: u16, at: Vector, seen: bool) {
+        let owner = Some(unit);
+        self.fx.remove(owner, world_fx::jobs3::COINS);
+        if count != 0 && seen {
+            self.launch_fx(gpu, grf, &world_fx::Launch { a7: Some(i32::from(count)), ..world_fx::Launch::at(world_fx::jobs3::COINS, owner, at) });
+        }
+    }
+
+    /// Fallen Angel's cast on `unit` (None = the player) standing at `at`.
+    pub fn fallen_angel(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, at: Vector) {
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        world_fx::jobs3::fallen_angel(fx, Some(unit), at, &mut assets);
+    }
+
+    /// `unit` (None = the player) snapped to the cell at `cell`: its Fallen Angel feathers fall there.
+    pub fn snapped(&mut self, unit: Option<u32>, cell: Vector) {
+        world_fx::jobs3::snap(&mut self.fx, Some(unit), cell);
+    }
+
+    /// A sphere status (`slot`) turning on with its value, or off, on `unit` (None = the player).
+    pub fn sphere(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, slot: usize, on: bool, value: i32) {
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        world_fx::jobs3::sphere(fx, Some(unit), slot, on, value, &mut assets);
+    }
+
+    /// A Triangle Shot damage packet from a caster at `from` on `target`, after the caster's shot (`delay` ms): the target's STRs and
+    /// the arrow.
+    pub fn triangle_shot(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, from: Vector, (target, at): (Option<u32>, Vector), delay: i32) {
+        for (id, wait) in [(world_fx::jobs3::TRIANGLE_HIT, 0), (world_fx::jobs3::TRIANGLE_HIT_2, delay)] {
+            let id = table.min_id(id, self.min);
+            if let Some(copy) = self.launch_world(gpu, grf, table, id, Some(target), at, false, 0).and_then(|serial| self.worlds.get_mut(serial)) {
+                copy.timeline.delay = wait;
+            }
+        }
+        self.launch_fx(gpu, grf, &world_fx::jobs3::shot(world_fx::jobs3::TRIANGLE_SHOT, None, from, (target, at), self.min, delay));
+    }
+
+    /// A use packet of Cart Cannon or Shield Shooting from `caster` at `from` on `target` at `at`: the ball 200 ms on,
+    /// with its sound at the listener, or the shield at once, with its sound at the target.
+    #[allow(clippy::too_many_arguments)]
+    pub fn thrown(
+        &mut self,
+        gpu: &Gpu,
+        grf: &Grf,
+        table: &Table,
+        skill: u16,
+        (caster, from): (Option<u32>, Vector),
+        (target, at): (Option<u32>, Vector),
+        now: Instant,
+    ) {
+        use world_fx::jobs3::{CART_CANNON, CART_CANNON_DELAY_MS, CART_CANNON_SKILL, SHIELD_SHOOTING, SHIELD_SKILL};
+        match skill {
+            // The ball is owned by its target: its far rule is the target's.
+            CART_CANNON_SKILL => {
+                self.launch_fx(gpu, grf, &world_fx::jobs3::shot(CART_CANNON, Some(target), from, (target, at), self.min, CART_CANNON_DELAY_MS));
+            }
+            SHIELD_SKILL => {
+                self.launch_fx(gpu, grf, &world_fx::jobs3::shot(SHIELD_SHOOTING, Some(caster), from, (target, at), self.min, 0));
+                self.play_sounds(table, SHIELD_SHOOTING, at, now);
+            }
+            _ => {}
+        }
+    }
+
+    /// An Axe Boomerang damage packet from `caster` at `from` on `target` at `at`: the axe.
+    pub fn axe_boomerang(&mut self, gpu: &Gpu, grf: &Grf, (caster, from): (Option<u32>, Vector), (target, at): (Option<u32>, Vector)) {
+        self.launch_fx(gpu, grf, &world_fx::jobs3::shot(world_fx::jobs3::AXE_BOOMERANG, Some(caster), from, (target, at), self.min, 0));
+    }
+
     /// A ground item taken or gone: its pillars go.
     pub fn item_gone(&mut self, item: u32) {
         self.fx.remove_all_of(Some(Some(item)));
@@ -3092,10 +3170,10 @@ impl Effects {
                 _ => None,
             };
             let mut launch = world_fx::Launch::at(id, owner, at);
-            // A status sent again keeps its copy, but Spirit Marble's spirits start afresh.
+            // A status sent again keeps its copy, but Spirit Marble's spirits and Flower Leaf's glints start afresh.
             if matches!(target, Target::Status(..)) {
                 launch.unique = true;
-                if world_fx::summoner::restarts_on_status(id) {
+                if world_fx::summoner::restarts_on_status(id) || world_fx::jobs3::restarts_on_status(id) {
                     self.fx.remove(owner, id);
                 }
             }
@@ -4366,7 +4444,8 @@ impl Effects {
             let period = table.lengths.get(&effect).copied().unwrap_or(21).saturating_sub(20).max(1);
             self.areas.push(Area { id, effect, lift, range, at, next: now, period });
         }
-        if let Some(&effect) = table.units.get(&kind) {
+        // Bind Trap's circle is sized by the trap's level.
+        if let Some(effect) = table.units.get(&kind).and_then(|&effect| world_fx::jobs3::unit_effect(effect, level)) {
             // Volcano's, Deluge's, Violent Gale's and Land Protector's cells keep their loops, drawn in code.
             if effect == GRAVITATION {
                 for path in [stone::STONE, crate::prims::ICE_TEXTURE] {
@@ -9749,6 +9828,25 @@ mod tests {
         assert!(table.used(740).unwrap().contains(&(Who::Caster, first::IGNITION_RING)));
         assert_eq!(sounds(first::IGNITION_RING), [("effect\\wl_jackfrost", 0, true)]);
         assert_eq!([first::SLOW_CAST, CRITICAL_WOUND].map(|id| table.lengths[&id]), [300, 50]);
+    }
+
+    #[test]
+    fn the_third_job_objects_have_their_rows() {
+        use world_fx::jobs3;
+        let table = Table::load();
+        let fx = WorldFx::default();
+        // Flower Leaf's status, Cloud Kill's unit (one object a unit) and Bind Trap's.
+        assert_eq!(table.status(675), [jobs3::FLOWER_LEAF]);
+        assert!(table.units[&224] == jobs3::CLOUD_KILL && table.units_once.contains(&224));
+        assert_eq!(table.units[&jobs3::BIND_TRAP_UNIT], jobs3::RUNES);
+        for id in [1013, 1059, 1069, 1070, 1071, 1080, 1135, 1140, 1262, 1263, 1264, 1265, 1324, 1357, 1657, 2183] {
+            assert!(fx.registered(id), "{id}");
+        }
+        // Triangle Shot's target STRs under /mineffect, Axe Boomerang's hit, Shield Shooting's sound.
+        assert_eq!([table.min_id(1296, true), table.min_id(1297, true), table.min_id(1296, false)], [1459, 1460, 1296]);
+        assert!(table.struck(jobs3::AXE_SKILL).unwrap().contains(&(Who::Target, 1660)));
+        let sounds: Vec<_> = table.sounds[&jobs3::SHIELD_SHOOTING].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect();
+        assert_eq!(sounds, [("effect\\IG_SHIELD_SHOOTING", 0, false)]);
     }
 
     #[test]
