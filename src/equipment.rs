@@ -37,12 +37,12 @@ const TAB_PADDING: f32 = 15.0;
 const ROW: f32 = 26.0;
 const ICON: f32 = 24.0;
 /// A slot's icon at x 6 or 251, top 38 + 26r; its name box 70 wide at x 33 or 172, two lines at most, centred on the row's
-/// middle 51 + 26r (one line's top is 45 + 26r, also the drag oval's).
+/// line box middle 47 + 26r: the glyphs sit low in their box, so their ink is centred between the row's dividers (the drag oval's top is 45 + 26r).
 const ICON_X: [f32; 2] = [6.0, 251.0];
 const ICON_TOP: f32 = 38.0;
 const NAME_X: [f32; 2] = [33.0, 172.0];
 const NAME_TOP: f32 = 45.0;
-const NAME_MID: f32 = 51.0;
+const NAME_MID: f32 = 47.0;
 const NAME_BOX: f32 = 70.0;
 /// The slot rows: from y 37, 26 apart, above y 165. A press takes the icon only, a hover or a right press the icon
 /// and the name: x from and to, left and right.
