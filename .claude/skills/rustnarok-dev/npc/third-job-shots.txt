@@ -1,0 +1,27 @@
+// Third-job shots (issue #791): a training dummy 3 cells east of prt_fild06 180,180, which can't cast. Whisper
+// npc:RustnarokShots "hell", "metal", "reverb" or "sonic" and the player casts SR_GATEOFHELL (given its two spirit spheres),
+// WM_METALICSOUND, WM_REVERBERATION (given and equipped a bow and arrows: the scenario makes the player a Wanderer first) or
+// RK_SONICWAVE on the dummy. Loaded and unloaded by scenarios/third-job-shots.json.
+prt_fild06,1,1,0	script	RustnarokShots	-1,{
+	end;
+OnInit:
+	monster "prt_fild06", 183, 180, "--ja--", 2408, 1;
+	.gid = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "hell") {
+		addspiritball 2, 60000;
+		unitskilluseid getcharid(3), "SR_GATEOFHELL", 1, .gid;
+	} else if (@whispervar0$ == "metal") {
+		unitskilluseid getcharid(3), "WM_METALICSOUND", 1, .gid;
+	} else if (@whispervar0$ == "sonic") {
+		unitskilluseid getcharid(3), "RK_SONICWAVE", 1, .gid;
+	} else if (@whispervar0$ == "reverb") {
+		getitem 1701, 1;
+		getitem 1750, 5;
+		equip 1701;
+		equip 1750;
+		unitskilluseid getcharid(3), "WM_REVERBERATION", 1, .gid;
+	}
+	end;
+}

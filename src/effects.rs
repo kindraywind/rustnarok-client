@@ -2461,6 +2461,12 @@ const SPEAR_RUSH: u32 = 835;
 const RAMPAGE_BODY: u32 = 1545;
 const CROSS_LINES: u32 = 1568;
 const REVERB_FX: u32 = 1569;
+/// Gate of Hell's grey lines, Metallic Sound's "V" and notes, Reverberation's notes and Sonic Wave's rings (`prims::brawl`,
+/// `prims::spears`, `prims::notes`, `prims::waves`).
+const HELL_LINES: u32 = 1575;
+const METAL_SOUND: u32 = 1584;
+const REVERB_NOTES_FX: u32 = 1594;
+const SONIC_RINGS: u32 = 1678;
 const SWING_DANCE: u32 = 847;
 const HARMONIZE: u32 = 849;
 /// Arrullo's drifting lights (`prims::souls`); Harmonize's (850) are launched by its emitter.
@@ -2716,7 +2722,7 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 55] = [
+pub const AIMED: [u32; 58] = [
     EF_TETRA,
     CANNON_LINES,
     STIN,
@@ -2738,6 +2744,9 @@ pub const AIMED: [u32; 55] = [
     GREAT_ECHO_V,
     SONIC_WAVE,
     WIND_SLASH,
+    HELL_LINES,
+    METAL_SOUND,
+    SONIC_RINGS,
     SHADOW_LINK,
     BOOST_KNUCKLE,
     RELEASE,
@@ -3580,6 +3589,12 @@ impl Effects {
             (STONE_RAIN, Target::Unit(unit)) => {
                 self.textures.entry(elemental::STONE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, elemental::STONE, true).ok());
                 self.prims.elemental.stone_rain(unit, at, now);
+            }
+            (REVERB_NOTES_FX, Target::Unit(unit)) => {
+                for path in if self.min { notes::REVERB_NOTES_MIN } else { notes::REVERB_NOTES } {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.notes.reverb(unit, at, self.min, now);
             }
             (ARRULLO_FX, Target::Unit(unit)) => {
                 self.textures.entry(souls::DOT.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, souls::DOT, true).ok());
@@ -4718,6 +4733,27 @@ impl Effects {
                     self.prims.guard.wind_slash(caster, now);
                 }
             }
+            SONIC_RINGS => {
+                for path in waves::RINGS {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.waves.sonic_rings(caster, from, to, self.min, now);
+            }
+            HELL_LINES => {
+                let path = if self.min { brawl::HELL_MIN } else { brawl::HELL };
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                self.play_sounds(table, id, from, now);
+                self.prims.brawl.hell_lines(from, to, self.min, now, |n| pick(0, n.saturating_sub(1)));
+            }
+            METAL_SOUND => {
+                let line = if self.min { spears::METAL_LINE_MIN } else { spears::METAL_LINE };
+                for path in std::iter::once(line).chain(if self.min { notes::METAL_NOTES_MIN } else { notes::METAL_NOTES }) {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.play_sounds(table, id, from, now);
+                self.prims.spears.metallic(from, to, self.min, now);
+                self.prims.notes.metallic(caster, from, to, self.min, now);
+            }
             SHADOW_LINK => {
                 self.textures.entry(transcend::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, transcend::CLOUD, true).ok());
                 self.prims.transcend.shadow(caster, target, own, now);
@@ -4788,7 +4824,7 @@ impl Effects {
         self.prims.spray.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.brawl.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.mechanic.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
-        self.prims.waves.advance(now, |n| pick(0, n.saturating_sub(1)));
+        self.prims.waves.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.chi.advance(now);
         self.prims.radar.advance(now);
         // Harmonize's emitters launch a pair of bands of soft lights (850) on their units each tick.
@@ -8540,6 +8576,24 @@ mod tests {
         assert!(AIMED.contains(&CANNON_LINES) && !aimed_at_centre(CANNON_LINES));
         assert!(table.struck(2307).unwrap().contains(&(Who::Caster, CANNON_LINES)));
         assert_eq!(sounds(CANNON_LINES), [("effect\\LG_CANNONSPEAR", 0, true)]);
+    }
+
+    #[test]
+    fn gate_of_hell_metallic_sound_reverberation_and_sonic_wave_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Gate of Hell's lines and Metallic Sound's "V" and notes on the caster at the target, heard at the listener; no quake.
+        assert!(table.struck(2343).unwrap().contains(&(Who::Caster, HELL_LINES)));
+        assert!(table.struck(2413).unwrap().contains(&(Who::Caster, METAL_SOUND)));
+        assert_eq!(sounds(HELL_LINES), [("effect\\SR_GATEOFHELL", 0, true)]);
+        assert_eq!(sounds(METAL_SOUND), [("effect\\metalic", 0, true)]);
+        assert!(!table.quakes.contains_key(&HELL_LINES) && !table.quakes.contains_key(&METAL_SOUND));
+        // Reverberation's notes on the target, silent; Sonic Wave's rings beside its crescents, silent.
+        assert!(table.struck(2414).unwrap().contains(&(Who::Target, REVERB_NOTES_FX)) && !table.sounds.contains_key(&REVERB_NOTES_FX));
+        let sonic = table.struck(2002).unwrap();
+        assert!(sonic.contains(&(Who::Caster, SONIC_WAVE)) && sonic.contains(&(Who::Caster, SONIC_RINGS)) && !table.sounds.contains_key(&SONIC_RINGS));
+        assert!([HELL_LINES, METAL_SOUND, SONIC_RINGS].iter().all(|id| AIMED.contains(id) && !aimed_at_centre(*id)) && !AIMED.contains(&REVERB_NOTES_FX));
+        assert_eq!([HELL_LINES, METAL_SOUND, REVERB_NOTES_FX, SONIC_RINGS].map(|id| table.lengths[&id]), [300, 300, 200, 1678]);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! The Rune Knight's Sonic Wave (832) and the Arch Bishop's Duple Light (833), a 16 ms tick at a time: four bubble crescents sliding
 //! toward the target, and two glowing balls circling a unit, each trailing four icy panes. The wind elemental's Wind Slash (943)
-//! is Sonic Wave's crescents in green, added on.
+//! is Sonic Wave's crescents in green, added on. Sonic Wave's rings (1678) are three pairs of the same crescents, wider, in blue
+//! sound-wave pictures.
 //!
 //! A shape's own age n counts from 1 at its first tick; a is the ticks run since the effect started minus one.
 
@@ -16,6 +17,13 @@ use crate::world::{EffectQuad, MeshVertex, Vector};
 
 pub const PANE: &str = "data\\texture\\effect\\freeze_a.bmp";
 pub const GLOW: &str = THUNDER_CENTER;
+/// Sonic Wave's rings: the pictures of each pair's first and second.
+pub const RINGS: [&str; 2] =
+    ["data\\texture\\effect\\new_sonicwave\\new_sonicwave\\son_wave_01.tga", "data\\texture\\effect\\new_sonicwave\\new_sonicwave\\son_wave_00.tga"];
+/// A pair each on ticks 0, 20 and 40: the rim heights and the first band's radii.
+const RING_TICKS: [u32; 3] = [0, 20, 40];
+const RING_RIMS: [f32; 2] = [20.0, 30.0];
+const RING_RADII: [f32; 2] = [9.0, 6.0];
 const PIXELS_PER_UNIT: f32 = 7.0;
 /// Sonic Wave: four bands, the rim 30 high; ages start at −8 k.
 const CRESCENT_RIM: f32 = 30.0;
@@ -51,13 +59,19 @@ fn weight(s: usize) -> f32 {
 }
 
 /// The four bands and the slide count after `ticks` ticks of the prim (`min` is /mineffect: alpha at most 125).
+#[cfg(test)]
 pub fn bands(ticks: u32, min: bool) -> ([Band; 4], u32) {
+    shaped_bands(ticks, min, CRESCENT_RIM, 3.0)
+}
+
+/// The same with a rim `rim` high and band k's radius `radius` − 0.1 k.
+pub fn shaped_bands(ticks: u32, min: bool, rim: f32, radius: f32) -> ([Band; 4], u32) {
     let mut bands: [Band; 4] = std::array::from_fn(|k| Band {
         active: true,
         age: -8 * k as i32,
         alpha: 0,
         lean: 5 * (14 - k as i32),
-        radius: 3.0 - 0.1 * k as f32,
+        radius: radius - 0.1 * k as f32,
         profile: [0.0; 21],
     });
     let mut slide = 0;
@@ -91,14 +105,15 @@ pub fn bands(ticks: u32, min: bool) -> ([Band; 4], u32) {
             }
             let grow = if band.age <= 15 { (6.0 * band.age as f32).to_radians().sin() } else { 1.0 };
             for (s, p) in band.profile.iter_mut().enumerate() {
-                *p = (CRESCENT_RIM * weight(s) * grow).max(0.0);
+                *p = (rim * weight(s) * grow).max(0.0);
             }
         }
     }
     (bands, slide)
 }
 
-/// Sonic Wave's crescents where the caster stood, toward the way `heading` (degrees), in their colour and blend.
+/// Sonic Wave's crescents where the caster stood, toward the way `heading` (degrees), in their colour and blend; the rings' have
+/// their own rim, radius and picture.
 struct Crescents {
     start: Instant,
     at: Vector,
@@ -106,6 +121,20 @@ struct Crescents {
     min: bool,
     rgb: [f32; 3],
     additive: bool,
+    rim: f32,
+    radius: f32,
+    picture: Option<&'static str>,
+}
+
+/// Sonic Wave's rings from the caster `unit` at the target's place `aim`: the pairs made so far, all where the caster stood on the
+/// last pair's tick.
+struct Rings {
+    unit: Option<u32>,
+    start: Instant,
+    aim: Vector,
+    at: Vector,
+    min: bool,
+    pairs: Vec<Crescents>,
 }
 
 /// Wind Slash's crescents: #64FF64.
@@ -140,6 +169,7 @@ struct Orbs {
 #[derive(Default)]
 pub struct Waves {
     crescents: Vec<Crescents>,
+    rings: Vec<Rings>,
     orbs: Vec<Orbs>,
 }
 
@@ -205,13 +235,28 @@ impl Waves {
     /// Sonic Wave from the caster standing at `from` toward `to` (/mineffect `min`).
     pub fn sonic(&mut self, from: Vector, to: Vector, min: bool, now: Instant) {
         let heading = bearing(to[0] - from[0], to[2] - from[2]) as f32;
-        self.crescents.push(Crescents { start: now, at: from, heading, min, rgb: [1.0; 3], additive: false });
+        self.crescents.push(Crescents { start: now, at: from, heading, min, rgb: [1.0; 3], additive: false, rim: CRESCENT_RIM, radius: 3.0, picture: None });
     }
 
     /// Wind Slash from the elemental standing at `from` toward `to`: the same crescents, green and added on.
     pub fn wind_slash(&mut self, from: Vector, to: Vector, min: bool, now: Instant) {
         let heading = bearing(to[0] - from[0], to[2] - from[2]) as f32;
-        self.crescents.push(Crescents { start: now, at: from, heading, min, rgb: WIND_SLASH_RGB, additive: true });
+        self.crescents.push(Crescents {
+            start: now,
+            at: from,
+            heading,
+            min,
+            rgb: WIND_SLASH_RGB,
+            additive: true,
+            rim: CRESCENT_RIM,
+            radius: 3.0,
+            picture: None,
+        });
+    }
+
+    /// Sonic Wave's rings from the caster `unit` standing at `from` at the target's place `to` (/mineffect `min`).
+    pub fn sonic_rings(&mut self, unit: Option<u32>, from: Vector, to: Vector, min: bool, now: Instant) {
+        self.rings.push(Rings { unit, start: now, aim: to, at: from, min, pairs: Vec::new() });
     }
 
     /// Duple Light on `unit` (two orbs), the choices of each from `rand(n)` in the order the game draws them.
@@ -247,8 +292,35 @@ impl Waves {
         self.orbs.retain(|orbs| orbs.unit != Some(unit));
     }
 
-    /// Runs the orbs up to `now`, a tick at a time.
-    pub fn advance(&mut self, now: Instant, mut rand: impl FnMut(u32) -> u32) {
+    /// Runs the orbs up to `now`, a tick at a time, and makes the rings' pairs whose ticks have come where the caster stands
+    /// (`position_of`).
+    pub fn advance(&mut self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>, mut rand: impl FnMut(u32) -> u32) {
+        for rings in &mut self.rings {
+            while let Some(&tick) = RING_TICKS.get(rings.pairs.len() / 2).filter(|&&tick| passes(rings.start, now) > tick) {
+                // ponytail: the earlier pairs move to the caster's new place (each keeps its heading), as the game's prims all sit at
+                // the effect's place; if that looks odd, keep each pair where it was made.
+                rings.at = position_of(rings.unit).unwrap_or(rings.at);
+                for pair in &mut rings.pairs {
+                    pair.at = rings.at;
+                }
+                let heading = bearing(rings.aim[0] - rings.at[0], rings.aim[2] - rings.at[2]) as f32;
+                for k in 0..2 {
+                    let start = rings.start + super::TICK * tick;
+                    rings.pairs.push(Crescents {
+                        start,
+                        at: rings.at,
+                        heading,
+                        min: rings.min,
+                        rim: RING_RIMS[k],
+                        radius: RING_RADII[k],
+                        picture: Some(RINGS[k]),
+                        rgb: [1.0; 3],
+                        additive: false,
+                    });
+                }
+            }
+        }
+        self.rings.retain(|rings| passes(rings.start, now) <= RING_TICKS[RING_TICKS.len() - 1] + 80);
         for orbs in &mut self.orbs {
             let due = passes(orbs.start, now);
             for orb in &mut orbs.orbs {
@@ -263,14 +335,14 @@ impl Waves {
     /// Sonic Wave's crescents (blended) and Duple Light's panes (added on) at `now`.
     pub fn meshes(&self, now: Instant, position_of: impl Fn(Option<u32>) -> Option<Vector>) -> Vec<Wall> {
         let mut walls = Vec::new();
-        for crescents in &self.crescents {
+        for crescents in self.crescents.iter().chain(self.rings.iter().flat_map(|rings| &rings.pairs)) {
             let Some(a) = passes(crescents.start, now).checked_sub(1).filter(|&a| a < 80) else { continue };
-            let (bands, slide) = bands(a + 1, crescents.min);
+            let (bands, slide) = shaped_bands(a + 1, crescents.min, crescents.rim, crescents.radius);
             let (sin_h, cos_h) = crescents.heading.to_radians().sin_cos();
             let turn = (crescents.heading + 195.0) % 360.0;
             let d = slide as f32;
             for band in bands.iter().filter(|band| band.active && band.age > 0) {
-                let picture = BUBBLES[2 * (band.age as usize % 13) + 1];
+                let picture = crescents.picture.unwrap_or(BUBBLES[2 * (band.age as usize % 13) + 1]);
                 let (lean_sin, lean_cos) = (band.lean as f32).to_radians().sin_cos();
                 let [red, green, blue] = crescents.rgb;
                 let tint = [red, green, blue, band.alpha as f32 / 255.0];
@@ -442,6 +514,46 @@ mod tests {
     }
 
     #[test]
+    fn sonic_wave_rolls_three_pairs_of_blue_rings_at_the_target() {
+        let start = Instant::now();
+        let mut waves = Waves::default();
+        waves.sonic_rings(Some(1), [0.0; 3], [40.0, 0.0, 0.0], false, start);
+        // Two prims on each of ticks 0, 20, 40: six, first son_wave_01 (rim 20, radius 9.0 − 0.1 k), then son_wave_00 (30, 6.0 − 0.1 k).
+        let made = |tick: u32, waves: &mut Waves| {
+            waves.advance(start + TICK * tick, |_| Some([0.0; 3]), |_| 0);
+            waves.rings[0].pairs.len()
+        };
+        assert_eq!([0, 19, 20, 39, 40, 60].map(|tick| made(tick, &mut waves)), [2, 2, 4, 4, 6, 6]);
+        let pairs = &waves.rings[0].pairs;
+        assert_eq!(
+            pairs.iter().map(|pair| (pair.picture, pair.rim, pair.radius)).collect::<Vec<_>>()[..2],
+            [(Some(RINGS[0]), 20.0, 9.0), (Some(RINGS[1]), 30.0, 6.0)]
+        );
+        assert_eq!(RINGS.map(|path| path.rsplit('\\').next().unwrap()), ["son_wave_01.tga", "son_wave_00.tga"]);
+        let (first, _) = shaped_bands(0, false, 20.0, 9.0);
+        assert_eq!(first.map(|band| (band.radius * 10.0).round()), [90.0, 89.0, 88.0, 87.0]);
+        // The bands' alpha as 832's at ages 1, 9, 10, 31, then the restart at 32; the rim 20 high at its full growth.
+        let band0 = |ticks: u32| shaped_bands(ticks, false, 20.0, 9.0).0[0];
+        assert_eq!([1, 9, 10, 31].map(|age| band0(age).alpha), [25, 225, 215, 5]);
+        assert_eq!((band0(32).age, band0(32).alpha, band0(32).lean), (0, 0, 50));
+        assert!(near(band0(15).profile[10], 20.0) && near(shaped_bands(15, false, 30.0, 6.0).0[0].profile[10], 30.0));
+        // One picture a prim, blended; drawn at tick 0 as one wall each (band 0 only), none after tick 40 + 71.
+        let walls = waves.meshes(start + TICK * 40, |_| None);
+        assert!(walls.iter().all(|wall| !wall.additive && RINGS.contains(&wall.texture)));
+        assert!(waves.meshes(start + TICK * 112, |_| None).is_empty());
+        // The pairs all move to where the caster stands on ticks 20 and 40.
+        let mut moving = Waves::default();
+        moving.sonic_rings(Some(1), [0.0; 3], [40.0, 0.0, 0.0], false, start);
+        moving.advance(start, |_| Some([0.0; 3]), |_| 0);
+        moving.advance(start + TICK * 10, |_| Some([5.0, 0.0, 0.0]), |_| 0);
+        assert_eq!(moving.rings[0].pairs[0].at, [0.0; 3]);
+        moving.advance(start + TICK * 20, |_| Some([5.0, 0.0, 0.0]), |_| 0);
+        assert!(moving.rings[0].pairs.iter().all(|pair| pair.at == [5.0, 0.0, 0.0]));
+        moving.advance(start + TICK * 121, |_| None, |_| 0);
+        assert!(moving.rings.is_empty());
+    }
+
+    #[test]
     fn duple_light_circles_two_glowing_balls_with_four_panes_each() {
         let start = Instant::now();
         let mut waves = Waves::default();
@@ -456,7 +568,7 @@ mod tests {
         assert!(waves.has_orbs(Some(1)) && !waves.has_orbs(Some(2)));
         // Run 110 ticks with every draw 0.
         for tick in 0..110 {
-            waves.advance(start + TICK * tick, |_| 0);
+            waves.advance(start + TICK * tick, |_| None, |_| 0);
         }
         let orb = &waves.orbs[0].orbs[0];
         // The glow brightens 1 a tick to 200; φ advances every second tick.
@@ -470,7 +582,7 @@ mod tests {
             let mut test = Waves::default();
             test.duple_light(None, start, |_| 0);
             for tick in 0..ticks {
-                test.advance(start + TICK * tick, |_| 0);
+                test.advance(start + TICK * tick, |_| None, |_| 0);
             }
             test.orbs[0].orbs[0].panes[1]
         };
