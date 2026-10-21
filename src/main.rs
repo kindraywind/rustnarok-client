@@ -15,7 +15,7 @@
 //! `RUSTNAROK_CLIENT_CAMERA=yaw,pitch,zoom` (the camera turned, in degrees and zoom units, on every map),
 //! `RUSTNAROK_CLIENT_WEAR=1` (put on every piece of equipment carried, once the inventory is in), `RUSTNAROK_CLIENT_EQUIPMENT=1` (open
 //! the equipment window), `RUSTNAROK_CLIENT_SHOT_LOADING=1` (screenshot the loading screen instead of the game),
-//! `RUSTNAROK_CLIENT_WINDOW=<width>x<height>` (the window's size at start, e.g. 1365x768 for 16:9),
+//! `RUSTNAROK_CLIENT_WINDOW=<width>x<height>` (the window's size at start in points, which is also the canvas, e.g. 1365x768 for 16:9),
 //! `RUSTNAROK_CLIENT_SKILLS=1` (open the skill window), `RUSTNAROK_CLIENT_SKILL=<id>:<level>` (use a skill 3 seconds in, on oneself
 //! if it needs a target), `RUSTNAROK_CLIENT_HOTKEYS=<slot>[,<slot>...]` (press those hotkeys, one a second from 3 seconds in),
 //! `RUSTNAROK_CLIENT_DEAL=buy|sell[:<row>:<amount>]` (answer a shop's question at once, and make that deal),
@@ -183,29 +183,43 @@ use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Window, WindowId};
 use world::{Billboard, Camera, DepthLayer, World, WorldFrame};
 
-/// The canvas the client lays out and renders in, in logical pixels (Retina scaling happens in the projection): 768
-/// high and as wide as the window's shape, at least the classic 1024, so a wide window shows more instead of black bars.
+/// The canvas the client lays out and renders in, in logical pixels: the window's own size, so a bigger window shows
+/// more room around the same-sized HUD instead of stretching it (the world's 3D view scales with the window's height).
 pub fn screen() -> [f32; 2] {
-    [f32::from_bits(SCREEN_WIDTH.load(Ordering::Relaxed)), 768.0]
+    [f32::from_bits(SCREEN[0].load(Ordering::Relaxed)), f32::from_bits(SCREEN[1].load(Ordering::Relaxed))]
+}
+
+/// Window pixels per canvas pixel.
+pub fn screen_scale() -> f32 {
+    f32::from_bits(SCREEN[2].load(Ordering::Relaxed))
 }
 
 // ponytail: one global for the one window, read in over a hundred places that would otherwise all take it as an argument.
-static SCREEN_WIDTH: AtomicU32 = AtomicU32::new(1024f32.to_bits());
+static SCREEN: [AtomicU32; 3] = [AtomicU32::new(1024f32.to_bits()), AtomicU32::new(768f32.to_bits()), AtomicU32::new(1f32.to_bits())];
 
-/// The canvas width for a window of `size` pixels.
-fn canvas_width([width, height]: [u32; 2]) -> f32 {
-    (768.0 * width as f32 / height.max(1) as f32).round().max(1024.0)
+/// The canvas for a window of `size` pixels on a display of `scale_factor` pixels a point, and window pixels per canvas
+/// pixel: a whole number (the display's own, 2 on Retina) so UI pictures stay sharp, unless the window is smaller than
+/// the classic 1024×768; then it shrinks to fit that.
+fn canvas([width, height]: [u32; 2], scale_factor: f64) -> ([f32; 2], f32) {
+    let [width, height] = [width.max(1) as f32, height.max(1) as f32];
+    let scale = (scale_factor.round().max(1.0) as f32).min(width / 1024.0).min(height / 768.0);
+    // ponytail: the nudge keeps 1000 / (1000 / 1024) from flooring to 1023.
+    ([(width / scale + 1e-3).floor(), (height / scale + 1e-3).floor()], scale)
 }
 
-/// Where a full-screen 4:3 picture (the login background, a loading screen) goes: in its own shape, centered.
+/// Where a full-screen 4:3 picture (the login background, a loading screen) goes: as high as the canvas, centered.
 fn picture_place() -> ([f32; 2], [f32; 2]) {
     let [width, height] = screen();
-    ([((width - 1024.0) / 2.0).floor(), 0.0], [1024.0, height])
+    let size = [(height * 4.0 / 3.0).round(), height];
+    ([((width - size[0]) / 2.0).floor(), 0.0], size)
 }
 
 /// Fits the canvas to a window of `size` pixels.
-pub fn fit_screen(size: [u32; 2]) {
-    SCREEN_WIDTH.store(canvas_width(size).to_bits(), Ordering::Relaxed);
+pub fn fit_screen(size: [u32; 2], scale_factor: f64) {
+    let ([width, height], scale) = canvas(size, scale_factor);
+    for (slot, value) in SCREEN.iter().zip([width, height, scale]) {
+        slot.store(value.to_bits(), Ordering::Relaxed);
+    }
 }
 
 const UI: &str = "data\\texture\\유저인터페이스\\";
@@ -5689,10 +5703,14 @@ mod tests {
     }
 
     #[test]
-    fn canvas_widens_with_the_window() {
-        assert_eq!(canvas_width([2048, 1536]), 1024.0);
-        assert_eq!(canvas_width([3840, 2160]), 1365.0, "16:9");
-        assert_eq!(canvas_width([1000, 1000]), 1024.0, "narrower than 4:3 keeps 1024, with bars above and below");
+    fn canvas_grows_with_the_window_at_a_whole_scale() {
+        assert_eq!(canvas([2048, 1536], 2.0), ([1024.0, 768.0], 2.0), "the classic window on Retina");
+        assert_eq!(canvas([2880, 1800], 2.0), ([1440.0, 900.0], 2.0), "full screen: more room, same-sized HUD");
+        assert_eq!(canvas([3841, 2160], 2.0), ([1920.0, 1080.0], 2.0), "an odd pixel is left over, not stretched into");
+        assert_eq!(canvas([1920, 1080], 1.0), ([1920.0, 1080.0], 1.0));
+        let (small, scale) = canvas([1000, 1000], 1.0);
+        assert_eq!(small, [1024.0, 1024.0], "smaller than 1024 wide shrinks to fit");
+        assert!(scale < 1.0);
     }
 
     #[test]

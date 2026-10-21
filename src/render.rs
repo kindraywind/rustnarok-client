@@ -84,11 +84,11 @@ type TextCache = HashMap<(String, [u8; 3]), (Texture, u64)>;
 /// How many frames a line of text stays rasterized without being drawn.
 const TEXT_FRAMES: u64 = 120;
 
-/// Where the canvas goes in a target of `size` pixels: as large as fits, centered, with black bars on the sides that
-/// don't match (only a window narrower than 4:3 has them) (left, top, width, height).
+/// Where the canvas goes in a target of `size` pixels: at `screen_scale`, or smaller to fit (a 1x screenshot), centered
+/// (left, top, width, height).
 pub fn viewport(size: [u32; 2]) -> [f32; 4] {
     let [width, height] = size.map(|side| side as f32);
-    let scale = (width / screen()[0]).min(height / screen()[1]);
+    let scale = crate::screen_scale().min(width / screen()[0]).min(height / screen()[1]);
     let [canvas_width, canvas_height] = [screen()[0] * scale, screen()[1] * scale];
     [((width - canvas_width) / 2.0).floor(), ((height - canvas_height) / 2.0).floor(), canvas_width, canvas_height]
 }
@@ -111,7 +111,7 @@ impl Gpu {
         // Original assets are sRGB; keep them unchanged on screen.
         config.format = config.format.add_srgb_suffix();
         surface.configure(&device, &config);
-        crate::fit_screen([config.width, config.height]);
+        crate::fit_screen([config.width, config.height], window.scale_factor());
 
         let screen_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
@@ -291,7 +291,7 @@ impl Gpu {
         self.config.width = size.width.max(1);
         self.config.height = size.height.max(1);
         self.surface.configure(&self.device, &self.config);
-        crate::fit_screen([self.config.width, self.config.height]);
+        crate::fit_screen([self.config.width, self.config.height], self.window.scale_factor());
         self.queue.write_buffer(&self.screen_buffer, 0, bytemuck::cast_slice(&screen()));
         // Text rasterized for the old size would be blurry or wasteful now.
         self.texts.borrow_mut().clear();
