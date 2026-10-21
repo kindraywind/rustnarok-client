@@ -1,0 +1,45 @@
+// The fourth-job status and counter objects (issue #855) at prt_fild08 170,360. Whisper npc:RustnarokStatus4
+// "climax" (Climax 3 on the player), "count" (Eternal Slash's count 3), "frost" (frostbite), "gods" (the fourth god),
+// "pierce" (Charging Pierce's count 7), "servant" (Servant Weapon 5: the swords come one at a time), "abyss" (Abyss Force
+// Weapon: five shadow balls at once), "off" (every one of them ended), "slash" (the training dummy 2 cells east uses Eternal
+// Slash on the player) or "exceed" (a Poring 4 cells west and 3 south uses Shadow Exceed). Loaded and unloaded by
+// scenarios/fourth-job-statuses.json.
+prt_fild08,1,1,0	script	RustnarokStatus4	-1,{
+	end;
+OnInit:
+	monster "prt_fild08", 172, 360, "--ja--", 2408, 1;
+	.gid = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	percentheal 100, 100;
+	if (@whispervar0$ == "climax") {
+		sc_start SC_CLIMAX, 60000, 3;
+	} else if (@whispervar0$ == "count") {
+		sc_start SC_E_SLASH_COUNT, 60000, 3;
+	} else if (@whispervar0$ == "frost") {
+		sc_start SC_HANDICAPSTATE_FROSTBITE, 60000, 1;
+	} else if (@whispervar0$ == "gods") {
+		sc_start SC_T_FOURTH_GOD, 60000, 1;
+	} else if (@whispervar0$ == "pierce") {
+		sc_start SC_CHARGINGPIERCE_COUNT, 60000, 7;
+	} else if (@whispervar0$ == "servant") {
+		sc_start SC_SERVANTWEAPON, 60000, 5;
+	} else if (@whispervar0$ == "abyss") {
+		sc_start SC_ABYSSFORCEWEAPON, 60000, 1;
+	} else if (@whispervar0$ == "off") {
+		sc_end SC_CLIMAX;
+		sc_end SC_E_SLASH_COUNT;
+		sc_end SC_HANDICAPSTATE_FROSTBITE;
+		sc_end SC_T_FOURTH_GOD;
+		sc_end SC_CHARGINGPIERCE_COUNT;
+		sc_end SC_SERVANTWEAPON;
+		sc_end SC_ABYSSFORCEWEAPON;
+	} else if (@whispervar0$ == "slash") {
+		unitskilluseid .gid, "SHC_ETERNAL_SLASH", 1, getcharid(3);
+	} else if (@whispervar0$ == "exceed") {
+		// The dummy takes no statuses, so its Shadow Exceed fails: a Poring 4 cells west and 3 south uses it.
+		monster "prt_fild08", 166, 357, "--ja--", 1002, 1;
+		unitskilluseid $@mobid[0], "SHC_SHADOW_EXCEED", 1, $@mobid[0];
+	}
+	end;
+}
