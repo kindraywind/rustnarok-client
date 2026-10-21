@@ -349,6 +349,8 @@ official, and it is not affiliated with, endorsed by or sponsored by Gravity. Th
 only this project's own code, never the game's content. No game data is included or distributed here; you bring your
 own legally obtained files.
 
+© Gravity Co., LTD & Lee MyoungJin(studio DTDS). All Rights Reserved.
+
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the code in `src/grf/mixcrypt.rs` that comes from elsewhere.
 
 ---
