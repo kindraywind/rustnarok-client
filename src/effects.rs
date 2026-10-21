@@ -598,7 +598,7 @@ fn str_frame(elapsed: Duration) -> u32 {
 /// The screen direction φ (degrees, counter-clockwise on the screen from facing the camera) a unit facing `rot` shows to a
 /// camera turned `yaw` degrees, both in whole degrees.
 // ponytail: the camera angle is taken 0 … 359 first, so φ is never negative here.
-pub fn cannon_phi(yaw: f32, rot: f32) -> i32 {
+pub fn screen_phi(yaw: f32, rot: f32) -> i32 {
     let phi = yaw.rem_euclid(360.0) as i32 + rot as i32;
     if phi >= 360 { phi - 360 } else { phi }
 }
@@ -616,6 +616,36 @@ pub fn cannon_sector(phi: i32) -> Option<u32> {
         247..=291 => 1406,
         _ => 1405,
     })
+}
+
+/// Dragon Breath's picture for a screen direction φ: the quadrant beside the caster it faces (fire, or water 8 ids on).
+pub fn breath_sector(phi: i32, water: bool) -> u32 {
+    let fire = match phi {
+        1..=89 => 1381,
+        90..=179 => 1380,
+        180..=269 => 1383,
+        _ => 1382,
+    };
+    if water { fire + 8 } else { fire }
+}
+
+/// What a Dragon Breath packet starts, each with where and its start delay in ms: the breath on the caster after 200 ms
+/// unless that picture still runs there, then the burst on the target after 350 ms (its ground patch only without
+/// /mineffect). Nothing without the caster's direction φ.
+pub fn breath_launches(table: &Table, min: bool, skill: u16, phi: Option<i32>, running: impl Fn(u32) -> bool) -> Vec<(u32, Who, i32)> {
+    let Some(phi) = phi else { return Vec::new() };
+    let water = skill == WATER_BREATH;
+    let breath = table.min_id(breath_sector(phi, water), min);
+    let (burst, patch) = if water { (1386, 1387) } else { (1378, 1379) };
+    let mut launches = Vec::new();
+    if !running(breath) {
+        launches.push((breath, Who::Caster, 200));
+    }
+    launches.push((table.min_id(burst, min), Who::Target, 350));
+    if !min {
+        launches.push((patch, Who::Target, 350));
+    }
+    launches
 }
 
 /// The blade's start delay in ms: the caster's swing, from the frame delay of the action it is in.
@@ -2379,6 +2409,11 @@ const RAINSTORM_CAST: u32 = 1286;
 /// Cannon Spear (2307): its gold vortex, and its blades by the screen direction the caster faces (`cannon_sector`).
 pub const CANNON_SPEAR: u16 = 2307;
 const CANNON_VORTEX: u32 = 1408;
+/// Dragon Breath, its monster skill and Water Dragon Breath: a breath on the caster by its screen quadrant, a burst on each
+/// target (`breath_launches`).
+pub const DRAGON_BREATHS: [u16; 3] = [2008, 731, 5004];
+const WATER_BREATH: u16 = 5004;
+const BREATH_SOUND: &str = "effect\\폭염룡.wav";
 /// Cart Tornado's spin of its caster (`prims::brawl`).
 const CART_TORNADO: u32 = 1365;
 /// Cannon Spear's pale blue lines (`prims::brawl`).
@@ -2877,6 +2912,40 @@ impl Effects {
                 copy.timeline.delay = delay;
             }
         }
+    }
+
+    /// A Dragon Breath packet of `skill` from `caster` (None = the player) at `caster_at` on `target` at `target_at`, the
+    /// caster facing φ on the screen (`breath_launches`); its sound once a packet at the listener.
+    #[allow(clippy::too_many_arguments)]
+    pub fn dragon_breath(
+        &mut self,
+        gpu: &Gpu,
+        grf: &Grf,
+        table: &Table,
+        skill: u16,
+        (caster, caster_at): (Option<u32>, Vector),
+        (target, target_at): (Option<u32>, Option<Vector>),
+        phi: i32,
+        now: Instant,
+    ) {
+        self.queue_breath_sound(now);
+        for (id, who, delay) in breath_launches(table, self.min, skill, Some(phi), |id| self.worlds.playing(Some(caster), id)) {
+            let (owner, at) = match who {
+                Who::Caster => (caster, caster_at),
+                _ => match target_at {
+                    Some(at) => (target, at),
+                    None => continue,
+                },
+            };
+            if let Some(copy) = self.launch_world(gpu, grf, table, id, Some(owner), at, false, 0).and_then(|serial| self.worlds.get_mut(serial)) {
+                copy.timeline.delay = delay;
+            }
+        }
+    }
+
+    /// Dragon Breath's sound, at once and at the listener.
+    fn queue_breath_sound(&mut self, now: Instant) {
+        self.sounds.push((now, BREATH_SOUND.to_owned(), LISTENER));
     }
 
     /// Sounds effect `id` makes, with none of its looks (Manhole's on a monster).
@@ -6084,7 +6153,7 @@ mod tests {
             for (direction, id) in [(0, 1404), (4, 1400), (6, 1402), (2, 1406)] {
                 let rot = (-yaw - 45.0 * direction as f32).rem_euclid(360.0);
                 assert_eq!(crate::actor::view_direction(rot, yaw, true), direction);
-                assert_eq!(cannon_sector(cannon_phi(yaw, rot)), Some(id), "yaw {yaw}, direction {direction}");
+                assert_eq!(cannon_sector(screen_phi(yaw, rot)), Some(id), "yaw {yaw}, direction {direction}");
             }
         }
     }
@@ -6183,6 +6252,129 @@ mod tests {
         // No blade for a negative direction.
         let mut fresh = Worlds::default();
         assert_eq!(cannon_packet(&mut fresh, &table, false, 7, -5), [(1408, 0)]);
+    }
+
+    #[test]
+    fn dragon_breath_picks_its_quadrant_by_the_screen_direction() {
+        let phis = [0, 1, 89, 90, 179, 180, 269, 270, 359];
+        let fire = [1382, 1381, 1381, 1380, 1380, 1383, 1383, 1382, 1382];
+        for (phi, id) in phis.into_iter().zip(fire) {
+            assert_eq!(breath_sector(phi, false), id, "fire {phi}");
+            assert_eq!(breath_sector(phi, true), id + 8, "water {phi}");
+        }
+        assert_eq!(breath_sector(-5, false), 1382);
+        // A caster facing the camera, at any camera turn.
+        for yaw in [0.0f32, 45.0, -30.0, 200.0] {
+            let rot = (-yaw).rem_euclid(360.0);
+            assert_eq!(crate::actor::view_direction(rot, yaw, true), 0);
+            assert_eq!((breath_sector(screen_phi(yaw, rot), false), breath_sector(screen_phi(yaw, rot), true)), (1382, 1390));
+        }
+        // The camera angle and the facing both count, and the sum wraps at 360.
+        assert_eq!(screen_phi(200.0, 200.0), 40);
+        assert_eq!(breath_sector(screen_phi(200.0, 200.0), false), 1381);
+        assert_eq!(screen_phi(-90.0, 0.0), 270);
+    }
+
+    /// The last frame of each Dragon Breath file: the breaths 50, the bursts 40 (35 lighter), the patches 54.
+    fn breath_last(id: u32) -> i32 {
+        match id {
+            1378 | 1386 => 40,
+            1379 | 1387 => 54,
+            1520 | 1526 => 35,
+            _ => 50,
+        }
+    }
+
+    /// Plays one Dragon Breath packet of `skill` from `caster` on `target` into `worlds`, as `Effects::dragon_breath` does.
+    fn breath_packet(worlds: &mut Worlds, table: &Table, min: bool, skill: u16, caster: u32, target: u32, phi: Option<i32>) -> Vec<(u32, Who, i32)> {
+        let launches = breath_launches(table, min, skill, phi, |id| worlds.playing(Some(Some(caster)), id));
+        for &(id, who, delay) in &launches {
+            let owner = Some(Some(if who == Who::Caster { caster } else { target }));
+            let launch = world_str::Launch { id, owner, point: [0.0; 3], unique: false, life: 0, min, roll: 0 };
+            let serial = worlds.launch(table.world(id).unwrap(), &launch, |_| Some(frames(breath_last(id)))).unwrap();
+            worlds.get_mut(serial).unwrap().timeline.delay = delay;
+        }
+        launches
+    }
+
+    #[test]
+    fn dragon_breath_starts_its_breath_once_a_direction_and_a_burst_on_every_target() {
+        let table = Table::load();
+        let mut worlds = Worlds::default();
+        let units = HashMap::from([(7, [10.0, 0.0, 10.0]), (8, [20.0, 0.0, 20.0]), (9, [30.0, 0.0, 30.0]), (5, [0.0; 3])]);
+        let (caster, target) = (Who::Caster, Who::Target);
+        assert_eq!(breath_packet(&mut worlds, &table, false, 2008, 7, 8, Some(0)), [(1382, caster, 200), (1378, target, 350), (1379, target, 350)]);
+        // Another target while the breath runs: only its burst.
+        assert_eq!(breath_packet(&mut worlds, &table, false, 2008, 7, 9, Some(0)), [(1378, target, 350), (1379, target, 350)]);
+        // Another direction starts that direction's breath.
+        assert_eq!(breath_packet(&mut worlds, &table, false, 2008, 7, 9, Some(180)), [(1383, caster, 200), (1378, target, 350), (1379, target, 350)]);
+        // Another caster is independent; the monster skill plays fire, Water Dragon Breath water.
+        assert_eq!(breath_packet(&mut worlds, &table, false, 731, 5, 8, Some(0))[0], (1382, caster, 200));
+        assert_eq!(breath_packet(&mut worlds, &table, false, 5004, 5, 8, Some(45)), [(1389, caster, 200), (1386, target, 350), (1387, target, 350)]);
+        // No known caster: nothing.
+        assert!(breath_packet(&mut worlds, &table, false, 2008, 6, 8, None).is_empty());
+        // Each follows its unit.
+        cannon_ticks(&mut worlds, 1, &units);
+        assert!(worlds.iter().filter(|copy| copy.id == 1382 && copy.owner == Some(Some(7))).all(|copy| copy.position == [10.0, 0.0, 10.0]));
+        assert!(worlds.iter().filter(|copy| copy.id == 1378).all(|copy| copy.position == units[&copy.owner.unwrap().unwrap()]));
+        // The breath plays to tick 64; from tick 65 a packet starts it again.
+        cannon_ticks(&mut worlds, 63, &units);
+        assert!(breath_packet(&mut worlds, &table, false, 2008, 7, 8, Some(0)).iter().all(|launch| launch.1 == target));
+        cannon_ticks(&mut worlds, 1, &units);
+        assert_eq!(breath_packet(&mut worlds, &table, false, 2008, 7, 8, Some(0))[0], (1382, caster, 200));
+    }
+
+    #[test]
+    fn dragon_breath_under_mineffect() {
+        let table = Table::load();
+        for (id, min) in
+            [(1380, 1521), (1381, 1522), (1382, 1523), (1383, 1524), (1388, 1527), (1389, 1528), (1390, 1529), (1391, 1530), (1378, 1520), (1386, 1526)]
+        {
+            assert_eq!(table.min_id(id, true), min, "{id}");
+        }
+        assert_eq!((table.min_id(1379, true), table.min_id(1387, true)), (1379, 1387));
+        let mut worlds = Worlds::default();
+        let (caster, target) = (Who::Caster, Who::Target);
+        assert_eq!(breath_packet(&mut worlds, &table, true, 2008, 7, 8, Some(100)), [(1521, caster, 200), (1520, target, 350)]);
+        assert_eq!(breath_packet(&mut worlds, &table, true, 5004, 5, 8, Some(300)), [(1529, caster, 200), (1526, target, 350)]);
+        // The running 1521 holds the next breath back; the normal 1380 is not what is looked for.
+        assert_eq!(breath_packet(&mut worlds, &table, true, 2008, 7, 9, Some(100)), [(1520, target, 350)]);
+        assert!(!worlds.playing(Some(Some(7)), 1380));
+    }
+
+    #[test]
+    fn dragon_breaths_pictures_wait_and_end() {
+        // The first drawn step and the tick the copy is over, for a start delay.
+        let steps = |last: i32, delay: i32| {
+            let mut timeline = world_str::Timeline::default();
+            timeline.delay = delay;
+            let run: Vec<world_str::Step> = (0..200).map(|_| timeline.step(last)).collect();
+            let first = run.iter().position(|step| matches!(step, world_str::Step::Show(_))).unwrap();
+            let over = run.iter().position(|step| *step == world_str::Step::Over).unwrap();
+            (first, over)
+        };
+        assert_eq!(steps(breath_last(1380), 200), (13, 64));
+        assert_eq!(steps(breath_last(1521), 200), (13, 64));
+        // The bursts draw frames 0 … 40, 0 … 54 and 0 … 35 after their 22 held ticks.
+        assert_eq!(steps(breath_last(1378), 350), (22, 22 + 41));
+        assert_eq!(steps(breath_last(1379), 350), (22, 22 + 55));
+        assert_eq!(steps(breath_last(1520), 350), (22, 22 + 36));
+    }
+
+    #[test]
+    fn dragon_breaths_sound_and_rows() {
+        let now = Instant::now();
+        let mut effects = Effects::default();
+        effects.queue_breath_sound(now);
+        assert_eq!(effects.sounds.len(), 1);
+        let (when, file, at) = &effects.sounds[0];
+        assert!(*when == now && file == "effect\\폭염룡.wav" && at.iter().all(|value| value.is_nan()));
+        // The old rows stay as they are.
+        let table = Table::load();
+        assert_eq!(table.skill(2008, "hitEffectId"), [587]);
+        for skill in DRAGON_BREATHS {
+            assert_eq!(table.caster(skill), None, "{skill}");
+        }
     }
 
     #[test]

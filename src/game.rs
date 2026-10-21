@@ -1284,10 +1284,26 @@ impl Game {
         }) else {
             return;
         };
-        let phi = effects::cannon_phi(self.camera.yaw.to_degrees(), actor.rot);
+        let phi = effects::screen_phi(self.camera.yaw.to_degrees(), actor.rot);
         let delay = effects::cannon_delay_ms(actor.sprites.as_ref().map_or(4.0, actor::SpriteSet::current_delay));
         let at = self.world.cell_position(actor.cell.map(|value| value as f32));
         self.effects.cannon_spear(gpu, grf, table, key, at, phi, delay);
+    }
+
+    /// A Dragon Breath damage packet of `skill` from `source` on `target` (`Effects::dragon_breath`); nothing when the
+    /// caster isn't known.
+    pub(crate) fn dragon_breath(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, skill: u16, source: u32, target: u32) {
+        let unit = |id: u32| (id != self.account_id).then_some(id);
+        let actor = |key: Option<u32>| match key {
+            None => Some(&self.player),
+            Some(id) => self.units.get(&id),
+        };
+        let Some(caster) = actor(unit(source)) else { return };
+        let phi = effects::screen_phi(self.camera.yaw.to_degrees(), caster.rot);
+        let place = |actor: &actor::Actor| self.world.cell_position(actor.cell.map(|value| value as f32));
+        let caster_at = place(caster);
+        let target_at = actor(unit(target)).map(place);
+        self.effects.dragon_breath(gpu, grf, table, skill, (unit(source), caster_at), (unit(target), target_at), phi, Instant::now());
     }
 
     /// Cold Slower (791): three prims of four snowflakes thrown from caster's feet toward `aim`.
