@@ -3810,6 +3810,15 @@ impl App {
         if self.fire_shortcut(event) {
             return;
         }
+        // Cmd+V (Ctrl+V off the Mac) types the clipboard's first line into whichever box has the focus.
+        let pasted = (self.modifiers.super_key() || self.modifiers.control_key()) && matches!(key, Key::Character(letter) if letter.eq_ignore_ascii_case("v"));
+        let paste;
+        let event = if pasted {
+            paste = control::KeyPress { text: Some(clipboard_line()), ..event.clone() };
+            &paste
+        } else {
+            event
+        };
         match &mut self.scene {
             Scene::Login => {
                 self.blink_start = Instant::now();
@@ -4272,7 +4281,7 @@ impl App {
             Scene::Game(game) if game.talks.typing() => match key {
                 Key::Named(NamedKey::Enter) => game.send_focused_talk(),
                 Key::Named(NamedKey::Backspace) => game.talks.backspace(),
-                _ if !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {
+                _ if pasted || (!self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key()) => {
                     game.talks.type_text(event.text.as_deref().unwrap_or_default());
                 }
                 _ => {}
