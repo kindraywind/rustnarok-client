@@ -1415,6 +1415,8 @@ pub enum MapEvent {
         cell: [u16; 2],
         /// The unit's own range (the skill's `Unit:` block), 0 for most; a layout is sent as one entry per cell.
         range: u8,
+        /// The skill's level.
+        level: u8,
     },
     /// A skill's unit is gone or out of sight (ZC_SKILL_DISAPPEAR).
     SkillUnitGone {
