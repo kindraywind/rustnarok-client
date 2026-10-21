@@ -561,7 +561,7 @@ fn plain_layers(gpu: &Gpu, sprite: &mut SpriteSet, action: usize, frame: usize, 
 }
 
 /// How often a ground unit's effect starts again, in ticks: 8 before its length ends (Quagmire's 20), by the skill unit's type 1
-/// before it for Wall of Thorns, the Insignias, Kaensin, Ground Drift and their like, 7 for Fire Walk.
+/// before it for Wall of Thorns, the Insignias, Kaensin, Ground Drift, Ice Mine and their like, 7 for Fire Walk.
 fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
     // Shockwave's waves start again every 75 ticks.
     if effect == 145 {
@@ -581,7 +581,7 @@ fn restart_ticks(effect: u32, kind: u32, length: u32) -> u32 {
 /// How many ticks before its length a ground unit's effect starts again.
 fn restart_early(effect: u32, kind: u32) -> u32 {
     match kind {
-        228 | 230..=233 | 235 | 239..=244 | 258 => 1,
+        228 | 230..=233 | 235 | 239..=244 | 254 | 258 => 1,
         220 | 221 => 7,
         // Kaensin's and Ground Drift's cells start the next copy a tick before this one ends.
         189..=194 => 1,
@@ -4125,7 +4125,7 @@ impl Effects {
         self.prims.crowds.advance(now, &position_of, &ground_at, |n| pick(0, n.saturating_sub(1)));
         self.prims.cells.advance(now, &ground_at, |n| pick(0, n.saturating_sub(1)));
         self.make_areas(now, &ground_at, |n| pick(0, n.saturating_sub(1)));
-        for effect in self.prims.cells.take_restarts() {
+        for effect in self.prims.cells.take_restarts().into_iter().chain(self.prims.crowds.take_restarts()) {
             for file in self.cell_sounds.get(&effect).into_iter().flatten() {
                 self.sounds.push((now, file.clone(), LISTENER));
             }
@@ -4233,6 +4233,12 @@ impl Effects {
                 self.textures.entry(crowds::MELODY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crowds::MELODY, false).ok());
                 self.play_sounds(table, effect, at, now);
                 self.prims.crowds.note(id, at, now, |n| pick(0, n.saturating_sub(1)));
+            } else if effect == crowds::CELL_NOTE {
+                // Reverberation's cell floats a note with white copies, a new one with its sound at the listener every 29 991 ticks.
+                self.textures.entry(crowds::MELODY.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, crowds::MELODY, false).ok());
+                self.cell_sounds.insert(effect, table.sounds.get(&effect).into_iter().flatten().map(|sound| format!("{}.wav", sound.file)).collect());
+                self.play_sounds(table, effect, at, now);
+                self.prims.crowds.cell_note(id, at, now, |n| pick(0, n.saturating_sub(1)));
             } else if matches!(effect, CHAOS_CELL | MAELSTROM_CELL | BLOODY_CELL | EPICLESIS_CELL) {
                 // Chaos Panic's, Maelstrom's and Bloody Lust's cells turn their squares, and Epiclesis' cell spreads yellow-green rings,
                 // for as long as their unit stands.
@@ -8081,6 +8087,32 @@ mod tests {
         assert!(AIMED.contains(&GREAT_ECHO_V) && table.struck(2426).unwrap().contains(&(Who::Caster, GREAT_ECHO_V)));
         assert_eq!(sounds(GREAT_ECHO_V), [("effect\\LG_EARTHDRIVE", 0, true)]);
         assert_eq!(table.quakes[&GREAT_ECHO_V], [(Duration::ZERO, QUAKE_LONG)]);
+    }
+
+    #[test]
+    fn reverberations_cell_note_and_ice_mines_crystals_have_their_rows() {
+        let table = Table::load();
+        // Reverberation's cell: the unit starts the note (again every 29 991 ticks, `prims::crowds`); its sound at the listener; no part, no skill start.
+        assert_eq!(table.units[&218], crowds::CELL_NOTE);
+        assert!(!table.units_once.contains(&218) && !table.floaters.contains_key(&crowds::CELL_NOTE));
+        assert!(!table.parts.contains_key(&crowds::CELL_NOTE) && table.skill(2414, "groundEffectId").is_empty());
+        let sounds = table.sounds[&crowds::CELL_NOTE].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        assert_eq!(sounds, [("effect\\reverberation", 0, true)]);
+        assert_eq!(table.lengths[&crowds::CELL_NOTE], 29_999);
+        // Ice Mine's cell: the looped crystals, 10 ticks a frame from frame 1, 1 up, depth tested, again every 998 ticks.
+        assert_eq!(table.units[&254], 1026);
+        assert!(!table.units_once.contains(&254) && !table.sounds.contains_key(&1026) && table.lengths[&1026] == 999);
+        let part = &table.sprites[&1026][0];
+        assert_eq!((part.file.as_str(), part.attached), ("icemine", false));
+        let mut crystals = Animation::new(part, 1026, Instant::now(), Anchor::Lasting(1, [0.0; 3]), true);
+        crystals.roll(|_| 0);
+        assert!(crystals.repeat && crystals.restarts && !crystals.over && crystals.offset == [0.0, -1.0] && crystals.first == 1.0);
+        assert_eq!(crystals.frame_ms, Some(10.0 * STR_TICK_MS));
+        let frame = |age: u32| (animation_progress(age as f32 * STR_TICK_MS, 10.0 * STR_TICK_MS, 14.0, crystals.first, crystals.repeat) * 14.0) as u32;
+        assert_eq!([0, 9, 10, 129, 130, 139, 140].map(frame), [1, 1, 2, 13, 0, 0, 1]);
+        assert_eq!(restart_ticks(1026, 254, 999), 998);
+        // The other types restart as before.
+        assert_eq!([(634, 189, 23), (25, 0, 40), (95, 0, 150), (1, 220, 50), (1, 258, 50)].map(|(e, k, l)| restart_ticks(e, k, l)), [22, 32, 130, 43, 49]);
     }
 
     #[test]

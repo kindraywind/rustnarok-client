@@ -1,0 +1,20 @@
+{
+  "about": "Reverberation's cell and Ice Mine's cell (issue #829): NPC_REVERBERATION (725) puts a Reverberation unit (218) on the player's cell, which floats a dark violet melody note with a white outline (856); NPC_ICEMINE (709) puts an Ice Mine (254), whose light blue crystals loop on the cell (1026). On a field, a warp apart; after each, the player walks off the cell so the shot shows it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@useskill 725 5 self"},
+    {"wait_for": {"event": "SkillUnit", "ms": 8000}},
+    {"wait": 3500}, {"click": [760, 200]}, {"wait": 2500},
+    {"expect": {"state": {"ground_unit_kinds": [218]}}},
+    {"shot": "reverberation-cell", "crop": [130, 430, 240, 180], "threshold": 5},
+    {"say": "@warp prt_fild08 170 300"}, {"settle": 1500},
+    {"say": "@useskill 709 1 self"},
+    {"wait_for": {"event": "SkillUnit", "ms": 8000}},
+    {"wait": 3500}, {"click": [760, 200]}, {"wait": 2500},
+    {"expect": {"state": {"ground_unit_kinds": [254]}}},
+    {"shot": "ice-mine-cell", "crop": [0, 460, 400, 220], "threshold": 5},
+    {"say": "@warp prontera 156 180"}, {"settle": 1000}
+  ]
+}
