@@ -471,6 +471,20 @@ fn decodes_skill_units() {
 }
 
 #[test]
+fn decodes_map_cells() {
+    // An Ice Wall cell at 61,232 of gef_fild07 made unwalkable (type 5).
+    let mut packet = vec![0x92, 0x01, 61, 0, 232, 0, 5, 0];
+    let mut name = b"gef_fild07.gat".to_vec();
+    name.resize(16, 0);
+    packet.extend(name);
+    assert_eq!(packet_length(ZC_SET_MAPCELL), Some(24));
+    match decode_map_packet(&packet) {
+        Some(MapEvent::MapCell { cell, kind, map }) => assert_eq!((cell, kind, map.as_str()), ([61, 232], 5, "gef_fild07.gat")),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn decodes_ground_items_and_inventory() {
     // Captured from rathena: a Poring dropping a Jellopy (909) at 252,88.
     let jellopy = [0xdd, 0x0a, 0x60, 0x04, 0, 0, 0x8d, 0x03, 0, 0, 0x03, 0, 0x01, 0xfc, 0, 0x58, 0, 0x06, 0x0c, 0x01, 0, 0, 0, 0];

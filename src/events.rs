@@ -3613,6 +3613,12 @@ impl App {
                 game.skill_units.remove(&id);
                 game.effects.forget(id);
             }
+            // An Ice Wall's cell can't be walked while it stands: the walks drawn for units go round it, as the server's do.
+            MapEvent::MapCell { cell, kind, map } => {
+                if map.trim_end_matches(".gat") == game.map.trim_end_matches(".gat") {
+                    game.world.gat.set_kind(cell.map(i32::from), kind as u8);
+                }
+            }
             // Cooldowns: kept across map changes (the server doesn't repeat them), sent again after a relog.
             MapEvent::SkillCooldown { skill, ms } => game.cooldowns.set(skill, ms, control::now()),
             MapEvent::SkillFailed { ok: true, .. } => {}
@@ -4080,12 +4086,10 @@ impl App {
                     game.player.place_at(cell.map(i32::from));
                 }
                 game.walk_cell = None;
-                // Chased again at once (`rearmed`); one on Ice Wall or a trap ends instead.
-                if too_far_ends(game.attack, game.attack_was, target) {
-                    game.attack = None;
-                } else if !game.player.sitting && game.player.option & 0x2 == 0 {
+                // Chased again at once (`rearmed`); one on Ice Wall or a trap to the attack range alone (`rearmed_ground`).
+                if !game.player.sitting && game.player.option & 0x2 == 0 {
                     let now = Instant::now();
-                    game.attack = Some(rearmed(game.attack, game.attack_was, target));
+                    game.attack = Some(rearmed_ground(game.attack, game.attack_was, target).unwrap_or_else(|| rearmed(game.attack, game.attack_was, target)));
                     game.last_chase_walk = Some(whole_ms(now).saturating_sub(ATTACK_GAP_MS));
                     game.attack_step(now);
                 }

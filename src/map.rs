@@ -439,6 +439,13 @@ impl Gat {
         Ok(Self { width, height, cells })
     }
 
+    /// Gives a cell a new type (the server's ZC_SET_MAPCELL); a cell off the map is left alone.
+    pub fn set_kind(&mut self, [x, y]: [i32; 2], kind: u8) {
+        if x >= 0 && y >= 0 && (x as usize) < self.width && (y as usize) < self.height {
+            self.cells[y as usize * self.width + x as usize].1 = kind;
+        }
+    }
+
     /// Every type but 1 (a wall) and 5 (a gap that can be shot across) can be walked on, as rathena has it.
     pub fn walkable(&self, cell: [i32; 2]) -> bool {
         self.walkable_by(cell, false)

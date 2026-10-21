@@ -1415,6 +1415,13 @@ pub enum MapEvent {
     SkillUnitGone {
         id: u32,
     },
+    /// A cell of `map` takes a new type (ZC_SET_MAPCELL): an Ice Wall's cell becomes 5 (not walkable) while it stands,
+    /// and its own type again when it goes.
+    MapCell {
+        cell: [u16; 2],
+        kind: u16,
+        map: String,
+    },
     /// The player's skill didn't go off (ZC_ACK_TOUSESKILL) unless `ok`: rathena's `useskill_fail_cause`, a
     /// skill-specific detail (`btype`) and the item it's about.
     SkillFailed {
