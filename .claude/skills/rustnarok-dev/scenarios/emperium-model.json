@@ -42,10 +42,10 @@
     {
       "shot": "emperium-model",
       "crop": [
-        0,
-        100,
-        512,
-        400
+        300,
+        300,
+        424,
+        320
       ]
     },
     {
@@ -87,7 +87,13 @@
       }
     },
     {
-      "shot": "guild-flag-model"
+      "shot": "guild-flag-model",
+      "crop": [
+        150,
+        100,
+        724,
+        560
+      ]
     },
     {
       "say": "@killmonster2"
