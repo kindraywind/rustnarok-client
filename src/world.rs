@@ -1113,6 +1113,11 @@ impl World {
     }
 
     /// World position of a (fractional) cell's center on the ground.
+    /// The map's light: the direction toward it, then its ambient and diffuse colours.
+    pub fn light(&self) -> (Vector, [f32; 3], [f32; 3]) {
+        self.light
+    }
+
     pub fn cell_position(&self, cell: [f32; 2]) -> Vector {
         let height = self.gat.height_at([cell[0] + 0.5, cell[1] + 0.5]);
         [(cell[0] + 0.5) * CELL, -height, (cell[1] + 0.5) * CELL]

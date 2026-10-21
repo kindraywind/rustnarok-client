@@ -118,6 +118,7 @@ mod picking;
 mod pickup;
 mod pin;
 mod prims;
+mod props;
 mod quest;
 mod quest_notice;
 mod quest_tracker;
@@ -1238,6 +1239,8 @@ struct Game {
     ground: HashMap<u32, FloorItem>,
     /// Ground item sprites by resource name.
     item_sprites: HashMap<String, Option<SpriteSet>>,
+    /// The Granny models some jobs are drawn as, by job (None: it didn't load).
+    props: HashMap<u16, Option<props::Prop>>,
     inventory: Inventory,
     equipment: Equipment,
     basic_info: BasicInfo,

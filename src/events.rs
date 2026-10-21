@@ -338,6 +338,7 @@ impl App {
                     skill_units: HashMap::new(),
                     ground: HashMap::new(),
                     item_sprites: HashMap::new(),
+                    props: HashMap::new(),
                     inventory: {
                         let mut inventory = Inventory::new(std::env::var_os("RUSTNAROK_CLIENT_INVENTORY").is_some());
                         inventory.apply_boxes(inventory::Boxes::load());
