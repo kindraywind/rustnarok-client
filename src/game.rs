@@ -3755,15 +3755,16 @@ impl Game {
         self.chat.push_kind(text, color, kind);
     }
 
-    /// Starts the attacker's swing now; the number and the flinch come when the hit lands.
-    pub(crate) fn act(&mut self, act: net::Act, tables: &LookTables, grf: &Grf) {
+    /// Starts the attacker's swing now; the number, the flinch and the sparks come when the hit lands, which is when
+    /// this returns (now, for what isn't a hit).
+    pub(crate) fn act(&mut self, act: net::Act, tables: &LookTables, grf: &Grf) -> Instant {
         // Sitting down and standing up.
         if matches!(act.kind, 2 | 3) {
             let who = if act.source == self.account_id { Some(&mut self.player) } else { self.units.get_mut(&act.source) };
             if let Some(actor) = who {
                 actor.sitting = act.kind == 2;
             }
-            return;
+            return Instant::now();
         }
         // Picking an item up: bend toward it.
         if act.kind == 1 {
@@ -3776,11 +3777,11 @@ impl Game {
                 let duration = picker.sprites.as_ref().and_then(|sprites| sprites.action_ms(actor::PICKUP, picker.direction)).unwrap_or(500.0);
                 picker.play(actor::PICKUP, Instant::now(), duration, false);
             }
-            return;
+            return Instant::now();
         }
         // Only hits animate (normal, endure, multi-hit, critical, lucky dodge, ...).
         if !matches!(act.kind, 0 | 4 | 8 | 9 | 10 | 11 | 13) {
-            return;
+            return Instant::now();
         }
         let me = self.account_id;
         let target_cell = if act.target == me { Some(self.player.cell) } else { self.units.get(&act.target).map(|actor| actor.cell) };
@@ -3804,6 +3805,7 @@ impl Game {
         }
         let hit_ms = hit_ms.map(|ms| actor::bow_flight(ms, bow));
         self.show_hit(&act, hit_ms, MULTI_HIT_DELAY, HitFrom::Attack);
+        hit_lands(hit_ms, act.source_speed)
     }
 
     /// A unit's name for a battle message: ours, the one the map server told, else "Someone".
@@ -3850,7 +3852,7 @@ impl Game {
         let attacker = if act.source == me { Some(&self.player) } else { self.units.get(&act.source) };
         let left = left_hand_number(from, act.left_damage, attacker.map(|actor| actor.job));
         let amount = act.damage;
-        let lands = Instant::now() + Duration::from_secs_f32(hit_ms.unwrap_or(act.source_speed.max(0) as f32) / 1000.0);
+        let lands = hit_lands(hit_ms, act.source_speed);
         let flinch = (amount > 0 && !endured(act.kind, from)).then_some(act.target_speed as f32);
         let kind = match act.kind {
             11 => DamageKind::Lucky,
@@ -3878,18 +3880,25 @@ impl Game {
             _ => DamageKind::Hit { taken: on_player, sp: act.sp },
         };
         let hits = if amount > 0 { i32::from(act.hits.max(1)) } else { 1 };
+        // A swing's critical has its own sound (EF_HIT2's) in place of the weapon's hit sound.
+        let heard = (from != HitFrom::Attack || kind != DamageKind::Critical).then_some(act.source);
         for hit in 0..hits {
             let start = lands + gap * hit as u32;
-            self.damages.push(Damage { target, amount: amount / hits, start, kind, flinch, drift, source: (amount > 0).then_some(act.source) });
+            self.damages.push(Damage { target, amount: amount / hits, start, kind, flinch, drift, source: heard.filter(|_| amount > 0) });
             if shows_total(hits, from) && !on_player {
                 self.damages.push(Damage { target, amount: amount / hits * (hit + 1), start, kind: DamageKind::Combo, flinch: None, drift, source: None });
             }
         }
         // ponytail: a multi-hit swing's left hand (no total with it); a katar never double-attacks.
         if let Some(left) = left {
-            self.damages.push(Damage { target, amount: left, start: lands + LEFT_HAND_DELAY, kind, flinch, drift, source: Some(act.source) });
+            self.damages.push(Damage { target, amount: left, start: lands + LEFT_HAND_DELAY, kind, flinch, drift, source: heard });
         }
     }
+}
+
+/// When a hit lands: `hit_ms` from now, else after the swing's `speed`.
+fn hit_lands(hit_ms: Option<f32>, speed: i32) -> Instant {
+    Instant::now() + Duration::from_secs_f32(hit_ms.unwrap_or(speed.max(0) as f32) / 1000.0)
 }
 
 /// Whether a hit's number is red: on anything but monsters, NPCs and skill units on the ground (Ice Wall, traps), so on
