@@ -1,0 +1,95 @@
+{
+  "about": "A hit on a siege map (a castle during War of Emperium): the hit lands, but no number shows over the Poring, as on any siege map or battleground. The same hit elsewhere is damage-numbers.json. Leaves the War of Emperium running, as it found it or started it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@agitstart"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@warp prtg_cas01 91 25"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "map_property": {
+            "flags": 1822,
+            "type": 3
+          }
+        }
+      }
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@monster 1002 1"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "units_at_least": {
+          "monster": 1
+        }
+      }
+    },
+    {
+      "click_unit": {
+        "kind": "monster"
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "wait",
+        "packet": "0x08c8",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 900
+      }
+    },
+    {
+      "shot": "woe-no-hit-number",
+      "crop": [
+        212,
+        0,
+        600,
+        500
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
