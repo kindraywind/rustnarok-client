@@ -26,7 +26,7 @@ fn lit_tint(tint: [f32; 4], light: [f32; 3]) -> [f32; 4] {
 /// What the STR world effects' head rule needs of a unit: where its body sprite's first layer sits at action 0, frame 0.
 fn world_body(gpu: &Gpu, actor: &mut actor::Actor, scale: f32) -> world_str::Body {
     let offset = actor.sprites.as_mut().and_then(|sprites| sprites.frame_at(gpu, 0, 0, Timing::Loop(0.0)).first().map(|(_, position, ..)| position[1]));
-    world_str::Body::from_sprite(offset, scale, actor::rides(actor.option), actor::is_doram(actor.job))
+    world_str::Body { rot: actor.rot, ..world_str::Body::from_sprite(offset, scale, actor::rides(actor.option), actor::is_doram(actor.job)) }
 }
 
 impl App {
@@ -479,6 +479,8 @@ impl App {
             game.player.rot = (game.player.rot + turned).rem_euclid(360.0);
         }
         let player_seen = seen_direction(game.player.rot, yaw, rounds_facing(game.player.drawn_job(), action));
+        // A Shadow Exceed double that ended leaves its unit's afterimages.
+        game.exceed_afterimages();
         // Pushcarts, apart from the bodies (their textures are the cart's, and they cast no shadow of their own).
         // A cart's ACT has one action per direction; its frames turn the wheels, so they run only while walking.
         // ponytail: the cart's anchor half a cell behind its owner; place it against the real client.
@@ -900,7 +902,8 @@ impl App {
                             (sprite.texture(*key), feet, [center[0] + position[0], center[1] + position[1]], *size, [1.0; 4], *angle, orbit_layer(near))
                         }));
                     }
-                } else if let Some(sphere) = &game.sphere {
+                } else if let Some(sphere) = game.sphere.as_ref().filter(|_| !crate::world_fx::status4::object_spheres(job)) {
+                    // The Abyss Chaser's balls and the Dragon Knight's swords are world objects (2109, 2460).
                     let size = sphere.size.map(|side| side * SPHERE_SCALE);
                     side.push((sphere, feet, [center[0] - size[0] / 2.0, center[1] - size[1] / 2.0], size, [1.0; 4], 0.0, orbit_layer(near)));
                 }
@@ -2905,7 +2908,16 @@ impl App {
         if effects_on {
             effect_quads.extend(game.weather.spark_quads(&assets.weather, now));
         }
-        let screen_shapes = game.effects.screen_shapes(now, feet_of_unit);
+        let mut screen_shapes = game.effects.screen_shapes(now, feet_of_unit);
+        // The frostbite frame lies over the whole screen, centred on the point the camera looks at.
+        if let Some(texture) = game.effects.frost_frame() {
+            let size = [world::SCREEN_HEIGHT * view.aspect, world::SCREEN_HEIGHT];
+            let centre = std::array::from_fn(|axis| view.eye[axis] + view.forward[axis] * view.distance);
+            for (corners, uv) in world_fx::status4::frost_quads(size[0], size[1]) {
+                let corner = |index: usize| ([corners[index][0] - size[0] / 2.0, corners[index][1] - size[1] / 2.0], uv[index], [1.0; 4]);
+                screen_shapes.push((texture, centre, [0, 1, 2, 2, 1, 3].into_iter().map(corner).collect()));
+            }
+        }
         // The sky's puffs and cloud fields run on; with /effect on they draw as meshes, one per picture and blending.
         // ponytail: alpha-blended puffs go through the mesh pass, which fogs them; the game doesn't fog them.
         let player_at = game.world.cell_position(game.player.position(now));

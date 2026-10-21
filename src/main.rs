@@ -1216,6 +1216,10 @@ struct Game {
     /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
     /// and the charm's pictures, the coin's sprite.
     spirits: HashMap<Option<u32>, Orbs>,
+    /// The units (None = the player) leaving afterimages since their Shadow Exceed double ended, until its status goes.
+    exceed_shadows: HashSet<Option<u32>>,
+    /// The units (None = the player) under Shadow Exceed's status.
+    exceed_on: HashSet<Option<u32>>,
     /// The last Shadow Scar count each unit was sent with.
     shadow_scars: HashMap<u32, u16>,
     sphere: Option<Texture>,

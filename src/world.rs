@@ -23,7 +23,7 @@ pub const CELL: f32 = 5.0;
 const SPRITE_SCALE: f32 = CELL / 35.0;
 /// The logical screen's height in pixels (`screen()` in main.rs): the field of view is vertical, so a screen pixel is
 /// this fraction of the view's height at any aspect.
-const SCREEN_HEIGHT: f32 = 768.0;
+pub const SCREEN_HEIGHT: f32 = 768.0;
 const FIELD_OF_VIEW: f32 = 15.0;
 const NEAR: f32 = 10.0;
 const FAR: f32 = 1500.0;

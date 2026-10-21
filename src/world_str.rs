@@ -204,6 +204,8 @@ pub struct Body {
     pub scale: f32,
     pub rides: bool,
     pub doram: bool,
+    /// The way it faces, in degrees (`Actor::rot`: 0 south, 90 east).
+    pub rot: f32,
 }
 
 // ponytail: the exact head height and size factor are not known. The height is 4 - 0.29·L, L being the y offset in
@@ -211,11 +213,11 @@ pub struct Body {
 // the unit's draw scale. A skill unit's are 30 and 1.
 impl Body {
     pub fn from_sprite(offset: Option<f32>, scale: f32, rides: bool, doram: bool) -> Self {
-        Self { height: 4.0 - 0.29 * offset.unwrap_or(30.0), scale, rides, doram }
+        Self { height: 4.0 - 0.29 * offset.unwrap_or(30.0), scale, rides, doram, rot: 0.0 }
     }
 
     pub fn skill_unit() -> Self {
-        Self { height: 30.0, scale: 1.0, rides: false, doram: false }
+        Self { height: 30.0, scale: 1.0, rides: false, doram: false, rot: 0.0 }
     }
 }
 
@@ -326,6 +328,8 @@ pub struct Scene<'a> {
 pub enum Fired {
     Sound(String, Vector),
     Quake,
+    /// A unit (None = the player) starts leaving Kagemusya's afterimages.
+    Afterimage(Option<u32>),
 }
 
 pub struct World {
@@ -915,7 +919,7 @@ mod tests {
 
     #[test]
     fn the_head_rule() {
-        let body = Body { height: 27.2, scale: 1.0, rides: false, doram: false };
+        let body = Body { height: 27.2, scale: 1.0, rides: false, doram: false, rot: 0.0 };
         let [right, up] = head_offset(1035, 5.0, 5.0, body).unwrap();
         assert!((right - 5.0).abs() < 1e-5 && (up - 43.2).abs() < 1e-4);
         let rider = Body { rides: true, ..body };
@@ -941,7 +945,7 @@ mod tests {
         let mut worlds = Worlds::default();
         let serial = worlds.launch(&head, &launch(1035, Some(Some(7))), |_| Some(small(10))).unwrap();
         let feet = |_: Option<u32>| Some([10.0, 0.0, 10.0]);
-        let body = |_: Option<u32>| Some(Body { height: 27.2, scale: 1.0, rides: false, doram: false });
+        let body = |_: Option<u32>| Some(Body { height: 27.2, scale: 1.0, rides: false, doram: false, rot: 0.0 });
         let scene =
             Scene { player: [10.0, 0.0, 10.0], feet: &feet, body: &body, longitude: 0.0, right: [0.0, 0.0, 1.0], up: [0.0, 1.0, 0.0], ground: &|_, _| 0.0 };
         worlds.tick(&scene);

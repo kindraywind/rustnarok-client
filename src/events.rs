@@ -324,6 +324,8 @@ impl App {
                         .filter_map(|name| Some((name, SpriteSet::at(&self.grf, &format!("data\\sprite\\이팩트\\{name}"))?)))
                         .collect(),
                     spirits: HashMap::new(),
+                    exceed_shadows: HashSet::new(),
+                    exceed_on: HashSet::new(),
                     shadow_scars: HashMap::new(),
                     sphere: gpu.try_load_texture(&self.grf, "data\\texture\\effect\\기구.bmp", true).ok(),
                     shield: render::load_image(&self.grf, "data\\texture\\effect\\shield.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
@@ -1252,6 +1254,7 @@ impl App {
                 change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.spheres = count);
                 if let Some(gpu) = gpu {
                     game.coins(gpu, grf, id, count);
+                    game.spirit_objects(gpu, grf, id, count);
                 }
             }
             // A Royal Guard's rage spheres come as shields too.
@@ -3492,6 +3495,10 @@ impl App {
                     if matches!(skill, crate::world_fx::jobs3::TRIANGLE_SKILL | crate::world_fx::jobs3::AXE_SKILL) {
                         game.third_job_hit(gpu, grf, table, skill, act.source, act.target);
                     }
+                    // Every hit of Attack Machine fires the caster's drone.
+                    if skill == crate::world_fx::status4::A_MACHINE_SKILL {
+                        game.a_machine_hit(gpu, grf, act.source, act.target);
+                    }
                     // Petitio's hammer comes with its damage too: rathena sends it no use packet.
                     if skill == crate::world_fx::area4::PETITIO_SKILL && !splash {
                         game.fourth_job_used(gpu, grf, skill, act.target, i32::from(level));
@@ -3560,6 +3567,9 @@ impl App {
                         crate::world_fx::jobs3::CART_CANNON_SKILL | crate::world_fx::jobs3::SHIELD_SKILL => game.thrown(gpu, grf, table, skill, source, target),
                         crate::world_fx::area4::PETITIO_SKILL | crate::world_fx::area4::GALE_STORM_SKILL => {
                             game.fourth_job_used(gpu, grf, skill, target, amount)
+                        }
+                        crate::world_fx::status4::ETERNAL_SLASH_SKILL | crate::world_fx::status4::SHADOW_EXCEED_SKILL => {
+                            game.status4_used(gpu, grf, skill, source)
                         }
                         _ => {}
                     }
