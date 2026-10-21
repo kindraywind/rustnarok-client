@@ -548,6 +548,8 @@ impl Class for Coins {
 struct Feathers {
     part: Option<StrPart>,
     from: Vector,
+    /// The jump has landed: the picture hangs `FEATHERS_DROP` lower.
+    landed: bool,
     over: bool,
 }
 
@@ -556,11 +558,19 @@ struct Feathers {
 pub const FEATHERS_DROP: f32 = 10.0 + (300.0 - 230.0) / 16.0;
 
 impl Feathers {
-    /// The unit snapped to `cell` (its position there): the feathers' point moves under it.
+    /// The unit snapped to `cell` (its position there): the feathers' point moves to it.
     pub fn snap(&mut self, cell: Vector) {
         if let Some(part) = &mut self.part {
-            part.point = [cell[0], cell[1] - FEATHERS_DROP, cell[2]];
+            part.point = cell;
+            self.landed = true;
         }
+    }
+
+    /// The step offset (STR px) that draws the picture `FEATHERS_DROP` units under the point once landed, under a camera
+    /// whose up axis is `up`: a shift on the screen, so the ground in front of a lowered point doesn't hide it.
+    fn offset(&self, up: Vector) -> [f32; 2] {
+        let drop = if self.landed { FEATHERS_DROP * up[1] / super::PIXEL } else { 0.0 };
+        [super::STR_OFFSET[0], super::STR_OFFSET[1] + drop]
     }
 }
 
@@ -572,8 +582,10 @@ impl Class for Feathers {
         self.from = fx.position;
     }
 
-    fn update(&mut self, fx: &mut Fx, _: &Scene, _: &mut dyn Assets) {
+    fn update(&mut self, fx: &mut Fx, scene: &Scene, _: &mut dyn Assets) {
+        let offset = self.offset(scene.up);
         let Some(part) = &mut self.part else { return };
+        part.offset = offset;
         // The point drifts 0.09 a tick toward where the jump started, along the ground; not before the jump.
         let d = [self.from[0] - fx.position[0], 0.0, self.from[2] - fx.position[2]];
         let length = length(d);
@@ -1286,13 +1298,20 @@ mod tests {
         // A second cast starts them again.
         fallen_angel(&mut fx, owner, FEET, &mut assets);
         assert_eq!((fx.iter().count(), fx.iter().next().unwrap().fx.age), (1, 0));
-        // The snap: the point under the new cell, 14.4 down; then 0.09 a tick toward where the jump began.
+        // The snap: the point at the new cell, drawn 14.4 lower; then 0.09 a tick toward where the jump began.
         let landed = [50.0, 6.0, 50.0];
+        let feathers = |fx: &mut WorldFx| {
+            let part = fx.class_mut::<Feathers>(owner, &[FALLEN_ANGEL]).unwrap().1.part.as_ref().unwrap();
+            (part.point, part.offset)
+        };
+        assert_eq!(feathers(&mut fx).1, super::super::STR_OFFSET);
         snap(&mut fx, owner, landed);
-        let point = |fx: &mut WorldFx| fx.class_mut::<Feathers>(owner, &[FALLEN_ANGEL]).unwrap().1.part.as_ref().unwrap().point;
-        assert!(close3(point(&mut fx), [50.0, 6.0 - 14.375, 50.0]));
+        assert!(close3(feathers(&mut fx).0, landed));
         scene(&[(OWNER, landed)], 0.0, |scene| fx.tick(scene, &mut assets));
-        assert!(close3(point(&mut fx), [50.0 - 0.09, 6.0 - 14.375, 50.0]));
+        let (point, offset) = feathers(&mut fx);
+        assert!(close3(point, [50.0 - 0.09, 6.0, 50.0]));
+        // 14.375 units straight down at 45 degrees: 14.375 · cos 45° · 7 px lower on the screen.
+        assert!(close(offset[1], -80.0 + 14.375 * 45.0_f32.to_radians().cos() * 7.0));
         // Standing where it began: no drift.
         let mut solo = Solo::new(Feathers::default(), Launch::at(FALLEN_ANGEL, owner, FEET), &mut assets);
         solo.tick(&HERE, &mut assets);
