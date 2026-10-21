@@ -18,6 +18,8 @@ pub const RING_WHITE: &str = "data\\texture\\effect\\ring_white.tga";
 pub const RING_YELLOW: &str = first::RING_YELLOW;
 pub const RING_PURPLE: &str = "data\\texture\\effect\\ring_purple.tga";
 pub const RING_BLUE: &str = "data\\texture\\effect\\ring_blue.tga";
+pub const RING_RED: &str = "data\\texture\\effect\\ring_red.tga";
+pub const RING_BROWN: &str = "data\\texture\\effect\\ring_brown.tga";
 pub const ALPHA_DOWN: &str = first::ALPHA_DOWN;
 pub const STREAK: &str = first::STREAK;
 
@@ -76,6 +78,12 @@ pub struct RibbonLook {
     turn: f32,
     ticks: u32,
     forced: bool,
+}
+
+impl RibbonLook {
+    pub fn texture(&self) -> &'static str {
+        self.texture
+    }
 }
 
 /// Steel Body's: yellow, 25 high, drawn on ticks 0 to 109 (alpha 0 at age 110), even with /effect off.
@@ -142,6 +150,10 @@ pub const CHI_CRESCENTS: RibbonLook = RibbonLook {
 };
 /// Elemental Action's crescents: the chi burst's in white, blended.
 pub const ELEMENTAL_CRESCENTS: RibbonLook = RibbonLook { rgb: [1.0; 3], additive: false, texture: RING_WHITE, ..CHI_CRESCENTS };
+/// The elementals' fire, wind and earth bursts (936 to 938): the chi burst's crescents in red flames, yellow or brown, white, blended.
+pub const FIRE_BURST: RibbonLook = RibbonLook { texture: RING_RED, ..ELEMENTAL_CRESCENTS };
+pub const WIND_BURST: RibbonLook = RibbonLook { texture: RING_YELLOW, ..ELEMENTAL_CRESCENTS };
+pub const EARTH_BURST: RibbonLook = RibbonLook { texture: RING_BROWN, ..ELEMENTAL_CRESCENTS };
 /// Grand Cross's four arcs: where from the caster's spot and the turn they start at.
 const ARCS: [([f32; 2], f32); 4] = [([23.0, 23.0], 180.0), ([23.0, -23.0], 90.0), ([-23.0, -23.0], 0.0), ([-23.0, 23.0], 270.0)];
 /// The arcs are drawn on ages 1…98, the bars on 1…89.
@@ -560,6 +572,11 @@ impl Walls {
     /// Elemental Action's four white crescents on `unit`.
     pub fn elemental_action(&mut self, unit: Option<u32>, now: Instant) {
         self.ribbons.push(Ribbons { look: &ELEMENTAL_CRESCENTS, unit, at: None, start: now });
+    }
+
+    /// An elemental's fire, wind or earth burst: four crescents of `look` on `unit`.
+    pub fn elemental_burst(&mut self, look: &'static RibbonLook, unit: Option<u32>, now: Instant) {
+        self.ribbons.push(Ribbons { look, unit, at: None, start: now });
     }
 
     /// Phantom Menace's four purple crescents on `unit`.
@@ -1265,6 +1282,26 @@ mod tests {
         assert_eq!(meshes.len(), 4);
         assert!(meshes.iter().all(|wall| wall.texture == RING_WHITE && !wall.additive && wall.vertices[0].tint[..3] == [1.0; 3]));
         assert!(walls.meshes(start + TICK * 48, |_| Some([0.0; 3])).len() == 4 && walls.meshes(start + TICK * 49, |_| Some([0.0; 3])).is_empty());
+    }
+
+    #[test]
+    fn the_elementals_bursts_open_four_crescents_of_flame() {
+        let start = Instant::now();
+        for (look, texture) in [(&FIRE_BURST, RING_RED), (&WIND_BURST, RING_YELLOW), (&EARTH_BURST, RING_BROWN)] {
+            let mut walls = Walls::default();
+            walls.elemental_burst(look, Some(3), start);
+            // Alpha at n = 1, 10, 11, 49, 50: 20, 200, 195, 5, 0; band 2's radius at n = 1 and 10: 3.3 and 6.0; lean 79 at 1, 40 from 40.
+            assert_eq!([1, 10, 11, 49, 50].map(|n| ribbon_alpha(look, n)), [20.0, 200.0, 195.0, 5.0, 0.0]);
+            assert!(near(ribbon_shape(look, 2, 1).0, 3.3) && near(ribbon_shape(look, 2, 10).0, 6.0));
+            assert_eq!([1, 40, 60].map(|n| ribbon_shape(look, 0, n).1), [79.0, 40.0, 40.0]);
+            // Four blended white bands in the element's ring on ages 1 to 49, following the unit.
+            let meshes = walls.meshes(start, |_| Some([0.0; 3]));
+            assert_eq!(meshes.len(), 4);
+            assert!(meshes.iter().all(|wall| wall.texture == texture && !wall.additive && wall.vertices[0].tint[..3] == [1.0; 3]));
+            assert_eq!(walls.meshes(start + TICK * 48, |_| Some([0.0; 3])).len(), 4);
+            assert!(walls.meshes(start + TICK * 49, |_| Some([0.0; 3])).is_empty());
+            assert!(walls.meshes(start, |_| None).is_empty());
+        }
     }
 
     #[test]
