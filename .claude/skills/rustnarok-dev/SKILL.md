@@ -33,7 +33,7 @@ Personal or machine-specific notes (your server's ports, data paths, task lists)
 ## Build and verify
 
 ```bash
-.claude/skills/rustnarok-dev/verify.sh
+cargo fmt && .claude/skills/rustnarok-dev/verify.sh
 ```
 
 fmt, clippy (`-D warnings`), every test target, and when a login server is up, the ignored live test. Failures that
@@ -48,14 +48,16 @@ top of `src/control.rs`):
 ```bash
 D=.claude/skills/rustnarok-dev/drive.py
 python3 -I $D launch "" 0                 # first account, slot 0: logs in and enters the map
-python3 -I $D state                       # scene, map, player, windows, units with their screen boxes
+python3 -I $D state                       # scene, map, player, windows, units with their screen boxes: a big JSON
+python3 -I $D state game.ground_items     # one part of it, by dotted path (also game.targets, game.windows, game.chat)
 python3 -I $D send '{"cmd":"say","text":"@item 501 5"}'
 python3 -I $D send '{"cmd":"click","x":512,"y":384,"count":2}'
 python3 -I $D shot inventory-open         # -> docs/personal/shots/inventory-open.png
 python3 -I $D quit
 ```
 
-Coordinates are the client's logical 1024×768. A driven client ignores the real mouse and keyboard. A GM account
+Coordinates are the client's logical 1024×768; a screenshot can be wider (1224 px on a retina display), so take click
+points from `state`'s `targets` boxes, not from the image. A driven client ignores the real mouse and keyboard. A GM account
 (`group_id` 99 in rathena's `login` table) can spawn what a test needs (`@monster`, `@item`, `@warp`). A scenario sets the level it needs with
 `@set BaseLevel <n>` (absolute, unlike `@blvl`): the ones that spend SP (skill-hits, skill-motions, status-loops) and
 aura-high leave the first character at base 99.
@@ -107,6 +109,13 @@ Animated things (water, warp portals, effects) differ between two runs of the sa
 map. Crop shots to what the change touches when that noise gets in the way. Read the sheets: an unexpected change elsewhere is a regression; no change where you meant one is a fix that didn't
 land. Put the sheets for the changed shots in the PR.
 
+## Things only the server can start
+
+The server sends some things only for its own events, so a GM command or a player's own action can't show them: an
+item's drop pillar (the fall packet's show drop effect is set for monster drops and the script command `makeitem`, never
+for a player's drop). To see one, run a throwaway script on your rathena (`@loadnpc`, `makeitem … ,1`, `@unloadnpcfile`
+at the end), then remove the file.
+
 ## Several tickets at once: lanes
 
 A lane is a git worktree of its own for one ticket, so several people or sessions can each build, run clients and play
@@ -146,7 +155,8 @@ lead's call, 2026-10-18).
 0. **Pick it up visibly**: check it's free **right before** claiming, as its own step (no assignee, no "Taking this"
    comment): another developer may have taken it minutes ago. Then assign yourself, react 👀 on the issue
    (`gh api -X POST repos/kindraywind/rustnarok-client/issues/<n>/reactions -f content=eyes`) and comment that you've
-   taken it. Comment again as it moves — what you found, the plan, the PR — in the issue's language.
+   taken it. A contributor without write access can't assign (`gh issue edit` is refused): the 👀 and the comment are
+   the claim. Comment again as it moves — what you found, the plan, the PR — in the issue's language.
 1. Reproduce it in the running client and screenshot it. **A UI bug report needs a screenshot.** Attach it to the
    issue on GitHub (drag it into the comment box); never commit it.
 2. Check the protocol facts against rathena before planning; plan before writing code.
@@ -162,4 +172,6 @@ lead's call, 2026-10-18).
    2. **How was the fix verified?** `verify.sh` and the issue's scenario passing on the branch, after-screenshots.
    3. **How do we know nothing regressed?** The merge bar: unit tests, and the feature's own scenario (plus any it
       directly touches) passing with `check` against current main. Say what else you checked.
+   A contributor's PR comes from a fork, so `gh pr list --head issue-<n>` finds none: look with
+   `gh pr list --repo kindraywind/rustnarok-client --state all --search "<n>"`.
 6. Merge it (`gh pr merge --merge --delete-branch`), then `lane.sh rm` its lane.
