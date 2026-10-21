@@ -514,6 +514,7 @@ mod tests {
                 description: Vec::new(),
                 unidentified_description: Vec::new(),
                 costume: false,
+                effect_id: None,
             },
         );
         // A +7 carded weapon:

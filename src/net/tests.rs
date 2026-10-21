@@ -475,8 +475,21 @@ fn decodes_ground_items_and_inventory() {
     // Captured from rathena: a Poring dropping a Jellopy (909) at 252,88.
     let jellopy = [0xdd, 0x0a, 0x60, 0x04, 0, 0, 0x8d, 0x03, 0, 0, 0x03, 0, 0x01, 0xfc, 0, 0x58, 0, 0x06, 0x0c, 0x01, 0, 0, 0, 0];
     let Some(MapEvent::GroundItem(item)) = decode_map_packet(&jellopy) else { panic!() };
-    assert_eq!(item, GroundItem { id: 0x460, item: 909, identified: true, cell: [252, 88], sub: [6, 12], amount: 1, falling: true });
+    assert_eq!(
+        item,
+        GroundItem { id: 0x460, item: 909, identified: true, cell: [252, 88], sub: [6, 12], amount: 1, falling: true, show_effect: false, effect_mode: 0 }
+    );
     assert_eq!(packet_length(ZC_ITEM_FALL_ENTRY), Some(jellopy.len() as i32));
+    // Show drop effect 1 and mode 3 (a purple pillar); an item already on the ground (ZC_ITEM_ENTRY) has neither.
+    let mut pillar = jellopy;
+    pillar[21] = 1;
+    pillar[22..24].copy_from_slice(&3u16.to_le_bytes());
+    let Some(MapEvent::GroundItem(item)) = decode_map_packet(&pillar) else { panic!() };
+    assert_eq!((item.show_effect, item.effect_mode, item.falling, item.item), (true, 3, true, 909));
+    let mut lying = [0u8; 19];
+    lying[..2].copy_from_slice(&ZC_ITEM_ENTRY.to_le_bytes());
+    let Some(MapEvent::GroundItem(item)) = decode_map_packet(&lying) else { panic!() };
+    assert_eq!((item.show_effect, item.effect_mode, item.falling), (false, 0, false));
 
     // A weapon card (4035) comes with its place, the weapon (2), where a worn item's would be.
     let mut list = vec![0u8; 5 + 3 * NORMAL_ITEM_SIZE];

@@ -35,6 +35,7 @@ pub mod radar;
 pub mod sage;
 pub mod shafts;
 pub mod shards;
+pub mod sheet;
 pub mod sight;
 pub mod sniper;
 pub mod snow;
@@ -213,6 +214,7 @@ pub struct Prims {
     pub vortex: vortex::Vortex,
     pub snow: snow::Snow,
     pub emblems: emblems::Emblems,
+    pub sheets: sheet::Sheets,
     pub portal: portal::Portal,
     pub sphere: sphere::Sphere,
 }

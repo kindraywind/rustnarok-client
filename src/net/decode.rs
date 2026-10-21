@@ -146,6 +146,8 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             amount: u16_at(15),
             sub: [packet[17], packet[18]],
             falling: false,
+            show_effect: false,
+            effect_mode: 0,
         }),
         ZC_ITEM_FALL_ENTRY => MapEvent::GroundItem(GroundItem {
             id: u32_at(2),
@@ -155,6 +157,8 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             sub: [packet[17], packet[18]],
             amount: u16_at(19),
             falling: true,
+            show_effect: packet[21] != 0,
+            effect_mode: u16_at(22),
         }),
         ZC_ITEM_DISAPPEAR => MapEvent::ItemGone { id: u32_at(2) },
         ZC_ITEM_PICKUP_ACK => MapEvent::PickedUp {

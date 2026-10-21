@@ -59,13 +59,18 @@ impl App {
 }
 
 impl App {
-    pub(crate) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
-        // The map packets since the last frame first, before anything moves.
+    /// Applies the map packets that wait for the next frame.
+    pub(crate) fn apply_frame_events(&mut self) {
         for event in std::mem::take(&mut self.frame_events) {
             let event = NetEvent::Map(event);
             control::observe(&event);
             self.net_event(event);
         }
+    }
+
+    pub(crate) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        // The map packets since the last frame first, before anything moves.
+        self.apply_frame_events();
         if self.loading.is_some() {
             return self.draw_loading(event_loop);
         }
@@ -644,9 +649,12 @@ impl App {
             }
         }
         // Items on the ground; just-dropped ones fall into place.
+        let mut item_feet = HashMap::new();
         for (&id, item) in &game.ground {
-            let Some(Some(sprites)) = game.item_sprites.get_mut(ground_sprite(items, item.item, item.identified)) else { continue };
             let mut feet = game.world.ground_under(game.world.cell_position(item.cell));
+            // The world objects of an item (its light pillar) stand where it lies, not where it falls.
+            item_feet.insert(id, feet);
+            let Some(Some(sprites)) = game.item_sprites.get_mut(ground_sprite(items, item.item, item.identified)) else { continue };
             if let Some(dropped) = item.dropped {
                 feet[1] += item_fall_height(now.saturating_duration_since(dropped).as_secs_f32() / 0.024);
             }
@@ -2809,9 +2817,10 @@ impl App {
                 .or_else(|| owner.filter(|id| feet_of.contains_key(id) && !game.units.contains_key(id)).map(|_| world_str::Body::skill_unit()))
         };
         let ground_at = |x: f32, z: f32| -game.world.gat.height_at([x / world::CELL, z / world::CELL]);
+        let feet_of_object = |owner: Option<u32>| feet_of_unit(owner).or_else(|| owner.and_then(|id| item_feet.get(&id).copied()));
         let scene = world_str::Scene {
             player: player_feet,
-            feet: &feet_of_unit,
+            feet: &feet_of_object,
             body: &body_of,
             longitude: yaw.to_degrees(),
             right: view.right,
@@ -2935,7 +2944,8 @@ impl App {
             billboards.extend(game.weather.world_sprites(&assets.weather));
         }
         // The overlay follows the player and stays up with /effect off. 334 is not an effect that switch hides.
-        let cover = blind_cover(&assets.blind_textures, player_feet, game.blind.alpha(now), game.blind.showing());
+        let mut cover = blind_cover(&assets.blind_textures, player_feet, game.blind.alpha(now), game.blind.showing());
+        cover.extend(game.effects.cover_quads(now, view.forward, feet_of_unit));
         let frame = WorldFrame {
             world: &game.world,
             view: &view,
