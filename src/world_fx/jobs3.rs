@@ -240,10 +240,6 @@ impl Class for Motes {
     fn alive(&self, fx: &Fx, scene: &Scene) -> bool {
         fx.owned(scene)
     }
-
-    fn any(&mut self) -> Option<&mut dyn Any> {
-        Some(self)
-    }
 }
 
 // Frigg's Song (1059)
@@ -310,10 +306,6 @@ impl Class for Frigg {
                 flags: FLAGS_EFFECT,
             });
         }
-    }
-
-    fn any(&mut self) -> Option<&mut dyn Any> {
-        Some(self)
     }
 }
 
@@ -460,10 +452,6 @@ impl Class for Haze {
             puff.card.faces(at, 1.0, false, &seen.eye, out);
         }
     }
-
-    fn any(&mut self) -> Option<&mut dyn Any> {
-        Some(self)
-    }
 }
 
 // The Rebellion's coins (1135)
@@ -534,10 +522,6 @@ impl Class for Coins {
 
     fn alive(&self, fx: &Fx, scene: &Scene) -> bool {
         fx.owned(scene)
-    }
-
-    fn any(&mut self) -> Option<&mut dyn Any> {
-        Some(self)
     }
 }
 
@@ -834,10 +818,6 @@ impl Class for Line {
     fn alive(&self, _: &Fx, _: &Scene) -> bool {
         self.part.as_ref().is_some_and(|part| part.loaded.is_some()) && self.n as f32 <= self.last
     }
-
-    fn any(&mut self) -> Option<&mut dyn Any> {
-        Some(self)
-    }
 }
 
 // Axe Boomerang (1657) and Shield Shooting (2183)
@@ -918,10 +898,6 @@ impl Class for Boomerang {
 
     fn alive(&self, fx: &Fx, scene: &Scene) -> bool {
         !self.over && fx.owned(scene) && self.part.as_ref().is_some_and(|part| part.loaded.is_some())
-    }
-
-    fn any(&mut self) -> Option<&mut dyn Any> {
-        Some(self)
     }
 }
 

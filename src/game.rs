@@ -1354,6 +1354,13 @@ impl Game {
         self.effects.triangle_shot(gpu, grf, table, from, (unit(target), to), delay);
     }
 
+    /// Fallen Angel's cast by `source`: its feathers start where it is drawn; nothing for a caster not in sight.
+    pub(crate) fn fallen_angel(&mut self, gpu: &Gpu, grf: &Grf, source: u32) {
+        if let Some(at) = self.feet(source, control::now()) {
+            self.effects.fallen_angel(gpu, grf, (source != self.account_id).then_some(source), at);
+        }
+    }
+
     /// The spirit count of `unit`: a Rebellion's or a Night Watch's coins, none while it is out of sight.
     pub(crate) fn coins(&mut self, gpu: &Gpu, grf: &Grf, unit: u32, count: u16) {
         let actor = if unit == self.account_id { Some(&self.player) } else { self.units.get(&unit) };

@@ -3325,10 +3325,8 @@ impl App {
                 if cast_ms == 0
                     && skill == crate::world_fx::jobs3::FALLEN_ANGEL_SKILL
                     && let Some(gpu) = gpu
-                    && let Some(at) = (if source == me { Some(&game.player) } else { game.units.get(&source) })
-                        .map(|caster| game.world.cell_position(caster.cell.map(|value| value as f32)))
                 {
-                    game.effects.fallen_angel(gpu, grf, (source != me).then_some(source), at);
+                    game.fallen_angel(gpu, grf, source);
                 }
                 let goal = if target == me { Some(game.player.cell) } else { game.units.get(&target).map(|actor| actor.cell) };
                 let caster = if source == me { Some(&mut game.player) } else { game.units.get_mut(&source) };
