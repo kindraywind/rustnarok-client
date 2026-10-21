@@ -775,16 +775,28 @@ impl Animation {
     }
 }
 
-// The wind elemental's Gust, Blast and Wild Storm: one picture file (Gust's) moved by three ACTs.
-// ponytail: these and Aqua Play's and Upheaval's sprites draw at scale 1.0; the game also multiplies them by the unit's shrink factor.
+// The elementals' sprites that share one picture file, each moved by its own ACT: Gust, Blast and Wild Storm (Gust's), Aqua Play,
+// Cooler and Chilly Air (Aqua Play's), Upheaval, Petrology and Cursed Soil (Upheaval's).
+// ponytail: the elementals' and Silent Breeze's sprites draw at scale 1.0; the game also multiplies them by the unit's shrink factor.
 const GUST_SPRITE: &str = "data\\sprite\\이팩트\\거스트";
 const BLAST_SPRITE: &str = "data\\sprite\\이팩트\\블래스트";
 const WILD_STORM_SPRITE: &str = "data\\sprite\\이팩트\\와일드스톰";
+const AQUA_PLAY_SPRITE: &str = "data\\sprite\\이팩트\\아쿠아플레이";
+const COOLER_SPRITE: &str = "data\\sprite\\이팩트\\쿨러";
+const CHILLY_AIR_SPRITE: &str = "data\\sprite\\이팩트\\칠리에어";
+const UPHEAVAL_SPRITE: &str = "data\\sprite\\이팩트\\업히벌";
+const PETROLOGY_SPRITE: &str = "data\\sprite\\이팩트\\페트롤로지";
+const CURSED_SOIL_SPRITE: &str = "data\\sprite\\이팩트\\커즈드소일";
 
 /// The picture file a sprite effect draws from when it is another's.
 /// ponytail: each set still reads the file for itself; one parsed copy shared between sets would read it once.
 fn shared_picture(sprite: &str) -> Option<&'static str> {
-    matches!(sprite, BLAST_SPRITE | WILD_STORM_SPRITE).then_some(GUST_SPRITE)
+    match sprite {
+        BLAST_SPRITE | WILD_STORM_SPRITE => Some(GUST_SPRITE),
+        COOLER_SPRITE | CHILLY_AIR_SPRITE => Some(AQUA_PLAY_SPRITE),
+        PETROLOGY_SPRITE | CURSED_SOIL_SPRITE => Some(UPHEAVAL_SPRITE),
+        _ => None,
+    }
 }
 
 /// Where a unit's standing model is.
@@ -8211,6 +8223,45 @@ mod tests {
             [first::TIDAL_WEAPON, WIND_SLASH, STONE_RAIN, 947, 948, 949, 950, 951].map(|id| table.lengths[&id]),
             [100, 2000, 100, 100, 100, 100, 100, 100]
         );
+    }
+
+    #[test]
+    fn the_elementals_sprites_and_silent_breeze_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Chilly Air, Cursed Soil, Cooler, Tropic, Pyrotechnic, Petrology and Heater: looped sprites following the target, 2 ticks a
+        // frame from frame 1, 99 draws, over everything. Silent Breeze the same on the homunculus, 4 ticks a frame.
+        let launches = [(8418, 952, 18), (8423, 953, 11), (8417, 954, 12), (8415, 955, 20), (8413, 956, 15), (8422, 957, 12), (8414, 958, 20)];
+        for (skill, id, _) in launches {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Target, id)));
+        }
+        assert!(table.used(8026).unwrap().contains(&(Who::Caster, 961)));
+        for (id, frame_ms) in launches.map(|(_, id, _)| (id, 32.0)).into_iter().chain([(961, 64.0)]) {
+            let part = &table.sprites[&id][0];
+            let animation = Animation::new(part, id, Instant::now(), Anchor::Unit(Some(1)), false);
+            assert!(part.attached && animation.over && animation.repeat && animation.frame_ms == Some(frame_ms) && animation.first == 1.0);
+            assert!(animation.scale == 1.0 && animation.offset == [0.0, 0.0] && animation.action.is_none());
+            assert_eq!(((animation.end.unwrap() - animation.start).as_secs_f32() * 1000.0).round(), 1584.0);
+            assert_eq!(table.lengths[&id], 100);
+        }
+        let frame = |a: u32, frame_ms: f32, count: f32| (animation_progress(16.0 * a as f32, frame_ms, count, 1.0, true) * count) as usize;
+        let at = |count: f32| [0, 1, 2, 98].map(|a| frame(a, 32.0, count));
+        assert_eq!(
+            launches.map(|(_, _, count)| at(count as f32)),
+            [[1, 1, 2, 14], [1, 1, 2, 6], [1, 1, 2, 2], [1, 1, 2, 10], [1, 1, 2, 5], [1, 1, 2, 2], [1, 1, 2, 10]]
+        );
+        assert_eq!([0, 3, 4, 91, 92, 95, 96, 98].map(|a| frame(a, 64.0, 25.0)), [1, 1, 2, 23, 24, 24, 0, 0]);
+        // Chilly Air's and Cooler's sounds once a packet at the listener; the others have none.
+        assert_eq!(sounds(952), [("effect\\EF_IceArrow1", 0, true)]);
+        assert_eq!(sounds(954), [("effect\\EF_FrostDiver", 0, true)]);
+        assert!([953, 955, 956, 957, 958, 961].iter().all(|id| !table.sounds.contains_key(id)));
+        // Cooler and Chilly Air draw from Aqua Play's picture file, Petrology and Cursed Soil from Upheaval's.
+        let picture = |id: u32| {
+            let sprite = Animation::new(&table.sprites[&id][0], id, Instant::now(), Anchor::Unit(None), false).sprite;
+            shared_picture(&sprite).map_or(sprite.clone(), str::to_owned)
+        };
+        assert_eq!([949, 954, 952].map(picture), [AQUA_PLAY_SPRITE; 3].map(str::to_owned));
+        assert_eq!([950, 957, 953].map(picture), [UPHEAVAL_SPRITE; 3].map(str::to_owned));
     }
 
     #[test]

@@ -1495,6 +1495,14 @@ spr	948	블래스트	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=tru
 spr	949	아쿠아플레이	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
 spr	950	업히벌	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
 spr	951	와일드스톰	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	952	칠리에어	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	953	커즈드소일	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	954	쿨러	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	955	트로픽	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	956	파이로테크닉	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	957	페트롤로지	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	958	히터	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
+spr	961	silent_brz	1	delayFrame=64;firstFrame=1;repeat=true;drawn=99;onTop=true
 func	79	quake	0	200
 func	90	quake	800	650
 func	90	quake	1600	650
@@ -2079,6 +2087,8 @@ wav	942	effect\wizard_waterball_chulung	0	listener
 wav	943	effect\기공포	0	listener
 wav	944	effect\매직 크래쉬	16	listener
 wav	949	effect\EF_FrostDiver2	0	listener
+wav	952	effect\EF_IceArrow1	0	listener
+wav	954	effect\EF_FrostDiver	0	listener
 wav	1042	effect\all_full_throttle	0
 wav	1043	effect\sr_flashcombo	0
 wav	1046	effect\so_elemental_shield	0
@@ -5216,6 +5226,14 @@ length	948	100
 length	949	100
 length	950	100
 length	951	100
+length	952	100
+length	953	100
+length	954	100
+length	955	100
+length	956	100
+length	957	100
+length	958	100
+length	961	100
 length	988	100
 length	1020	100
 length	920	40
