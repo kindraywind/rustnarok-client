@@ -1,0 +1,32 @@
+{
+  "about": "A 1440x900 window: the canvas is the window's own size, so the HUD keeps its size and stays sharp (no uneven stretch) and the world fills the rest; the minimap and status icons keep to the right edge, the chat to the bottom left.",
+  "account": "",
+  "slot": 0,
+  "env": {
+    "RUSTNAROK_CLIENT_WINDOW": "1440x900"
+  },
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "move": [
+        700,
+        560
+      ]
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "big-window-game",
+      "threshold": 5
+    }
+  ]
+}
