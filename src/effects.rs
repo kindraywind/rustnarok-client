@@ -3076,6 +3076,49 @@ impl Effects {
         self.launch_fx(gpu, grf, &world_fx::jobs3::shot(world_fx::jobs3::AXE_BOOMERANG, Some(caster), from, (target, at), self.min, 0));
     }
 
+    /// A cast start of `skill` by `unit` (None = the player) standing at `at`: Competentia's sparkles, or Nipelheim Requiem's
+    /// cast STR (cut at the cast's end) and its funnel.
+    #[allow(clippy::too_many_arguments)]
+    pub fn fourth_job_cast(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, skill: u16, unit: Option<u32>, at: Vector, cast_ms: u32) {
+        use world_fx::area4;
+        match skill {
+            area4::COMPETENTIA_SKILL => {
+                if let Some(launch) = area4::competentia(unit, at, cast_ms, self.min) {
+                    self.launch_fx(gpu, grf, &launch);
+                }
+            }
+            area4::NIPELHEIM_SKILL => {
+                if let Some(copy) =
+                    self.launch_world(gpu, grf, table, area4::NIPELHEIM_CAST, Some(unit), at, false, 0).and_then(|serial| self.worlds.get_mut(serial))
+                {
+                    copy.timeline.cut = cast_ms as i32;
+                }
+                self.launch_fx(gpu, grf, &area4::funnel(unit, at, cast_ms));
+            }
+            _ => {}
+        }
+    }
+
+    /// `unit`'s (None = the player) cast was cancelled: Competentia's sparkles, Nipelheim Requiem's cast STR and its funnel go.
+    pub fn fourth_job_cast_cancelled(&mut self, unit: Option<u32>) {
+        use world_fx::area4;
+        for id in [area4::COMPETENTIA, area4::NIPELHEIM_FUNNEL] {
+            self.fx.remove(Some(unit), id);
+        }
+        self.worlds.remove(Some(unit), area4::NIPELHEIM_CAST);
+    }
+
+    /// A use packet of Petitio (or its damage) or Gale Storm (at `level`) on `target` (None = the player) standing at `at`.
+    pub fn fourth_job_used(&mut self, gpu: &Gpu, grf: &Grf, skill: u16, target: Option<u32>, at: Vector, level: i32) {
+        use world_fx::area4;
+        let launch = match skill {
+            area4::PETITIO_SKILL => area4::petitio(target, at, self.min),
+            area4::GALE_STORM_SKILL => area4::gale_storm(target, at, level, self.min),
+            _ => return,
+        };
+        self.launch_fx(gpu, grf, &launch);
+    }
+
     /// A ground item taken or gone: its pillars go.
     pub fn item_gone(&mut self, item: u32) {
         self.fx.remove_all_of(Some(Some(item)));
@@ -3169,7 +3212,7 @@ impl Effects {
                 Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
                 _ => None,
             };
-            let mut launch = world_fx::Launch::at(id, owner, at);
+            let mut launch = world_fx::Launch { min: self.min, ..world_fx::Launch::at(id, owner, at) };
             // A status sent again keeps its copy, but Spirit Marble's spirits and Flower Leaf's glints start afresh.
             if matches!(target, Target::Status(..)) {
                 launch.unique = true;
@@ -4557,7 +4600,7 @@ impl Effects {
                 if !self.fx.running(Some(Some(id)), effect) {
                     self.play_sounds(table, effect, at, now);
                 }
-                let launch = world_fx::Launch { a7: Some(i32::from(level)), unique: true, ..world_fx::Launch::at(effect, Some(Some(id)), at) };
+                let launch = world_fx::Launch { a7: Some(i32::from(level)), unique: true, min: self.min, ..world_fx::Launch::at(effect, Some(Some(id)), at) };
                 self.launch_fx(gpu, grf, &launch);
             } else {
                 let target = if table.units_once.contains(&kind) { Target::Kept(id) } else { Target::Lasting(id) };
@@ -9847,6 +9890,29 @@ mod tests {
         assert!(table.struck(jobs3::AXE_SKILL).unwrap().contains(&(Who::Target, 1660)));
         let sounds: Vec<_> = table.sounds[&jobs3::SHIELD_SHOOTING].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect();
         assert_eq!(sounds, [("effect\\IG_SHIELD_SHOOTING", 0, false)]);
+    }
+
+    #[test]
+    fn the_fourth_job_area_objects_have_their_rows() {
+        use world_fx::area4;
+        let table = Table::load();
+        let fx = WorldFx::default();
+        for id in [1760, 1768, 1798, 1804, 1851, 1911, 1957, 1973, 2077] {
+            assert!(fx.registered(id), "{id}");
+        }
+        // Violent Quake's and All Bloom's ground rows start them at the cell.
+        assert_eq!(table.ground(5219), Some(&[(Who::Ground, area4::VIOLENT_QUAKE)][..]));
+        assert_eq!(table.ground(5223), Some(&[(Who::Ground, area4::ALL_BLOOM)][..]));
+        // One object a unit: Floral Flare Road, Astral Strike, Pneumaticus Procella.
+        for (unit, effect) in
+            [(area4::FLORAL_UNIT, area4::FLORAL_FLARE_ROAD), (area4::ASTRAL_UNIT, area4::ASTRAL_STRIKE), (area4::PNEUMATICUS_UNIT, area4::PNEUMATICUS)]
+        {
+            assert!(table.units[&unit] == effect && table.units_once.contains(&unit), "{unit}");
+        }
+        // Nipelheim Requiem's cast STR is a world row; Competentia's cast has no aura; the objects' sounds are their own.
+        assert!(table.world(area4::NIPELHEIM_CAST).is_some());
+        assert_eq!(table.cast_aura(area4::COMPETENTIA_SKILL, 12), None);
+        assert!([1760, 1768, 1798, 1804, 1851, 1911, 1957, 1973, 2077].iter().all(|id| !table.sounds.contains_key(id)));
     }
 
     #[test]

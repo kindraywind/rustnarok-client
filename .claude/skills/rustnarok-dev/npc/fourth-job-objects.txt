@@ -1,0 +1,35 @@
+// The fourth-job ground and area objects (issue #853): a training dummy 2 cells east of prt_fild08 170,360 casts them,
+// since a monster needs no weapon, ammunition or items for a skill. Whisper npc:RustnarokFourthJob "quake" (Violent
+// Quake 5 on the cell 4 west and 3 north of the player), "bloom" (All Bloom 5 there), "astral" (Astral Strike 1 there), "floral"
+// (Floral Flare Road 5 there), "procella" (Pneumaticus Procella 10 there), "competentia" (Competentia on the dummy),
+// "petitio" (Petitio 1 on the player), "gale" (Gale Storm 10 on the player) or "nipelheim" (Nipelheim Requiem on the
+// dummy). Loaded and unloaded by scenarios/fourth-job-objects.json.
+prt_fild08,1,1,0	script	RustnarokFourthJob	-1,{
+	end;
+OnInit:
+	monster "prt_fild08", 172, 360, "--ja--", 2408, 1;
+	.gid = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	percentheal 100, 100;
+	if (@whispervar0$ == "quake") {
+		unitskillusepos .gid, "AG_VIOLENT_QUAKE", 5, 166, 363;
+	} else if (@whispervar0$ == "bloom") {
+		unitskillusepos .gid, "AG_ALL_BLOOM", 5, 166, 363;
+	} else if (@whispervar0$ == "astral") {
+		unitskillusepos .gid, "AG_ASTRAL_STRIKE", 1, 166, 363;
+	} else if (@whispervar0$ == "floral") {
+		unitskillusepos .gid, "AG_FLORAL_FLARE_ROAD", 5, 166, 363;
+	} else if (@whispervar0$ == "procella") {
+		unitskillusepos .gid, "CD_PNEUMATICUS_PROCELLA", 10, 166, 363;
+	} else if (@whispervar0$ == "competentia") {
+		unitskilluseid .gid, "CD_COMPETENTIA", 5, .gid;
+	} else if (@whispervar0$ == "petitio") {
+		unitskilluseid .gid, "CD_PETITIO", 1, getcharid(3);
+	} else if (@whispervar0$ == "gale") {
+		unitskilluseid .gid, "WH_GALESTORM", 10, getcharid(3);
+	} else if (@whispervar0$ == "nipelheim") {
+		unitskilluseid .gid, "TR_NIPELHEIM_REQUIEM", 5, .gid;
+	}
+	end;
+}
