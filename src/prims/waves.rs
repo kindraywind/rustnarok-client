@@ -1,5 +1,6 @@
 //! The Rune Knight's Sonic Wave (832) and the Arch Bishop's Duple Light (833), a 16 ms tick at a time: four bubble crescents sliding
-//! toward the target, and two glowing balls circling a unit, each trailing four icy panes.
+//! toward the target, and two glowing balls circling a unit, each trailing four icy panes. The wind elemental's Wind Slash (943)
+//! is Sonic Wave's crescents in green, added on.
 //!
 //! A shape's own age n counts from 1 at its first tick; a is the ticks run since the effect started minus one.
 
@@ -97,13 +98,18 @@ pub fn bands(ticks: u32, min: bool) -> ([Band; 4], u32) {
     (bands, slide)
 }
 
-/// Sonic Wave's crescents where the caster stood, toward the way `heading` (degrees).
+/// Sonic Wave's crescents where the caster stood, toward the way `heading` (degrees), in their colour and blend.
 struct Crescents {
     start: Instant,
     at: Vector,
     heading: f32,
     min: bool,
+    rgb: [f32; 3],
+    additive: bool,
 }
+
+/// Wind Slash's crescents: #64FF64.
+const WIND_SLASH_RGB: [f32; 3] = [100.0 / 255.0, 1.0, 100.0 / 255.0];
 
 /// One spark of an orb: its age, angle round, size, alpha and the way it opens.
 #[derive(Clone, Copy, Debug)]
@@ -199,7 +205,13 @@ impl Waves {
     /// Sonic Wave from the caster standing at `from` toward `to` (/mineffect `min`).
     pub fn sonic(&mut self, from: Vector, to: Vector, min: bool, now: Instant) {
         let heading = bearing(to[0] - from[0], to[2] - from[2]) as f32;
-        self.crescents.push(Crescents { start: now, at: from, heading, min });
+        self.crescents.push(Crescents { start: now, at: from, heading, min, rgb: [1.0; 3], additive: false });
+    }
+
+    /// Wind Slash from the elemental standing at `from` toward `to`: the same crescents, green and added on.
+    pub fn wind_slash(&mut self, from: Vector, to: Vector, min: bool, now: Instant) {
+        let heading = bearing(to[0] - from[0], to[2] - from[2]) as f32;
+        self.crescents.push(Crescents { start: now, at: from, heading, min, rgb: WIND_SLASH_RGB, additive: true });
     }
 
     /// Duple Light on `unit` (two orbs), the choices of each from `rand(n)` in the order the game draws them.
@@ -260,7 +272,8 @@ impl Waves {
             for band in bands.iter().filter(|band| band.active && band.age > 0) {
                 let picture = BUBBLES[2 * (band.age as usize % 13) + 1];
                 let (lean_sin, lean_cos) = (band.lean as f32).to_radians().sin_cos();
-                let tint = [1.0, 1.0, 1.0, band.alpha as f32 / 255.0];
+                let [red, green, blue] = crescents.rgb;
+                let tint = [red, green, blue, band.alpha as f32 / 255.0];
                 let point = |s: usize| {
                     let (sin, cos) = ((15.0 * s as f32 + turn) % 360.0).to_radians().sin_cos();
                     let p = band.profile[s.min(20)];
@@ -285,7 +298,7 @@ impl Waves {
                     ];
                     vertices.extend([p, q, r, p, r, t]);
                 }
-                walls.push(Wall { texture: picture, vertices, additive: false, forced: false });
+                walls.push(Wall { texture: picture, vertices, additive: crescents.additive, forced: false });
             }
         }
         for orbs in &self.orbs {
@@ -409,6 +422,23 @@ mod tests {
         // The crescent stands where the caster did and slides 1 unit a tick along +x (the way to the target).
         let tip = |tick: u32| waves.meshes(start_time + TICK * tick, |_| None)[0].vertices[0].position;
         assert!(near(tip(10)[0] - tip(9)[0], 0.75));
+    }
+
+    #[test]
+    fn wind_slash_slides_green_crescents_added_on() {
+        let start = Instant::now();
+        let mut waves = Waves::default();
+        waves.wind_slash([0.0; 3], [0.0, 0.0, 40.0], false, start);
+        // Band 0 at ticks 0 – 30 and 32 – 62, band 3 at 24 – 54; nothing after 70.
+        let shown = |tick: u32| waves.meshes(start + TICK * tick, |_| None).len();
+        assert_eq!([0, 23, 24, 31, 54, 55, 70, 71].map(shown), [1, 3, 4, 3, 3, 2, 1, 0]);
+        let wall = &waves.meshes(start + TICK * 5, |_| None)[0];
+        assert!(wall.additive && wall.vertices.iter().all(|vertex| vertex.tint[..3] == WIND_SLASH_RGB));
+        // The turn is the bearing + 195: the same crescents as Sonic Wave's toward the same aim.
+        let mut sonic = Waves::default();
+        sonic.sonic([0.0; 3], [0.0, 0.0, 40.0], false, start);
+        let positions = |waves: &Waves| waves.meshes(start + TICK * 5, |_| None)[0].vertices.iter().map(|vertex| vertex.position).collect::<Vec<_>>();
+        assert_eq!(positions(&waves), positions(&sonic));
     }
 
     #[test]

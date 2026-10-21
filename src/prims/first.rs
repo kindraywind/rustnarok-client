@@ -1,6 +1,7 @@
 //! Six first-job skill effects, built tick by tick from a few exact parts: the small heal's glowing column and
 //! sparkles (7), Endure's crest and closing streaks (11), Magnum Break's two rings and turning dome (17), Steal's ten
-//! sparks (18), Detoxify's rising sparkles (21) and Decrease AGI's sinking sign and falling streaks (38).
+//! sparks (18), Detoxify's rising sparkles (21) and Decrease AGI's sinking sign and falling streaks (38); Tidal Weapon's
+//! blue rings round an icy dome (942) is Magnum Break's.
 //!
 //! An effect has an age e (0 at its launch) and a length N; a part made at age e has its own age a. A part with life L
 //! made at e is drawn min(L, N − e − 1) times: the effect's end cuts it. Alphas are cut to whole numbers when drawn.
@@ -14,6 +15,9 @@ use crate::world::{MeshVertex, Vector};
 pub const ALPHA_DOWN: &str = "data\\texture\\effect\\alpha_down.tga";
 pub const ENDURE: &str = "data\\texture\\effect\\endure.tga";
 pub const RING_YELLOW: &str = "data\\texture\\effect\\ring_yellow.tga";
+pub const RING_BLUE: &str = "data\\texture\\effect\\ring_blue.tga";
+/// Tidal Weapon's icy dome.
+pub const ICE: &str = crate::prims::ICE_TEXTURE;
 pub const DOME: &str = "data\\texture\\effect\\대폭발.tga";
 pub const SLOW: &str = "data\\texture\\effect\\slow.bmp";
 pub const STREAK: &str = "data\\texture\\effect\\ac_center2.tga";
@@ -63,6 +67,8 @@ pub const DARK_RING: u32 = 812;
 pub const IGNITION_RING: u32 = 722;
 /// The monsters' Slow Cast: a clock over the target's head.
 pub const SLOW_CAST: u32 = 676;
+/// The water elemental's Tidal Weapon: Magnum Break's rings in blue, twice, round its dome in ice.
+pub const TIDAL_WEAPON: u32 = 942;
 /// Slow Cast's clock is drawn this many ticks.
 const CLOCK_LIFE: u32 = 242;
 pub const ENCHANT_POISON: u32 = 125;
@@ -100,6 +106,7 @@ pub fn makes(effect: u32) -> bool {
             | SLOW_CAST
             | ENCHANT_POISON
             | ENCHANT_DEADLY_POISON
+            | TIDAL_WEAPON
     )
 }
 
@@ -121,6 +128,7 @@ fn length(effect: u32) -> u32 {
         GREEN_RING | IGNITION_RING => 100,
         SLOW_CAST => 300,
         ENCHANT_DEADLY_POISON => 120,
+        TIDAL_WEAPON => 100,
         _ => 50,
     }
 }
@@ -415,6 +423,7 @@ impl First {
                     | DARK_RING
                     | ENCHANT_POISON
                     | ENCHANT_DEADLY_POISON
+                    | TIDAL_WEAPON
             ),
             at,
             seeds,
@@ -546,6 +555,11 @@ impl First {
                         meshes.push((DOME, dome(at, a, magnum_alpha(a), 1.15, 0.009_583_3)));
                     }
                 }
+                TIDAL_WEAPON => {
+                    if let Some(a) = Self::age(effect, now, 0, 30) {
+                        meshes.push((ICE, dome(at, a, tidal_alpha(a, 30), 1.15, 0.009_583_3)));
+                    }
+                }
                 CART_REVOLUTION => {
                     for seed in &effect.seeds {
                         if let Some(a) = Self::age(effect, now, seed.born, 20) {
@@ -596,7 +610,8 @@ impl First {
         meshes
     }
 
-    /// Magnum Break's two rings, flat on the ground and drawn with the depth test off, over everything: the same ring twice.
+    /// Magnum Break's two rings, flat on the ground and drawn with the depth test off, over everything: the same ring twice;
+    /// Tidal Weapon's two rings, each twice.
     pub fn top_meshes(&self, now: Instant) -> Vec<Mesh> {
         let mut meshes = Vec::new();
         for effect in self.list.iter().filter(|effect| effect.id == CART_REVOLUTION) {
@@ -611,6 +626,15 @@ impl First {
                 let ring = ring(effect.at, a, magnum_alpha(a), 0.014_583_3, 12.0);
                 meshes.push((RING_YELLOW, ring.clone()));
                 meshes.push((RING_YELLOW, ring));
+            }
+        }
+        for effect in self.list.iter().filter(|effect| effect.id == TIDAL_WEAPON) {
+            for (life, swell) in [(30, 0.014_583_3), (20, 0.021_875)] {
+                if let Some(a) = Self::age(effect, now, 0, life) {
+                    let ring = ring(effect.at, a, tidal_alpha(a, life), swell, 12.0);
+                    meshes.push((RING_BLUE, ring.clone()));
+                    meshes.push((RING_BLUE, ring));
+                }
             }
         }
         meshes
@@ -866,6 +890,13 @@ pub fn cart_dome_alpha(a: u32) -> f32 {
 /// Magnum Break's alpha at age `a`: up to 254 over 15 ticks, then down by the same.
 pub fn magnum_alpha(a: u32) -> f32 {
     if a <= 14 { (16.93 * (a + 1) as f32).min(254.0) } else { (254.0 - 16.93 * (a - 14) as f32).max(0.0) }
+}
+
+/// Tidal Weapon's alpha at age `a` for a part of life `life`: 16.93 a tick to 169.3 at a = 9, then down to 0 at the
+/// last age.
+pub fn tidal_alpha(a: u32, life: u32) -> f32 {
+    let top = 16.93 * 10.0;
+    if a <= 9 { 16.93 * (a + 1) as f32 } else { (top - top / (life - 10) as f32 * (a - 9) as f32).max(0.0) }
 }
 
 /// A screen square of half-size `half` at `centre` (y down), `alpha` 0 to 255: two triangles.
@@ -1147,6 +1178,49 @@ mod tests {
         assert!(!first.list[0].follows);
         assert_eq!(first.meshes(tick(start, 3), |_| Some([100.0, 0.0, 0.0])).len(), 1);
         assert!(first.meshes(tick(start, 3), |_| Some([100.0, 0.0, 0.0]))[0].1.iter().all(|vertex| vertex.position[0].abs() < 30.0));
+    }
+
+    #[test]
+    fn tidal_weapon_draws_two_blue_rings_round_an_icy_dome() {
+        let (first, start) = effect_at(TIDAL_WEAPON, |_| 0, false);
+        assert!(makes(TIDAL_WEAPON) && !first.list[0].follows);
+        // The alpha: 16 at a = 0, 169 at 9, then the ring A 160, 118, 0 at 10, 15, 29, and C 152, 67, 0 at 10, 15, 19.
+        let cut = |a: u32, life: u32| tidal_alpha(a, life).trunc();
+        assert_eq!([0, 9, 10, 15, 29].map(|a| cut(a, 30)), [16.0, 169.0, 160.0, 118.0, 0.0]);
+        assert_eq!([10, 12, 15, 19].map(|a| cut(a, 20)), [152.0, 118.0, 67.0, 0.0]);
+        assert_eq!(cut(12, 30), 143.0);
+        // The radii: A 1.72, 14.44, 28.87, 38.94 at 0, 8, 19, 29; B 1.13, 9.49, 18.97, 25.59; C 1.71, 13.78, 25.81.
+        let outer = |a: u32, swell: f32| {
+            let mesh = ring([0.0; 3], a, 255.0, swell, 12.0);
+            f32::hypot(mesh[1].position[0], mesh[1].position[2])
+        };
+        let close = |got: f32, want: f32| (got - want).abs() < 0.01;
+        assert!([(0, 1.72), (8, 14.44), (19, 28.87), (29, 38.94)].iter().all(|&(a, want)| close(outer(a, 0.014_583_3), want)));
+        assert!([(0, 1.71), (8, 13.78), (19, 25.81)].iter().all(|&(a, want)| close(outer(a, 0.021_875), want)));
+        let radius = |a: u32| {
+            dome([0.0; 3], a, 255.0, 1.15, 0.009_583_3).iter().map(|vertex| (vertex.position.iter().map(|v| v * v).sum::<f32>()).sqrt()).fold(0.0, f32::max)
+        };
+        assert!([(0, 1.13), (8, 9.49), (19, 18.97), (29, 25.59)].iter().all(|&(a, want)| close(radius(a), want)));
+        // The inner radius: a full disc while the outer is under 12, then 12 wide.
+        let inner = |a: u32| {
+            let mesh = ring([0.0; 3], a, 255.0, 0.014_583_3, 12.0);
+            f32::hypot(mesh[0].position[0], mesh[0].position[2])
+        };
+        assert!(inner(5) < 0.01 && close(inner(19), outer(19, 0.014_583_3) - 12.0));
+        // A and C twice each, over everything, to a = 19; A alone (twice) to 29; nothing after. The dome depth-tested to 29.
+        let rings = |e: u32| first.top_meshes(tick(start, e)).into_iter().map(|(path, _)| path).collect::<Vec<_>>();
+        assert_eq!(rings(19), [RING_BLUE; 4]);
+        assert_eq!((rings(20).len(), rings(29).len(), rings(30).len()), (2, 2, 0));
+        let domes = |e: u32| first.meshes(tick(start, e), |_| Some([100.0, 0.0, 0.0]));
+        assert!(domes(29).len() == 1 && domes(29)[0].0 == ICE && domes(30).is_empty());
+        // It stays at the target's feet at tick 0.
+        assert!(domes(3)[0].1.iter().all(|vertex| vertex.position[0].abs() < 30.0));
+        // The dome turns 3 (a + 1)°: yaw 3 at a = 0, 30 at 9 (the first column's first point).
+        let yaw = |a: u32| {
+            let point = dome([0.0; 3], a, 255.0, 1.15, 0.009_583_3)[60].position;
+            point[0].atan2(point[2]).to_degrees()
+        };
+        assert!(close(yaw(0), 3.0) && close(yaw(9), 30.0), "{} {}", yaw(0), yaw(9));
     }
 
     #[test]

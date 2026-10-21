@@ -12,9 +12,9 @@ use rustnarok_client::model::Rsm;
 
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
-    balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, emblems, first, ground, guard, holes, huujin, kicks, knight,
-    linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sheet, sight, sniper, snow, songs, soul, souls, spears, sphere, spray, star,
-    stone, tanji, throw, transcend, vortex, walls, waterball, waves, wheels,
+    balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, elemental, emblems, first, ground, guard, holes, huujin, kicks,
+    knight, linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sheet, sight, sniper, snow, songs, soul, souls, spears, sphere,
+    spray, star, stone, tanji, throw, transcend, vortex, walls, waterball, waves, wheels,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -773,6 +773,18 @@ impl Animation {
             self.action = Some(if rand(2) == 0 { side } else { 0 });
         }
     }
+}
+
+// The wind elemental's Gust, Blast and Wild Storm: one picture file (Gust's) moved by three ACTs.
+// ponytail: these and Aqua Play's and Upheaval's sprites draw at scale 1.0; the game also multiplies them by the unit's shrink factor.
+const GUST_SPRITE: &str = "data\\sprite\\이팩트\\거스트";
+const BLAST_SPRITE: &str = "data\\sprite\\이팩트\\블래스트";
+const WILD_STORM_SPRITE: &str = "data\\sprite\\이팩트\\와일드스톰";
+
+/// The picture file a sprite effect draws from when it is another's.
+/// ponytail: each set still reads the file for itself; one parsed copy shared between sets would read it once.
+fn shared_picture(sprite: &str) -> Option<&'static str> {
+    matches!(sprite, BLAST_SPRITE | WILD_STORM_SPRITE).then_some(GUST_SPRITE)
 }
 
 /// Where a unit's standing model is.
@@ -2547,6 +2559,10 @@ const GREAT_ECHO_V: u32 = 863;
 /// Sonic Wave's crescents and Duple Light's orbs (`prims::waves`).
 const SONIC_WAVE: u32 = 832;
 const DUPLE_LIGHT: u32 = 833;
+/// The wind elemental's Wind Slash: Sonic Wave's crescents in green and its strobe (`prims::waves`, `prims::guard`).
+const WIND_SLASH: u32 = 943;
+/// The earth elemental's Stone Rain (`prims::elemental`).
+const STONE_RAIN: u32 = 944;
 /// Shadow Form's cast aura, the ground cells of Chaos Panic, Maelstrom and Bloody Lust, the bubble casts of the Arch Bishop and the
 /// Sura (`prims::holes`, `prims::songs`).
 const SHADOW_CAST: u32 = 826;
@@ -2700,7 +2716,7 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 54] = [
+pub const AIMED: [u32; 55] = [
     EF_TETRA,
     CANNON_LINES,
     STIN,
@@ -2721,6 +2737,7 @@ pub const AIMED: [u32; 54] = [
     SPEAR_RUSH,
     GREAT_ECHO_V,
     SONIC_WAVE,
+    WIND_SLASH,
     SHADOW_LINK,
     BOOST_KNUCKLE,
     RELEASE,
@@ -3224,7 +3241,9 @@ impl Effects {
                 first::ALPHA_DOWN,
                 first::ENDURE,
                 first::RING_YELLOW,
+                first::RING_BLUE,
                 first::DOME,
+                first::ICE,
                 first::SLOW,
                 first::STREAK,
                 first::DEX_AGI_TEXT,
@@ -3557,6 +3576,10 @@ impl Effects {
                     self.textures.entry(name.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
                 }
                 self.prims.notes.lullaby(unit, at, now);
+            }
+            (STONE_RAIN, Target::Unit(unit)) => {
+                self.textures.entry(elemental::STONE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, elemental::STONE, true).ok());
+                self.prims.elemental.stone_rain(unit, at, now);
             }
             (ARRULLO_FX, Target::Unit(unit)) => {
                 self.textures.entry(souls::DOT.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, souls::DOT, true).ok());
@@ -4000,7 +4023,8 @@ impl Effects {
             let mut animation = Animation::new(part, id, now, anchor(part.attached), lasting);
             animation.length = table.lengths.get(&id).copied();
             animation.roll(|n| pick(0, n.saturating_sub(1)));
-            self.sprites.entry(animation.sprite.clone()).or_insert_with(|| SpriteSet::at(grf, &animation.sprite));
+            let picture = shared_picture(&animation.sprite).unwrap_or(&animation.sprite);
+            self.sprites.entry(animation.sprite.clone()).or_insert_with(|| SpriteSet::with_act(grf, picture, &format!("{}.act", animation.sprite)));
             self.animations.push(animation);
         }
         self.play_quakes(table, id, now);
@@ -4681,13 +4705,18 @@ impl Effects {
                 self.play_quakes(table, id, now);
                 self.prims.spears.chevron(from, to, now);
             }
-            SONIC_WAVE => {
+            SONIC_WAVE | WIND_SLASH => {
                 for path in songs::BUBBLES {
                     self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
                 }
                 self.play_sounds(table, id, from, now);
-                self.prims.waves.sonic(from, to, self.min, now);
-                self.prims.guard.sonic(caster, now);
+                if id == SONIC_WAVE {
+                    self.prims.waves.sonic(from, to, self.min, now);
+                    self.prims.guard.sonic(caster, now);
+                } else {
+                    self.prims.waves.wind_slash(from, to, self.min, now);
+                    self.prims.guard.wind_slash(caster, now);
+                }
             }
             SHADOW_LINK => {
                 self.textures.entry(transcend::CLOUD.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, transcend::CLOUD, true).ok());
@@ -4769,6 +4798,7 @@ impl Effects {
         }
         self.prims.souls.advance(now, |n| pick(0, n.saturating_sub(1)));
         self.prims.notes.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
+        self.prims.elemental.advance(now, &position_of, |n| pick(0, n.saturating_sub(1)));
         self.prims.emblems.advance(now);
         self.prims.sheets.advance(now);
         self.prims.bodies.advance(now);
@@ -5840,6 +5870,8 @@ impl Effects {
             quads.extend(self.prims.petals.quads(|path| self.textures.get(path).and_then(Option::as_ref)));
             // Lullaby Deep Sleep's notes, over everything (`STR_RISE` is taken off again).
             quads.extend(self.prims.notes.quads(|path| self.textures.get(path).and_then(Option::as_ref), STR_RISE));
+            // Stone Rain's stones and their glows, over everything.
+            quads.extend(self.prims.elemental.quads(self.textures.get(elemental::STONE).and_then(Option::as_ref), STR_RISE));
             // Sight Rasher's sprites and their shadows, white with their alpha.
             for drawn in self.prims.sights.sprites(now).into_iter().chain(self.prims.cells.flames(now, &position_of)) {
                 let Some(Some(sprite)) = self.sprites.get(drawn.sprite) else { continue };
@@ -8087,6 +8119,49 @@ mod tests {
         // Duple Light: on the status and on the skill's target; its sound at the listener.
         assert!(table.status(350).contains(&DUPLE_LIGHT) && table.used(2054).unwrap().contains(&(Who::Target, DUPLE_LIGHT)));
         assert_eq!(sounds(DUPLE_LIGHT), [("effect\\AB_duplelight", 0, true)]);
+    }
+
+    #[test]
+    fn the_elementals_skills_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        // Tidal Weapon: built in code on the target, its sound at the listener; the caster's 439 stays.
+        let struck = table.struck(8433).unwrap();
+        assert!(struck.contains(&(Who::Target, first::TIDAL_WEAPON)) && struck.contains(&(Who::Caster, 439)));
+        assert!(first::makes(first::TIDAL_WEAPON) && !table.parts.contains_key(&first::TIDAL_WEAPON));
+        assert_eq!(sounds(first::TIDAL_WEAPON), [("effect\\wizard_waterball_chulung", 0, true)]);
+        // Wind Slash: from the elemental aimed at the target, its sound once a packet at the listener.
+        assert!(AIMED.contains(&WIND_SLASH) && table.struck(8434).unwrap().contains(&(Who::Caster, WIND_SLASH)));
+        assert_eq!(sounds(WIND_SLASH), [("effect\\기공포", 0, true)]);
+        // Stone Rain: on the target, its sound 16 ms in at the listener.
+        assert!(table.struck(8442).unwrap().contains(&(Who::Target, STONE_RAIN)));
+        assert_eq!(sounds(STONE_RAIN), [("effect\\매직 크래쉬", 16, true)]);
+        // Gust, Blast, Aqua Play, Upheaval and Wild Storm: looped sprites following the target, 2 ticks a frame from frame 1, 99
+        // draws, over everything.
+        for (skill, id) in [(8419, 947), (8420, 948), (8416, 949), (8424, 950), (8421, 951)] {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Target, id)));
+            let part = &table.sprites[&id][0];
+            let animation = Animation::new(part, id, Instant::now(), Anchor::Unit(Some(1)), false);
+            assert!(part.attached && animation.over && animation.repeat && animation.frame_ms == Some(32.0) && animation.first == 1.0);
+            assert!(animation.scale == 1.0 && animation.offset == [0.0, 0.0] && animation.action.is_none());
+            assert_eq!(((animation.end.unwrap() - animation.start).as_secs_f32() * 1000.0).round(), 1584.0);
+        }
+        let frame = |a: u32| (animation_progress(16.0 * a as f32, 32.0, 18.0, 1.0, true) * 18.0) as usize;
+        assert_eq!([0, 1, 2, 34, 35, 36, 98].map(frame), [1, 1, 2, 0, 0, 1, 14]);
+        // Only Aqua Play has a sound, once a packet at the listener.
+        assert_eq!(sounds(949), [("effect\\EF_FrostDiver2", 0, true)]);
+        assert!([947, 948, 950, 951].iter().all(|id| !table.sounds.contains_key(id)));
+        // Gust, Blast and Wild Storm draw from one picture file.
+        let pictures = [947, 948, 951].map(|id| {
+            let sprite = Animation::new(&table.sprites[&id][0], id, Instant::now(), Anchor::Unit(None), false).sprite;
+            shared_picture(&sprite).map_or(sprite.clone(), str::to_owned)
+        });
+        assert_eq!(pictures, [GUST_SPRITE; 3].map(str::to_owned));
+        assert!(shared_picture(GUST_SPRITE).is_none() && shared_picture("data\\sprite\\이팩트\\업히벌").is_none());
+        assert_eq!(
+            [first::TIDAL_WEAPON, WIND_SLASH, STONE_RAIN, 947, 948, 949, 950, 951].map(|id| table.lengths[&id]),
+            [100, 2000, 100, 100, 100, 100, 100, 100]
+        );
     }
 
     #[test]
