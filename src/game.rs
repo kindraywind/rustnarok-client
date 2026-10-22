@@ -1835,6 +1835,23 @@ impl Game {
         if known.0 != version {
             known.0 = version;
             let _ = self.session.guild_emblem(guild);
+            // Some servers keep emblems on their web server instead: ask there too, off the frame.
+            let (address, auth) = self.booking_web.clone();
+            let answers = self.web_emblems.0.clone();
+            std::thread::spawn(move || {
+                let _ = answers.send((guild, version, guild::download_emblem(&address, &auth, guild)));
+            });
+        }
+    }
+
+    /// The emblems the web server sent: each one that's still the version wanted. One it doesn't have (or a server
+    /// without one) leaves what the map server sends.
+    pub(crate) fn poll_web_emblems(&mut self, gpu: &Gpu) {
+        while let Ok((guild, version, file)) = self.web_emblems.1.try_recv() {
+            let Some(known) = self.emblems.get_mut(&guild).filter(|known| known.0 == version) else { continue };
+            if let Some(image) = file.ok().as_deref().and_then(guild::decode_emblem_file) {
+                known.1 = Some(gpu.texture(&image, false));
+            }
         }
     }
 

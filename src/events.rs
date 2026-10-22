@@ -460,6 +460,7 @@ impl App {
                     ),
                     booking_answers: std::sync::mpsc::channel(),
                     booking_asked: None,
+                    web_emblems: std::sync::mpsc::channel(),
                     trade_with: String::new(),
                     shop_sizes: shop::default_sizes(),
                     no_trade: false,

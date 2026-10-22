@@ -1389,6 +1389,8 @@ struct Game {
     booking_web: (String, booking::Auth),
     booking_answers: (std::sync::mpsc::Sender<BookingAnswer>, std::sync::mpsc::Receiver<BookingAnswer>),
     booking_asked: Option<(u32, u32, String, u16, u16)>,
+    /// Emblems coming back from the web server: guild, version, the file or why not.
+    web_emblems: (std::sync::mpsc::Sender<WebEmblem>, std::sync::mpsc::Receiver<WebEmblem>),
     /// The NPC shop windows' sizes (goods width, goods and deal rows): kept, and given to the next shop.
     shop_sizes: (f32, [usize; 2]),
     trade_with: String,
@@ -3256,6 +3258,8 @@ fn battle_key(key: &Key) -> battle_mode::KeyKind {
 
 /// A party booking request and what the web server said to it.
 type BookingAnswer = (booking::Request, std::io::Result<booking::Reply>);
+/// A guild's emblem from the web server: guild, version, the file or why not.
+type WebEmblem = (u32, u32, std::io::Result<Vec<u8>>);
 
 /// The web server's address (party booking): RUSTNAROK_CLIENT_WEB, else the login server's host on 8888.
 // ponytail: the web server's port, rathena's default; the client's own source of it isn't in our data.
