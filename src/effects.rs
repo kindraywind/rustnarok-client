@@ -2616,6 +2616,8 @@ const POWER_UP_TICKS: u32 = 1500;
 const ANTI_MAGIC: u32 = 675;
 /// Max Pain's red-orange dome: Anti-Magic's (`prims::guard`).
 const MAX_PAIN: u32 = 1032;
+/// Relieve's blue dome: Anti-Magic's, all three shells on guardK and added on (`prims::guard`).
+const RELIEVE: u32 = 1600;
 /// EF_HITDARK's near-black sparks and Lope's motes and petals (`HitSpark`, `prims::petals`).
 pub const HIT_DARK: u32 = 180;
 const LOPE: u32 = 411;
@@ -2925,9 +2927,10 @@ pub const AIMED: [u32; 71] = [
     throw::KUNAI_EXPLOSION,
     throw::CHARMS,
 ];
-/// EF_EARTHSPIKE and EF_HEAVENSDRIVE: stone spikes where they play (`prims`).
+/// EF_EARTHSPIKE and EF_HEAVENSDRIVE: stone spikes where they play (`prims`); Ground Drive's short-lived Heaven's Drive field.
 const EARTH_SPIKE: u32 = 79;
 const HEAVENS_DRIVE: u32 = 142;
+const GROUND_DRIVE: u32 = 1399;
 /// Spear of Ice's spikes (`prims::stone`), and the blinks of Madness Canceller (blue) and Adjustment and Gatling Fever (red).
 const HYOUSENSOU: u32 = 619;
 const MADNESS_BLUE: u32 = 625;
@@ -3937,6 +3940,11 @@ impl Effects {
                 let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
                 self.prims.guard.max_pain(unit, facing, now);
             }
+            (RELIEVE, Target::Unit(unit)) => {
+                self.textures.entry(guard::GUARD_K.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, guard::GUARD_K, true).ok());
+                let facing = self.facings.get(&unit).copied().unwrap_or(0.0);
+                self.prims.guard.relieve(unit, facing, now);
+            }
             (172..=179, Target::Unit(_) | Target::Ground) => {
                 let path = cells::sheet_texture(id);
                 self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
@@ -4474,13 +4482,16 @@ impl Effects {
             self.animations.push(animation);
         }
         self.play_quakes(table, id, now);
-        if matches!(id, EARTH_SPIKE | HEAVENS_DRIVE | HYOUSENSOU) {
+        if matches!(id, EARTH_SPIKE | HEAVENS_DRIVE | GROUND_DRIVE | HYOUSENSOU) {
             let path = if id == HYOUSENSOU { crate::prims::ICE_TEXTURE } else { stone::STONE };
             self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
             match id {
                 EARTH_SPIKE => self.prims.stone.earth_spike(at, now),
                 HYOUSENSOU => self.prims.stone.ice_spike(at, now),
-                _ => self.prims.stone.heavens_drive(at, now),
+                _ => {
+                    let ticks = if id == GROUND_DRIVE { stone::GROUND_DRIVE_TICKS } else { stone::HEAVENS_DRIVE_TICKS };
+                    self.prims.stone.heavens_drive(at, now, ticks, |n| pick(0, n.saturating_sub(1)));
+                }
             }
         }
         // Ice Wall's cell: a skill unit's, the spikes standing until it goes.
@@ -9614,6 +9625,40 @@ mod tests {
         assert!(table.skill(8020, "effectId").is_empty() && !table.parts[&959][0].attached && table.lengths[&959] == 60);
         // (Zephyr's cell, type 239, restarts a tick early too.)
         assert_eq!((restart_ticks(1088, 240, 2000), restart_ticks(0, 239, 2000), restart_ticks(0, 9, 2000)), (1999, 1999, 1992));
+    }
+
+    #[test]
+    fn wide_web_burnt_ground_drive_and_relieve_have_their_rows() {
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect::<Vec<_>>();
+        let animation = |effect: u32, anchor: Anchor| Animation::new(&table.sprites[&effect][0], effect, Instant::now(), anchor, false);
+        // Wide Web: on the monster at the use, over everything, unlooped from frame 1 at 4 ticks a frame: frames 1 – 14,
+        // 56 draws, gone at 56 (15 frames); no sound.
+        assert!(table.used(721).unwrap().contains(&(Who::Caster, 1053)) && !table.sounds.contains_key(&1053));
+        let web = animation(1053, Anchor::Unit(Some(1)));
+        assert_eq!((table.sprites[&1053][0].file.as_str(), table.sprites[&1053][0].attached), ("wideweb", true));
+        assert!(!web.repeat && web.over && web.first == 1.0 && web.frame_ms == Some(64.0) && table.lengths[&1053] == 999);
+        let frame = |age: u32| (animation_progress(16.0 * age as f32, 64.0, 15.0, 1.0, false) * 15.0) as usize;
+        assert_eq!([0, 3, 4, 55].map(frame), [1, 1, 2, 14]);
+        assert_eq!((15.0 - 1.0) * 64.0 / 16.0, 56.0);
+        // Burnt: the Burning status's flame on its unit, over everything, looped at 4 ticks a frame through 12 frames from 1.
+        assert_eq!(table.status(737), [1054]);
+        let flame = animation(1054, Anchor::Status(Some(1), 737));
+        assert!(flame.repeat && flame.over && flame.first == 1.0 && flame.frame_ms == Some(64.0) && table.lengths[&1054] == 9999);
+        let frame = |age: u32| (animation_progress(16.0 * age as f32, 64.0, 12.0, 1.0, true) * 12.0) as usize;
+        assert_eq!([0, 3, 4, 27, 28, 43, 44, 47, 48].map(frame), [1, 1, 2, 7, 8, 11, 0, 0, 1]);
+        // A status packet takes the unit's copies away before it starts one.
+        let mut effects =
+            Effects { animations: vec![animation(1054, Anchor::Status(Some(1), 737)), animation(1054, Anchor::Status(Some(2), 737))], ..Effects::default() };
+        effects.forget_status(Some(1), 737);
+        assert_eq!(effects.animations.iter().map(|animation| animation.anchor.unit()).collect::<Vec<_>>(), [Some(Some(2))]);
+        // Ground Drive: at the cell, the earth-spike sound and one quake at tick 0.
+        assert!(table.ground(770).unwrap().contains(&(Who::Ground, GROUND_DRIVE)));
+        assert_eq!(sounds(GROUND_DRIVE), [("effect\\wizard_earthspike", 0, false)]);
+        assert_eq!(table.quakes[&GROUND_DRIVE], [(Duration::ZERO, Duration::from_millis(650))]);
+        // Relieve: on the target at the use, Kyrie's sound at once, 200 ticks.
+        assert!(table.used(771).unwrap().contains(&(Who::Target, RELIEVE)));
+        assert_eq!((sounds(RELIEVE), table.lengths[&RELIEVE]), (vec![("effect\\kyrie_guard", 0, false)], 200));
     }
 
     #[test]

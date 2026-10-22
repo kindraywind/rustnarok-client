@@ -1,5 +1,5 @@
 //! Spikes the game makes in code (its prim kind 9): open four-sided pyramids that rise out of the ground along their
-//! own axis. Earth Spike's (EF_EARTHSPIKE 79), Heaven's Drive's field (EF_HEAVENSDRIVE 142), Grimtooth's train
+//! own axis. Earth Spike's (EF_EARTHSPIKE 79), Heaven's Drive's field (EF_HEAVENSDRIVE 142, and Ground Drive's 1399), Grimtooth's train
 //! (EF_GRIMTOOTH 123), Frost Diver's ice (EF_FROSTDIVER 27, EF_FROSTDIVER2 28) and Ice Wall's cells (EF_ICEWALL 74).
 
 use std::time::Instant;
@@ -11,9 +11,11 @@ use crate::world::{MeshVertex, Vector};
 /// What the stone spikes are made of (Frost Diver's are `ICE_TEXTURE`).
 pub const STONE: &str = "data\\texture\\effect\\stone.bmp";
 
-/// Earth Spike's and Heaven's Drive's lengths in ticks (Heaven's Drive raises its 250 by 50 as it starts).
+/// Earth Spike's, Heaven's Drive's and Ground Drive's lengths in ticks (the field raises its effect's 250 or 75 by 50 as it
+/// starts).
 const EARTH_SPIKE_TICKS: u32 = 250;
-const HEAVENS_DRIVE_TICKS: u32 = 300;
+pub const HEAVENS_DRIVE_TICKS: u32 = 300;
+pub const GROUND_DRIVE_TICKS: u32 = 125;
 /// Grimtooth's length: its point walks the whole of it, leaving a spike every 3rd tick.
 const TRAIN_TICKS: u32 = 250;
 const TRAIN_EVERY: u32 = 3;
@@ -260,16 +262,18 @@ impl Stone {
         }
     }
 
-    /// Heaven's Drive at `at` from `now`: 25 spikes on a 5 by 5 grid a cell apart, rising for 11 ticks and settling
-    /// back a little, standing unfaded and sinking into the ground over their last 30 ticks of 290 to 319 (the effect
-    /// ends at 299).
-    pub fn heavens_drive(&mut self, at: Vector, now: Instant) {
-        // ponytail: the effect lives its 300 ticks; whether the game's launcher (260 ticks) cuts it short isn't known.
+    /// Heaven's Drive's field at `at` from `now`, lasting `ticks` (`HEAVENS_DRIVE_TICKS`, or Ground Drive's
+    /// `GROUND_DRIVE_TICKS`): 25 spikes on a 5 by 5 grid a cell apart, rising for 11 ticks and settling back a little,
+    /// standing unfaded and sinking into the ground over their last 30 ticks of `ticks` − 10 to `ticks` + 19 (the effect
+    /// ends at `ticks` − 1). `rand(n)` draws below n.
+    pub fn heavens_drive(&mut self, at: Vector, now: Instant, ticks: u32, mut rand: impl FnMut(u32) -> u32) {
+        // ponytail: the effect lives its length; whether the game's launcher (260 ticks for 142) cuts it short isn't known.
         for x in [-10.0, -5.0, 0.0, 5.0, 10.0] {
             for z in [-10.0, -5.0, 0.0, 5.0, 10.0] {
-                let size = [3.0 + below(50) / 100.0, 9.0 + (below(60) + 1.0) / 10.0];
-                let life = HEAVENS_DRIVE_TICKS - 10 + pick(0, 29);
-                let spike = Spike::new(now, [at[0] + x, at[1], at[2] + z], 10.0, [below(360), 80.0 + below(20)], size, life, HEAVENS_DRIVE_TICKS - 1);
+                let size = [3.0 + rand(50) as f32 / 100.0, 9.0 + (rand(60) as f32 + 1.0) / 10.0];
+                let life = ticks - 10 + rand(30);
+                let angles = [rand(360) as f32, 80.0 + rand(20) as f32];
+                let spike = Spike::new(now, [at[0] + x, at[1], at[2] + z], 10.0, angles, size, life, ticks - 1);
                 self.spikes.push(Spike { speed: 1.0, change: 0.01, turn: Some((11, -1.2)), stop: 14, sink: Some((-1.0, -0.01)), ..spike });
             }
         }
@@ -531,7 +535,7 @@ mod tests {
     fn heavens_drive_raises_25_spikes_and_sinks_them() {
         let start = Instant::now();
         let mut spikes = Stone::default();
-        spikes.heavens_drive([0.0; 3], start);
+        spikes.heavens_drive([0.0; 3], start, HEAVENS_DRIVE_TICKS, |n| pick(0, n - 1));
         spikes.advance(start + TICK * 20);
         assert_eq!(spikes.spikes.len(), 25);
         // A cell apart, x and z from −10 to 10.
@@ -552,6 +556,44 @@ mod tests {
         assert!(spikes.spikes.iter().all(|spike| spike.life >= 299));
         spikes.advance(start + TICK * 299);
         assert!(spikes.spikes.is_empty());
+    }
+
+    #[test]
+    fn ground_drive_is_heaven_s_drive_s_field_cut_at_125_ticks() {
+        let start = Instant::now();
+        let field = |ticks: u32, draw: fn(u32) -> u32| {
+            let mut spikes = Stone::default();
+            spikes.heavens_drive([0.0; 3], start, ticks, draw);
+            spikes
+        };
+        // 25 spikes at tick 0 on the grid x, z ∈ {−10, −5, 0, 5, 10}; life 115 with every draw 0, 144 with every draw the highest.
+        let mut low = field(GROUND_DRIVE_TICKS, |_| 0);
+        let mut high = field(GROUND_DRIVE_TICKS, |n| n - 1);
+        assert_eq!(low.spikes.len(), 25);
+        let grid: Vec<[f32; 2]> = low.spikes.iter().map(|spike| [spike.base[0], spike.base[2]]).collect();
+        let steps = [-10.0, -5.0, 0.0, 5.0, 10.0];
+        assert_eq!(grid, steps.iter().flat_map(|&x| steps.map(|z| [x, z])).collect::<Vec<_>>());
+        assert!(low.spikes.iter().all(|spike| spike.life == 115 && spike.ends == 115 && (spike.height - 9.1).abs() < 1e-6 && spike.half == 3.0));
+        assert!(
+            high.spikes.iter().all(|spike| spike.life == 144 && spike.ends == 124 && (spike.height - 15.0).abs() < 1e-6 && (spike.half - 3.49).abs() < 1e-6)
+        );
+        // Standing at 6.86 from age 14; a life-115 spike sinks from age 85, a life-144 one from 114.
+        for (spikes, sinks) in [(&mut low, 85), (&mut high, 114)] {
+            spikes.advance(start + TICK * (sinks - 1));
+            assert!((spikes.spikes[0].rise - 6.86).abs() < 1e-3, "{}", spikes.spikes[0].rise);
+            spikes.advance(start + TICK * (sinks + 1));
+            assert!(spikes.spikes[0].rise < 6.86 - 1.0);
+        }
+        // Drawn up to age min(life − 1, 123): a life-115 spike to 114, a life-144 one cut at 124.
+        for (spikes, last) in [(&mut low, 114), (&mut high, 123)] {
+            spikes.advance(start + TICK * last);
+            assert!(!spikes.mesh(STONE).is_empty());
+            spikes.advance(start + TICK * (last + 1));
+            assert!(spikes.spikes.is_empty());
+        }
+        // Heaven's Drive's own field is unchanged: life 290 to 319, cut at 299.
+        let lives = [field(HEAVENS_DRIVE_TICKS, |_| 0), field(HEAVENS_DRIVE_TICKS, |n| n - 1)].map(|spikes| (spikes.spikes[0].life, spikes.spikes[0].ends));
+        assert_eq!(lives, [(290, 290), (319, 299)]);
     }
 
     #[test]

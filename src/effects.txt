@@ -1492,6 +1492,8 @@ spr	957	페트롤로지	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=
 spr	958	히터	1	delayFrame=32;firstFrame=1;repeat=true;drawn=99;onTop=true
 spr	961	silent_brz	1	delayFrame=64;firstFrame=1;repeat=true;drawn=99;onTop=true
 spr	962	magma_flow	1	delayFrame=64;firstFrame=1;repeat=false;drawn=92;onTop=true
+spr	1053	wideweb	1	delayFrame=64;firstFrame=1;onTop=true
+spr	1054	burnt	1	delayFrame=64;firstFrame=1;repeat=true;onTop=true
 func	79	quake	0	200
 func	90	quake	800	650
 func	90	quake	1600	650
@@ -1546,6 +1548,7 @@ func	804	quake	1280	650
 func	835	quake	704	650
 func	863	quake	0	650
 func	906	quake	528	650
+func	1399	quake	0	650
 unit	133	141
 rsm	143	외부소품\트랩03_3
 rsm	144	외부소품\트랩02
@@ -2142,6 +2145,8 @@ wav	989	effect\닌자_던지기	0
 wav	1044	effect\rk_luxanima	0
 wav	1132	effect\mon_금강불괴	0
 wav	1195	effect\EF_BeginSpell	0
+wav	1399	effect\wizard_earthspike	0
+wav	1600	effect\kyrie_guard	0
 hit	1	0	-1
 hit	2	0	-1
 hit	3	0	-1
@@ -5384,6 +5389,9 @@ length	1575	300
 length	1584	300
 length	1594	200
 length	1678	1678
+length	1053	999
+length	1054	9999
+length	1600	200
 minid	1296	1459
 minid	1297	1460
 minid	1314	1477
