@@ -1000,9 +1000,21 @@ pub struct QuestInfo {
 }
 
 /// A quest's words: title, description lines, summary, its NPC (cell, sprite, map) when listed, whether it's a cooldown
-/// timer, its rewards.
+/// timer, its rewards. From both lists when there are both: a translation can hold only some quests (a server's own).
 pub fn quest_info(grf: &Grf) -> io::Result<HashMap<u32, QuestInfo>> {
-    quest_infos(&run(grf, &[QUEST_INFO]).or_else(|_| run(grf, &[QUEST_INFO_TRANSLATED]))?)
+    merge_quests([QUEST_INFO, QUEST_INFO_TRANSLATED].map(|file| run(grf, &[file]).and_then(|lua| quest_infos(&lua))))
+}
+
+/// The original list with the translation's quests over it, or whichever of them there is.
+fn merge_quests([original, translated]: [io::Result<HashMap<u32, QuestInfo>>; 2]) -> io::Result<HashMap<u32, QuestInfo>> {
+    match (original, translated) {
+        (Ok(mut quests), Ok(translated)) => {
+            quests.extend(translated);
+            Ok(quests)
+        }
+        (Ok(quests), Err(_)) | (Err(_), Ok(quests)) => Ok(quests),
+        (Err(_), Err(error)) => Err(error),
+    }
 }
 
 fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
@@ -2193,6 +2205,23 @@ mod tests {
         assert_eq!(quests[&7001].npc, None);
         assert_eq!(quests[&7002].npc, Some([150, 180]));
         assert!(!quests[&7001].cooldown && quests[&7003].cooldown, "a cooldown timer");
+    }
+
+    #[test]
+    fn puts_the_translations_quests_over_the_original() {
+        let quests = |list: &str| {
+            let lua = super::new_lua().unwrap();
+            lua.load(list).exec().unwrap();
+            super::quest_infos(&lua)
+        };
+        let original = quests(r#"QuestInfoList = { [1] = { Title = "원본" }, [2] = { Title = "둘" } }"#);
+        let translated = quests(r#"QuestInfoList = { [2] = { Title = "Two" }, [79901] = { Title = "Job Change: Knight" } }"#);
+        let merged = super::merge_quests([original, translated]).unwrap();
+        assert_eq!([1, 2, 79901].map(|id| merged[&id].title.clone()), ["원본", "Two", "Job Change: Knight"]);
+        let missing = || Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+        let only = super::merge_quests([missing(), quests(r#"QuestInfoList = { [3] = { Title = "Three" } }"#)]).unwrap();
+        assert_eq!(only[&3].title, "Three");
+        assert!(super::merge_quests([missing(), missing()]).is_err());
     }
 
     #[test]
