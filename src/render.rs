@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use image::RgbaImage;
 use rustnarok_client::grf::Grf;
@@ -73,6 +74,10 @@ pub struct Gpu {
     /// Frames aren't presented: a client driven over the control socket opens behind the window in use, and waiting
     /// for a drawable there can block for good. It presents while it has the focus (click it to watch).
     pub hidden: bool,
+    /// The window was fully covered at the last draw, so nothing was presented and nothing waits for the display; and
+    /// when that draw began. `request_frame` paces frames by them.
+    occluded: bool,
+    drawn_at: Instant,
     /// Lines of text as textures, with the frame each was last drawn in; and the frame count.
     texts: RefCell<TextCache>,
     frame: Cell<u64>,
@@ -211,6 +216,8 @@ impl Gpu {
             pixel_sampler,
             smooth_sampler,
             hidden: crate::control::driven(),
+            occluded: false,
+            drawn_at: Instant::now(),
             texts: RefCell::new(HashMap::new()),
             frame: Cell::new(0),
         }
@@ -297,9 +304,18 @@ impl Gpu {
         self.texts.borrow_mut().clear();
     }
 
+    /// Asks for the next frame. Presenting waits for the display, which paces frames; a covered window presents
+    /// nothing, so its frames are kept a frame time apart instead of running flat out.
+    pub fn request_frame(&self) {
+        if frame_due(self.occluded, self.drawn_at.elapsed()) {
+            self.window.request_redraw();
+        }
+    }
+
     /// Draws the world and then `sprites` in order, each at its `alphas` opacity (1 past the list's end).
     pub fn draw(&mut self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) {
         crate::control::on_draw(self, world, sprites, alphas);
+        self.drawn_at = Instant::now();
         if self.hidden {
             // The frame's texture uploads still go out, or they'd pile up until the next screenshot.
             self.queue.submit([]);
@@ -307,9 +323,15 @@ impl Gpu {
         }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                // Covered: the uploads still go out, or they'd pile up (gigabytes in a minute) until it shows again.
+                self.occluded = true;
+                self.queue.submit([]);
+                return;
+            }
             _ => return self.resize(),
         };
+        self.occluded = false;
         let size = [self.config.width, self.config.height];
         let encoder = self.encode(&frame.texture.create_view(&Default::default()), size, world, sprites, alphas);
         self.queue.submit([encoder.finish()]);
@@ -466,4 +488,22 @@ pub fn key_out(mut image: RgbaImage) -> RgbaImage {
         }
     }
     image
+}
+/// Whether the next frame may be drawn now: always while frames are presented (the display paces them), else once a
+/// frame time has gone by since the last.
+fn frame_due(occluded: bool, since_drawn: std::time::Duration) -> bool {
+    !occluded || since_drawn >= crate::FRAME_TIME
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    #[test]
+    fn a_covered_window_keeps_frames_a_frame_time_apart() {
+        // Presenting: always (the display waits). Covered: only once a frame time has gone by.
+        assert!(super::frame_due(false, Duration::ZERO));
+        assert!(!super::frame_due(true, Duration::from_millis(2)));
+        assert!(super::frame_due(true, crate::FRAME_TIME));
+    }
 }
