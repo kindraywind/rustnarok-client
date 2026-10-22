@@ -3189,6 +3189,23 @@ impl Effects {
         self.textures.get(world_fx::status4::FROST_TEXTURE)?.as_ref()
     }
 
+    /// A use packet (or for Unlucky Rush a damage packet) starting shot `effect` at `level` from `caster` toward `target`
+    /// (each a unit and where it stands), with the shot's sounds.
+    #[allow(clippy::too_many_arguments)]
+    pub fn fourth_job_shot(
+        &mut self,
+        gpu: &Gpu,
+        grf: &Grf,
+        table: &Table,
+        effect: u32,
+        caster: (Option<u32>, Vector),
+        target: (Option<u32>, Vector),
+        level: i32,
+    ) {
+        self.play_sounds(table, effect, caster.1, Instant::now());
+        self.launch_fx(gpu, grf, &world_fx::shots::launch(effect, caster.0, caster.1, target, level, self.min));
+    }
+
     /// A ground item taken or gone: its pillars go.
     pub fn item_gone(&mut self, item: u32) {
         self.fx.remove_all_of(Some(Some(item)));
@@ -3282,6 +3299,7 @@ impl Effects {
             && !world_fx::heal::is_class(id)
             && !world_fx::drops::is_pillar(id)
             && !world_fx::status4::is_class(id)
+            && !world_fx::shots::is_class(id)
         {
             let owner = match target {
                 Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
@@ -10004,6 +10022,20 @@ mod tests {
         assert!(table.world(area4::NIPELHEIM_CAST).is_some());
         assert_eq!(table.cast_aura(area4::COMPETENTIA_SKILL, 12), None);
         assert!([1760, 1768, 1798, 1804, 1851, 1911, 1957, 1973, 2077].iter().all(|id| !table.sounds.contains_key(id)));
+    }
+
+    #[test]
+    fn the_fourth_job_shots_have_their_sounds() {
+        use world_fx::shots;
+        let table = Table::load();
+        let sounds = |id: u32| table.sounds.get(&id).map(|sounds| sounds.iter().map(|sound| (sound.file.clone(), sound.delay_ms)).collect::<Vec<_>>());
+        assert_eq!(sounds(shots::CRIMSON_ARROW), Some(vec![("effect\\AG_CRIMSON_ARROW1".into(), 0)]));
+        assert_eq!(sounds(shots::FRENZY_SHOT), Some(vec![("effect\\ABC_FRENZY_SHOT".into(), 0)]));
+        assert_eq!(sounds(shots::SAVAGE_IMPACT), Some(vec![("effect\\SHC_SAVAGE_IMPACT".into(), 0)]));
+        // Unlucky Rush has none; the sweep, the storm and the blob play their own.
+        for id in [shots::UNLUCKY_RUSH, shots::STORM_CANNON, shots::JUPITEL, 2206, 2214, 2222, 2230] {
+            assert!(!table.sounds.contains_key(&id), "{id}");
+        }
     }
 
     #[test]

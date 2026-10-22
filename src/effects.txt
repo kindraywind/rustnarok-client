@@ -2105,6 +2105,9 @@ wav	1104	effect\su_cn_powdering	0
 wav	1110	effect\su_roottwist	0
 wav	1125	effect\su_nyanggrass	0
 wav	2183	effect\IG_SHIELD_SHOOTING	0
+wav	1756	effect\AG_CRIMSON_ARROW1	0
+wav	2114	effect\ABC_FRENZY_SHOT	0
+wav	1837	effect\SHC_SAVAGE_IMPACT	0
 wav	1872	effect\ef_beginspell	0
 wav	1876	effect\ef_beginspell	0
 wav	1902	effect\ef_beginspell	0
