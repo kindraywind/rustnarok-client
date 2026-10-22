@@ -3323,9 +3323,15 @@ impl App {
                         game.play_effect(gpu, grf, table, extra, source);
                     }
                 }
-                // Competentia's sparkles and Nipelheim Requiem's funnel last the cast.
+                // Competentia's sparkles and Nipelheim Requiem's funnel last the cast; Acid Demonstration's two bottles
+                // leave as it starts.
                 if let Some(gpu) = gpu {
                     game.fourth_job_cast(gpu, grf, table, skill, source, cast_ms);
+                    if skill == crate::prims::throw::ACID_DEMONSTRATION_SKILL {
+                        for effect in [crate::prims::throw::FIRE_BOTTLE, crate::prims::throw::ACID_BOTTLE] {
+                            game.aimed(gpu, grf, table, effect, source, target, 1);
+                        }
+                    }
                 }
                 let me = game.account_id;
                 // Fallen Angel's jump (cast at once) starts its feathers on the caster.

@@ -395,7 +395,6 @@ skill	140	groundEffectId	171
 skill	141	effectId	129
 skill	142	effectId	309
 skill	149	effectId	310
-skill	152	beforeHitEffectId	308
 skill	153	hitEffectId	170
 skill	153	beginCastEffectId	170
 skill	155	effectId	311
@@ -444,7 +443,6 @@ skill	215	successEffectId	269
 skill	216	successEffectId	270
 skill	217	successEffectId	271
 skill	218	successEffectId	272
-skill	230	beforeHitEffectId	298
 skill	234	effectId	300
 skill	235	effectId	300
 skill	236	effectId	300
@@ -620,10 +618,6 @@ skill	517	effectId	626
 skill	518	effectId	628
 skill	519	effectId	584
 skill	520	effectId	645
-skill	523	beforeHitEffectId	613
-skill	524	beforeHitEffectId	614
-skill	525	beforeHitEffectId	615
-skill	526	beforeHitEffectId	616
 skill	527	groundEffectId	631
 skill	528	effectId	632
 skill	530	effectId	630
@@ -650,7 +644,6 @@ skill	673	hitEffectId	677
 skill	698	effectId	717
 skill	706	effectId	1020
 skill	1002	effectId	599
-skill	1004	beforeHitEffectId	600
 skill	1005	effectId	602
 skill	1005	groundEffectId	604
 skill	1006	effectId	601
@@ -1242,8 +1235,6 @@ part	116	3D	duration=500;fileList=effect/water_out_a.bmp,effect/water_out_b.bmp,
 part	217	3D	duration=600;duplicate=5;timeBetweenDupli=0;absoluteSpriteName=data/sprite/이팩트/particle1;playSprite=true;toSrc=true;rotateToTarget=true;red=0.4;green=0.4;blue=1.0;sizeStart=150.0;sizeEnd=180.0;zOffsetStart=5;arc=3.0;retreat=3.0;drainPattern=true
 part	232	3D	alphaMax=0.5;angle=180;attachedEntity=true;blendMode=2;red=0.1;green=0.1;blue=0.9;duration=100;fadeIn=true;fadeOut=true;file=effect/alpha_center.tga;fromSrc=true;rotateToTarget=true;rotateWithCamera=true;sizeX=5;sizeY=50;zOffset=1;zIndex=1
 part	262	3D	wav=effect/mon_폭기;duplicate=12;timeBetweenDupli=0;file=effect/alpha_center.tga;delayStart=250;duration=550;alphaMax=0.8;fadeIn=true;fadeOut=true;posxStart=0;posyStart=0;posxEndRand=40;posyEndRand=40;sizeStartX=10;sizeStartY=150;sizeEndX=10;sizeEndY=150;blendMode=2;attachedEntity=true;overlay=true;rotateToTarget=true;rotateWithCamera=true
-part	298	3D	alphaMax=1;angle=180;attachedEntity=true;duration=300;fadeIn=true;fadeOut=true;file=유저인터페이스/item/염산병.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=0.5;size=30;zOffset=1;zIndex=1
-part	308	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/돌.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=0.5;size=20;zOffset=1;zIndex=1
 part	313	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1500;duplicate=4;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1.2;posyRand=1.2;poszEndRand=1;poszEndRandMiddle=8;poszStart=0;red=1;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=10;zIndex=1
 part	313	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1300;delayOffset=400;duplicate=20;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1.5;posyRand=1.5;poszEndRand=3;poszEndRandMiddle=6;poszStart=0;red=1;size=9;sizeRand=2;sparkling=true;sparkNumber=2;timeBetweenDupli=10;zIndex=1
 part	313	3D	alphaMax=0.8;attachedEntity=true;blendMode=2;blue=1;duration=1100;delayLate=200;duplicate=10;fadeIn=true;fadeOut=true;file=effect/pok3.tga;green=1;posxRand=1;posyRand=1;poszEnd=6;poszStartRand=1;poszStartRandMiddle=0;red=1;size=9;sizeRand=2;timeBetweenDupli=50;zIndex=1
@@ -1328,11 +1319,6 @@ part	533	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=tru
 part	534	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot12.tga
 part	535	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot13.tga
 part	536	3D	alphaMax=1;attachedEntity=true;duration=3000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=70;sizeSmooth=true;sizeStart=100;wav=effect/priest_slowpoison;zIndex=10;file=effect/tarot14.tga
-part	600	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/베넘나이프.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=1;size=30;zOffset=1;zIndex=1
-part	613	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/수리검.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=1;size=30;zOffset=1;zIndex=1
-part	614	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/쿠나이_독.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=1;size=30;zOffset=1;zIndex=1
-part	615	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=유저인터페이스/item/풍마_뇌우.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=1;size=30;zOffset=1;zIndex=1
-part	616	3D	alphaMax=1;angle=180;attachedEntity=true;duration=200;fadeIn=true;fadeOut=true;file=effect/coin_a.bmp;toSrc=true;rotateToTarget=true;rotateWithCamera=true;rotate=true;nbOfRotation=1;size=20;zOffset=1;zIndex=1
 part	758	3D	alphaMax=1;blendMode=1;red=1.0;green=1.0;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=200;zIndex=10;file=effect/회전카운터1.tga
 part	758	3D	alphaMax=0.2;blendMode=2;red=0.7;green=0.7;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=220;zIndex=10;file=effect/회전카운터1.tga
 part	758	3D	alphaMax=0.2;blendMode=2;red=0.5;green=0.5;blue=1.0;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;posz=4;sizeEnd=20;sizeSmooth=true;sizeStart=240;zIndex=10;file=effect/회전카운터1.tga
@@ -1771,6 +1757,7 @@ wav	291	effect\흥얼거림	0
 wav	292	effect\나를잊지말아요	0
 wav	293	effect\행운의	0
 wav	294	effect\당신을 위한 서비스	0
+wav	298	_heal_effect	0
 wav	300	apocalips_attack	0
 wav	304	effect\ef_teleportation	0
 wav	305	effect\p_success	0
@@ -2137,6 +2124,9 @@ wav	921	effect\S스펠피스트	0	listener
 wav	923	effect\S포이즌버스터	0	listener
 wav	931	effect\S포이즌버스터	0	listener
 wav	969	effect\안식의자장가	0	listener
+wav	981	effect\T_회오리차기	0
+wav	983	effect\닌자_던지기	0
+wav	989	effect\닌자_던지기	0
 wav	1044	effect\rk_luxanima	0
 wav	1132	effect\mon_금강불괴	0
 wav	1195	effect\EF_BeginSpell	0
@@ -4451,6 +4441,14 @@ struck	2426	target	466
 struck	2429	target	425
 struck	2604	target	417
 struck	2604	target	431
+struck	230	caster	298
+struck	152	caster	308
+struck	1004	caster	600
+struck	523	caster	613
+struck	524	caster	614
+struck	525	caster	615
+struck	526	caster	616
+struck	3019	target	1008
 used	6	target	67
 used	7	caster	17
 used	8202	caster	17
@@ -4844,6 +4842,9 @@ used	2597	target	424
 used	2598	target	424
 used	2599	target	424
 used	5023	caster	411
+used	3007	caster	981
+used	3006	caster	983
+used	3019	caster	989
 ground	21	ground	30
 ground	69	ground	91
 ground	694	ground	91
