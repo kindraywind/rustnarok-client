@@ -2112,6 +2112,12 @@ wav	1986	effect\ef_beginspell	0
 wav	1998	effect\ef_beginspell	0
 wav	2240	effect\ef_beginspell	0
 wav	2249	effect\ef_beginspell	0
+wav	2255	effect\ef_beginspell	0
+wav	2288	effect\EF_IncAgility	0
+wav	2294	effect\EF_IncAgility	0
+wav	2296	effect\EF_IncAgility	0
+wav	2298	effect\EF_IncAgility	0
+wav	2300	effect\EF_IncAgility	0
 wav	1418	effect\ef_beginspell	0
 wav	1449	effect\ef_beginspell	0
 wav	1556	effect\ef_beginspell	0

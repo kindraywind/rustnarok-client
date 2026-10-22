@@ -1,0 +1,271 @@
+{
+  "about": "The C.RATE, P.ATK, RES and S.MATK UP signs (issue #798) on open grass at prt_fild08 170,360: the player gets Pre Acies, Powerful Faith, Firm Faith, Spell Enchanting and Competentia (npc/stat-up-signs.txt), each floating its lettering up from the feet over rising cyan streaks (a shot 650 ms after the status).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/stat-up-signs.txt"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/stat-up-signs.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            170,
+            360
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokSigns"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "acies"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 650
+    },
+    {
+      "shot": "c-rate-up",
+      "crop": [
+        312,
+        134,
+        400,
+        400
+      ],
+      "threshold": 30
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "powerful"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 650
+    },
+    {
+      "shot": "p-atk-up",
+      "crop": [
+        312,
+        134,
+        400,
+        400
+      ],
+      "threshold": 30
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "firm"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 650
+    },
+    {
+      "shot": "res-up",
+      "crop": [
+        312,
+        134,
+        400,
+        400
+      ],
+      "threshold": 30
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "spell"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 650
+    },
+    {
+      "shot": "s-matk-up",
+      "crop": [
+        312,
+        134,
+        400,
+        400
+      ],
+      "threshold": 30
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "comp"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 650
+    },
+    {
+      "shot": "competentia",
+      "crop": [
+        312,
+        134,
+        400,
+        400
+      ],
+      "threshold": 30
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "off"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1000
+    }
+  ]
+}

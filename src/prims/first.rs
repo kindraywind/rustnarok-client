@@ -47,6 +47,12 @@ pub const DETOXIFY: u32 = 21;
 pub const DECREASE_AGI: u32 = 38;
 pub const HOLY_WATER: u32 = 39;
 pub const DEX_AGI_UP: u32 = 43;
+/// The 4th-job stat-up signs: DEX AGI UP's lettering and rising streaks, the streaks cyan, the lettering sized by its picture.
+pub const C_RATE_UP: u32 = 2288;
+pub const P_ATK_UP: u32 = 2294;
+pub const RES_UP: u32 = 2296;
+pub const S_MATK_UP: u32 = 2298;
+pub const P_ATK_S_MATK_UP: u32 = 2300;
 pub const CART_REVOLUTION: u32 = 170;
 pub const FIRST_AID: u32 = 309;
 pub const SPRINKLE_SAND: u32 = 310;
@@ -77,6 +83,21 @@ pub const ENCHANT_DEADLY_POISON: u32 = 493;
 const EDP_LAST: u32 = 80;
 /// Enchant Poison's sparkles made after this tick are never drawn.
 const POISON_LAST: u32 = 210;
+
+/// A stat-up sign's picture.
+pub fn sign_picture(effect: u32) -> Option<&'static str> {
+    Some(match effect {
+        C_RATE_UP => "data\\texture\\effect\\status_effect\\C_rate_Up.bmp",
+        P_ATK_UP => "data\\texture\\effect\\status_effect\\P_atk_Up.bmp",
+        RES_UP => "data\\texture\\effect\\status_effect\\Res_Up.bmp",
+        S_MATK_UP => "data\\texture\\effect\\status_effect\\S_matk_Up.bmp",
+        P_ATK_S_MATK_UP => "data\\texture\\effect\\status_effect\\P_atk_S_matk_Up.bmp",
+        _ => return None,
+    })
+}
+
+/// The signs' streaks are cyan.
+const SIGN_STREAK: [f32; 3] = [0.0, 1.0, 1.0];
 
 pub fn makes(effect: u32) -> bool {
     matches!(
@@ -113,7 +134,7 @@ pub fn makes(effect: u32) -> bool {
 /// The effects' lengths N in ticks.
 fn length(effect: u32) -> u32 {
     match effect {
-        SMALL_HEAL | DETOXIFY | DECREASE_AGI | HOLY_WATER | DEX_AGI_UP => 100,
+        SMALL_HEAL | DETOXIFY | DECREASE_AGI | HOLY_WATER | DEX_AGI_UP | C_RATE_UP | P_ATK_UP | RES_UP | S_MATK_UP | P_ATK_S_MATK_UP => 100,
         ENDURE_FX => 80,
         MAGNUM_BREAK => 30,
         CART_REVOLUTION => 50,
@@ -208,6 +229,8 @@ struct Effect {
     at: Vector,
     seeds: Vec<Seed>,
     sparks: Vec<Spark>,
+    /// A sign's picture size in pixels.
+    picture: [f32; 2],
 }
 
 /// The effects playing.
@@ -428,7 +451,26 @@ impl First {
             at,
             seeds,
             sparks,
+            picture: [0.0; 2],
         });
+    }
+
+    /// Stat-up sign `id` from `now` on `unit`, following it, its picture `picture` pixels: DEX AGI UP's lettering and rising
+    /// streaks (26, made at ticks 0, 2 … 50) with the streak's draws in the order half-length, yaw, distance, speed. Every
+    /// sign made stays; a repeat makes another.
+    pub fn sign(&mut self, id: u32, unit: Option<u32>, picture: [f32; 2], now: Instant, mut rand: impl FnMut(u32) -> u32) {
+        let seeds = (0..=50)
+            .step_by(2)
+            .map(|born| {
+                let half = (rand(60) + 30) as f32 / 10.0;
+                let y = rand(360) as f32;
+                let d = (2 + rand(7)) as f32;
+                let speed = (rand(50) + 20) as f32 / 100.0;
+                Seed { born, y, r: [d, speed, half, 0.0], more: [0.0; 2] }
+            })
+            .collect();
+        self.list.push(Effect { id, start: now, unit, follows: true, at: [0.0; 3], seeds, sparks: Vec::new(), picture });
+        self.list.retain(|effect| passes(effect.start, now) < length(effect.id));
     }
 
     /// Runs Steal's sparks up to `now`, a tick at a time over the ground (`ground_at(x, z)`: its height in the world), and
@@ -513,6 +555,14 @@ impl First {
                         shapes.push((DEX_AGI_TEXT, effect.unit, square([0.0, -rise], [40.0, 20.0], alpha)));
                     }
                 }
+                id if sign_picture(id).is_some() => {
+                    if let (Some(a), Some(picture)) = (Self::age(effect, now, 0, 100), sign_picture(id)) {
+                        let k = (a + 1) as f32;
+                        let rise = 1.5 * k - 0.009 * k * (k + 1.0);
+                        let alpha = super::burst::alpha(a, 0.0, 200.0 / 15.0, 200.0, 85, 100);
+                        shapes.push((picture, effect.unit, square([0.0, -rise], [effect.picture[0] * 0.625, effect.picture[1] * 0.625], alpha)));
+                    }
+                }
                 DECREASE_AGI => {
                     if let Some(a) = Self::age(effect, now, 0, 100) {
                         let n = (a + 1) as f32;
@@ -576,7 +626,13 @@ impl First {
                 DEX_AGI_UP => {
                     for seed in &effect.seeds {
                         let Some(a) = Self::age(effect, now, seed.born, 50) else { continue };
-                        meshes.push((STREAK, rising_blades(at, seed, a)));
+                        meshes.push((STREAK, rising_blades(at, seed, a, [1.0; 3])));
+                    }
+                }
+                id if sign_picture(id).is_some() => {
+                    for seed in &effect.seeds {
+                        let Some(a) = Self::age(effect, now, seed.born, 50) else { continue };
+                        meshes.push((STREAK, rising_blades(at, seed, a, SIGN_STREAK)));
                     }
                 }
                 DETECTING => {
@@ -1025,7 +1081,7 @@ fn dome(at: Vector, a: u32, alpha: f32, grow: f32, slow: f32) -> Vec<MeshVertex>
 
 /// DEX AGI UP's streak made at `seed.born`, at age `a`: two crossed vertical blades standing on the ground and rising by their
 /// speed a tick, centred on the streak's centre.
-fn rising_blades(at: Vector, seed: &Seed, a: u32) -> Vec<MeshVertex> {
+fn rising_blades(at: Vector, seed: &Seed, a: u32, colour: [f32; 3]) -> Vec<MeshVertex> {
     let n = (a + 1) as f32;
     let [d, speed, half, _] = seed.r;
     let (sin, cos) = trig(seed.y);
@@ -1036,7 +1092,7 @@ fn rising_blades(at: Vector, seed: &Seed, a: u32) -> Vec<MeshVertex> {
     } else {
         (200.0 - 10.0 * (a - 29) as f32).max(0.0)
     };
-    let tint = [1.0, 1.0, 1.0, alpha.trunc().clamp(0.0, 200.0) / 255.0];
+    let tint = [colour[0], colour[1], colour[2], alpha.trunc().clamp(0.0, 200.0) / 255.0];
     let centre = [at[0] + d * sin, at[1] + speed * n, at[2] + d * cos];
     let w = 0.18;
     let point = |across: [f32; 3], side: f32, top: bool| {
@@ -1463,13 +1519,84 @@ mod tests {
         // Streaks at e = 0, 2 … 50 (26), none at 52; alpha 10 a tick to 200 at 19, held to 29, then 190 … 0 at 49; it rises by its speed.
         assert_eq!(first.list[0].seeds.len(), 26);
         let seed = Seed { born: 0, y: 0.0, r: [2.0, 0.5, 3.0, 0.0], more: [0.0; 2] };
-        let streak_alpha = |a: u32| rising_blades([0.0; 3], &seed, a)[0].tint[3] * 255.0;
+        let streak_alpha = |a: u32| rising_blades([0.0; 3], &seed, a, [1.0; 3])[0].tint[3] * 255.0;
         assert!(near(streak_alpha(19), 200.0) && near(streak_alpha(29), 200.0) && near(streak_alpha(30), 190.0) && near(streak_alpha(49), 0.0));
-        let middle = |a: u32| rising_blades([0.0; 3], &seed, a).iter().map(|vertex| vertex.position[1]).sum::<f32>() / 12.0;
+        let middle = |a: u32| rising_blades([0.0; 3], &seed, a, [1.0; 3]).iter().map(|vertex| vertex.position[1]).sum::<f32>() / 12.0;
         assert!(near(middle(49), 0.5 * 50.0));
         // The blades are the same whatever y is.
         let turned = Seed { y: 120.0, ..seed };
-        assert!(rising_blades([0.0; 3], &seed, 5).iter().zip(rising_blades([0.0; 3], &turned, 5)).all(|(p, q)| near(p.position[1], q.position[1])));
+        assert!(
+            rising_blades([0.0; 3], &seed, 5, [1.0; 3])
+                .iter()
+                .zip(rising_blades([0.0; 3], &turned, 5, [1.0; 3]))
+                .all(|(p, q)| near(p.position[1], q.position[1]))
+        );
+    }
+
+    #[test]
+    fn stat_up_signs_float_their_picture_over_cyan_streaks() {
+        let signs = [(C_RATE_UP, [128.0, 16.0], 160.0, 20.0), (P_ATK_UP, [64.0, 16.0], 80.0, 20.0), (P_ATK_S_MATK_UP, [128.0, 32.0], 160.0, 40.0)];
+        for (id, picture, width, height) in signs {
+            let start = Instant::now();
+            let mut first = First::default();
+            first.sign(id, Some(7), picture, start, |_| 0);
+            let text = |e: u32| {
+                first.shapes(tick(start, e)).into_iter().next().map(|(path, unit, corners)| {
+                    (
+                        path,
+                        unit,
+                        (corners[2].0[0] - corners[0].0[0], corners[2].0[1] - corners[0].0[1]),
+                        (corners[0].0[1] + corners[2].0[1]) / 2.0,
+                        corners[0].2[3] * 255.0,
+                    )
+                })
+            };
+            // The quad is 1.25 times the picture; the picture is the sign's own.
+            let (path, unit, size, _, _) = text(0).unwrap();
+            assert_eq!((path, unit, size), (sign_picture(id).unwrap(), Some(7), (width, height)), "{id}");
+            // y −1.48 at a = 0, −14.0 at 9, −52.1 at 49, −61.75 at 81, −59.4 at 98; 99 draws.
+            let y = |e: u32| text(e).unwrap().3;
+            assert!(near(y(0), -1.482) && near(y(9), -14.01) && near(y(49), -52.05) && near(y(81), -61.75) && near(y(98), -59.4));
+            assert!(text(99).is_none() && (0..100).filter(|&e| text(e).is_some()).count() == 99);
+            // 13, 26, 199 at 14, 200 at 15 and 84, 186 at 85, 13 at 98.
+            let alpha = |e: u32| text(e).unwrap().4.floor();
+            assert_eq!([0, 1, 14, 15, 84, 85, 98].map(alpha), [13.0, 26.0, 199.0, 200.0, 200.0, 186.0, 13.0]);
+        }
+        // 26 streaks, at e = 0, 2 … 50, none at 52.
+        let (mut first, start) = (First::default(), Instant::now());
+        first.sign(RES_UP, None, [64.0, 16.0], start, |_| 0);
+        assert_eq!(first.list[0].seeds.iter().map(|seed| seed.born).collect::<Vec<_>>(), (0..=50).step_by(2).collect::<Vec<_>>());
+        let streaks = |e: u32| first.meshes(tick(start, e), |_| Some([0.0; 3])).len();
+        // Seeds 0 … 48 show at 49 (25); the one made at 0 is over at 50, the one made at 50 shows; 24 at 52.
+        assert_eq!((streaks(0), streaks(49), streaks(50), streaks(52)), (1, 25, 25, 24));
+        // Every draw 0: half-length 3.0, yaw 0, distance 2, speed 0.20; the largest: 8.9, 359, 8, 0.69.
+        let seed = |draw: fn(u32) -> u32| {
+            let mut first = First::default();
+            first.sign(RES_UP, None, [64.0, 16.0], start, draw);
+            let seed = first.list[0].seeds[0];
+            (seed.r[2], seed.y, seed.r[0], seed.r[1])
+        };
+        assert_eq!(seed(|_| 0), (3.0, 0.0, 2.0, 0.2));
+        assert_eq!(seed(|n| n - 1), (8.9, 359.0, 8.0, 0.69));
+        // The draws go R(60), R(360), R(7), R(50), a streak at a time.
+        let mut asked = Vec::new();
+        let mut order = First::default();
+        order.sign(RES_UP, None, [64.0, 16.0], start, |n| {
+            asked.push(n);
+            0
+        });
+        assert_eq!(asked[..8], [60, 360, 7, 50, 60, 360, 7, 50]);
+        assert_eq!(asked.len(), 26 * 4);
+        // Cyan, alpha 10 at a = 0, 200 at 19 and 29, 190 at 30, 0 at 49.
+        let seed = Seed { born: 0, y: 0.0, r: [2.0, 0.5, 3.0, 0.0], more: [0.0; 2] };
+        let blades = |a: u32| rising_blades([0.0; 3], &seed, a, SIGN_STREAK)[0].tint;
+        assert_eq!(&blades(0)[..3], &[0.0, 1.0, 1.0]);
+        assert_eq!([0, 19, 29, 30, 49].map(|a| (blades(a)[3] * 255.0).round()), [10.0, 200.0, 200.0, 190.0, 0.0]);
+        // A second packet makes a second copy; both play on.
+        let mut twice = First::default();
+        twice.sign(RES_UP, None, [64.0, 16.0], start, |_| 0);
+        twice.sign(RES_UP, None, [64.0, 16.0], tick(start, 10), |_| 0);
+        assert_eq!(twice.shapes(tick(start, 20)).len(), 2);
     }
 
     #[test]
