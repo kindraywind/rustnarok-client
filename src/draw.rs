@@ -1439,9 +1439,8 @@ impl App {
             }
         }
         // The hovered player's block: the emblem (and on siege maps its frame) at the left, centred on the lines, the
-        // text after it.
-        // ponytail: each line centred in the text area; the siege frame always drawn (the game's option for it is
-        // unknown).
+        // lines after it, each from the same left edge.
+        // ponytail: the siege frame always drawn (the game's option for it is unknown).
         game.hover_block = None;
         if let Some((lines, feet, color, emblem, siege)) = &name_block
             && let Some(point) = sprite_point(*feet, overhead::NAME_BELOW)
@@ -1452,8 +1451,7 @@ impl App {
             let height = overhead::NAME_TEXT_TOP + overhead::NAME_LINE * lines.len() as f32;
             let [left, top] = overhead::label_corner(point, layout.text_x + text_width, height, screen());
             for (row, line) in lines.iter().enumerate() {
-                let x = left + layout.text_x + ((text_width - font.width(line)) / 2.0).floor();
-                base.outlined_in(line, [x, top + overhead::NAME_TEXT_TOP + overhead::NAME_LINE * row as f32], *color);
+                base.outlined_in(line, [left + layout.text_x, top + overhead::NAME_TEXT_TOP + overhead::NAME_LINE * row as f32], *color);
             }
             if let Some(frame_x) = layout.frame_x {
                 base.sprites.push((frame, [left + frame_x, top + overhead::centred_on_lines(lines.len(), frame.size[1])], frame.size));
@@ -1793,6 +1791,25 @@ impl App {
             }
         }
         let mut tooltip = Layer::default();
+        // A sign's cut words show whole while the pointer is on its text: a darker speech balloon over the text, the
+        // words starting where they were (the topmost sign, as a press takes it).
+        if game.window_at(pointer.0).is_none()
+            && let Some((rect, id, _)) =
+                game.sign_rects.iter().rev().find(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], pointer.0))
+            && let strip = chatroom::text_strip(*rect)
+            && contains([strip[0], strip[1]], [strip[2], strip[3]], pointer.0)
+            && let Some(text) = game.signs.values().find(|sign| sign.id == *id).and_then(|sign| chatroom::whole_text(font, sign))
+        {
+            let size = overhead::size(font.width(&text), 1);
+            let corner = overhead::over_text_corner([strip[0], strip[1]], size, screen());
+            tooltip.sprites.push((&assets.whole_text_fill, corner, size));
+            for (edge, piece) in overhead::border(size) {
+                tooltip.sprites.push((&assets.speech_border, offset(corner, edge), piece));
+            }
+            let place = offset(corner, overhead::TEXT_AT);
+            tooltip.texts.push((text.clone(), offset(place, [1.0, 1.0]), [0, 0, 0]));
+            tooltip.texts.push((text, place, [255; 3]));
+        }
         let mut chat_layer = Layer::default();
         let open = game.chat_mode.chat_line_open();
         let caret = open && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
