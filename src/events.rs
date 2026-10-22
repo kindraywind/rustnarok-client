@@ -3760,7 +3760,7 @@ impl App {
                     let (sprite, act) = actor::cart_path(value, actor.job);
                     let sprites = SpriteSet::with_act(grf, &sprite, &act).filter(|_| on);
                     let leader = actor::world_xz(actor.cell.map(|value| value as f32));
-                    actor.cart = sprites.map(|sprites| actor::Cart::behind(sprites, leader, actor.direction));
+                    actor.cart = sprites.map(|sprites| actor::Cart::new(sprites, leader, actor.direction));
                 }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != actor::PUSH_CART);
