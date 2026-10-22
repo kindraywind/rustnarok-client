@@ -5823,6 +5823,7 @@ impl Effects {
     pub fn forget(&mut self, unit: u32) {
         self.areas.retain(|area| area.id != unit);
         self.unit_starts.retain(|start| start.id != unit);
+        self.shafts.retain(|cast| cast.unit != Some(unit));
         self.fx.release(Some(Some(unit)));
         self.worlds.remove_status(Some(unit), None);
         if let Some(world) = self.unit_worlds.remove(&unit) {
