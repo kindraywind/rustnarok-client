@@ -1300,6 +1300,14 @@ pub fn is_cast_aura(effect: u32) -> bool {
                 | 1910
                 | 1918
                 | 1923
+                | FRAMI_CAST
+                | 1938
+                | 1959
+                | 1963
+                | 1986
+                | 1998
+                | 2240
+                | 2249
     )
 }
 
@@ -1339,6 +1347,14 @@ pub fn is_banded(effect: u32) -> bool {
                 | 1910
                 | 1918
                 | 1923
+                | FRAMI_CAST
+                | 1938
+                | 1959
+                | 1963
+                | 1986
+                | 1998
+                | 2240
+                | 2249
     )
 }
 
@@ -1408,6 +1424,14 @@ fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
             | 1910
             | 1918
             | 1923
+            | FRAMI_CAST
+            | 1938
+            | 1959
+            | 1963
+            | 1986
+            | 1998
+            | 2240
+            | 2249
     ) {
         56
     } else if effect == HOMUN_CASTING {
@@ -1466,6 +1490,14 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         1902 => ("new_abr_mother\\abr_mother_ring", [0xFF, 0xFF, 0xFF], true),
         1910 => ("new_abr_infinity\\ring_infinity", [0xFF, 0xFF, 0xFF], true),
         1918 => ("new_d_cannon\\abr_dual_cannon_ring", [0xFF, 0xFF, 0xFF], true),
+        FRAMI_CAST => ("new_pramen\\ring_blue", [0x64, 0x64, 0xFF], true),
+        1938 => ("new_battle_w\\abr_battle_warior", [0xFF, 0xFF, 0xFF], true),
+        1959 => ("pneumaticusprocella\\pneumaticusprocella_cast\\ring_yellow", [0xFF, 0xFF, 0xFF], true),
+        1963 => ("ring_white", [0x41, 0x8D, 0xE7], true),
+        1986 => ("ring_white", [0xA4, 0x2F, 0x1D], true),
+        1998 => ("ring_white", [0xAC, 0x9A, 0x38], true),
+        2240 => ("ring_white", [0x50, 0x14, 0x14], true),
+        2249 => ("ring_white", [0xC8, 0x82, 0x54], true),
         _ => ("ring_yellow", [0xFF, 0xFF, 0xAA], true),
     }
 }
@@ -1497,9 +1529,14 @@ const BLOOM_HEIGHTS: [f32; 4] = [20.0, 19.0, 18.0, 17.0];
 const CLEARANCE_HEIGHTS: [f32; 4] = [15.0, 14.0, 13.0, 12.0];
 const BLOOM_TURNS: [f32; 4] = [180.0, 270.0, 0.0, 90.0];
 
-/// How many sets of cones a blooming aura makes: Comet's only the first, the others both.
+/// How many sets of cones a blooming aura makes: Comet's and Frami's only the first, the others both.
 fn bloom_sets(effect: u32) -> usize {
-    if effect == COMET_CAST { 1 } else { 2 }
+    if matches!(effect, COMET_CAST | FRAMI_CAST) { 1 } else { 2 }
+}
+
+/// The first alphas of set `set` of a blooming aura's cones: Frami's one set is brighter.
+fn bloom_alphas(effect: u32, set: usize) -> [i32; 4] {
+    if effect == FRAMI_CAST { [225, 180, 135, 90] } else { BLOOM_ALPHAS[set] }
 }
 
 /// Blooming band `band` of set `set` (12 and 58) `age` ticks into an aura of `ticks`: each tick it widens 0.07 and leans
@@ -1513,7 +1550,7 @@ fn bloom(effect: u32, set: usize, band: usize, ticks: u32, age: u32) -> Option<B
     let late = if short { 5 * band as u32 } else { 0 };
     let since = age.checked_sub(late)?;
     // Hundredths of a unit, so the 0.07 steps meet 4.0 exactly.
-    let (mut radius, mut lean, mut alpha) = (410, 80, if short { 0 } else { BLOOM_ALPHAS[set][band] });
+    let (mut radius, mut lean, mut alpha) = (410, 80, if short { 0 } else { bloom_alphas(effect, set)[band] });
     for tick in 0..=since {
         alpha = if radius < 400 { alpha + gain } else { (alpha - 3).max(0) };
         radius += 7;
@@ -1650,6 +1687,14 @@ fn is_bloom(effect: u32) -> bool {
             | 1910
             | 1918
             | 1923
+            | FRAMI_CAST
+            | 1938
+            | 1959
+            | 1963
+            | 1986
+            | 1998
+            | 2240
+            | 2249
     )
 }
 
@@ -2448,6 +2493,7 @@ const JACK_CAST: u32 = 1449;
 const MAELSTROM_CAST: u32 = 1556;
 const CLEARANCE_CAST: u32 = 1560;
 const VARETYR_CAST: u32 = 1565;
+const FRAMI_CAST: u32 = 1932;
 /// Epiclesis' ground rings, Soul Ascetic's bubble cones, Earth Grave's crescents and sheet and Cart Boost's cones (`prims::holes`,
 /// `prims::songs`).
 const EPICLESIS_CELL: u32 = 1655;
@@ -7869,6 +7915,54 @@ mod tests {
         assert_eq!(table.cast_aura(5305, 12), Some(1910));
         assert_eq!(table.cast_aura(5303, 12), Some(1918));
         assert_eq!(table.cast_aura(5335, 12), Some(1923));
+    }
+
+    #[test]
+    fn eight_more_cast_auras_bloom_in_their_looks() {
+        let auras = [1932, 1938, 1959, 1963, 1986, 1998, 2240, 2249];
+        let now = Instant::now();
+        let banded =
+            |effect: u32| Banded { effect, anchor: Anchor::Unit(None), start: now, ticks: 100, turns: [0.0; 3], extra: [0.0; 2], sparkles: Vec::new() };
+        for &id in &auras {
+            assert!(is_cast_aura(id) && is_banded(id), "{id}");
+            assert_eq!([aura_ticks(id, 0), aura_ticks(id, 500), aura_ticks(id, 2000)], [56, 56, 125], "{id}");
+        }
+        assert_eq!(aura_look(1932), ("new_pramen\\ring_blue", [0x64, 0x64, 0xFF], true));
+        assert_eq!(aura_look(1938), ("new_battle_w\\abr_battle_warior", [0xFF, 0xFF, 0xFF], true));
+        assert_eq!(aura_look(1959), ("pneumaticusprocella\\pneumaticusprocella_cast\\ring_yellow", [0xFF, 0xFF, 0xFF], true));
+        assert_eq!(aura_look(1963), ("ring_white", [0x41, 0x8D, 0xE7], true));
+        assert_eq!(aura_look(1986), ("ring_white", [0xA4, 0x2F, 0x1D], true));
+        assert_eq!(aura_look(1998), ("ring_white", [0xAC, 0x9A, 0x38], true));
+        assert_eq!(aura_look(2240), ("ring_white", [0x50, 0x14, 0x14], true));
+        assert_eq!(aura_look(2249), ("ring_white", [0xC8, 0x82, 0x54], true));
+
+        // Frami's one brighter set: 4 bands, 222 … 87 at the first drawn frame of a long aura, 225 … 90 before it.
+        let frami = banded(1932).bands(0);
+        assert_eq!(frami.iter().map(|(shape, _)| shape.alpha).collect::<Vec<_>>(), [222.0, 177.0, 132.0, 87.0]);
+        assert_eq!(frami.iter().map(|(shape, _)| shape.height).collect::<Vec<_>>(), BLOOM_HEIGHTS);
+        assert_eq!((0..4).map(|band| bloom_alphas(1932, 0)[band]).collect::<Vec<_>>(), [225, 180, 135, 90]);
+        // The other seven: two sets of four.
+        for &id in &auras[1..] {
+            let heights: Vec<f32> = banded(id).bands(0).iter().map(|(shape, _)| shape.height).collect();
+            assert_eq!(heights, [20.0, 19.0, 18.0, 17.0, 20.0, 19.0, 18.0, 17.0], "{id}");
+        }
+
+        // A second cast aura on the same caster replaces the first.
+        let mut effects = Effects::default();
+        let on = |effect: u32| Banded { anchor: Anchor::Unit(Some(42)), ticks: 56, ..banded(effect) };
+        effects.auras.push(on(1963));
+        effects.auras.retain(|aura| !(is_cast_aura(aura.effect) && matches!(aura.anchor, Anchor::Unit(each) if each == Some(42))));
+        effects.auras.push(on(1986));
+        assert_eq!(effects.auras.iter().map(|aura| aura.effect).collect::<Vec<_>>(), [1986]);
+
+        let table = Table::load();
+        for &id in &auras {
+            let sounds = &table.sounds[&id];
+            assert_eq!((sounds.len(), sounds[0].file.as_str(), sounds[0].delay_ms), (1, "effect\\ef_beginspell", 0), "{id}");
+        }
+        for (skill, id) in [(5284, 1932), (5302, 1938), (5279, 1959), (5242, 1963), (5238, 1986), (5239, 1998), (5387, 2240), (5384, 2249), (5385, 2249)] {
+            assert_eq!(table.cast_aura(skill, 12), Some(id), "{skill}");
+        }
     }
 
     #[test]

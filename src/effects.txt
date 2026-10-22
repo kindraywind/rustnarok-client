@@ -2111,6 +2111,14 @@ wav	1902	effect\ef_beginspell	0
 wav	1910	effect\ef_beginspell	0
 wav	1918	effect\ef_beginspell	0
 wav	1923	effect\ef_beginspell	0
+wav	1932	effect\ef_beginspell	0
+wav	1938	effect\ef_beginspell	0
+wav	1959	effect\ef_beginspell	0
+wav	1963	effect\ef_beginspell	0
+wav	1986	effect\ef_beginspell	0
+wav	1998	effect\ef_beginspell	0
+wav	2240	effect\ef_beginspell	0
+wav	2249	effect\ef_beginspell	0
 wav	1418	effect\ef_beginspell	0
 wav	1449	effect\ef_beginspell	0
 wav	1556	effect\ef_beginspell	0
