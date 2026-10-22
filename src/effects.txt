@@ -14,6 +14,7 @@
 # wdelay <world id> <ms>: every launch of that STR world effect (world_str.txt) waits that long before its first step
 # unitr <skill unit type> <world id> <draw>: every tick such a unit stands in sight, one random whole number below 100 is drawn; when it equals draw, the unit starts that STR world effect, owned by the unit (it follows the cell and ends with its STR)
 # area <skill unit type> <effect id> <lift>: the effect plays on a grid of points round each such unit's cell (one point at range 0, 6 units apart), now and every length less 20 ticks while it stands; lift is how far below the ground its anchor goes
+# keep <skill unit type> <effect id>: while such a unit is in sight, every tick the effect is launched on it (owned by the unit, at its cell, unique): a running copy is kept, otherwise a new one starts; the unit going takes its copies with it
 # rsm <skill unit type> <model under data\model\ without .rsm, or an .rsm2 with its extension>: the model standing on such a unit's cell (traps)
 # wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
 # hit <skill> <hit effect 1> <hit effect 2>: what a damaging skill shows on its target at each hit (-1 none); skills not listed fall back to the skill lines
@@ -223,11 +224,11 @@ str	920	firewall_per	-	1
 str	926	hunter_shockwave_blue	-	1
 str	959	poison_mist	-	0
 str	960	eraser_cutter	-	1
-str	964	lava_slide	-	1
+str	964	lava_slide	-	0
 str	965	sonic_claw	-	1
 str	966	tinder	-	1
 str	967	mid_frenzy	-	1
-str	975	vash00	-	1
+str	975	vash00	-	0
 str	987	rwc2011	-	1
 str	988	rwc2011_2	-	1
 str	1015	rune_success	-	1
@@ -235,7 +236,7 @@ str	1016	rune_fail	-	1
 str	1017	changematerial_su	-	1
 str	1018	changematerial_fa	-	1
 str	1019	guardian	-	1
-str	1020	bubble%d_1	-	1	1	4
+str	1020	bubble%d_1	-	0	1	4
 str	1021	dust	-	1
 str	1029	dancingblade	-	1
 str	1031	invincibleoff2	-	1
@@ -644,7 +645,6 @@ skill	665	effectIdOnCaster	669
 skill	670	groundEffectId	674
 skill	673	hitEffectId	677
 skill	698	effectId	717
-skill	706	effectId	1020
 skill	1002	effectId	599
 skill	1005	effectId	602
 skill	1005	groundEffectId	604
@@ -745,8 +745,6 @@ skill	8028	effectId	965
 skill	8030	effectId	967
 skill	8036	effectId	966
 skill	8039	effectId	962
-skill	8041	effectId	964
-skill	8043	effectId	975
 item	501	204
 item	684	261
 item	502	205
@@ -5034,6 +5032,14 @@ unit	273	1804	once
 unit	274	1768	once
 unit	276	1957	once
 area	245	959	20
+area	246	964	0
+area	247	975	20
+area	253	1020	0
+keep	248	992
+keep	249	993
+keep	250	994
+keep	251	995
+keep	252	1007
 status	2	166
 status	161	166
 status	25	166
@@ -5263,6 +5269,7 @@ length	801	150
 length	803	500
 length	804	600
 length	959	60
+length	964	40
 length	975	40
 length	987	100
 length	942	100
