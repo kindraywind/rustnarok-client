@@ -42,6 +42,12 @@ fn describe(command: &Command) -> Option<String> {
             let mods = if mods.is_empty() { String::new() } else { format!(" +{mods}") };
             format!("click {}{side}{times}{mods}", at(x, y))
         }
+        Command::ClickUnit { id, button, mods, count } => {
+            let side = if *button == Button::Right { " right" } else { "" };
+            let times = count.filter(|&count| count > 1).map_or(String::new(), |count| format!(" x{count}"));
+            let mods = if mods.is_empty() { String::new() } else { format!(" +{mods}") };
+            format!("click unit {id}{side}{times}{mods}")
+        }
         Command::Drag { from, to, .. } => format!("drag {} -> {}", at(&from[0], &from[1]), at(&to[0], &to[1])),
         Command::Wheel { x, y, rows } => format!("wheel {} {rows}", at(x, y)),
         Command::Key { key, .. } => format!("key {key}"),
@@ -113,6 +119,7 @@ mod tests {
             Some("click (512, 301) right x2 +Alt")
         );
         assert_eq!(describe(r#"{"cmd":"click","x":1,"y":2}"#).as_deref(), Some("click (1, 2)"));
+        assert_eq!(describe(r#"{"cmd":"click_unit","id":110000123,"mods":"Shift"}"#).as_deref(), Some("click unit 110000123 +Shift"));
         assert_eq!(describe(r#"{"cmd":"drag","from":[1,2],"to":[3,4]}"#).as_deref(), Some("drag (1, 2) -> (3, 4)"));
         assert_eq!(describe(r#"{"cmd":"key","key":"Ctrl+F"}"#).as_deref(), Some("key Ctrl+F"));
         assert_eq!(describe(r#"{"cmd":"say","text":"@heal"}"#).as_deref(), Some("say @heal"));

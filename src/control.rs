@@ -17,6 +17,9 @@
 //! - `move` `{x, y}`, `click` `{x, y, button?: "left"|"right", mods?: "Alt+Shift", count?}`, `drag` `{from: [x, y],
 //!   to: [x, y], button?, mods?, held?}` (`held`: the button stays down until `release` `{button?}`): the pointer and
 //!   buttons, through the same code as the mouse.
+//! - `click_unit` `{id, button?, mods?, count?}`: a `click` on unit `id` where it's drawn now, at a point inside its
+//!   area that picks it (the middle when nothing covers it), as `{"point": [x, y]}`. Refused for our own id, a unit
+//!   not known, hidden, off screen or covered (by a window or a unit that wins the click).
 //! - `key` `{key, repeat?, hold?}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End",
 //!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen", "ScrollLock" or one
 //!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; a shortcut fires again only
@@ -91,6 +94,15 @@ pub enum Command {
     Click {
         x: f32,
         y: f32,
+        #[serde(default)]
+        button: Button,
+        #[serde(default)]
+        mods: String,
+        count: Option<u8>,
+    },
+    /// A click on a unit where it's drawn now: `{"point": [x, y]}`.
+    ClickUnit {
+        id: u32,
         #[serde(default)]
         button: Button,
         #[serde(default)]
@@ -537,17 +549,17 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             Ok(Value::Null)
         }
         Command::Click { x, y, button, mods, count } => {
-            let held = modifiers(&mods)?;
-            point(app, [x, y]);
-            hold(app, held, |app| {
-                for _ in 0..count.unwrap_or(1) {
-                    press(app, event_loop, button, ElementState::Pressed);
-                    // Held over a frame, so the world reads the press (`ButtonRead`).
-                    app.read_button();
-                    press(app, event_loop, button, ElementState::Released);
-                }
-            });
+            click(app, event_loop, [x, y], button, modifiers(&mods)?, count);
             Ok(Value::Null)
+        }
+        Command::ClickUnit { id, button, mods, count } => {
+            let held = modifiers(&mods)?;
+            let (Scene::Game(game), Some(assets)) = (&app.scene, &app.assets) else { return Err("not in the game".into()) };
+            let clairvoyance = game.status_icons.iter().any(|(id, ..)| *id == crate::actor::CLAIRVOYANCE);
+            let unit = game.units.get(&id).map(|actor| crate::actor::seen(actor.hide_option, false, clairvoyance) != crate::actor::Seen::Nothing);
+            let at = unit_point(&game.hit_boxes, id, game.account_id, unit, held.shift_key(), crate::screen(), |at| game.on_ui(at, assets.message.size))?;
+            click(app, event_loop, at, button, held, count);
+            Ok(json!({"ok": true, "point": at}))
         }
         Command::Drag { from, to, button, mods, held: keep_down } => {
             let held = modifiers(&mods)?;
@@ -635,6 +647,57 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
         }
         Command::Wait { .. } | Command::Trace { .. } | Command::Inbox { .. } => Err("wait, trace and inbox can't be run by wait".into()),
     }
+}
+
+/// `count` presses and releases at a point with modifiers held, as the mouse does.
+fn click(app: &mut App, event_loop: &ActiveEventLoop, at: [f32; 2], button: Button, held: ModifiersState, count: Option<u8>) {
+    point(app, at);
+    hold(app, held, |app| {
+        for _ in 0..count.unwrap_or(1) {
+            press(app, event_loop, button, ElementState::Pressed);
+            // Held over a frame, so the world reads the press (`ButtonRead`).
+            app.read_button();
+            press(app, event_loop, button, ElementState::Released);
+        }
+    });
+}
+
+/// Where a click picks unit `id` among the last drawn frame's `hit_boxes`: the middle of its area, else the point of a
+/// 5 x 5 grid in it nearest the middle, on the screen, not on a window (`on_ui`) and picked as `hovered` picks with
+/// `shift`. `unit` is whether the unit is seen, or None for one not known; `me` is our own id.
+fn unit_point(
+    hit_boxes: &[crate::picking::Target<Owner>],
+    id: u32,
+    me: u32,
+    unit: Option<bool>,
+    shift: bool,
+    screen: [f32; 2],
+    on_ui: impl Fn([f32; 2]) -> bool,
+) -> Result<[f32; 2], String> {
+    if id == me {
+        return Err("that's the player's own id".into());
+    }
+    match unit {
+        None => return Err(format!("no unit {id}")),
+        Some(false) => return Err(format!("unit {id} is hidden")),
+        Some(true) => {}
+    }
+    let target = hit_boxes.iter().find(|target| target.owner == Owner::Unit(id)).ok_or_else(|| format!("unit {id} isn't drawn on the screen"))?;
+    let [left, top, right, bottom] = target.area;
+    let middle = [(left + right) / 2.0, (top + bottom) / 2.0];
+    let mut points: Vec<[f32; 2]> = (0..25)
+        .map(|n| [left + (right - left) * (n % 5) as f32 / 5.0 + (right - left) / 10.0, top + (bottom - top) * (n / 5) as f32 / 5.0 + (bottom - top) / 10.0])
+        .collect();
+    points.sort_by(|a, b| (a[0] - middle[0]).hypot(a[1] - middle[1]).total_cmp(&(b[0] - middle[0]).hypot(b[1] - middle[1])));
+    let on_screen: Vec<_> = std::iter::once(middle).chain(points).filter(|at| at[0] >= 0.0 && at[1] >= 0.0 && at[0] < screen[0] && at[1] < screen[1]).collect();
+    if on_screen.is_empty() {
+        return Err(format!("unit {id} is off the screen"));
+    }
+    let picks = |at: [f32; 2]| {
+        let others = hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player);
+        !on_ui(at) && crate::picking::pick(others, at, shift, [screen[0] / 2.0, screen[1] / 2.0]) == Some(Owner::Unit(id))
+    };
+    on_screen.into_iter().find(|&at| picks(at)).ok_or_else(|| format!("unit {id} is covered"))
 }
 
 fn point(app: &mut App, at: [f32; 2]) {
