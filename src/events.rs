@@ -3506,6 +3506,10 @@ impl App {
                     if skill == crate::world_fx::area4::PETITIO_SKILL && !splash {
                         game.fourth_job_used(gpu, grf, skill, act.target, i32::from(level));
                     }
+                    // Every hit of Unlucky Rush thrusts its spear.
+                    if let Some(effect) = crate::world_fx::shots::struck(skill) {
+                        game.fourth_job_shot(gpu, grf, table, effect, act.source, act.target, i32::from(level));
+                    }
                     // Not for a splash's other targets: one spear volley or spirit a cast.
                     if matches!(skill, crate::world_fx::summoner::STEM_SPEAR_SKILL | crate::world_fx::summoner::SAVAGE_SKILL) && !splash {
                         game.summoner_shot(gpu, grf, table, skill, act.source, act.target);
@@ -3576,6 +3580,10 @@ impl App {
                         }
                         _ => {}
                     }
+                }
+                // The fourth-job shots fly or turn from the caster toward the target.
+                if let (Some(effect), Some(gpu)) = (crate::world_fx::shots::used(skill), gpu) {
+                    game.fourth_job_shot(gpu, grf, table, effect, source, target, amount);
                 }
                 // Lunatic Carrot Beat's carrots fall round a target in sight, as many as its level says.
                 if let (Some(effect), Some(gpu)) = (crate::world_fx::summoner::carrots_of(skill), gpu) {

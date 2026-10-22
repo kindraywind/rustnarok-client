@@ -1403,6 +1403,17 @@ impl Game {
         }
     }
 
+    /// A packet starting shot `effect` (`world_fx::shots`) at `level` from `source` toward `target`; nothing unless both are
+    /// in sight.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn fourth_job_shot(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, source: u32, target: u32, level: i32) {
+        let now = control::now();
+        let unit = |id: u32| (id != self.account_id).then_some(id);
+        if let (Some(from), Some(to)) = (self.feet(source, now), self.feet(target, now)) {
+            self.effects.fourth_job_shot(gpu, grf, table, effect, (unit(source), from), (unit(target), to), level);
+        }
+    }
+
     /// Frigg's Song's use packet at `level` from `source`; nothing for a caster not in sight.
     pub(crate) fn frigg_song(&mut self, gpu: &Gpu, grf: &Grf, source: u32, level: i32) {
         if let Some(at) = self.feet(source, control::now()) {

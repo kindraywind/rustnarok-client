@@ -1,0 +1,36 @@
+// The fourth-job shots and throws (issue #852): a training dummy 5 cells east of prt_fild08 170,360 casts them on the
+// player, since a monster needs no weapon, ammunition or items for a skill. Whisper npc:RustnarokShots
+// "cannon" (Storm Cannon 5), "crimson" (Crimson Arrow 5), "frenzy" (Frenzy Shot 10), "unlucky" (Unlucky Rush 5),
+// "savage" (Savage Impact 5), "jupitel" (Jupitel Thunderstorm 10) or "acid" (Acidified Zone - Fire 5), each on the
+// player. Each whisper casts from a new dummy: a dash moves the old one. Loaded and unloaded by
+// scenarios/fourth-job-shots.json.
+prt_fild08,1,1,0	script	RustnarokShots	-1,{
+	end;
+OnInit:
+	monster "prt_fild08", 175, 360, "--ja--", 2408, 1, strnpcinfo(3) + "::OnGone";
+	.gid = $@mobid[0];
+	end;
+OnGone:
+	end;
+OnWhisperGlobal:
+	percentheal 100, 100;
+	killmonster "prt_fild08", strnpcinfo(3) + "::OnGone";
+	monster "prt_fild08", 175, 360, "--ja--", 2408, 1, strnpcinfo(3) + "::OnGone";
+	.gid = $@mobid[0];
+	if (@whispervar0$ == "cannon") {
+		unitskilluseid .gid, "AG_STORM_CANNON", 5, getcharid(3);
+	} else if (@whispervar0$ == "crimson") {
+		unitskilluseid .gid, "AG_CRIMSON_ARROW", 5, getcharid(3);
+	} else if (@whispervar0$ == "frenzy") {
+		unitskilluseid .gid, "ABC_FRENZY_SHOT", 10, getcharid(3);
+	} else if (@whispervar0$ == "unlucky") {
+		unitskilluseid .gid, "ABC_UNLUCKY_RUSH", 5, getcharid(3);
+	} else if (@whispervar0$ == "savage") {
+		unitskilluseid .gid, "SHC_SAVAGE_IMPACT", 5, getcharid(3);
+	} else if (@whispervar0$ == "jupitel") {
+		unitskilluseid .gid, "HN_JUPITEL_THUNDER_STORM", 10, getcharid(3);
+	} else if (@whispervar0$ == "acid") {
+		unitskilluseid .gid, "BO_ACIDIFIED_ZONE_FIRE", 5, getcharid(3);
+	}
+	end;
+}

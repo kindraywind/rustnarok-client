@@ -12,6 +12,7 @@ pub mod drops;
 pub mod footprints;
 pub mod heal;
 pub mod jobs3;
+pub mod shots;
 pub mod status4;
 pub mod summoner;
 
@@ -769,6 +770,7 @@ impl Default for WorldFx {
         footprints::register(&mut fx);
         heal::register(&mut fx);
         jobs3::register(&mut fx);
+        shots::register(&mut fx);
         status4::register(&mut fx);
         summoner::register(&mut fx);
         fx
