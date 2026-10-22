@@ -1,0 +1,24 @@
+// The /mineffect ground STRs and Poison Smoke's puffs (issue #838): whisper npc:RustnarokMinGrounds "quagmire", "vermilion",
+// "meteor" or "smoke" and a fresh Poring that stands 3 cells east of prt_fild06 180,180 casts WZ_QUAGMIRE, WZ_VERMILION,
+// WZ_METEOR or GC_POISONSMOKE (with a poisoned weapon) on the cell 2 east of the player (the last whisper's Poring goes).
+// Loaded and unloaded by scenarios/mineffect-grounds.json.
+prt_fild06,1,1,0	script	RustnarokMinGrounds	-1,{
+	end;
+OnWhisperGlobal:
+	if (.gid)
+		unitkill .gid;
+	monster "prt_fild06", 183, 180, "--ja--", 1002, 1;
+	.gid = $@mobid[0];
+	setunitdata .gid, UMOB_MODE, MD_CANATTACK;
+	if (@whispervar0$ == "quagmire") {
+		unitskillusepos .gid, "WZ_QUAGMIRE", 5, 182, 180, 0;
+	} else if (@whispervar0$ == "vermilion") {
+		unitskillusepos .gid, "WZ_VERMILION", 10, 182, 180, 0;
+	} else if (@whispervar0$ == "meteor") {
+		unitskillusepos .gid, "WZ_METEOR", 10, 182, 180, 0;
+	} else if (@whispervar0$ == "smoke") {
+		sc_start4 SC_POISONINGWEAPON, 60000, 1, SC_TOXIN, 0, 0, 10000, SCSTART_NOAVOID, .gid;
+		unitskillusepos .gid, "GC_POISONSMOKE", 5, 182, 180, 0;
+	}
+	end;
+}
