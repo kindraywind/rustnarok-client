@@ -1355,6 +1355,22 @@ impl Game {
         self.effects.cannon_spear(gpu, grf, table, key, at, phi, delay);
     }
 
+    /// A Cross Ripper Slasher damage packet from `source` on `target` (`Effects::cross_ripper`): its blades fly the way it faces
+    /// on the screen; nothing when the caster isn't known.
+    pub(crate) fn cross_ripper(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, source: u32, target: u32) {
+        let unit = |id: u32| (id != self.account_id).then_some(id);
+        let actor = |key: Option<u32>| match key {
+            None => Some(&self.player),
+            Some(id) => self.units.get(&id),
+        };
+        let Some(caster) = actor(unit(source)) else { return };
+        let phi = effects::screen_phi(self.camera.yaw.to_degrees(), caster.rot);
+        let place = |actor: &actor::Actor| self.world.cell_position(actor.cell.map(|value| value as f32));
+        let caster_at = place(caster);
+        let target_at = actor(unit(target)).map(|actor| (unit(target), place(actor)));
+        self.effects.cross_ripper(gpu, grf, table, (unit(source), caster_at), target_at, phi);
+    }
+
     /// A Dragon Breath damage packet of `skill` from `source` on `target` (`Effects::dragon_breath`); nothing when the
     /// caster isn't known.
     pub(crate) fn dragon_breath(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, skill: u16, source: u32, target: u32) {

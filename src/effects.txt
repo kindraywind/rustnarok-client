@@ -4341,6 +4341,9 @@ struck	2228	target	147
 struck	2237	caster	750
 struck	2256	caster	806
 struck	2258	caster	776
+struck	2258	caster	1703
+struck	2258	caster	1704
+struck	2258	target	1705
 struck	2270	caster	780
 struck	2270	caster	794
 struck	2271	target	786
@@ -5375,6 +5378,15 @@ length	1594	200
 length	1678	1678
 minid	1296	1459
 minid	1297	1460
+minid	1314	1477
+minid	1315	1478
+minid	1316	1479
+minid	1317	1480
+minid	1318	1481
+minid	1319	1482
+minid	1320	1483
+minid	1321	1484
+minid	1322	1485
 minid	1400	1511
 minid	1401	1512
 minid	1402	1513

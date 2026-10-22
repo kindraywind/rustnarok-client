@@ -3498,6 +3498,9 @@ impl App {
                     if skill == effects::CANNON_SPEAR {
                         game.cannon_spear(gpu, grf, table, act.source);
                     }
+                    if skill == effects::CROSS_RIPPER {
+                        game.cross_ripper(gpu, grf, table, act.source, act.target);
+                    }
                     if effects::DRAGON_BREATHS.contains(&skill) {
                         game.dragon_breath(gpu, grf, table, skill, act.source, act.target);
                     }
