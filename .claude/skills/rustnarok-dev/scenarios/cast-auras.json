@@ -1,0 +1,425 @@
+{
+  "about": "Cast auras (issue #797) on open grass: a fresh Poring 3 cells east (npc/cast-auras.txt) casts each skill on itself (a ground skill on the player's cell) with a 2 s cast, and its cast aura blooms round its feet; a shot 600 ms into each cast. Frami (5284) one brighter set of blue-violet cones, Battle Warior (5302) streaky blue, Pneumaticus Procella (5279) pale yellow-white, Sincere Faith (5242) sky blue, Powerful Faith (5238) dark red, Firm Faith (5239) olive gold, the 5387 cast a faint dark red and the 5384 and 5385 casts tan.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild06 180 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/cast-auras.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/cast-auras.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            180,
+            180
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokCastAuras"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "5242"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "cast-aura-sincere-faith",
+      "crop": [
+        362,
+        184,
+        400,
+        320
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 9000
+    },
+    {
+      "type": "5238"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "cast-aura-powerful-faith",
+      "crop": [
+        362,
+        184,
+        400,
+        320
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 9000
+    },
+    {
+      "type": "5239"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "cast-aura-firm-faith",
+      "crop": [
+        362,
+        184,
+        400,
+        320
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 9000
+    },
+    {
+      "type": "5387"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "cast-aura-monster-5387",
+      "crop": [
+        362,
+        184,
+        400,
+        320
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 9000
+    },
+    {
+      "type": "5384"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "cast-aura-monster-5384",
+      "crop": [
+        362,
+        184,
+        400,
+        320
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 9000
+    },
+    {
+      "type": "5385"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "cast-aura-monster-5385",
+      "crop": [
+        362,
+        184,
+        400,
+        320
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 9000
+    },
+    {
+      "type": "5284"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "cast-aura-frami",
+      "crop": [
+        362,
+        184,
+        400,
+        320
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 9000
+    },
+    {
+      "type": "5302"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "cast-aura-battle-warior",
+      "crop": [
+        362,
+        184,
+        400,
+        320
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 9000
+    },
+    {
+      "type": "5279"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "cast-aura-pneumaticus-procella",
+      "crop": [
+        362,
+        184,
+        400,
+        320
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 9000
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/cast-auras.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    }
+  ]
+}
