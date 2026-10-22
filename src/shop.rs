@@ -757,6 +757,16 @@ impl Shop {
                 layer.sprites.push((&assets.buttons[2][look(Hit::Cancel)], frame.at(cancel), BUTTON));
             }
         }
+        // A vendor's row under the pointer whose name is cut: the whole name over it, starting where it was.
+        if let (Some(Hit::Row(window, row)), Some(_)) = (hit, &self.vendor)
+            && let Some(offer) = self.offer_at(window, row)
+        {
+            let name = inventory::item_name(items, offer.item, offer.identified, offer.refine);
+            if window::fit(font, &name, price_text(offer.listed, offer.price).1) != name {
+                let top = TITLE_HEIGHT + (row - self.scroll[window]) as f32 * ROW;
+                window::whole_text(layer.window(), chrome, font, &name, self.frames[window].at([NAME[0], top + NAME[1]]));
+            }
+        }
         // An NPC shop's row under the pointer: its name and price over it.
         if let (Some(Hit::Row(window, row)), true) = (hit, self.plain()) {
             let (Some(offer), frame) = (self.offer_at(window, row), &self.frames[window]) else { return };

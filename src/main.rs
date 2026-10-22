@@ -3002,8 +3002,6 @@ struct Assets {
     cast_fill: Texture,
     combo_fill: Texture,
     speech_fill: Texture,
-    /// A cut text's whole-words balloon: the speech balloon's look, darker.
-    whole_text_fill: Texture,
     speech_border: Texture,
     clocks: [Vec<Texture>; 2],
     /// The cooldown fan by step, `cooldown_fan`.
@@ -3132,7 +3130,6 @@ impl Assets {
             cast_fill: gpu.solid([0x16, 0xEA, 0x25, 0xFF]),
             combo_fill: gpu.solid([0xFF, 0xA0, 0x00, 0xFF]),
             speech_fill: gpu.solid([0, 0, 0, 102]),
-            whole_text_fill: gpu.solid([0, 0, 0, 0x88]),
             speech_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
             clocks: [[255, 255, 255, 166], [255, 150, 50, 166]]
                 .map(|color| (0..=CLOCK_STEPS).map(|step| gpu.texture(&clock(step as f32 / CLOCK_STEPS as f32, color), false)).collect()),
