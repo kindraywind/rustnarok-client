@@ -59,6 +59,16 @@ struct Part {
     hold: bool,
 }
 
+impl Part {
+    /// The files it may play: one for each number of its `%d` range (a copy draws which), else its one file.
+    fn files(&self) -> Vec<String> {
+        match self.random {
+            Some((from, to)) => (from..=to).map(|number| self.file.replace("%d", &number.to_string())).collect(),
+            None => vec![self.file.clone()],
+        }
+    }
+}
+
 /// A sprite's animation (SPR effects): a sprite under data\sprite\이팩트\, whether it follows the unit, and how it
 /// plays as name=value parameters.
 struct SpritePart {
@@ -95,6 +105,8 @@ pub struct Table {
     /// The units whose effect plays on a grid of points round their cell, again and again: the effect and how far below the ground
     /// its anchor is put (`area`).
     areas: HashMap<u32, (u32, f32)>,
+    /// The units that launch an effect on themselves every tick while they're in sight, one copy at a time (`keep`).
+    keeps: HashMap<u32, u32>,
     models: HashMap<u32, String>,
     /// Effects that end (or, on a ground unit, start again) by their own length in ticks rather than their STR's.
     lengths: HashMap<u32, u32>,
@@ -166,6 +178,7 @@ impl Table {
             unit_worlds: HashMap::new(),
             unit_rolls: HashMap::new(),
             areas: HashMap::new(),
+            keeps: HashMap::new(),
             models: HashMap::new(),
             lengths: HashMap::new(),
             misc: HashMap::new(),
@@ -246,6 +259,11 @@ impl Table {
                 ["unitr", ..] => {
                     if let (Some(kind), Some(id), Some(draw)) = (number(1), number(2), number(3)) {
                         table.unit_rolls.entry(kind).or_default().push((id, draw));
+                    }
+                }
+                ["keep", ..] => {
+                    if let (Some(kind), Some(id)) = (number(1), number(2)) {
+                        table.keeps.insert(kind, id);
                     }
                 }
                 ["minid", ..] => {
@@ -439,6 +457,11 @@ impl Table {
         self.unit_rolls.get(&kind).map_or(&[], Vec::as_slice)
     }
 
+    /// The effect a unit of this skill unit type keeps launching on itself.
+    pub fn keep(&self, kind: u32) -> Option<u32> {
+        self.keeps.get(&kind).copied()
+    }
+
     /// What a trap of this skill unit type shows when it goes off.
     pub fn trap(&self, kind: u32) -> Option<u32> {
         self.traps.get(&kind).copied()
@@ -619,6 +642,30 @@ impl UnitStart {
             starts.extend(self.rolls.iter().filter(|&&(_, wanted)| wanted == draw).map(|&(world, _)| (world, Some(Some(self.id)))));
         }
         starts
+    }
+}
+
+/// The ticks between an `area` effect's grids: its length less 20.
+fn area_period(table: &Table, effect: u32) -> u32 {
+    table.lengths.get(&effect).copied().unwrap_or(21).saturating_sub(20).max(1)
+}
+
+/// A skill unit that launches an effect on itself every tick (`keep`): the unit, the effect, the cell's centre, and the STR
+/// world row it plays (None: a world object, or nothing).
+struct Kept {
+    unit: u32,
+    effect: u32,
+    at: Vector,
+    row: Option<world_str::Row>,
+}
+
+/// One tick's launches of the kept units' STR world effects, each `unique` and owned by its unit: a running copy is kept,
+/// otherwise a new one starts. `load` reads a file.
+fn launch_kept(worlds: &mut Worlds, kept: &[Kept], min: bool, mut load: impl FnMut(&str) -> Option<Rc<Loaded>>) {
+    for keep in kept {
+        let Some(row) = &keep.row else { continue };
+        let launch = world_str::Launch { id: keep.effect, owner: Some(Some(keep.unit)), point: keep.at, unique: true, life: 0, min, roll: 0 };
+        worlds.launch(row, &launch, &mut load);
     }
 }
 
@@ -2116,6 +2163,8 @@ pub struct Effects {
     /// The ground units starting world effects by themselves (`UnitStart`).
     unit_starts: Vec<UnitStart>,
     area_queue: Vec<(u32, Vector, Instant)>,
+    /// The skill units that launch an effect on themselves every tick (`keep`).
+    kept: Vec<Kept>,
     /// The cells' sprites' frames, plain white, each layer with its ACT alpha, by sprite, action and frame.
     cell_frames: HashMap<(&'static str, usize, usize), Layers>,
     /// The sound files a cell effect plays again with each copy.
@@ -3112,7 +3161,7 @@ impl Effects {
         let due = world_ticks(now.saturating_duration_since(*clock));
         // A long stall (a loading screen) skips ahead rather than running every tick.
         *clock = if due > WORLD_TICKS_MAX { now } else { *clock + WORLD_TICK * due };
-        if self.worlds.is_empty() && self.fx.is_empty() && self.unit_starts.is_empty() && self.shafts.is_empty() {
+        if self.worlds.is_empty() && self.fx.is_empty() && self.unit_starts.is_empty() && self.shafts.is_empty() && self.kept.is_empty() {
             return;
         }
         for _ in 0..due.min(WORLD_TICKS_MAX) {
@@ -3131,6 +3180,7 @@ impl Effects {
             let mut fired = self.worlds.tick(scene);
             let (fx, mut assets) = self.fx_assets(gpu, grf);
             fired.extend(fx.tick(scene, &mut assets));
+            self.launch_kept(gpu, grf);
             for fired in fired {
                 match fired {
                     world_str::Fired::Sound(file, at) => self.sounds.push((now, file, at)),
@@ -3141,6 +3191,28 @@ impl Effects {
         }
         let (fx, mut assets) = self.fx_assets(gpu, grf);
         fx.frame(seen, &mut assets);
+    }
+
+    /// Launches each kept unit's effect on itself, after the tick's removals: a copy that ended is followed by a new one.
+    /// ponytail: Zenkai's next copy starts 63 ticks after the last with this order; the game's may be 62.
+    fn launch_kept(&mut self, gpu: &Gpu, grf: &Grf) {
+        if self.kept.is_empty() {
+            return;
+        }
+        let loaded = &mut self.loaded;
+        launch_kept(&mut self.worlds, &self.kept, self.min, |file| {
+            let folder = file.rsplit_once('/').map_or(String::new(), |(directory, _)| format!("{directory}/"));
+            loaded.entry(format!("{folder}|{file}")).or_insert_with(|| load(gpu, grf, file, &folder)).clone()
+        });
+        let objects: Vec<world_fx::Launch> = self
+            .kept
+            .iter()
+            .filter(|keep| keep.row.is_none() && self.fx.registered(keep.effect))
+            .map(|keep| world_fx::Launch { unique: true, min: self.min, ..world_fx::Launch::at(keep.effect, Some(Some(keep.unit)), keep.at) })
+            .collect();
+        for launch in &objects {
+            self.launch_fx(gpu, grf, launch);
+        }
     }
 
     /// Starts world object `id` (`Some(None)` owner = the player, None = at the point), or returns the copy running.
@@ -4670,10 +4742,9 @@ impl Effects {
         }
         for part in table.parts.get(&id).into_iter().flatten() {
             // Every file a `%d` names is loaded, so each restart can pick again.
-            let files: Vec<String> = match (min_file(id).filter(|_| self.min), part.random) {
-                (Some(file), _) => vec![file.to_owned()],
-                (None, Some((from, to))) => (from..=to).map(|number| part.file.replace("%d", &number.to_string())).collect(),
-                (None, None) => vec![part.file.clone()],
+            let files: Vec<String> = match min_file(id).filter(|_| self.min) {
+                Some(file) => vec![file.to_owned()],
+                None => part.files(),
             };
             let variants: Vec<Rc<Loaded>> = files
                 .iter()
@@ -4822,10 +4893,10 @@ impl Effects {
             self.launch_world(gpu, grf, table, world, Some(Some(id)), at, false, 0);
             self.unit_worlds.insert(id, world);
         }
-        // Poison Mist's cells put a puff of mist on a grid round them, now and every length − 20 ticks.
-        if let Some(&(effect, lift)) = table.areas.get(&kind) {
-            let period = table.lengths.get(&effect).copied().unwrap_or(21).saturating_sub(20).max(1);
-            self.areas.push(Area { id, effect, lift, range, at, next: now, period });
+        self.add_area(table, kind, id, range, at, now);
+        // Zenkai's and Makibishi's units launch their effect on themselves now and every tick after: one copy a unit.
+        if self.keep_unit(table, kind, id, at) {
+            self.launch_kept(gpu, grf);
         }
         // Under /mineffect Quagmire's cell plays its world effect (`minid`), started again by its effect's restart period; Poison
         // Smoke's cells send up puffs by chance (`unitr`).
@@ -4962,6 +5033,21 @@ impl Effects {
             }
             self.standing.push((model, id, at));
         }
+    }
+
+    /// Poison Mist's, Lava Slide's, Volcanic Ash's and Venom Fog's cells put their effect on a grid round them, now and every
+    /// length − 20 ticks.
+    fn add_area(&mut self, table: &Table, kind: u32, id: u32, range: u8, at: Vector, now: Instant) {
+        if let Some(&(effect, lift)) = table.areas.get(&kind) {
+            self.areas.push(Area { id, effect, lift, range, at, next: now, period: area_period(table, effect) });
+        }
+    }
+
+    /// Keeps a unit of a `keep` type launching its effect on itself; whether it is one.
+    fn keep_unit(&mut self, table: &Table, kind: u32, id: u32, at: Vector) -> bool {
+        let Some(effect) = table.keep(kind) else { return false };
+        self.kept.push(Kept { unit: id, effect, at, row: table.world(effect).cloned() });
+        true
     }
 
     /// The kinds (rathena's UNT_ numbers) of the units standing as models now, sorted (for the test driver).
@@ -5824,6 +5910,10 @@ impl Effects {
         self.areas.retain(|area| area.id != unit);
         self.unit_starts.retain(|start| start.id != unit);
         self.shafts.retain(|cast| cast.unit != Some(unit));
+        for keep in self.kept.iter().filter(|keep| keep.unit == unit) {
+            self.worlds.remove(Some(Some(unit)), keep.effect);
+        }
+        self.kept.retain(|keep| keep.unit != unit);
         self.fx.release(Some(Some(unit)));
         self.worlds.remove_status(Some(unit), None);
         if let Some(world) = self.unit_worlds.remove(&unit) {
@@ -9868,6 +9958,177 @@ mod tests {
         // Relieve: on the target at the use, Kyrie's sound at once, 200 ticks.
         assert!(table.used(771).unwrap().contains(&(Who::Target, RELIEVE)));
         assert_eq!((sounds(RELIEVE), table.lengths[&RELIEVE]), (vec![("effect\\kyrie_guard", 0, false)], 200));
+    }
+
+    #[test]
+    fn lava_slide_volcanic_ash_and_venom_fog_put_a_copy_on_each_units_cell() {
+        let start = Instant::now();
+        let table = Table::load();
+        let tick = |n: u32| start + Duration::from_secs_f32(STR_TICK_MS / 1000.0) * n;
+        let flat = |_: f32, _: f32| 2.0;
+        let copies = |effects: &mut Effects, ticks: &[u32]| -> Vec<usize> {
+            ticks
+                .iter()
+                .map(|&n| {
+                    effects.make_areas(tick(n), flat, |_| 0);
+                    effects.take_areas().len()
+                })
+                .collect()
+        };
+        // Rows: the unit types, the lifts, the lengths and the periods (length − 20).
+        for (kind, effect, lift, length, period) in [(246, 964, 0.0, 40, 20), (247, 975, 20.0, 40, 20), (253, 1020, 0.0, 100, 80)] {
+            assert_eq!(table.areas[&kind], (effect, lift), "{kind}");
+            assert_eq!((table.lengths[&effect], area_period(&table, effect)), (length, period), "{effect}");
+            // The copy stays where it was made and is not started again by itself.
+            let part = &table.parts[&effect][0];
+            assert!(!part.attached && !part.once && !part.hold, "{effect}");
+            assert!(!table.units.contains_key(&kind) && table.keep(kind).is_none(), "{kind}");
+            // Range 0: one copy at tick 0, none until the period, then one each period.
+            let mut one = Effects::default();
+            one.add_area(&table, kind, 1, 0, [10.0, 0.0, 10.0], start);
+            let ticks: Vec<u32> = (0..=2 * period).collect();
+            let made = copies(&mut one, &ticks);
+            let at: Vec<u32> = ticks.iter().zip(&made).filter(|&(_, &count)| count > 0).map(|(&n, _)| n).collect();
+            assert_eq!(at, [0, period, 2 * period], "{effect}");
+            assert!(made.iter().all(|&count| count <= 1), "{effect}");
+            // The lift: draws 0 put the point 1.0 back on x and z and the lift under the ground.
+            let mut low = Effects::default();
+            low.add_area(&table, kind, 2, 0, [100.0, 0.0, 200.0], start);
+            low.make_areas(start, flat, |_| 0);
+            assert_eq!(low.take_areas()[0].1, [99.0, 2.0 - lift, 199.0], "{effect}");
+            // A copy plays its length (the files: 964 has 40 frames, 975 and 1020 120), drawn for e = 0 … length − 1.
+            let last = if effect == 964 { 39 } else { 119 };
+            assert_eq!(playing_ticks(effect, &frames(last).animation, table.lengths.get(&effect).copied(), part.hold), length, "{effect}");
+            // The draws of a copy are x, z, then the height; the file comes after, as the copy is played.
+            let mut order = Effects::default();
+            order.add_area(&table, kind, 3, 0, [0.0; 3], start);
+            let mut asked = Vec::new();
+            order.make_areas(start, flat, |n| {
+                asked.push(n);
+                0
+            });
+            assert_eq!(asked, [11, 11, 11], "{effect}");
+            // A unit that comes into sight again starts at once; a gone one makes no more copies.
+            one.forget(1);
+            assert_eq!(copies(&mut one, &[2 * period + 5]), [0], "{effect}");
+            one.add_area(&table, kind, 1, 0, [10.0, 0.0, 10.0], tick(2 * period + 7));
+            assert_eq!(copies(&mut one, &[2 * period + 7, 2 * period + 8, 3 * period + 7]), [1, 0, 1], "{effect}");
+        }
+        // Lava Slide's 7 x 7 area is 49 units: 49 copies at tick 0, one on each cell.
+        let mut lava = Effects::default();
+        for k in 0..49 {
+            lava.add_area(&table, 246, k, 0, [5.0 * (k % 7) as f32, 0.0, 5.0 * (k / 7) as f32], start);
+        }
+        lava.make_areas(start, flat, |_| 5);
+        let made = lava.take_areas();
+        assert_eq!(made.len(), 49);
+        assert!(made.iter().all(|&(effect, _, when)| effect == 964 && when == start));
+        // Venom Fog's file is drawn once a copy: draws 0 … 3 pick bubble1_1 … bubble4_1.
+        assert_eq!(table.parts[&1020][0].files(), ["bubble1_1", "bubble2_1", "bubble3_1", "bubble4_1"]);
+        // The skills' use starts nothing of its own.
+        for skill in [8041, 8043, 706] {
+            assert!(table.skill(skill, "effectId").is_empty(), "{skill}");
+        }
+        // The other unit types keep their rows.
+        assert_eq!((table.units[&126], table.units[&199], table.areas[&245]), (315, 1555, (959, 20.0)));
+        assert!(table.keep(126).is_none() && !table.areas.contains_key(&126));
+    }
+
+    /// An in-memory STR of two layers (layer 0 never drawn) showing frame n with texture n, to its last key `last`.
+    fn numbered(last: i32) -> Rc<Loaded> {
+        let key = |frame| rustnarok_client::effect::Key {
+            frame,
+            kind: 0,
+            position: [320.0, 240.0],
+            corners: [-10.0, 10.0, 10.0, -10.0, -10.0, -10.0, 10.0, 10.0],
+            texture: frame as f32,
+            texture_motion: 0,
+            delay: 0.0,
+            angle: 0.0,
+            color: [1.0; 4],
+            source_blend: 5,
+            destination_blend: 2,
+        };
+        let layer = || rustnarok_client::effect::Layer { textures: vec!["a.bmp".into()], keys: (0..=last).map(key).collect() };
+        Rc::new(Loaded { animation: Str { fps: 60, frames: last as u32, layers: vec![layer(), layer()] }, textures: vec![Vec::new(); 2] })
+    }
+
+    #[test]
+    fn zenkai_and_makibishi_units_keep_one_copy_launched_on_themselves() {
+        let table = Table::load();
+        for (kind, effect) in [(248, 992), (249, 993), (250, 994), (251, 995), (252, 1007)] {
+            assert_eq!(table.keep(kind), Some(effect), "{kind}");
+            assert!(!table.units.contains_key(&kind) && !table.areas.contains_key(&kind), "{kind}");
+        }
+        assert!((992..=995).all(|id| table.world(id).is_some()));
+        let feet = |unit: Option<u32>| unit.map_or(Some([0.0; 3]), |_| None);
+        let body = |_: Option<u32>| None;
+        let scene =
+            world_str::Scene { player: [0.0; 3], feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], ground: &|_, _| 0.0 };
+        // Zenkai's picture ends at tick 61 (frames 0 … 60).
+        let load = |_: &str| Some(numbered(60));
+        let owned =
+            |effects: &Effects, unit: u32| effects.worlds.iter().filter(|copy| copy.owner == Some(Some(unit))).map(|copy| copy.serial).collect::<Vec<_>>();
+        // Both orders of a tick's removal and launch.
+        for launch_first in [false, true] {
+            let mut effects = Effects::default();
+            let (here, there) = ([50.0, 0.0, 60.0], [80.0, 0.0, 90.0]);
+            assert!(effects.keep_unit(&table, 248, 7, here) && effects.keep_unit(&table, 250, 8, there));
+            assert!(!effects.keep_unit(&table, 126, 9, here));
+            let mut starts = Vec::new();
+            let mut last = None;
+            let mut drawn = Vec::new();
+            for n in 0..200u32 {
+                if launch_first {
+                    launch_kept(&mut effects.worlds, &effects.kept, false, load);
+                    effects.worlds.tick(&scene);
+                } else {
+                    effects.worlds.tick(&scene);
+                    launch_kept(&mut effects.worlds, &effects.kept, false, load);
+                }
+                // Never two; with the launch first, the tick that removes a copy ends without one.
+                let mine = owned(&effects, 7);
+                assert!(mine.len() <= 1 && owned(&effects, 8).len() <= 1, "tick {n}");
+                assert!(launch_first || mine.len() == 1, "tick {n}");
+                let Some(&serial) = mine.first() else { continue };
+                if last != Some(serial) {
+                    starts.push(n);
+                    last = Some(serial);
+                }
+                let copy = effects.worlds.iter().find(|copy| copy.owner == Some(Some(7))).unwrap();
+                assert_eq!((copy.id, copy.position), (992, here));
+                if starts.len() == 1 {
+                    drawn.extend(copy.drawn().first().map(|quad| quad.texture));
+                }
+            }
+            // One copy from tick 0, the launch of every tick getting it, a new one 62 – 63 ticks after each start.
+            assert_eq!(starts[0], 0);
+            assert!(starts.windows(2).all(|pair| (62..=63).contains(&(pair[1] - pair[0]))), "{starts:?}");
+            assert_eq!(starts.len(), 4);
+            // It draws e = 0 … 60.
+            drawn.dedup();
+            assert_eq!(drawn, (0..=60).collect::<Vec<usize>>(), "launch first {launch_first}");
+            // The other unit's copy is its own, of fire's id.
+            assert!(effects.worlds.iter().any(|copy| copy.owner == Some(Some(8)) && copy.id == 994 && copy.position == there));
+            // A unit that goes takes its copy and launches nothing more.
+            effects.forget(7);
+            assert!(owned(&effects, 7).is_empty() && effects.kept.iter().all(|keep| keep.unit != 7));
+            for _ in 0..70 {
+                effects.worlds.tick(&scene);
+                launch_kept(&mut effects.worlds, &effects.kept, false, load);
+            }
+            assert!(owned(&effects, 7).is_empty() && owned(&effects, 8).len() == 1);
+        }
+        // Water, land, fire and wind; Makibishi's object is not there yet, so its launch starts nothing.
+        let mut effects = Effects::default();
+        for (unit, kind) in (248..=252).enumerate() {
+            assert!(effects.keep_unit(&table, kind, unit as u32, [0.0; 3]));
+        }
+        launch_kept(&mut effects.worlds, &effects.kept, false, load);
+        let mut ids: Vec<u32> = effects.worlds.iter().map(|copy| copy.id).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, [992, 993, 994, 995]);
+        assert!(effects.kept.iter().any(|keep| keep.effect == 1007 && keep.row.is_none()));
     }
 
     #[test]
