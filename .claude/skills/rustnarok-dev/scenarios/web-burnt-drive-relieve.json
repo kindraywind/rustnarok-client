@@ -1,0 +1,212 @@
+{
+  "about": "Wide Web, Burnt, Ground Drive and Relieve (issue #831) on open grass: a fresh Poring 3 cells east (npc/web-burnt-drive-relieve.txt) uses Wide Web, Ground Drive and Relieve on itself and the player takes the Burning status; a shot a moment in. Wide Web a dark web shooting out in six directions over everything, Burnt a pinkish-red flame up the player's body, Ground Drive a 5 x 5 field of stone spikes round it, Relieve a blue additive tile dome in front of it.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild06 180 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/web-burnt-drive-relieve.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/web-burnt-drive-relieve.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            180,
+            180
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokWebBurnt"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "web"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 400
+      }
+    },
+    {
+      "shot": "wide-web",
+      "crop": [
+        412,
+        134,
+        500,
+        400
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "type": "burnt"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "StatusIcon",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 64
+      }
+    },
+    {
+      "shot": "burnt",
+      "crop": [
+        312,
+        134,
+        500,
+        400
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "type": "drive"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "GroundSkill",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "ground-drive",
+      "crop": [
+        412,
+        134,
+        500,
+        400
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "type": "relieve"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 150
+      }
+    },
+    {
+      "shot": "relieve",
+      "crop": [
+        412,
+        134,
+        500,
+        400
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 3000
+    }
+  ]
+}

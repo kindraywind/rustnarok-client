@@ -1,0 +1,25 @@
+// Wide Web, Burnt, Ground Drive and Relieve (issue #831): whisper npc:RustnarokWebBurnt "web", "drive" or "relieve" and a
+// fresh Poring that stands 3 cells east of prt_fild06 180,180 uses NPC_WIDEWEB on itself, NPC_GROUNDDRIVE on its own cell
+// or NPC_RELIEVE_ON on itself (the last whisper's Poring goes); "burnt" puts the Burning status on the player for 5 s.
+// Loaded and unloaded by scenarios/web-burnt-drive-relieve.json.
+prt_fild06,1,1,0	script	RustnarokWebBurnt	-1,{
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "burnt") {
+		sc_start SC_BURNT, 5000, 1, 10000, SCSTART_NOAVOID;
+		end;
+	}
+	if (.gid)
+		unitkill .gid;
+	monster "prt_fild06", 183, 180, "--ja--", 1002, 1;
+	.gid = $@mobid[0];
+	setunitdata .gid, UMOB_MODE, MD_CANATTACK;
+	if (@whispervar0$ == "web") {
+		unitskilluseid .gid, "NPC_WIDEWEB", 1, .gid, 0;
+	} else if (@whispervar0$ == "drive") {
+		unitskillusepos .gid, "NPC_GROUNDDRIVE", 1, 183, 180, 0;
+	} else if (@whispervar0$ == "relieve") {
+		unitskilluseid .gid, "NPC_RELIEVE_ON", 1, .gid, 0;
+	}
+	end;
+}
