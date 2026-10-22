@@ -616,19 +616,44 @@ pub fn screen_phi(yaw: f32, rot: f32) -> i32 {
     if phi >= 360 { phi - 360 } else { phi }
 }
 
+/// One of eight ids for a screen direction φ, by the way it points: `up` points up the screen, the next ones turn clockwise
+/// on it (1, 3, 5 o'clock, down, 7, 9, 11). None for a negative φ.
+fn clock_sector(phi: i32, up: u32) -> Option<u32> {
+    Some(
+        up + match phi {
+            ..0 => return None,
+            0..=22 | 337.. => 4,
+            23..=66 => 3,
+            67..=111 => 2,
+            112..=156 => 1,
+            157..=201 => 0,
+            202..=246 => 7,
+            247..=291 => 6,
+            _ => 5,
+        },
+    )
+}
+
 /// Cannon Spear's blade for a screen direction φ: one of eight, by the way it points; none for a negative φ.
 pub fn cannon_sector(phi: i32) -> Option<u32> {
-    Some(match phi {
-        ..0 => return None,
-        0..=22 | 337.. => 1404,
-        23..=66 => 1403,
-        67..=111 => 1402,
-        112..=156 => 1401,
-        157..=201 => 1400,
-        202..=246 => 1407,
-        247..=291 => 1406,
-        _ => 1405,
-    })
+    clock_sector(phi, 1400)
+}
+
+/// Cross Ripper Slasher's blades for a screen direction φ: one of eight, by the way they fly; none for a negative φ.
+pub fn ripper_sector(phi: i32) -> Option<u32> {
+    clock_sector(phi, 1315)
+}
+
+/// What a Cross Ripper Slasher packet starts, at once: the blades on the caster by its screen direction φ, then the slash on
+/// the target; their lighter ids under /mineffect.
+pub fn ripper_launches(table: &Table, min: bool, phi: i32) -> Vec<(u32, Who)> {
+    let blades = ripper_sector(phi).map(|id| (table.min_id(id, min), Who::Caster));
+    blades.into_iter().chain([(table.min_id(RIPPER_SLASH, min), Who::Target)]).collect()
+}
+
+/// Vulcan Arm's bullet holes' screen turn for a draw of 0 … 35: that many tens of degrees.
+pub fn vulcan_turn(draw: u32) -> f32 {
+    10.0 * draw as f32
 }
 
 /// Dragon Breath's picture for a screen direction φ: the quadrant beside the caster it faces (fire, or water 8 ids on).
@@ -2471,6 +2496,11 @@ const RAINSTORM_CAST: u32 = 1286;
 /// Cannon Spear (2307): its gold vortex, and its blades by the screen direction the caster faces (`cannon_sector`).
 pub const CANNON_SPEAR: u16 = 2307;
 const CANNON_VORTEX: u32 = 1408;
+/// Cross Ripper Slasher (2037): its blades on the caster by its screen direction (`ripper_sector`), a slash on the target.
+pub const CROSS_RIPPER: u16 = 2037;
+const RIPPER_SLASH: u32 = 1314;
+/// Vulcan Arm's bullet holes on its target, turned at random on the screen (`vulcan_turn`).
+const VULCAN_HOLES: u32 = 1705;
 /// Dragon Breath, its monster skill and Water Dragon Breath: a breath on the caster by its screen quadrant, a burst on each
 /// target (`breath_launches`).
 pub const DRAGON_BREATHS: [u16; 3] = [2008, 731, 5004];
@@ -3218,6 +3248,27 @@ impl Effects {
         }
     }
 
+    /// A Cross Ripper Slasher packet from `caster` (None = the player) at `caster_at` on `target` at `target_at`, the caster
+    /// facing φ on the screen (`ripper_launches`); no slash without the target.
+    pub fn cross_ripper(
+        &mut self,
+        gpu: &Gpu,
+        grf: &Grf,
+        table: &Table,
+        (caster, caster_at): (Option<u32>, Vector),
+        target: Option<(Option<u32>, Vector)>,
+        phi: i32,
+    ) {
+        for (id, who) in ripper_launches(table, self.min, phi) {
+            let (owner, at) = match (who, target) {
+                (Who::Caster, _) => (caster, caster_at),
+                (_, Some(target)) => target,
+                _ => continue,
+            };
+            self.launch_world(gpu, grf, table, id, Some(owner), at, false, 0);
+        }
+    }
+
     /// A Dragon Breath packet of `skill` from `caster` (None = the player) at `caster_at` on `target` at `target_at`, the
     /// caster facing φ on the screen (`breath_launches`); its sound once a packet at the listener.
     #[allow(clippy::too_many_arguments)]
@@ -3272,6 +3323,10 @@ impl Effects {
             let serial = self.launch_world(gpu, grf, table, id, owner, at, status.is_some(), 0);
             if let Some(copy) = serial.zip(status).and_then(|(serial, _)| self.worlds.get_mut(serial)) {
                 copy.status = copy.status.or(status);
+            }
+            // Vulcan Arm's bullet holes turn on the screen by a draw a packet.
+            if let Some(copy) = serial.filter(|_| id == VULCAN_HOLES).and_then(|serial| self.worlds.get_mut(serial)) {
+                copy.controls.turn = vulcan_turn(pick(0, 35));
             }
             return;
         }
@@ -6706,6 +6761,88 @@ mod tests {
         // No blade for a negative direction.
         let mut fresh = Worlds::default();
         assert_eq!(cannon_packet(&mut fresh, &table, false, 7, -5), [(1408, 0)]);
+    }
+
+    #[test]
+    fn cross_ripper_slasher_picks_its_blades_by_the_screen_direction() {
+        let phis = [0, 22, 23, 66, 67, 111, 112, 156, 157, 201, 202, 246, 247, 291, 292, 336, 337, 359];
+        let ids = [1319, 1319, 1318, 1318, 1317, 1317, 1316, 1316, 1315, 1315, 1322, 1322, 1321, 1321, 1320, 1320, 1319, 1319];
+        for (phi, id) in phis.into_iter().zip(ids) {
+            assert_eq!(ripper_sector(phi), Some(id), "{phi}");
+        }
+        assert_eq!(ripper_sector(-1), None);
+        // Facing the camera, away, to the screen's right and to its left.
+        for yaw in [0.0f32, 45.0, -30.0, 200.0] {
+            for (direction, id) in [(0, 1319), (4, 1315), (6, 1317), (2, 1321)] {
+                let rot = (-yaw - 45.0 * direction as f32).rem_euclid(360.0);
+                assert_eq!(ripper_sector(screen_phi(yaw, rot)), Some(id), "yaw {yaw}, direction {direction}");
+            }
+        }
+    }
+
+    /// The tick (from 0) at which a copy of `id` on unit 7, with an in-memory STR whose last frame is `last`, ends: tick n shows
+    /// frame n, the tick after the last frame ends it, and the next one removes it.
+    fn world_end(table: &Table, id: u32, min: bool, last: i32) -> usize {
+        let mut worlds = Worlds::default();
+        let launch = world_str::Launch { id, owner: Some(Some(7)), point: [0.0; 3], unique: false, life: 0, min, roll: 0 };
+        worlds.launch(table.world(id).unwrap(), &launch, |_| Some(frames(last))).unwrap();
+        let units = HashMap::from([(7, [0.0; 3])]);
+        (1..200)
+            .find(|_| {
+                cannon_ticks(&mut worlds, 1, &units);
+                worlds.is_empty()
+            })
+            .unwrap()
+            - 2
+    }
+
+    #[test]
+    fn cross_ripper_slasher_starts_its_blades_on_the_caster_and_a_slash_on_the_target() {
+        let table = Table::load();
+        // One packet: the blades by the direction, then the slash, at once; one set each.
+        assert_eq!(ripper_launches(&table, false, 0), [(1319, Who::Caster), (RIPPER_SLASH, Who::Target)]);
+        assert_eq!(ripper_launches(&table, false, 180), [(1315, Who::Caster), (RIPPER_SLASH, Who::Target)]);
+        // No blade for a negative direction.
+        assert_eq!(ripper_launches(&table, false, -5), [(RIPPER_SLASH, Who::Target)]);
+        // Under /mineffect the lighter files: each id 163 on.
+        for id in 1314..=1322 {
+            assert_eq!((table.min_id(id, true), table.min_id(id, false)), (id + 163, id), "{id}");
+            assert!(table.world(id).is_some() && table.world(id + 163).is_some(), "{id}");
+        }
+        assert_eq!(ripper_launches(&table, true, 90), [(1480, Who::Caster), (1477, Who::Target)]);
+        // Every launch is a copy of its own: two packets make two sets, each following its unit.
+        let mut worlds = Worlds::default();
+        for _ in 0..2 {
+            for (id, who) in ripper_launches(&table, false, 0) {
+                let owner = Some(Some(if who == Who::Caster { 7 } else { 8 }));
+                let launch = world_str::Launch { id, owner, point: [0.0; 3], unique: false, life: 0, min: false, roll: 0 };
+                worlds.launch(table.world(id).unwrap(), &launch, |_| Some(frames(20))).unwrap();
+            }
+        }
+        assert_eq!([1319, RIPPER_SLASH].map(|id| worlds.iter().filter(|copy| copy.id == id).count()), [2, 2]);
+        // The blades end at tick 58, the slash at 21, the lighter files at their own last key's next tick; only the slash
+        // sits at head height, 4 px lower.
+        assert_eq!([world_end(&table, 1317, false, 57), world_end(&table, RIPPER_SLASH, false, 20)], [58, 21]);
+        assert_eq!([world_end(&table, 1480, true, 30), world_end(&table, 1477, true, 15)], [31, 16]);
+        for id in [RIPPER_SLASH, 1477] {
+            assert_eq!(table.world(id).unwrap().head, world_str::Head::At { dx: 0.0, adjust: -4.0 }, "{id}");
+        }
+        assert!((1315..=1322).all(|id| table.world(id).unwrap().head == world_str::Head::Feet));
+        assert!((1314..=1322).all(|id| !table.world(id).unwrap().single));
+    }
+
+    #[test]
+    fn vulcan_arm_starts_sparks_and_a_ring_on_the_caster_and_turned_bullet_holes_on_the_target() {
+        let table = Table::load();
+        let struck = table.struck(2258).unwrap();
+        assert!([(Who::Caster, 1703), (Who::Caster, 1704), (Who::Target, VULCAN_HOLES)].iter().all(|each| struck.contains(each)));
+        assert_eq!([0, 1, 35].map(vulcan_turn), [0.0, 10.0, 350.0]);
+        // Each has its /mineffect file and the head rule with -3; they end at ticks 21, 17 and 69.
+        for id in [1703, 1704, VULCAN_HOLES] {
+            let row = table.world(id).unwrap();
+            assert!(row.min.is_some() && !row.single && row.head == world_str::Head::At { dx: 0.0, adjust: -3.0 }, "{id}");
+        }
+        assert_eq!([(1703, 20), (1704, 16), (VULCAN_HOLES, 68)].map(|(id, last)| world_end(&table, id, false, last)), [21, 17, 69]);
     }
 
     #[test]
