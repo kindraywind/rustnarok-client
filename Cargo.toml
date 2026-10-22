@@ -1,6 +1,6 @@
 [package]
 name = "rustnarok-client"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 # Plain `cargo run` starts the client, not the dev MCP server in src/bin.
