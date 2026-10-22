@@ -1859,6 +1859,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     };
     state["quest_tracker"] =
         json!(blocks.iter().map(|block| json!({"id": block.id, "title": block.title, "summary": block.summary, "hunts": block.hunts})).collect::<Vec<_>>());
+    // Every quest the quest window lists, as it shows them: title, summary, hunt lines and time left.
+    state["quests"] = quests_state(&game.quests, &app.quest_texts, &app.messages, crate::memorial::unix_now());
     // The new-quest icon up, and the progress banners showing.
     state["quest_icon"] = json!(game.quest_icon);
     state["quest_banners"] = json!(game.banners.texts());
@@ -1965,9 +1967,63 @@ fn homunculus_state(homunculus: &net::Homunculus, id: Option<u32>, following: bo
     })
 }
 
+/// The quests in the quest window's order (in progress, on hold, waiting; by id on each tab), each with its title and
+/// summary (null when unknown), seconds left (null for no end) and hunts with the lines the window shows.
+pub(crate) fn quests_state(quests: &[net::Quest], texts: &HashMap<u32, crate::quest::QuestText>, messages: &[String], now: u64) -> Value {
+    let mut listed: Vec<&net::Quest> = quests.iter().collect();
+    listed.sort_by_key(|quest| (crate::quest::tab_of(quest, texts), quest.id));
+    json!(
+        listed
+            .iter()
+            .map(|quest| {
+                let text = texts.get(&quest.id);
+                json!({
+                    "id": quest.id,
+                    "active": quest.active,
+                    "title": text.map(|text| text.title.clone()),
+                    "summary": text.map(|text| text.summary.clone()),
+                    "ends_in_s": (quest.end > 0).then(|| u64::from(quest.end).saturating_sub(now)),
+                    "hunts": quest.hunts.iter().map(|hunt| json!({
+                        "name": hunt.name,
+                        "count": hunt.count,
+                        "needed": hunt.needed,
+                        "levels": hunt.levels,
+                        "line": crate::quest_tracker::hunt_line(hunt, messages),
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_quests_as_the_quest_window_shows_them() {
+        let hunt = |name: &str, count, needed| net::Hunt { id: 1, name: name.into(), count, needed, levels: [0, 0] };
+        let quests = [
+            net::Quest { id: 9, active: false, end: 0, hunts: Vec::new() },
+            net::Quest { id: 7, active: true, end: 1_000_600, hunts: vec![hunt("Condor", 10, 10), hunt("Poring", 3, 10)] },
+        ];
+        let texts: HashMap<u32, crate::quest::QuestText> =
+            [(7, crate::quest::QuestText { title: "Hunt".into(), summary: "Condors and Porings".into(), ..Default::default() })].into();
+        let mut messages = vec![String::new(); 2031];
+        messages[2030] = "Complete".into();
+        let state = quests_state(&quests, &texts, &messages, 1_000_000);
+        // In progress before on hold; the active quest's two hunts, one done.
+        assert_eq!(
+            state,
+            json!([
+                {"id": 7, "active": true, "title": "Hunt", "summary": "Condors and Porings", "ends_in_s": 600, "hunts": [
+                    {"name": "Condor", "count": 10, "needed": 10, "levels": [0, 0], "line": "Condor ( Complete )"},
+                    {"name": "Poring", "count": 3, "needed": 10, "levels": [0, 0], "line": "Poring ( 3 / 10 )"},
+                ]},
+                {"id": 9, "active": false, "title": null, "summary": null, "ends_in_s": null, "hunts": []},
+            ])
+        );
+    }
 
     #[test]
     fn parses_commands() {
