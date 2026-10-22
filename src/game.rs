@@ -516,9 +516,16 @@ impl Game {
         let _ = self.session.talk(id);
     }
 
-    /// The trade or storage window is open: the world takes no presses and the held button makes no tries.
-    pub(crate) fn trade_or_storage(&self) -> bool {
-        self.trade.is_some() || self.storage.frame.open
+    /// The world takes no presses and the held button makes no tries (no walking, attacking, talking or picking up):
+    /// with the trade or storage window open, or a deal open while we aren't casting.
+    pub(crate) fn world_locked(&self) -> bool {
+        world_lock(self.trade.is_some() || self.storage.frame.open, self.deal_open(), self.casts.contains_key(&None))
+    }
+
+    /// A deal is open: an NPC shop's question or lists (markets and barters too), a vendor's shop or its deal to
+    /// confirm, a buying store we sell into, our own shop or buying store.
+    fn deal_open(&self) -> bool {
+        self.deal_choice.is_some() || self.shop.is_some() || self.deal_confirm.is_some() || self.store_open()
     }
 
     pub(crate) fn talk_blocks(&self) -> bool {
@@ -4239,9 +4246,22 @@ fn left_hand_number(from: HitFrom, damage: i32, attacker: Option<u16>) -> Option
     (from == HitFrom::Attack && damage > 0 && attacker.is_some_and(shows)).then_some(damage)
 }
 
+/// Trading or storage always locks the world; an open deal does, except while our own cast bar is up.
+fn world_lock(trade_or_storage: bool, deal: bool, casting: bool) -> bool {
+    trade_or_storage || (deal && !casting)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locks_the_world_while_trading_or_dealing() {
+        assert!(!world_lock(false, false, false));
+        assert!(world_lock(true, false, false) && world_lock(true, false, true), "trade or storage, cast or not");
+        assert!(world_lock(false, true, false), "a shop open");
+        assert!(!world_lock(false, true, true), "a shop open while our cast bar is up");
+    }
 
     #[test]
     fn hits_on_ice_wall_show_white() {
