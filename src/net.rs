@@ -735,12 +735,11 @@ fn lengths_for(version: u32) -> &'static HashMap<u16, i32> {
     if version >= PACKETVER_20250402 { &NEW } else { &OLD }
 }
 
-/// Packets some servers send that rathena's tables leave out. ZC_NOTIFY_MOVE is in rathena's packets.hpp, commented
-/// out as unused: id, move data, start tick.
-const EXTRA_LENGTHS: [(u16, i32); 1] = [(ZC_NOTIFY_MOVE, 16)];
-
+/// Then the lengths of older packets some servers still send (packet_lengths_extra.txt), so they don't drop the
+/// connection.
 fn packet_length(id: u16) -> Option<i32> {
-    lengths_for(packetver()).get(&id).copied().or_else(|| EXTRA_LENGTHS.iter().find(|(extra, _)| *extra == id).map(|(_, length)| *length))
+    static EXTRA: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("packet_lengths_extra.txt")));
+    lengths_for(packetver()).get(&id).or_else(|| EXTRA.get(&id)).copied()
 }
 
 /// Dev hook (the client's control socket): sees every packet read from the char and map servers.
@@ -964,6 +963,8 @@ const CZ_UPGRADE_SKILLLEVEL: u16 = 0x0112;
 const CZ_USE_SKILL: u16 = 0x0438;
 const CZ_USE_SKILL_TOGROUND: u16 = 0x0366;
 const ZC_USESKILL_ACK: u16 = 0x0B1A;
+/// The same cast before 20181212, without the attack motion at the end.
+const ZC_USESKILL_ACK2: u16 = 0x07FB;
 /// A unit's cast was cut off (rathena's clif_skillcastcancel).
 const ZC_DISPEL: u16 = 0x01B9;
 /// The server starts a navigation (rathena's clif_navigateTo).

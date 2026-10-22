@@ -102,7 +102,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 .collect(),
         ),
         ZC_REPUTE_OPEN => MapEvent::ReputationOpen { group: u64::from_le_bytes(packet[2..10].try_into().unwrap()), repute: u32_at(10) },
-        ZC_USESKILL_ACK => MapEvent::Casting {
+        ZC_USESKILL_ACK | ZC_USESKILL_ACK2 => MapEvent::Casting {
             source: u32_at(2),
             target: u32_at(6),
             cell: [u16_at(10), u16_at(12)],

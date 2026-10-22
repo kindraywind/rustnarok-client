@@ -1,0 +1,32 @@
+# Packet lengths for ids the main tables don't know, read only when they don't: what some servers still send.
+# The ids rathena's PACKETVER 20180620 table has and 20220406's lacks (run.sh <rathena with PACKETVER 20180620> <out>),
+# plus 0x0086 (ZC_NOTIFY_MOVE: in rathena's packets.hpp, commented out as unused).
+0x0086 16
+0x0136 -1
+0x01B4 12
+0x01CD 30
+0x02B8 22
+0x07DB 8
+0x07FB 25
+0x0800 -1
+0x0836 -1
+0x08D5 -1
+0x0991 -1
+0x0993 -1
+0x0995 -1
+0x099D -1
+0x09D5 -1
+0x09EB -1
+0x0A05 53
+0x0A0A 47
+0x0A0B 47
+0x0A0D -1
+0x0A0F -1
+0x0A10 -1
+0x0A2B 14
+0x0A2D -1
+0x0A37 59
+0x0A84 94
+0x0A87 -1
+0x0A96 51
+0x0AB9 39
