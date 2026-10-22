@@ -10,6 +10,15 @@ use crate::world::Vector;
 
 /// A copy this far from the own player (3D, in world units) is far: it neither ages nor draws.
 pub const FAR: f32 = 130.0;
+/// Whether a point is nearer the own player's feet than `FAR`.
+pub fn near(point: Vector, player: Vector) -> bool {
+    distance(point, player) < FAR
+}
+
+fn distance(a: Vector, b: Vector) -> f32 {
+    std::array::from_fn::<f32, 3, _>(|axis| a[axis] - b[axis]).map(|d| d * d).iter().sum::<f32>().sqrt()
+}
+
 /// An STR step is 16 ms: the delay and the cut count down by this much a tick.
 const TICK_MS: i32 = 16;
 /// The full-screen black fill grows up to this much alpha.
@@ -419,8 +428,7 @@ impl World {
         if let Some(feet) = self.owner.and_then(|unit| (scene.feet)(unit)) {
             self.position = feet;
         }
-        let distance = std::array::from_fn::<f32, 3, _>(|axis| self.position[axis] - scene.player[axis]).map(|d| d * d).iter().sum::<f32>().sqrt();
-        self.far = distance >= self.controls.far;
+        self.far = distance(self.position, scene.player) >= self.controls.far;
         if self.far {
             return;
         }
@@ -738,6 +746,58 @@ mod tests {
         let body = |_: Option<u32>| None;
         let scene = Scene { player, feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], ground: &|_, _| 0.0 };
         (0..count).flat_map(|_| worlds.tick(&scene)).collect()
+    }
+
+    /// The tick (0 = the first, the copy's age) a copy of `id` launched with `launch` ends on, playing an in-memory STR whose last key is `last`.
+    fn ends_at(id: u32, launch: Launch, last: i32, units: &HashMap<u32, Vector>) -> usize {
+        let mut worlds = Worlds::default();
+        worlds.launch(table().get(id).unwrap(), &launch, |_| Some(small(last))).unwrap();
+        (0..)
+            .find(|_| {
+                run(&mut worlds, 1, [0.0; 3], units);
+                !worlds.playing(launch.owner, id)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn the_reduced_ground_spells_play_out_at_their_cell() {
+        let none = HashMap::new();
+        // Quagmire's and Lord of Vermilion's files end at ticks 121 and 231.
+        assert_eq!(ends_at(1161, launch(1161, None), 120, &none), 121);
+        assert_eq!(ends_at(1162, launch(1162, None), 230, &none), 231);
+        // Meteor Storm picks meteor1, 2 or 3; they end at ticks 97, 91 and 97.
+        let row = table().get(1163).unwrap().clone();
+        assert_eq!([0, 1, 2].map(|roll| Worlds::file_of(&row, true, roll).unwrap()), ["MeteorStorm/meteor1", "MeteorStorm/meteor2", "MeteorStorm/meteor3"]);
+        for (roll, last, end) in [(0, 96, 97), (1, 90, 91), (2, 96, 97)] {
+            assert_eq!(ends_at(1163, Launch { roll, ..launch(1163, None) }, last, &none), end);
+        }
+        // The sounds and shakes at their ages: Lord of Vermilion shakes at 50, 100, 150, 200 and 250, Meteor Storm at 40.
+        let quakes = |id: u32| {
+            table().get(id).unwrap().events.iter().filter_map(|event| if let Event::Quake(age) = event { Some(*age) } else { None }).collect::<Vec<_>>()
+        };
+        assert_eq!((quakes(1162), quakes(1163)), (vec![50, 100, 150, 200, 250], vec![40]));
+        let sounds = |id: u32| table().get(id).unwrap().events.iter().filter(|event| matches!(event, Event::Sound(..))).cloned().collect::<Vec<_>>();
+        assert_eq!(sounds(1161), [Event::Sound(0, "effect\\wizard_quagmire.wav".into())]);
+        assert_eq!(sounds(1162).len(), 11);
+        // A copy at the cell stays when Quagmire's unit goes.
+        let mut worlds = Worlds::default();
+        worlds.launch(table().get(1161).unwrap(), &Launch { point: [5.0, 0.0, 5.0], ..launch(1161, None) }, |_| Some(small(120))).unwrap();
+        run(&mut worlds, 60, [0.0; 3], &none);
+        assert!(worlds.playing(None, 1161));
+    }
+
+    #[test]
+    fn a_poison_smoke_puff_follows_its_unit_and_ends_with_its_str() {
+        let units = HashMap::from([(7, [10.0, 0.0, 10.0])]);
+        for id in [1546, 1547] {
+            assert_eq!(ends_at(id, launch(id, Some(Some(7))), 60, &units), 61, "{id}");
+            assert!(table().get(id).unwrap().min.is_some(), "{id}");
+        }
+        let mut worlds = Worlds::default();
+        let serial = worlds.launch(table().get(1546).unwrap(), &launch(1546, Some(Some(7))), |_| Some(small(60))).unwrap();
+        run(&mut worlds, 1, [0.0; 3], &units);
+        assert_eq!(worlds.get_mut(serial).unwrap().position, [10.0, 0.0, 10.0]);
     }
 
     #[test]

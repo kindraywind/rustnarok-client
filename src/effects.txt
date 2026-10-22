@@ -12,6 +12,7 @@
 # unit <skill unit type> <effect id> [once]: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there (once: played once and kept, not started again)
 # unitw <skill unit type> <world id>: the STR world effect (world_str.txt) such a unit also starts once as it comes into sight, owned by the unit (it follows the unit's cell and ends with it)
 # wdelay <world id> <ms>: every launch of that STR world effect (world_str.txt) waits that long before its first step
+# unitr <skill unit type> <world id> <draw>: every tick such a unit stands in sight, one random whole number below 100 is drawn; when it equals draw, the unit starts that STR world effect, owned by the unit (it follows the cell and ends with its STR)
 # area <skill unit type> <effect id> <lift>: the effect plays on a grid of points round each such unit's cell (one point at range 0, 6 units apart), now and every length less 20 ticks while it stands; lift is how far below the ground its anchor goes
 # rsm <skill unit type> <model under data\model\ without .rsm, or an .rsm2 with its extension>: the model standing on such a unit's cell (traps)
 # wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
@@ -5422,6 +5423,14 @@ minid	1390	1529
 minid	1391	1530
 minid	1378	1520
 minid	1386	1526
+# Quagmire, Lord of Vermilion and Meteor Storm play their reduced STRs at the cell under /mineffect, Quagmire's cell again by
+# its restart period.
+minid	95	1161
+minid	90	1162
+minid	92	1163
+# Poison Smoke's cell sends up a violet puff now and then: one draw a tick, 1 or 2 of 100.
+unitr	225	1546	1
+unitr	225	1547	2
 # The sounds and shakes of Steel Body's, Explosion Spirits' and SL_SKA's use packets, heard at full volume.
 skillwav	10	effect\ef_sight	0
 skillwav	8005	effect\h_castling	0

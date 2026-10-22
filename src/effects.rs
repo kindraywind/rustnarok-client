@@ -89,6 +89,9 @@ pub struct Table {
     units_once: std::collections::HashSet<u32>,
     /// The STR world effect a unit of a skill unit type also starts, owned by the unit (`unitw`).
     unit_worlds: HashMap<u32, u32>,
+    /// The STR world effects a unit of a skill unit type starts by chance each tick it's in sight, owned by the unit (`unitr`): the
+    /// effect and the draw of 100 that starts it.
+    unit_rolls: HashMap<u32, Vec<(u32, u32)>>,
     /// The units whose effect plays on a grid of points round their cell, again and again: the effect and how far below the ground
     /// its anchor is put (`area`).
     areas: HashMap<u32, (u32, f32)>,
@@ -161,6 +164,7 @@ impl Table {
             units: HashMap::new(),
             units_once: std::collections::HashSet::new(),
             unit_worlds: HashMap::new(),
+            unit_rolls: HashMap::new(),
             areas: HashMap::new(),
             models: HashMap::new(),
             lengths: HashMap::new(),
@@ -237,6 +241,11 @@ impl Table {
                 ["wdelay", ..] => {
                     if let (Some(id), Some(ms)) = (number(1), number(2)) {
                         table.worlds.set_delay(id, ms as i32);
+                    }
+                }
+                ["unitr", ..] => {
+                    if let (Some(kind), Some(id), Some(draw)) = (number(1), number(2), number(3)) {
+                        table.unit_rolls.entry(kind).or_default().push((id, draw));
                     }
                 }
                 ["minid", ..] => {
@@ -416,6 +425,20 @@ impl Table {
         self.unit_worlds.get(&kind).copied()
     }
 
+    /// The STR world effect a unit of this skill unit type plays instead of its own under /mineffect (`min`), and how often it starts
+    /// again (ticks): its effect's `minid` one, by the effect's restart period.
+    pub fn unit_again(&self, kind: u32, min: bool) -> Option<(u32, u32)> {
+        let effect = *self.units.get(&kind).filter(|_| min && !self.units_once.contains(&kind))?;
+        let world = self.min_id(effect, true);
+        let length = self.lengths.get(&effect).copied()?;
+        (world != effect && self.world(world).is_some()).then(|| (world, restart_ticks(effect, kind, length)))
+    }
+
+    /// The STR world effects a unit of this skill unit type starts by chance (`unitr`): each with the draw of 100 that starts it.
+    pub fn unit_rolls(&self, kind: u32) -> &[(u32, u32)] {
+        self.unit_rolls.get(&kind).map_or(&[], Vec::as_slice)
+    }
+
     /// What a trap of this skill unit type shows when it goes off.
     pub fn trap(&self, kind: u32) -> Option<u32> {
         self.traps.get(&kind).copied()
@@ -566,6 +589,37 @@ struct Area {
     at: Vector,
     next: Instant,
     period: u32,
+}
+
+/// A ground unit that starts STR world effects by itself while it stands.
+struct UnitStart {
+    id: u32,
+    at: Vector,
+    /// Under /mineffect, the world effect its own effect turned into and how often it starts again (ticks), ownerless at the cell.
+    again: Option<(u32, u32)>,
+    /// `unitr`: each world effect and the draw of 100 that starts it, owned by the unit.
+    rolls: Vec<(u32, u32)>,
+    age: u32,
+}
+
+impl UnitStart {
+    /// One 16 ms tick, `seen` telling whether the unit is in sight and `draw` giving a random number below 100: the world effects it
+    /// starts, each with its owner (None = at the cell).
+    fn tick(&mut self, seen: bool, draw: impl FnOnce() -> u32) -> Vec<(u32, Option<Option<u32>>)> {
+        self.age += 1;
+        let mut starts = Vec::new();
+        if let Some((world, period)) = self.again
+            && self.age.is_multiple_of(period)
+        {
+            starts.push((world, None));
+        }
+        // One draw a tick decides between them.
+        if seen && !self.rolls.is_empty() {
+            let draw = draw();
+            starts.extend(self.rolls.iter().filter(|&&(_, wanted)| wanted == draw).map(|&(world, _)| (world, Some(Some(self.id)))));
+        }
+        starts
+    }
 }
 
 /// A frame's layers, each with its ACT alpha.
@@ -2059,6 +2113,8 @@ pub struct Effects {
     crowd_frames: HashMap<(&'static str, usize, usize), Vec<Placed>>,
     /// The skill units whose effect plays on a grid of points, and the points made and waiting to play.
     areas: Vec<Area>,
+    /// The ground units starting world effects by themselves (`UnitStart`).
+    unit_starts: Vec<UnitStart>,
     area_queue: Vec<(u32, Vector, Instant)>,
     /// The cells' sprites' frames, plain white, each layer with its ACT alpha, by sprite, action and frame.
     cell_frames: HashMap<(&'static str, usize, usize), Layers>,
@@ -3019,15 +3075,24 @@ impl Effects {
 
     /// Runs the STR world copies' and the world objects' 16 ms ticks that came due, before the units, and queues the sounds
     /// and shakes they fire; then the drawn objects' frame step.
-    pub fn advance_world(&mut self, gpu: &Gpu, grf: &Grf, now: Instant, scene: &world_str::Scene, seen: &world_fx::Seen) {
+    pub fn advance_world(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, now: Instant, scene: &world_str::Scene, seen: &world_fx::Seen) {
         let clock = self.world_clock.get_or_insert(now);
         let due = world_ticks(now.saturating_duration_since(*clock));
         // A long stall (a loading screen) skips ahead rather than running every tick.
         *clock = if due > WORLD_TICKS_MAX { now } else { *clock + WORLD_TICK * due };
-        if self.worlds.is_empty() && self.fx.is_empty() {
+        if self.worlds.is_empty() && self.fx.is_empty() && self.unit_starts.is_empty() {
             return;
         }
         for _ in 0..due.min(WORLD_TICKS_MAX) {
+            // The ground units' own starts come first, so a copy started this tick runs it.
+            let mut starts = Vec::new();
+            for start in &mut self.unit_starts {
+                let seen = (scene.feet)(Some(start.id)).is_some_and(|feet| world_str::near(feet, scene.player));
+                starts.extend(start.tick(seen, || pick(0, 99)).into_iter().map(|(world, owner)| (world, owner, start.at)));
+            }
+            for (world, owner, at) in starts {
+                self.launch_world(gpu, grf, table, world, owner, at, false, 0);
+            }
             let mut fired = self.worlds.tick(scene);
             let (fx, mut assets) = self.fx_assets(gpu, grf);
             fired.extend(fx.tick(scene, &mut assets));
@@ -4719,6 +4784,13 @@ impl Effects {
             let period = table.lengths.get(&effect).copied().unwrap_or(21).saturating_sub(20).max(1);
             self.areas.push(Area { id, effect, lift, range, at, next: now, period });
         }
+        // Under /mineffect Quagmire's cell plays its world effect (`minid`), started again by its effect's restart period; Poison
+        // Smoke's cells send up puffs by chance (`unitr`).
+        let again = table.unit_again(kind, self.min);
+        let rolls = table.unit_rolls(kind).to_vec();
+        if again.is_some() || !rolls.is_empty() {
+            self.unit_starts.push(UnitStart { id, at, again, rolls, age: 0 });
+        }
         // Bind Trap's circle is sized by the trap's level.
         if let Some(effect) = table.units.get(&kind).and_then(|&effect| world_fx::jobs3::unit_effect(effect, level)) {
             // Volcano's, Deluge's, Violent Gale's and Land Protector's cells keep their loops, drawn in code.
@@ -5707,6 +5779,7 @@ impl Effects {
 
     pub fn forget(&mut self, unit: u32) {
         self.areas.retain(|area| area.id != unit);
+        self.unit_starts.retain(|start| start.id != unit);
         self.fx.release(Some(Some(unit)));
         self.worlds.remove_status(Some(unit), None);
         if let Some(world) = self.unit_worlds.remove(&unit) {
@@ -7085,6 +7158,53 @@ mod tests {
         for skill in DRAGON_BREATHS {
             assert_eq!(table.caster(skill), None, "{skill}");
         }
+    }
+
+    #[test]
+    fn the_reduced_ground_spells_under_mineffect() {
+        let table = Table::load();
+        assert_eq!([95, 90, 92].map(|id| table.min_id(id, true)), [1161, 1162, 1163]);
+        assert_eq!([95, 90, 92].map(|id| table.min_id(id, false)), [95, 90, 92]);
+        for id in [1161, 1162, 1163] {
+            assert!(table.world(id).is_some_and(|row| matches!(row.file, world_str::Source::Named(_)) && !row.owner), "{id}");
+        }
+        // Quagmire's cell starts 1161 again every 130 ticks under /mineffect only; Poison Smoke's plays once.
+        assert_eq!(table.unit_again(142, true), Some((1161, 130)));
+        assert_eq!([table.unit_again(142, false), table.unit_again(225, true)], [None, None]);
+    }
+
+    #[test]
+    fn poison_smoke_puffs_by_one_draw_a_tick() {
+        let table = Table::load();
+        assert_eq!(table.unit_rolls(225), [(1546, 1), (1547, 2)]);
+        assert!(table.unit_rolls(142).is_empty());
+        let mut start = UnitStart { id: 7, at: [0.0; 3], again: None, rolls: table.unit_rolls(225).to_vec(), age: 0 };
+        assert_eq!(start.tick(true, || 1), [(1546, Some(Some(7)))]);
+        assert_eq!(start.tick(true, || 2), [(1547, Some(Some(7)))]);
+        for draw in [0, 3, 99] {
+            assert_eq!(start.tick(true, || draw), [], "{draw}");
+        }
+        // Out of sight it draws nothing.
+        assert_eq!(start.tick(false, || panic!("drawn")), []);
+        // About one puff of each in 100 ticks with the real draws.
+        let mut counts = [0, 0];
+        for _ in 0..100_000 {
+            for (world, _) in start.tick(true, || pick(0, 99)) {
+                counts[(world - 1546) as usize] += 1;
+            }
+        }
+        assert!(counts.iter().all(|&count| (850..=1150).contains(&count)), "{counts:?}");
+    }
+
+    #[test]
+    fn a_quagmire_cell_starts_its_world_effect_again() {
+        let mut start = UnitStart { id: 7, at: [0.0; 3], again: Some((1161, 130)), rolls: Vec::new(), age: 0 };
+        let started: Vec<u32> = (1..=400).filter(|_| !start.tick(true, || panic!("drawn")).is_empty()).collect();
+        assert_eq!(started, [130, 260, 390]);
+        // Ownerless, at the cell, whether in sight or not.
+        assert_eq!(start.tick(false, || 0), []);
+        start.age = 129;
+        assert_eq!(start.tick(false, || 0), [(1161, None)]);
     }
 
     #[test]

@@ -2891,7 +2891,7 @@ impl App {
             ground: &ground_at,
             dim: game.map.trim_end_matches(".gat") == "ecl_fild01",
         };
-        game.effects.advance_world(gpu, grf, now, &scene, &fx_seen);
+        game.effects.advance_world(gpu, grf, &self.effect_table, now, &scene, &fx_seen);
         // The Sight option (bit 0x1) keeps a flame circling its unit.
         let sights: Vec<_> = std::iter::once((None, game.player.hide_option & 1 != 0))
             .chain(game.units.iter().map(|(&id, actor)| (Some(id), actor.hide_option & 1 != 0)))
