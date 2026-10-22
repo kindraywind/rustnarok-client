@@ -75,7 +75,9 @@ impl App {
             return self.draw_loading(event_loop);
         }
         if matches!(self.scene, Scene::Game(_)) {
-            return self.redraw_game(event_loop);
+            self.redraw_game(event_loop);
+            self.frame_current = true;
+            return;
         }
         let blink_phase = self.blink_phase();
         let (Some(gpu), Some(assets)) = (&mut self.gpu, &self.assets) else { return };

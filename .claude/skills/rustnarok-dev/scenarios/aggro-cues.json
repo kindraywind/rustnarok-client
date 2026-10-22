@@ -1,5 +1,5 @@
 {
-  "about": "Aggro cues in state (issue #1039): a Fabre (1184, aggressive, weak) spawned by the player comes for it and hits it. The player is held stunned (@option 3: rathena lets every attack on a stunned target hit) so the Fabre's first swing can't miss. The clock pauses on that attack packet: the Fabre faces the player (facing_me) and hit it 0 ms ago (attacking_me_ms); a second on, it's 1000 ms and the number shown on the player is in hits_taken. Shot there. The option is put back at the end.",
+  "about": "Aggro cues in state (issue #1039): a Fabre (1184, aggressive, weak) spawned by the player comes for it and hits it. The player is held stunned (@option 3: rathena lets every attack on a stunned target hit) so the Fabre's first swing can't miss. The clock pauses on that attack packet: the Fabre faces the player (facing_me) and hit it a moment ago (attacking_me_ms, a few ms: the hit is applied just before the pause); a second on, it's at least 1000 ms and the number shown on the player is in hits_taken. Shot there. The option is put back at the end.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -8,9 +8,9 @@
     {"say": "@monster 1184 1"},
     {"wait_for": {"packet": "0x08c8", "pause": true, "ms": 15000}},
     {"cmd": {"cmd": "clock", "action": "step", "ms": 0}},
-    {"expect": {"unit": {"name": "Fabre", "facing_me": true, "attacking_me_ms": 0}}},
+    {"expect": {"unit": {"name": "Fabre", "facing_me": true}, "unit_at_least": {"name": "Fabre", "attacking_me_ms": 0}}},
     {"cmd": {"cmd": "clock", "action": "step", "ms": 1000}},
-    {"expect": {"unit": {"name": "Fabre", "facing_me": true, "attacking_me_ms": 1000}, "state_at_least": {"player.hits_taken.0.amount": 1}}},
+    {"expect": {"unit": {"name": "Fabre", "facing_me": true}, "unit_at_least": {"name": "Fabre", "attacking_me_ms": 1000}, "state_at_least": {"player.hits_taken.0.amount": 1}}},
     {"move": [1000, 750]},
     {"shot": "aggro-fabre", "crop": [362, 234, 300, 300], "threshold": 10},
     {"cmd": {"cmd": "clock", "action": "resume"}},

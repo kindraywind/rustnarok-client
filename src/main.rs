@@ -4455,6 +4455,8 @@ struct App {
     early_events: Vec<MapEvent>,
     /// Map packets heard since the last frame, applied at the start of the next.
     frame_events: Vec<MapEvent>,
+    /// The last game frame was drawn after every command, packet and input since: `state` needn't draw another.
+    frame_current: bool,
     /// Our guess of the server's tick, to place walks in time; and whether a map has loaded since the last
     /// ZC_NOTIFY_TIME (the first one after a load sets the clock outright).
     server_clock: actor::ServerClock,
@@ -4993,6 +4995,10 @@ impl ApplicationHandler<NetEvent> for App {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
+        // A command marks the frame old itself (`control::run`), unless it only reads.
+        if !matches!(event, NetEvent::Control(_)) {
+            self.frame_current = false;
+        }
         match event {
             NetEvent::Control(request) => control::run(self, event_loop, request),
             // ponytail: in the game every map packet waits for the next frame, so none overtakes a move queued before
@@ -5010,6 +5016,9 @@ impl ApplicationHandler<NetEvent> for App {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         let Some(gpu) = &mut self.gpu else { return };
+        if !matches!(event, WindowEvent::RedrawRequested) {
+            self.frame_current = false;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => gpu.resize(),
@@ -5518,6 +5527,7 @@ fn main() {
         entering: None,
         early_events: Vec::new(),
         frame_events: Vec::new(),
+        frame_current: false,
         server_clock: actor::ServerClock::default(),
         map_loaded: false,
         fields: [saved_id().unwrap_or_default(), String::new()],
