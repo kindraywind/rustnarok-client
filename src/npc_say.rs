@@ -103,18 +103,81 @@ impl Assets {
     }
 }
 
-/// The timer Next, a clicked Close and the menu's OK share.
+/// What a key pressed inside the throttle's wait presses once the wait is over.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Queued {
+    Next,
+    MenuOk,
+}
+
+/// The timer Next, a clicked Close and the menu's OK share, and a key press that came too soon for it.
 #[derive(Default)]
-pub struct Throttle(Option<Instant>);
+pub struct Throttle {
+    last: Option<Instant>,
+    queued: Option<Queued>,
+}
 
 impl Throttle {
     /// Whether a press goes through now; one that does starts the wait.
     pub fn pass(&mut self, now: Instant) -> bool {
-        if self.0.is_some_and(|last| now.saturating_duration_since(last) < THROTTLE) {
+        if self.last.is_some_and(|last| now.saturating_duration_since(last) < THROTTLE) {
             return false;
         }
-        self.0 = Some(now);
+        self.last = Some(now);
         true
+    }
+
+    /// A key's press (Enter, Space): as `pass`, but one that comes too soon isn't lost: it waits for the end of the
+    /// wait (`due`). Several too soon are one.
+    pub fn press(&mut self, now: Instant, what: Queued) -> bool {
+        let through = self.pass(now);
+        if !through {
+            self.queued = Some(what);
+        }
+        through
+    }
+
+    /// The key press waiting, if any.
+    pub fn queued(&self) -> Option<Queued> {
+        self.queued
+    }
+
+    /// The waiting key press, once the wait is over: it goes through then, once.
+    pub fn due(&mut self, now: Instant) -> Option<Queued> {
+        if self.queued.is_some() && self.pass(now) { self.queued.take() } else { None }
+    }
+
+    /// Drops the waiting key press (what it would press is gone).
+    pub fn forget(&mut self) {
+        self.queued = None;
+    }
+}
+
+/// What Enter or Space does while an NPC dialog is open.
+#[derive(Debug, PartialEq)]
+pub enum DialogKey {
+    /// The input box's OK.
+    Submit,
+    /// A space typed into the input box.
+    TypeInput,
+    /// A space typed into the chat line.
+    TypeChat,
+    /// The menu's OK on the highlighted item.
+    MenuOk,
+    /// Next or Close.
+    Button,
+}
+
+/// Enter (or Space with `space`), with the input box open, a menu open, and text in an open chat line: the input box
+/// takes both, Enter submitting. Space types into a chat line that has text in it; otherwise both confirm the menu,
+/// or press Next or Close.
+pub fn dialog_key(space: bool, input: bool, menu: bool, chat_text: bool) -> DialogKey {
+    match (space, input, menu) {
+        (false, true, _) => DialogKey::Submit,
+        (true, true, _) => DialogKey::TypeInput,
+        (true, false, _) if chat_text => DialogKey::TypeChat,
+        (_, false, true) => DialogKey::MenuOk,
+        (_, false, false) => DialogKey::Button,
     }
 }
 
@@ -254,6 +317,7 @@ impl SayWindow {
 
     /// The talk ended: back to 280×180. Where the player left it stays.
     pub fn end_talk(&mut self) {
+        self.throttle.forget();
         self.size = SIZE;
         self.frame.set_width(SIZE[0]);
         self.scroll = 0.0;
@@ -302,6 +366,59 @@ mod tests {
         assert!(!throttle.pass(start + Duration::from_millis(299)));
         assert!(throttle.pass(start + Duration::from_millis(300)));
         assert!(!throttle.pass(start + Duration::from_millis(400)));
+    }
+
+    #[test]
+    fn keeps_a_key_pressed_too_soon_for_the_end_of_the_wait() {
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        let mut throttle = Throttle::default();
+        assert!(throttle.press(start, Queued::Next));
+        assert_eq!(throttle.due(at(50)), None);
+        // Two presses too soon: one waits, and goes through once the 300 ms are over.
+        assert!(!throttle.press(at(100), Queued::Next));
+        assert!(!throttle.press(at(150), Queued::Next));
+        assert_eq!(throttle.queued(), Some(Queued::Next));
+        assert_eq!(throttle.due(at(299)), None);
+        assert_eq!(throttle.due(at(300)), Some(Queued::Next));
+        assert_eq!(throttle.due(at(700)), None);
+        // It started a wait of its own.
+        assert!(!throttle.pass(at(599)));
+        // A click too soon is dropped, as before.
+        assert!(!throttle.pass(at(450)));
+        assert_eq!(throttle.due(at(1000)), None);
+        // The talk ending drops a waiting press.
+        assert!(throttle.press(at(1000), Queued::MenuOk));
+        assert!(!throttle.press(at(1100), Queued::MenuOk));
+        throttle.forget();
+        assert_eq!(throttle.due(at(2000)), None);
+    }
+
+    #[test]
+    fn space_and_enter_in_a_dialog() {
+        // Space with an empty chat line: Next or Close, and the menu's OK, as Enter.
+        assert_eq!(dialog_key(true, false, false, false), DialogKey::Button);
+        assert_eq!(dialog_key(false, false, false, false), DialogKey::Button);
+        assert_eq!(dialog_key(true, false, true, false), DialogKey::MenuOk);
+        assert_eq!(dialog_key(false, false, true, false), DialogKey::MenuOk);
+        // With text in the chat line Space types there; Enter still answers the dialog.
+        assert_eq!(dialog_key(true, false, false, true), DialogKey::TypeChat);
+        assert_eq!(dialog_key(true, false, true, true), DialogKey::TypeChat);
+        assert_eq!(dialog_key(false, false, true, true), DialogKey::MenuOk);
+        // The input box takes Space as text and Enter as OK.
+        assert_eq!(dialog_key(true, true, false, false), DialogKey::TypeInput);
+        assert_eq!(dialog_key(true, true, false, true), DialogKey::TypeInput);
+        assert_eq!(dialog_key(false, true, false, false), DialogKey::Submit);
+    }
+
+    #[test]
+    fn the_buttons_target_is_where_a_click_presses_it() {
+        let mut window = SayWindow::default();
+        for size in [(0, 0), (400, 240)] {
+            window.resize(size.0, size.1);
+            let [x, y, width, height] = window.button_box();
+            assert!(window.on_button([x + width / 2.0, y + height / 2.0]));
+        }
     }
 
     #[test]

@@ -5120,6 +5120,7 @@ impl ApplicationHandler<NetEvent> for App {
                 let now = Instant::now();
                 game.attack_step(now);
                 game.pending_step(now);
+                game.queued_dialog_press(now);
                 // The walk cell goes with a change of the player's own motion.
                 let action = game.player.animation(control::now()).0;
                 if clears_walk_cell(game.player_motion, action) {

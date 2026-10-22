@@ -42,6 +42,8 @@
 //!   list's level up buttons are targets named `raise:<skill id>`. `player.look` is the real look (hair, hair color,
 //!   clothes color, head top, mid and bottom, and `body` for the 2nd outfit). The stylist's buttons are targets (`hair_style_<row>`, `hair_color_<row>`,
 //!   `clothes_color_<row>`, `tab_hair`, `tab_accessory`, `buy`, `refresh`, `rotate_left`, `rotate_right`, `close`).
+//!   An NPC dialog's buttons are targets while they show: `npc_next` or `npc_close`, `npc_menu:<index>` for each menu row
+//!   in view, `npc_menu_ok`, `npc_menu_cancel` and `npc_input_ok`.
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
 //!   (a `MapEvent`/`CharEvent` variant like "Act", "LoginAccepted"/"LoginRefused", or "Sound <file>" for an effect
 //!   sound played, e.g. "Sound _hit_sword.wav"), waits up to `ms` (10 s by
@@ -1300,6 +1302,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.ranking.iter().flat_map(|board| board.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.dressroom.iter().flat_map(|room| room.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.party_dialog.iter().flat_map(|dialog| dialog.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            app.assets
+                .iter()
+                .flat_map(|assets| game.dialog_button_boxes(assets.ok[0].size, assets.cancel[0].size))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(game.talks.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.friend_setup.iter().flat_map(|setup| setup.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.block_list.iter().flat_map(|list| list.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))

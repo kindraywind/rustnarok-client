@@ -127,6 +127,16 @@ impl Menu {
         (row < rows(self.items.len()) && index < self.items.len()).then_some(index)
     }
 
+    /// The rows shown: each one's item and its box inside the window, where `row_at` finds that item.
+    pub fn row_boxes(&self) -> Vec<(usize, [f32; 4])> {
+        let [x, y, width, _] = list_box(self.items.len());
+        (0..rows(self.items.len()))
+            .map(|row| (self.first + row, row))
+            .filter(|(index, _)| *index < self.items.len())
+            .map(|(index, row)| (index, [x, y + row as f32 * ROW, width, ROW]))
+            .collect()
+    }
+
     /// Whether a press at `local` drags the window: anywhere but the list and the buttons.
     pub fn grips(&self, local: [f32; 2]) -> bool {
         let [x, y, width, height] = list_box(self.items.len());
@@ -201,6 +211,22 @@ mod tests {
         // Fewer items than rows: the empty rows pick nothing.
         let menu = Menu::new(vec!["Stay".into(), "Leave".into()]);
         assert_eq!((menu.row_at([20.0, 27.0 + 16.0]), menu.row_at([20.0, 27.0 + 32.0])), (Some(1), None));
+    }
+
+    #[test]
+    fn a_rows_target_is_where_a_press_picks_it() {
+        let middle = |[x, y, width, height]: [f32; 4]| [x + width / 2.0, y + height / 2.0];
+        // Two items: two targets, no empty rows.
+        let menu = Menu::new(vec!["Stay".into(), "Leave".into()]);
+        let boxes = menu.row_boxes();
+        assert_eq!(boxes.iter().map(|(index, _)| *index).collect::<Vec<_>>(), [0, 1]);
+        assert!(boxes.iter().all(|&(index, area)| menu.row_at(middle(area)) == Some(index)));
+        // Scrolled: only the rows shown, each where row_at finds it.
+        let mut menu = Menu::new((1..=20).map(|item| item.to_string()).collect());
+        menu.wheel(1);
+        let boxes = menu.row_boxes();
+        assert_eq!((boxes.len(), boxes[0].0, boxes[14].0), (15, 3, 17));
+        assert!(boxes.iter().all(|&(index, area)| menu.row_at(middle(area)) == Some(index)));
     }
 
     #[test]
