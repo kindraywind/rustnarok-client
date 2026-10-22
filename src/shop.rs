@@ -757,16 +757,22 @@ impl Shop {
                 layer.sprites.push((&assets.buttons[2][look(Hit::Cancel)], frame.at(cancel), BUTTON));
             }
         }
-        // An NPC shop's or a vendor's row under the pointer: its name (and price) over it.
-        if let (Some(Hit::Row(window, row)), true) = (hit, self.plain() || self.vendor.is_some()) {
+        // A vendor's row under the pointer whose name is cut: the whole name over it, starting where it was.
+        if let (Some(Hit::Row(window, row)), Some(_)) = (hit, &self.vendor)
+            && let Some(offer) = self.offer_at(window, row)
+        {
+            let name = inventory::item_name(items, offer.item, offer.identified, offer.refine);
+            if window::fit(font, &name, price_text(offer.listed, offer.price).1) != name {
+                let top = TITLE_HEIGHT + (row - self.scroll[window]) as f32 * ROW;
+                window::whole_text(layer.window(), chrome, font, &name, self.frames[window].at([NAME[0], top + NAME[1]]));
+            }
+        }
+        // An NPC shop's row under the pointer: its name and price over it.
+        if let (Some(Hit::Row(window, row)), true) = (hit, self.plain()) {
             let (Some(offer), frame) = (self.offer_at(window, row), &self.frames[window]) else { return };
             let count = if window == 0 { u32::from(offer.have) } else { self.deal[row].1 };
             let item = InventoryItem { id: offer.item, kind: offer.kind, identified: offer.identified, refine: offer.refine, ..Default::default() };
-            let name = inventory::item_name(items, offer.item, offer.identified, offer.refine);
-            let text = match self.vendor {
-                Some(_) => vendor_tooltip_text(&name, offer, count, window == 1),
-                None => tooltip_text(&name, offer, count, self.selling),
-            };
+            let text = tooltip_text(&inventory::item_name(items, offer.item, offer.identified, offer.refine), offer, count, self.selling);
             let local = pointer.0[0] - frame.position[0];
             let x = TIP_STEP[0] + TIP_STEP[1] * ((local - TIP_STEP[0]) / TIP_STEP[1]).floor();
             let top = TITLE_HEIGHT + (row - self.scroll[window]) as f32 * ROW - TIP_ABOVE;
@@ -826,13 +832,6 @@ fn tooltip_text(name: &str, offer: &Offer, count: u32, selling: bool) -> String 
     let price = group(u64::from(offer.price));
     let price = if offer.listed == 0 || offer.listed == offer.price { price } else { format!("{} -> {price}", offer.listed) };
     if selling { format!("{name} {count} ea {price} Zeny") } else { format!("{name} {price} Zeny") }
-}
-
-/// A vendor's row's tooltip: the shop's list just the name; the Buying Items list "name 3 ea 1,200 Zeny", how many
-/// are in the deal at the unit price.
-// ponytail: offers carry no cards or random options, so the name is the row's and "%s [%d Option]" isn't used.
-fn vendor_tooltip_text(name: &str, offer: &Offer, count: u32, deal: bool) -> String {
-    if deal { format!("{name} {count} ea {} Zeny", group(u64::from(offer.price))) } else { name.to_owned() }
 }
 
 /// A row's unit price, " 1,234 Z", or with a discount or overcharge " 1500 -> 1,200 Z" (the original not grouped); and
@@ -1052,10 +1051,6 @@ mod tests {
         let discounted = Offer { listed: 1500, ..plain.clone() };
         assert_eq!(tooltip_text("Red Potion", &discounted, 5, false), "Red Potion 1500 -> 1,200 Zeny");
         assert_eq!(tooltip_text("Red Potion", &plain, 5, true), "Red Potion 5 ea 1,200 Zeny");
-        // A vendor's list: the whole name only; its deal list: how many at the unit price.
-        let long = "+7 Spiked Clip of Infinite Long Names";
-        assert_eq!(vendor_tooltip_text(long, &plain, 5, false), long);
-        assert_eq!(vendor_tooltip_text("Red Potion", &plain, 3, true), "Red Potion 3 ea 1,200 Zeny");
     }
 
     #[test]

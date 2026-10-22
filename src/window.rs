@@ -23,6 +23,9 @@ pub struct Chrome {
     pub white: Texture,
     pub border: Texture,
     tooltip: Texture,
+    /// A cut text's whole-words balloon: the speech balloon's border, a darker fill.
+    whole_fill: Texture,
+    balloon_border: Texture,
 }
 
 impl Chrome {
@@ -43,6 +46,8 @@ impl Chrome {
             white: gpu.solid([255; 4]),
             border: gpu.solid(BORDER),
             tooltip: gpu.solid(TOOLTIP),
+            whole_fill: gpu.solid([0, 0, 0, 0x88]),
+            balloon_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
         }
     }
 }
@@ -265,6 +270,20 @@ impl Frame {
         layer.texts.push((title.to_owned(), self.at(offset(TITLE_TEXT, [1.0, 1.0])), [255, 255, 255]));
         layer.texts.push((title.to_owned(), self.at(TITLE_TEXT), [0, 0, 0]));
     }
+}
+
+/// A cut text shown whole while the pointer is on it: the speech balloon's look with a darker fill, its words starting
+/// on the cut text's own `spot`, kept on screen.
+pub fn whole_text<'a>(layer: &mut Layer<'a>, chrome: &'a Chrome, font: &Font, text: &str, spot: [f32; 2]) {
+    let size = crate::overhead::size(font.width(text), 1);
+    let corner = crate::overhead::over_text_corner(spot, size, screen());
+    layer.sprites.push((&chrome.whole_fill, corner, size));
+    for (edge, piece) in crate::overhead::border(size) {
+        layer.sprites.push((&chrome.balloon_border, offset(corner, edge), piece));
+    }
+    let place = offset(corner, crate::overhead::TEXT_AT);
+    layer.texts.push((text.to_owned(), offset(place, [1.0, 1.0]), [0, 0, 0]));
+    layer.texts.push((text.to_owned(), place, [255; 3]));
 }
 
 /// The client's tooltip: white text with a black shadow on a translucent black box.

@@ -1,5 +1,5 @@
 {
-  "about": "A vendor's row under the pointer shows the item's whole name over it, like an NPC shop's row. At prt_fild08 the second player turns Merchant and vends Concentration Potions (dev switch), six cells east of the first; the first opens the shop by its sign and rests the pointer on the row, whose name is cut to fit: the tooltip shows it whole, 16 px above the row. The second goes back to a Novice without cart or items at base level 1.",
+  "about": "A vendor's row whose name is cut shows the whole name over it while the pointer is on the row, like a shop sign's cut title. At prt_fild08 the second player turns Merchant and vends Concentration Potions (dev switch), six cells east of the first; the first opens the shop by its sign and rests the pointer on the row, whose name ends in \"...\": a dark balloon over the name shows it whole, starting where it was. The second goes back to a Novice without cart or items at base level 1.",
   "account": "",
   "slot": 0,
   "second": {

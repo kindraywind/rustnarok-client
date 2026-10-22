@@ -1801,15 +1801,7 @@ impl App {
             && contains([strip[0], strip[1]], [strip[2], strip[3]], pointer.0)
             && let Some(text) = game.signs.values().find(|sign| sign.id == *id).and_then(|sign| chatroom::whole_text(font, sign))
         {
-            let size = overhead::size(font.width(&text), 1);
-            let corner = overhead::over_text_corner([strip[0], strip[1]], size, screen());
-            tooltip.sprites.push((&assets.whole_text_fill, corner, size));
-            for (edge, piece) in overhead::border(size) {
-                tooltip.sprites.push((&assets.speech_border, offset(corner, edge), piece));
-            }
-            let place = offset(corner, overhead::TEXT_AT);
-            tooltip.texts.push((text.clone(), offset(place, [1.0, 1.0]), [0, 0, 0]));
-            tooltip.texts.push((text, place, [255; 3]));
+            window::whole_text(&mut tooltip, &assets.chrome, font, &text, [strip[0], strip[1]]);
         }
         let mut chat_layer = Layer::default();
         let open = game.chat_mode.chat_line_open();
