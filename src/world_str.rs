@@ -393,6 +393,11 @@ impl World {
         self.loaded.as_ref().map_or(0, |loaded| loaded.animation.last_key())
     }
 
+    /// Ends the picture with a cast of `cast_ms`, or after its last key if that comes first.
+    pub fn cut_with_cast(&mut self, cast_ms: u32) {
+        self.timeline.cut = cast_ms.min(17 * (self.last_key() + 1) as u32) as i32;
+    }
+
     /// Runs the STR step, `steps` times for a fast-forward.
     pub fn run(&mut self, steps: u32) {
         let last = self.last_key();

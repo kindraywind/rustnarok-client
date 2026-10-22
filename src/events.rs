@@ -3320,7 +3320,12 @@ impl App {
                     }
                     // What the cast starts beside its aura (Elemental Action's crescents and flicker).
                     for extra in table.cast_extras(skill) {
-                        game.play_effect(gpu, grf, table, extra, source);
+                        // An STR world effect lasts the cast (Tetra Vortex's ball and ring).
+                        if table.world(table.min_id(extra, game.effects.min)).is_some() {
+                            game.cast_world(gpu, grf, table, extra, source, cast_ms);
+                        } else {
+                            game.play_effect(gpu, grf, table, extra, source);
+                        }
                     }
                 }
                 // Competentia's sparkles and Nipelheim Requiem's funnel last the cast; Acid Demonstration's two bottles
@@ -3632,6 +3637,10 @@ impl App {
                             }
                             if effect == effects::EF_FROSTDIVER3 {
                                 game.jack_frost(gpu, grf, source, target);
+                                continue;
+                            }
+                            if effects::USED_WORLDS.contains(&effect) {
+                                game.used_world(gpu, grf, table, effect, unit);
                                 continue;
                             }
                             game.play_effect(gpu, grf, table, effect, unit);
