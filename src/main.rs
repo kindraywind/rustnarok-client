@@ -5282,7 +5282,7 @@ impl ApplicationHandler<NetEvent> for App {
                     }
                 }
                 if let Some(gpu) = &self.gpu {
-                    gpu.window.request_redraw();
+                    gpu.request_frame();
                 }
                 event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_TIME));
             }
@@ -5299,7 +5299,7 @@ impl ApplicationHandler<NetEvent> for App {
             // The select and creation screens animate (the selected card, the characters, the caret).
             scene if matches!(scene.base(), Scene::CharSelect(_) | Scene::CharMake(..)) => {
                 if let Some(gpu) = &self.gpu {
-                    gpu.window.request_redraw();
+                    gpu.request_frame();
                 }
                 event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_TIME));
             }
