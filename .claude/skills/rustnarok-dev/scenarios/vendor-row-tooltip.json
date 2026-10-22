@@ -1,0 +1,229 @@
+{
+  "about": "A vendor's row under the pointer shows the item's whole name over it, like an NPC shop's row. At prt_fild08 the second player turns Merchant and vends Concentration Potions (dev switch), six cells east of the first; the first opens the shop by its sign and rests the pointer on the row, whose name is cut to fit: the tooltip shows it whole, 16 px above the row. The second goes back to a Novice without cart or items at base level 1.",
+  "account": "",
+  "slot": 0,
+  "second": {
+    "account": "2",
+    "slot": 0,
+    "env": {
+      "RUSTNAROK_CLIENT_VEND": "QA potions:10"
+    }
+  },
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "say": "@warp prt_fild08 176 360"
+    },
+    {
+      "as": "second",
+      "settle": 2500
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "say": "@blvl 40"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@itemreset"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "as": "second",
+      "say": "@job 5"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@allskill"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@cart 2"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "say": "@item 645 5"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "as": "second",
+      "key": "Alt+E"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "tab:item"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "key": "Alt+W"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "inventory_item": 645
+      },
+      "button": "right",
+      "mods": "Alt"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "sent": "0x0126",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "key": "Alt+E"
+    },
+    {
+      "as": "second",
+      "key": "Alt+W"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "say": "@useskill 41 1 {second}"
+    },
+    {
+      "as": "second",
+      "wait_for": {
+        "packet": "0x0b40",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click_on": {
+        "button": "shop_sign"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Shop"
+        ]
+      }
+    },
+    {
+      "move": {
+        "pick_item": 645
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "shot": "vendor-row-tip",
+      "crop": [
+        0,
+        100,
+        600,
+        360
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "say": "@warp prontera 156 184"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "as": "second",
+      "say": "@cart 0"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@job 0"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "as": "second",
+      "say": "@blvl -39"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "wait": 800
+    }
+  ]
+}
