@@ -1,5 +1,5 @@
 {
-  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded. Then (issue #320) four quests more make six: the tracker lists the first five; switching 1002 off in the quest window (Alt+U) brings 4275 on, and switching it back restores the five; the four are taken out again. Picking the Drops quest opens its details right of the list (issue #534): its title, the Description, Monster and Reward panels and the Deadline; their Close shuts them. Filters, the search and links (issue #535): with a normal quest (1109) and a daily one (1298) given, Daily lists only 1298 and Normal only 1109; 'Archer' in the box, Enter, lists only 1004; reopening clears both. The Drops quest put on hold, the NPC's line links it and a quest nobody has: that one says it isn't found, and the Drops link opens the window on On hold with it picked.",
+  "about": "Quest tracker (issue #219): a test NPC (quests.txt) gives two quests, a hunt for ten Drops (4275) and one without hunts (1001); the tracker under the minimap lists both, the hunt with '( 0 / 10 )'. Killing a Drops (the character raised for it) updates the line to '( 1 / 10 )'. The NPC erases the quests, the character is put back and the NPC unloaded. Then (issue #320) four quests more make six: the tracker lists the first five; switching 1002 off in the quest window (Alt+U) brings 4275 on, and switching it back restores the five; the four are taken out again. Picking the Drops quest opens its details right of the list (issue #534): its title, the Description, Monster and Reward panels and the Deadline; their Close shuts them. Filters, the search and links (issue #535): with a normal quest (1109) and a daily one (1298) given, Daily lists only 1298 and Normal only 1109; 'Archer' in the box, Enter, lists only 1004; reopening clears both. The Drops quest put on hold, the NPC's line links it and a quest nobody has: that one says it isn't found, and the Drops link opens the window on On hold with it picked. The state's quests (issue #1038) list the same quests in the window's order with the hunt lines the window shows, before and after the kill.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -59,7 +59,14 @@
         "state": {
           "quest_tracker.0.id": 1001,
           "quest_tracker.1.id": 4275,
-          "quest_tracker.1.hunts.0": "Drops ( 0 / 10 )"
+          "quest_tracker.1.hunts.0": "Drops ( 0 / 10 )",
+          "quests.0.id": 1001,
+          "quests.0.hunts": [],
+          "quests.1.id": 4275,
+          "quests.1.active": true,
+          "quests.1.hunts.0.count": 0,
+          "quests.1.hunts.0.needed": 10,
+          "quests.1.hunts.0.line": "Drops ( 0 / 10 )"
         }
       }
     },
@@ -111,7 +118,9 @@
     {
       "expect": {
         "state": {
-          "quest_tracker.1.hunts.0": "Drops ( 1 / 10 )"
+          "quest_tracker.1.hunts.0": "Drops ( 1 / 10 )",
+          "quests.1.hunts.0.count": 1,
+          "quests.1.hunts.0.line": "Drops ( 1 / 10 )"
         }
       }
     },

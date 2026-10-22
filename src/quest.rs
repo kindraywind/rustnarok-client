@@ -317,7 +317,7 @@ pub enum Hit {
 }
 
 /// The tab a quest is listed under: waiting for a cooldown, else in progress or on hold.
-fn tab_of(quest: &Quest, texts: &HashMap<u32, QuestText>) -> usize {
+pub fn tab_of(quest: &Quest, texts: &HashMap<u32, QuestText>) -> usize {
     if texts.get(&quest.id).is_some_and(|text| text.cooldown) {
         WAITING
     } else if quest.active {
