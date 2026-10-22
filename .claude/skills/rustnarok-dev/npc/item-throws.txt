@@ -1,0 +1,53 @@
+// Item throws (issue #843): a training dummy 5 cells east of prt_fild06 188,180. Whisper npc:RustnarokThrows "acid",
+// "stone", "demo", "shuriken", "kunai", "huuma", "zeny" or "splash" and the player uses AM_ACIDTERROR, TF_THROWSTONE,
+// CR_ACIDDEMONSTRATION, NJ_SYURIKEN, NJ_KUNAI, NJ_HUUMA or NJ_ZENYNAGE (as a Ninja) on the dummy, or KO_HAPPOKUNAI on
+// itself (as a Kagerou), given what each one costs. AS_VENOMKNIFE is left out: on this server an Assassin can't wear its
+// knife and a monster doesn't cast it. "clean" takes back the ammo and the Huuma left over. Loaded and unloaded by
+// scenarios/item-throws.json, which sets the jobs.
+prt_fild06,1,1,0	script	RustnarokThrows	-1,{
+	end;
+OnInit:
+	monster "prt_fild06", 193, 180, "--ja--", 2408, 1;
+	.gid = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "acid") {
+		getitem 7136, 1;
+		unitskilluseid getcharid(3), "AM_ACIDTERROR", 1, .gid;
+	} else if (@whispervar0$ == "stone") {
+		getitem 7049, 1;
+		unitskilluseid getcharid(3), "TF_THROWSTONE", 1, .gid;
+	} else if (@whispervar0$ == "demo") {
+		getitem 7135, 1;
+		getitem 7136, 1;
+		unitskilluseid getcharid(3), "CR_ACIDDEMONSTRATION", 1, .gid;
+	} else if (@whispervar0$ == "shuriken") {
+		getitem 13250, 5;
+		equip 13250;
+		unitskilluseid getcharid(3), "NJ_SYURIKEN", 1, .gid;
+	} else if (@whispervar0$ == "kunai") {
+		getitem 13259, 5;
+		equip 13259;
+		unitskilluseid getcharid(3), "NJ_KUNAI", 1, .gid;
+	} else if (@whispervar0$ == "huuma") {
+		getitem 13300, 1;
+		equip 13300;
+		unitskilluseid getcharid(3), "NJ_HUUMA", 1, .gid;
+	} else if (@whispervar0$ == "zeny") {
+		Zeny += 1000;
+		unitskilluseid getcharid(3), "NJ_ZENYNAGE", 1, .gid;
+	} else if (@whispervar0$ == "splash") {
+		getitem 13259, 5;
+		equip 13259;
+		unitskilluseid getcharid(3), "KO_HAPPOKUNAI", 1, getcharid(3);
+	} else if (@whispervar0$ == "clean") {
+		unequip EQI_AMMO;
+		unequip EQI_HAND_R;
+		for (.@i = 0; .@i < 3; .@i++) {
+			.@item = (.@i == 0 ? 13250 : (.@i == 1 ? 13259 : 13300));
+			if (countitem(.@item))
+				delitem .@item, countitem(.@item);
+		}
+	}
+	end;
+}
