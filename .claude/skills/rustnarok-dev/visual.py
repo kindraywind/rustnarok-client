@@ -42,7 +42,7 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_
     field — e.g. "pin" ("ask"/"new"/"change"/"none") at character select; state_at_least: numbers there at least the
     ones given; achievements: each one "completed" or "rewarded"; title: the one worn; no_sound: that wav didn't play in
     the last 5 seconds; unit: {"name": ..., field: value, ...} the first unit of that name has those
-    fields, null for one it doesn't have)
+    fields, null for one it doesn't have; unit_at_least: numbers there at least the ones given)
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -238,16 +238,19 @@ def expect(wanted, state):
             failures.append(f"chat has {value!r}")
         elif key == "no_sound" and value in game.get("sounds_recent", []):
             failures.append(f"{value} played in the last 5 s")
-        elif key == "unit":
-            # The first unit with that name: each other field as given (null: absent).
+        elif key in ("unit", "unit_at_least"):
+            # The first unit with that name: each other field as given (null: absent), or a number at least the one given.
             fields = dict(value)
             name = fields.pop("name")
             found = next((unit for unit in game.get("units", []) if unit.get("name") == name), None)
             if found is None:
                 failures.append(f"no unit named {name!r}")
             for field, want in fields.items() if found else []:
-                if found.get(field) != want:
-                    failures.append(f"unit {name!r} {field} is {found.get(field)!r}, not {want!r}")
+                have = found.get(field)
+                if key == "unit" and have != want:
+                    failures.append(f"unit {name!r} {field} is {have!r}, not {want!r}")
+                elif key == "unit_at_least" and not (isinstance(have, (int, float)) and have >= want):
+                    failures.append(f"unit {name!r} {field} is {have!r}, not at least {want!r}")
         elif key == "inventory_items" and game.get("inventory_items") != value:
             failures.append(f"inventory_items {game.get('inventory_items')} != {value}")
         elif key == "hp_at_least" and game.get("player", {}).get("hp", 0) < value:
@@ -328,7 +331,7 @@ def expect(wanted, state):
                     failures.append(f"achievement {achievement} is not {want}: {have}")
         elif key == "title" and game.get("title") != value:
             failures.append(f"title {game.get('title')} != {value}")
-        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "no_sound", "unit", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
+        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "no_sound", "unit", "unit_at_least", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
             failures.append(f"unknown expectation {key}")
     return failures
 

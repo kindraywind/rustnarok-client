@@ -521,11 +521,15 @@ pub fn on_draw(gpu: &Gpu, world: Option<&dyn WorldPass>, sprites: &[Sprite], alp
 
 /// Runs a command on the event loop, where the client's state lives, and answers it.
 pub fn run(app: &mut App, event_loop: &ActiveEventLoop, Request { command, reply }: Request) {
+    let reads = matches!(command, Command::State | Command::Screenshot { .. });
     let answer = match execute(app, event_loop, command) {
         Ok(Value::Null) => json!({"ok": true}),
         Ok(value) => value,
         Err(error) => json!({"ok": false, "error": error}),
     };
+    if !reads {
+        app.frame_current = false;
+    }
     let _ = reply.send(answer);
 }
 
@@ -628,7 +632,15 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             Ok(Value::Null)
         }
         Command::Reply { text } => mcp::reply(&mut app.scene, text),
-        Command::State => Ok(state(app)),
+        Command::State => {
+            // In the game, a frame first, so the held map packets are applied and what drawing places (units' and items'
+            // boxes, signs, links) matches the screen after the last command. Not while the clock is paused, so frame
+            // stepping stays the visual tests', nor when the last frame is already current.
+            if fresh_frame_due(matches!(app.scene, Scene::Game(_)) && app.loading.is_none(), FROZEN.lock().unwrap().is_some(), app.frame_current) {
+                app.redraw(event_loop);
+            }
+            Ok(state(app))
+        }
         Command::Clock { action, ms } => {
             // A pause lands after the packets that came in before it, as a pause at a packet shows its effect.
             // ponytail: the log sees a packet before its event is queued; a pause racing that gap misses it, a wait for the event would close it.
@@ -841,6 +853,11 @@ fn typed(character: char, text: bool) -> KeyPress {
         text: text.then(|| character.to_string()),
         repeat: false,
     }
+}
+
+/// Whether `state` draws a frame first: in the game, with the clock running, when something came since the last frame.
+fn fresh_frame_due(in_game: bool, paused: bool, current: bool) -> bool {
+    in_game && !paused && !current
 }
 
 fn screenshot(app: &mut App, event_loop: &ActiveEventLoop, crop: Option<[u32; 4]>, scale: Option<f32>) -> Result<Value, String> {
@@ -2084,6 +2101,16 @@ pub(crate) fn quests_state(quests: &[net::Quest], texts: &HashMap<u32, crate::qu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn draws_a_fresh_frame_for_state_only_when_due() {
+        // In the game, the clock running, something since the last frame: draw.
+        assert!(fresh_frame_due(true, false, false));
+        // Not outside the game, not on a paused clock (frame stepping stays the tests'), not twice.
+        assert!(!fresh_frame_due(false, false, false));
+        assert!(!fresh_frame_due(true, true, false));
+        assert!(!fresh_frame_due(true, false, true));
+    }
 
     #[test]
     fn lists_quests_as_the_quest_window_shows_them() {
