@@ -241,6 +241,11 @@ fn corner_normals(node: &Node, own: &Matrix, shade: i32) -> Vec<[Vector; 3]> {
     node.faces.iter().map(|face| face.vertices.map(|vertex| normalized(shared[&(vertex, face.smoothing)]))).collect()
 }
 
+/// What only moves a node's own vertices: translation1 · offset.
+fn own_matrix(node: &Node) -> Matrix {
+    multiply(&translation(node.translation1), &node.offset)
+}
+
 fn cross(a: Vector, b: Vector) -> Vector {
     [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
@@ -321,6 +326,8 @@ pub struct Rsm {
     pub shade: i32,
     /// RSM 1: the shift that puts its frame-0 pose's bottom centre on the origin, kept while it moves.
     centre: std::cell::OnceCell<Vector>,
+    /// Each node's `corner_normals`, which no frame changes: found the first time it's posed.
+    normals: std::cell::OnceCell<Vec<Vec<[Vector; 3]>>>,
 }
 
 /// A model triangle in model space (Y down, bottom center at the origin), with its texture name index, its corners'
@@ -415,7 +422,7 @@ impl Rsm {
                 tracks: Tracks { rotation: rotations, ..Tracks::default() },
             });
         }
-        Ok(Self { version, textures, root, nodes, frames: length, fps: 0.0, shade, centre: Default::default() })
+        Ok(Self { version, textures, root, nodes, frames: length, fps: 0.0, shade, centre: Default::default(), normals: Default::default() })
     }
 
     /// RSM 2.2 and 2.3 (`.rsm2`). Strings carry their length; 2.2 lists the textures once and nodes point into the
@@ -530,7 +537,7 @@ impl Rsm {
             });
         }
         let root = roots.into_iter().next().unwrap_or_default();
-        Ok(Self { version, textures, root, nodes, frames, fps, shade, centre: Default::default() })
+        Ok(Self { version, textures, root, nodes, frames, fps, shade, centre: Default::default(), normals: Default::default() })
     }
 
     /// All triangles in model space (y down), with the model's bottom center at the origin for RSM 1; RSM 2 keeps the
@@ -605,9 +612,8 @@ impl Rsm {
         let node_place = tracks.and_then(|(.., position)| position).unwrap_or(node.translation2);
         // Children inherit translation2 · rotation · scale; translation1 · offset only moves this node's vertices.
         let inherited = multiply(parent, &multiply(&translation(node_place), &multiply(&rotation_matrix, &scaling(node_scale))));
-        let own = multiply(&translation(node.translation1), &node.offset);
-        let local = multiply(&inherited, &own);
-        let normals = corner_normals(node, &own, self.shade);
+        let local = multiply(&inherited, &own_matrix(node));
+        let normals = &self.normals.get_or_init(|| self.nodes.iter().map(|node| corner_normals(node, &own_matrix(node), self.shade)).collect())[index];
 
         for (number, face) in node.faces.iter().enumerate() {
             let Some(texture) = node.textures.get(usize::from(face.texture) % node.textures.len().max(1)).copied() else { continue };
@@ -689,6 +695,7 @@ mod tests {
             fps: 0.0,
             shade: 1,
             centre: Default::default(),
+            normals: Default::default(),
         };
         let triangles = rsm.triangles();
         assert_eq!(triangles.len(), 4);

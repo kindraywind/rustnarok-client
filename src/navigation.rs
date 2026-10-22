@@ -133,11 +133,26 @@ pub struct Active {
     pub trail: Vec<[i32; 2]>,
     /// The map, the player's cell and the cell headed for that the trail was made for.
     trail_for: Option<(String, [i32; 2], [u16; 2])>,
+    /// The map `next_cell` was found for and what it found: the route only changes with the map.
+    next_for: Option<(String, Option<[u16; 2]>)>,
 }
 
 impl Active {
     pub fn new(target: Target, services: u8) -> Self {
-        Self { target, services, trail: Vec::new(), trail_for: None }
+        Self { target, services, trail: Vec::new(), trail_for: None, next_for: None }
+    }
+
+    /// `next_cell` on `here`, found again only when the map changed.
+    pub fn next_cell(&mut self, tables: &NaviTables, here: &str) -> Option<[u16; 2]> {
+        let here = map_key(here);
+        match &self.next_for {
+            Some((map, next)) if *map == here => *next,
+            _ => {
+                let next = next_cell(tables, &here, &self.target, self.services);
+                self.next_for = Some((here, next));
+                next
+            }
+        }
     }
 
     /// Makes the trail again (with `path`, the cells walked from one cell to another) when the map, the player's cell or
@@ -327,6 +342,11 @@ mod tests {
         let target = Target { map: "prontera".into(), cell: Some([150, 150]), monster: None, name: String::new() };
         assert_eq!(next_cell(&tables, "prt_fild08", &target, 111), Some([170, 375]));
         assert_eq!(next_cell(&tables, "prontera", &target, 111), Some([150, 150]));
+        // A navigation under way finds it once per map, and again on the next one.
+        let mut active = Active::new(target.clone(), 111);
+        assert_eq!(active.next_cell(&tables, "prt_fild08.gat"), Some([170, 375]));
+        assert_eq!(active.next_cell(&tables, "prt_fild08"), Some([170, 375]));
+        assert_eq!(active.next_cell(&tables, "prontera.gat"), Some([150, 150]));
         assert!(!arrived("prontera", [150, 147], &target) && arrived("prontera", [148, 152], &target));
         assert!(!arrived("prt_fild08", [150, 150], &target));
         let map_only = Target { cell: None, ..target };

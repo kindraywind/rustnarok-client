@@ -1606,7 +1606,7 @@ impl App {
         if game.navigation.as_ref().is_some_and(|active| navigation::arrived(&here, game.player.cell, &active.target)) {
             game.navigation = None;
         }
-        let navi_next = game.navigation.as_ref().and_then(|active| navigation::next_cell(&self.navi_tables, &here, &active.target, active.services));
+        let navi_next = game.navigation.as_mut().and_then(|active| active.next_cell(&self.navi_tables, &here));
         if let Some(active) = &mut game.navigation {
             let gat = &game.world.gat;
             active.update_trail(&here, game.player.cell, navi_next, |from, to| world::find_trail(gat, from, to));
