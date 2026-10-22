@@ -4979,6 +4979,8 @@ impl ApplicationHandler<NetEvent> for App {
             .with_inner_size(size.unwrap_or(LogicalSize::new(1024.0, 768.0)))
             .with_min_inner_size(LogicalSize::new(512.0, 384.0))
             .with_fullscreen(self.graphics.fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
+        #[cfg(target_os = "macos")]
+        set_dock_icon();
         let gpu = Gpu::new(Arc::new(event_loop.create_window(attributes).expect("create window")));
         // The client draws its own cursor.
         gpu.window.set_cursor_visible(false);
@@ -5304,6 +5306,21 @@ impl ApplicationHandler<NetEvent> for App {
             }
             _ => event_loop.set_control_flow(ControlFlow::Wait),
         }
+    }
+}
+
+/// The README's logo as the Dock icon: run outside tools/bundle.sh's app (cargo run, the test driver), macOS shows a
+/// terminal's "exec" icon instead. The bundled app keeps its icon.icns.
+#[cfg(target_os = "macos")]
+fn set_dock_icon() {
+    use objc2::ClassType;
+    if std::env::current_exe().is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/")) {
+        return;
+    }
+    let Some(main_thread) = objc2_foundation::MainThreadMarker::new() else { return };
+    let data = objc2_foundation::NSData::with_bytes(include_bytes!("../assets/icon.png"));
+    if let Some(image) = objc2_app_kit::NSImage::initWithData(objc2_app_kit::NSImage::alloc(), &data) {
+        unsafe { objc2_app_kit::NSApplication::sharedApplication(main_thread).setApplicationIconImage(Some(&image)) };
     }
 }
 
