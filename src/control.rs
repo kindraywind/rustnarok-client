@@ -1076,6 +1076,16 @@ fn game_state(app: &App, game: &Game) -> Value {
             if actor.sitting {
                 unit["sitting"] = true.into();
             }
+            // What a player sees of it coming for them: turned their way, walking to a cell, hitting them lately.
+            if crate::actor::faces(actor.rot, actor.cell, game.player.cell) {
+                unit["facing_me"] = true.into();
+            }
+            if actor.moving() {
+                unit["moving_to"] = json!(actor.destination());
+            }
+            if let Some(ms) = actor.hit_ms_ago(game.account_id, now()) {
+                unit["attacking_me_ms"] = ms.into();
+            }
             // How opaque it's drawn, 0 to 255 (fading in after a spawn, out when leaving).
             unit["alpha"] = (actor.alpha(now()) * 255.0).round().into();
             unit["tint"] = json!(crate::actor::status_tint(actor.body_state, actor.health_state));
@@ -1832,6 +1842,10 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["opened_page"] = game.opened_page.clone().into();
     // Our milliseconds a cell.
     state["player"]["step_ms"] = game.player.step_ms.into();
+    // The numbers shown on us in the last 3 s.
+    state["player"]["hits_taken"] = json!(
+        game.hits_taken(crate::control::now()).iter().map(|(amount, kind, ms)| json!({"amount": amount, "kind": kind, "ms_ago": ms})).collect::<Vec<_>>()
+    );
     // The effect sounds played in the last five seconds (`no_sound` in a scenario checks these).
     state["sounds_recent"] = recent_sounds().into();
     state["battle_mode"] = game.chat_mode.enabled().into();

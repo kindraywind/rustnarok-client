@@ -2760,6 +2760,29 @@ impl DamageKind {
         };
         ticks * 0.024
     }
+
+    /// Its name in the test driver's state.
+    fn name(self) -> &'static str {
+        match self {
+            DamageKind::Hit { sp: true, .. } => "sp",
+            DamageKind::Hit { .. } => "hit",
+            DamageKind::Critical => "critical",
+            DamageKind::Lucky => "lucky",
+            DamageKind::Miss { .. } => "miss",
+            DamageKind::Heal { .. } => "heal",
+            DamageKind::Combo => "combo",
+        }
+    }
+}
+
+/// The numbers that have shown on the player in the last `actor::HIT_SHOWN`: amount, kind and how long ago, oldest
+/// first (for the test driver).
+fn hits_taken(damages: &[Damage], now: Instant) -> Vec<(i32, &'static str, u64)> {
+    damages
+        .iter()
+        .filter(|damage| damage.target.is_none() && damage.start <= now && now.duration_since(damage.start) < actor::HIT_SHOWN)
+        .map(|damage| (damage.amount, damage.kind.name(), now.duration_since(damage.start).as_millis() as u64))
+        .collect()
 }
 
 enum Scene {
@@ -5635,6 +5658,26 @@ fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_the_numbers_shown_on_the_player() {
+        let now = Instant::now();
+        let number = |target, amount, ago: u64, kind| Damage {
+            target,
+            source: None,
+            amount,
+            start: now - Duration::from_millis(ago),
+            kind,
+            flinch: None,
+            drift: [0.0; 2],
+        };
+        let hit = DamageKind::Hit { taken: true, sp: false };
+        let damages = [number(None, 12, 500, hit), number(Some(7), 30, 100, hit), number(None, 40, 3500, hit), number(None, 25, 0, DamageKind::Critical)];
+        // Ours, under 3 s old: not another unit's, not an old one.
+        assert_eq!(hits_taken(&damages, now), [(12, "hit", 500), (25, "critical", 0)]);
+        // Not one that lands later.
+        assert_eq!(hits_taken(&damages, now - Duration::from_millis(100)), [(12, "hit", 400)]);
+    }
 
     #[test]
     fn the_left_hand_is_never_drawn_as_a_shield() {

@@ -3376,6 +3376,9 @@ impl App {
                     return;
                 }
                 let target_cell = if act.target == me { Some(game.player.cell) } else { game.units.get(&act.target).map(|actor| actor.cell) };
+                if let Some(source) = if act.source == me { Some(&mut game.player) } else { game.units.get_mut(&act.source) } {
+                    source.note_hit(&act, crate::control::now());
+                }
                 // Blitz Beat's packet sends the caster's falcon at the target, once whatever the hit count.
                 if skill == actor::BLITZ_BEAT {
                     game.dive_falcon(act.source, act.target);
