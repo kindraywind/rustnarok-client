@@ -57,6 +57,12 @@ fn tools() -> Value {
             &["x", "y"],
         ),
         tool(
+            "cell_point",
+            "Where map cell (x, y)'s middle is on the screen, as {\"point\": [x, y]} in the same 1024x768 pixels as click. Use it to click the ground at a cell. Errors outside the game and for a cell behind the camera.",
+            json!({"x": {"type": "integer"}, "y": {"type": "integer"}}),
+            &["x", "y"],
+        ),
+        tool(
             "drag",
             "Press at `from`, move to `to` and let go (windows, items onto hotkeys, the camera with the right button).",
             json!({"from": point, "to": point, "button": button, "mods": mods}),
@@ -84,7 +90,7 @@ fn tools() -> Value {
         tool("reply", "Answer the player in the chat's MCP tab, which shows what you do there.", json!({"text": {"type": "string"}}), &["text"]),
         tool(
             "state",
-            "The scene; in the game the map, the player (cell, HP/SP, levels, zeny, screen box), open windows, the NPC dialog, the aimed skill, units and ground items nearest first (id, kind, name, cell, screen box [left, top, right, bottom]), counts, status icons and the last chat lines.",
+            "The scene; in the game the map, the player (cell, HP/SP, levels, zeny, screen box), open windows, the NPC dialog, the aimed skill, units and ground items nearest first (id, kind, name, cell, screen box [left, top, right, bottom]), counts, status icons and the last chat lines. cell_point turns player.cell or a unit's cell into a point to click.",
             json!({}),
             &[],
         ),
@@ -277,6 +283,17 @@ fn picks_an_account_from_the_file() {
     assert_eq!(account(file, ""), Some(("one".into(), "p1".into())));
     assert_eq!(account(file, "2"), Some(("two".into(), "p2".into())));
     assert_eq!(account(file, "3"), None);
+}
+
+#[cfg(test)]
+#[test]
+fn offers_cell_point() {
+    let tools = tools();
+    let tool = tools.as_array().unwrap().iter().find(|tool| tool["name"] == "cell_point").expect("a cell_point tool");
+    assert_eq!(tool["inputSchema"]["required"], json!(["x", "y"]));
+    let properties = &tool["inputSchema"]["properties"];
+    assert_eq!((&properties["x"]["type"], &properties["y"]["type"]), (&json!("integer"), &json!("integer")));
+    assert_eq!(properties.as_object().unwrap().len(), 2);
 }
 
 fn main() {
