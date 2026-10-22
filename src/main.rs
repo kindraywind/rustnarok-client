@@ -829,17 +829,13 @@ const SPIRIT_TURN: f32 = 1.5;
 const SPIRIT_TILT: f32 = 0.4;
 /// The sphere picture's ball is about 22px across in a 94px square.
 const SPHERE_SCALE: f32 = 0.5;
-/// Shields, souls and charms circle at their own heights, so two kinds on one unit don't overlap; the shield and
-/// charm pictures are scaled down to about a sphere's size, and souls are spheres tinted pale violet.
+/// Shields and souls circle at their own heights, so two kinds on one unit don't overlap; the shield picture is scaled down
+/// to about a sphere's size, and souls are spheres tinted pale violet.
 // ponytail: heights, sizes and tints are estimates; calibrate against the real client.
 const SHIELD_HEIGHT: f32 = 22.0;
 const SHIELD_SCALE: f32 = 0.22;
 const SOUL_HEIGHT: f32 = 64.0;
 const SOUL_TINT: [f32; 4] = [0.85, 0.7, 1.0, 1.0];
-const CHARM_HEIGHT: f32 = 84.0;
-const CHARM_SCALE: f32 = 0.4;
-/// Charm tints by element: water, earth, fire, wind.
-const CHARM_TINTS: [[f32; 4]; 4] = [[0.5, 0.7, 1.0, 1.0], [0.75, 0.55, 0.35, 1.0], [1.0, 0.45, 0.35, 1.0], [0.5, 1.0, 0.55, 1.0]];
 const CHARM_NAMES: [&str; 4] = ["water", "earth", "fire", "wind"];
 /// Heal, Highness Heal and Coluceo Heal report how much they healed.
 /// Heals that show their amount and an effect by it: Heal, Lord Heal, the NPC heal, Coluceo Heal, Highness Heal and the
@@ -1213,8 +1209,8 @@ struct Game {
     mvps: HashMap<Option<u32>, Instant>,
     /// The status marks' sprites (stun, sleep, curse, the ice block) by name.
     mark_sprites: HashMap<&'static str, SpriteSet>,
-    /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's, the shield's
-    /// and the charm's pictures, the coin's sprite.
+    /// What circles units (None = the player): spheres or coins, shields, charms, souls; the sphere's and the shield's
+    /// pictures, the coin's sprite. The charms are world objects too (`world_fx::ninja`); the count is kept for the throws.
     spirits: HashMap<Option<u32>, Orbs>,
     /// The units (None = the player) leaving afterimages since their Shadow Exceed double ended, until its status goes.
     exceed_shadows: HashSet<Option<u32>>,
@@ -1224,7 +1220,6 @@ struct Game {
     shadow_scars: HashMap<u32, u16>,
     sphere: Option<Texture>,
     shield: Option<Texture>,
-    charm: Option<Texture>,
     coin_sprite: Option<SpriteSet>,
     digits: Option<Digits>,
     /// The message sprite: a critical hit's burst and Lucky (`actor::BURST_ACTION`, `LUCKY_ACTION`).

@@ -2146,7 +2146,10 @@ wav	931	effect\S포이즌버스터	0	listener
 wav	969	effect\안식의자장가	0	listener
 wav	981	effect\T_회오리차기	0
 wav	983	effect\닌자_던지기	0
+# ponytail: Swirling Petal's sound plays at its object; the game plays it at the listener.
+wav	984	effect\T_회오리차기	0
 wav	989	effect\닌자_던지기	0
+wav	990	effect\폭염룡	0
 wav	1044	effect\rk_luxanima	0
 wav	1132	effect\mon_금강불괴	0
 wav	1195	effect\EF_BeginSpell	0
@@ -4209,6 +4212,10 @@ cast	5494	1656
 cast	5494	812
 cast	5495	1656
 cast	5495	812
+cast	5483	986
+cast	5484	986
+cast	5485	986
+cast	5487	986
 struck	13	caster	15
 struck	2278	target	1660
 struck	340	caster	451
@@ -4482,6 +4489,7 @@ struck	524	caster	614
 struck	525	caster	615
 struck	526	caster	616
 struck	3019	target	1008
+struck	3006	target	990
 used	6	target	67
 used	7	caster	17
 used	8202	caster	17
@@ -4882,6 +4890,11 @@ used	2599	target	424
 used	5023	caster	411
 used	3007	caster	981
 used	3006	caster	983
+used	3007	caster	986
+used	3009	target	984
+used	3009	target	1000
+used	3009	target	1002
+used	3023	caster	991
 used	3019	caster	989
 ground	21	ground	30
 ground	69	ground	91
@@ -4933,6 +4946,9 @@ ground	5042	ground	1112
 ground	5219	ground	1760
 ground	5223	ground	1798
 ground	5319	ground	2087
+ground	3009	ground	984
+ground	3009	ground	1000
+ground	3009	ground	1002
 trap	143	106
 trap	149	139
 trap	150	99

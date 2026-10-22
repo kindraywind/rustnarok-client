@@ -1,0 +1,46 @@
+// The ninja objects (issue #845): a training dummy 2 cells east of prt_fild08 170,360 casts them, since a monster needs no
+// weapon, ammunition or items for a skill. Whisper npc:RustnarokNinja "kunai" (the player's Kunai Explosion 3 on the dummy), "splash"
+// (Kunai Splash 5 by the dummy), "grasp" (Huuma Shuriken - Grasp 5 by the dummy, a cast), "trample" (Shadow Trampling 5 by the
+// dummy), "makibishi" (Makibishi 5 by the dummy), "moon" (Moonlight Fantasy 5 on the player), "petal" (Swirling Petal 10 on
+// the player), "swirl" (the effect packets of Swirling Petal's 984, 1000 and 1002 on the player: rathena sends the skill as damage
+// packets only), or "fx984", "fx986", "fx991", "fx1000" and "fx1002": the effect packet of that id alone on the player. Loaded and unloaded by scenarios/ninja-objects.json.
+prt_fild08,1,1,0	script	RustnarokNinja	-1,{
+	end;
+OnInit:
+	monster "prt_fild08", 172, 360, "--ja--", 2408, 1;
+	.gid = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	percentheal 100, 100;
+	if (@whispervar0$ == "kunai") {
+		getitem 13294, 3;
+		unitskilluseid getcharid(3), "KO_BAKURETSU", 3, .gid;
+	} else if (@whispervar0$ == "splash") {
+		unitskilluseid .gid, "KO_HAPPOKUNAI", 5, .gid;
+	} else if (@whispervar0$ == "grasp") {
+		unitskillusepos .gid, "SS_FUUMASHOUAKU", 5, 168, 362;
+	} else if (@whispervar0$ == "trample") {
+		unitskilluseid .gid, "KG_KAGEHUMI", 5, .gid;
+	} else if (@whispervar0$ == "makibishi") {
+		unitskilluseid .gid, "KO_MAKIBISHI", 5, .gid;
+	} else if (@whispervar0$ == "moon") {
+		unitskilluseid .gid, "OB_OBOROGENSOU", 5, getcharid(3);
+	} else if (@whispervar0$ == "petal") {
+		unitskilluseid .gid, "KO_HUUMARANKA", 10, getcharid(3);
+	} else if (@whispervar0$ == "swirl") {
+		specialeffect2 984;
+		specialeffect2 1000;
+		specialeffect2 1002;
+	} else if (@whispervar0$ == "fx984") {
+		specialeffect2 984;
+	} else if (@whispervar0$ == "fx991") {
+		specialeffect2 991;
+	} else if (@whispervar0$ == "fx986") {
+		specialeffect2 986;
+	} else if (@whispervar0$ == "fx1000") {
+		specialeffect2 1000;
+	} else if (@whispervar0$ == "fx1002") {
+		specialeffect2 1002;
+	}
+	end;
+}

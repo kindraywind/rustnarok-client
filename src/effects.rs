@@ -669,6 +669,8 @@ struct Kept {
     effect: u32,
     at: Vector,
     row: Option<world_str::Row>,
+    /// The unit's range byte, for the world object.
+    range: u8,
 }
 
 /// One tick's launches of the kept units' STR world effects, each `unique` and owned by its unit: a running copy is kept,
@@ -3240,7 +3242,12 @@ impl Effects {
             .kept
             .iter()
             .filter(|keep| keep.row.is_none() && self.fx.registered(keep.effect))
-            .map(|keep| world_fx::Launch { unique: true, min: self.min, ..world_fx::Launch::at(keep.effect, Some(Some(keep.unit)), keep.at) })
+            .map(|keep| world_fx::Launch {
+                unique: true,
+                min: self.min,
+                a7: Some(i32::from(keep.range)),
+                ..world_fx::Launch::at(keep.effect, Some(Some(keep.unit)), keep.at)
+            })
             .collect();
         for launch in &objects {
             self.launch_fx(gpu, grf, launch);
@@ -3329,6 +3336,14 @@ impl Effects {
         if count != 0 && seen {
             self.launch_fx(gpu, grf, &world_fx::Launch { a7: Some(i32::from(count)), ..world_fx::Launch::at(world_fx::jobs3::COINS, owner, at) });
         }
+    }
+
+    /// A charm packet for `unit` (None = the player): the Kagerou's or Oboro's orbs of the kind, `count` of them, round it at `at`
+    /// (None: out of sight) unless it is hidden or cloaked (`seen` false).
+    // ponytail: a unit that shows itself again later does not get its orbs back until the next packet.
+    pub fn charms(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, charms: (u16, u16), at: Option<Vector>, seen: bool) {
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        world_fx::ninja::charms(fx, Some(unit), charms, at, seen, &mut assets);
     }
 
     /// Fallen Angel's cast on `unit` (None = the player) standing at `at`.
@@ -3680,6 +3695,7 @@ impl Effects {
             && !world_fx::drops::is_pillar(id)
             && !world_fx::status4::is_class(id)
             && !world_fx::shots::is_class(id)
+            && !world_fx::ninja::is_charm(id)
         {
             let owner = match target {
                 Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
@@ -3689,7 +3705,7 @@ impl Effects {
             // A status sent again keeps its copy, but Spirit Marble's spirits and Flower Leaf's glints start afresh.
             if matches!(target, Target::Status(..)) {
                 launch.unique = true;
-                if world_fx::summoner::restarts_on_status(id) || world_fx::jobs3::restarts_on_status(id) {
+                if world_fx::summoner::restarts_on_status(id) || world_fx::jobs3::restarts_on_status(id) || world_fx::ninja::restarts_on_status(id) {
                     self.fx.remove(owner, id);
                 }
             }
@@ -4976,6 +4992,9 @@ impl Effects {
         self.add_area(table, kind, id, range, at, now);
         // Zenkai's and Makibishi's units launch their effect on themselves now and every tick after: one copy a unit.
         if self.keep_unit(table, kind, id, at) {
+            if let Some(keep) = self.kept.last_mut() {
+                keep.range = range;
+            }
             self.launch_kept(gpu, grf);
         }
         // Under /mineffect Quagmire's cell plays its world effect (`minid`), started again by its effect's restart period; Poison
@@ -5126,7 +5145,7 @@ impl Effects {
     /// Keeps a unit of a `keep` type launching its effect on itself; whether it is one.
     fn keep_unit(&mut self, table: &Table, kind: u32, id: u32, at: Vector) -> bool {
         let Some(effect) = table.keep(kind) else { return false };
-        self.kept.push(Kept { unit: id, effect, at, row: table.world(effect).cloned() });
+        self.kept.push(Kept { unit: id, effect, at, row: table.world(effect).cloned(), range: 0 });
         true
     }
 
@@ -7708,9 +7727,9 @@ mod tests {
         // The 4th jobs' ranges show none; the edges of the ranges and just outside.
         assert_eq!([5401, 5507, 6001, 6006, 6525, 6606].map(|skill| table.cast_aura(skill, 12)), [None; 6]);
         assert_eq!([5400, 6007, 6607].map(|skill| table.cast_aura(skill, 12)).len(), 3);
-        // The table's rows, as the issue lists them: 766 skills and 5 None rows.
-        assert_eq!(table.casts.len(), 776);
-        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 783);
+        // The table's rows, as the issue lists them: 766 skills and 5 None rows, and the four ninja casts' dark ribbons.
+        assert_eq!(table.casts.len(), 780);
+        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 787);
     }
 
     #[test]
@@ -8254,7 +8273,7 @@ mod tests {
             assert_eq!(table.struck(skill), Some(&[(Who::Caster, effect)][..]), "{skill}");
             assert!(table.skill(skill, "beforeHitEffectId").is_empty(), "{skill}");
         }
-        assert_eq!([table.used(3007), table.used(3006)], [Some(&[(Who::Caster, 981)][..]), Some(&[(Who::Caster, 983)][..])]);
+        assert_eq!([table.used(3007), table.used(3006)], [Some(&[(Who::Caster, 981), (Who::Caster, 986)][..]), Some(&[(Who::Caster, 983)][..])]);
         assert_eq!(table.used(3019), Some(&[(Who::Caster, 989)][..]));
         assert_eq!(table.struck(3019), Some(&[(Who::Target, 1008)][..]));
         assert!(table.world(1008).is_some());
@@ -11036,6 +11055,38 @@ mod tests {
         assert_eq!(table.status(status4::SLASH_COUNT_STATUS), [status4::SLASH_COUNT]);
         assert_eq!(table.status(status4::FROSTBITE_STATUS), [2270, status4::FROST_FRAME]);
         assert!(table.world(status4::FROSTBITE_END).is_some());
+    }
+
+    #[test]
+    fn the_ninja_objects_have_their_rows() {
+        use world_fx::ninja;
+        let table = Table::load();
+        let fx = WorldFx::default();
+        for id in [228, 735, 736, 737, 738, 984, 986, 990, 991, 1000, 1002, 1005, 1007] {
+            assert!(fx.registered(id), "{id}");
+        }
+        // Moonlight Fantasy's status starts the fog beside its other effect.
+        assert!(table.status(659).contains(&ninja::FOG) && table.status(659).contains(&963));
+        // Swirling Petal: on the target, or on the cell, the ring, the ribbons and the petals in that order; its one sound.
+        assert_eq!(table.used(3009), Some(&[(Who::Target, 984), (Who::Target, 1000), (Who::Target, 1002)][..]));
+        assert_eq!(table.ground(3009).map(|rows| rows.iter().map(|&(_, effect)| effect).collect::<Vec<_>>()), Some(vec![984, 1000, 1002]));
+        assert_eq!(table.sounds[&984].len(), 1);
+        assert_eq!(table.sounds[&984][0].file, "effect\\T_회오리차기");
+        assert_eq!(table.sounds[&990][0].file, "effect\\폭염룡");
+        // The dark ribbons start with the cast of the four Huuma and Kunai skills and with Kunai Splash's use.
+        for skill in [5483, 5484, 5485, 5487] {
+            assert_eq!(table.cast_aura(skill, 12), Some(986), "{skill}");
+            assert!(!is_cast_aura(986));
+        }
+        assert!(table.used(3007).unwrap().contains(&(Who::Caster, 986)) && table.used(3007).unwrap().contains(&(Who::Caster, 981)));
+        // Kunai Explosion's burst on each target, Shadow Trampling's square on the caster.
+        assert_eq!(table.struck(3006), Some(&[(Who::Target, 990)][..]));
+        assert_eq!(table.used(3023), Some(&[(Who::Caster, 991)][..]));
+        // The charms start only from their packet.
+        for id in [228, 735, 736, 737, 738] {
+            assert!(ninja::is_charm(id), "{id}");
+        }
+        assert!(!ninja::is_charm(984) && !ninja::is_charm(1005));
     }
 
     #[test]

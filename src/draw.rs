@@ -873,12 +873,10 @@ impl App {
                     _ => continue,
                 },
             };
-            // Shields at the waist, souls over the spheres, charms over the head.
-            let (element, charms) = orbs.charms;
+            // Shields at the waist, souls over the spheres (the charms are world objects).
             let pictures = [
                 (game.shield.as_ref(), orbs.shields, SHIELD_HEIGHT, SHIELD_SCALE, [1.0; 4]),
                 (game.sphere.as_ref(), orbs.souls, SOUL_HEIGHT, SPHERE_SCALE, SOUL_TINT),
-                (game.charm.as_ref(), charms, CHARM_HEIGHT, CHARM_SCALE, CHARM_TINTS[usize::from(element.clamp(1, 4) - 1)]),
             ];
             for (picture, count, height, scale, tint) in pictures {
                 let Some(picture) = picture else { continue };
