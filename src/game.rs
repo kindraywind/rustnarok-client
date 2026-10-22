@@ -1563,18 +1563,32 @@ impl Game {
         // From and to are the feet as drawn, not the cells' centres.
         let now = control::now();
         if let (Some(from), Some(to)) = (self.feet(caster, now), self.feet(target, now)) {
-            self.effects.aimed(
-                gpu,
-                grf,
-                table,
-                effect,
-                ((caster != self.account_id).then_some(caster), target, self.account_id),
-                from,
-                to,
-                hits,
-                Instant::now(),
-            );
+            self.launch_aimed(gpu, grf, table, effect, (caster, target), from, to, hits);
         }
+    }
+
+    /// An effect from `caster` at `from` aimed at `to`; Release Ninja Spell's throws the charms the caster holds now.
+    #[allow(clippy::too_many_arguments)]
+    fn launch_aimed(
+        &mut self,
+        gpu: &Gpu,
+        grf: &Grf,
+        table: &effects::Table,
+        effect: u32,
+        (caster, target): (u32, u32),
+        from: world::Vector,
+        to: world::Vector,
+        hits: u16,
+    ) {
+        let key = (caster != self.account_id).then_some(caster);
+        if effect == crate::prims::throw::CHARMS {
+            // ponytail: rathena takes the charms away (a count of 0) before any packet of the skill comes, and sends it no use
+            // packet, so on rathena this finds none; remembering the last charms a unit held would show them.
+            let charms = self.spirits.get(&key).map_or((0, 0), |orbs| orbs.charms);
+            self.effects.throw_charms(gpu, grf, table, charms, key, from, to, Instant::now());
+            return;
+        }
+        self.effects.aimed(gpu, grf, table, effect, (key, target, self.account_id), from, to, hits, Instant::now());
     }
 
     /// An effect the server sent with no target (`effects::aimed_at_centre`): from `unit`'s feet now, at the map's centre.
@@ -1582,7 +1596,7 @@ impl Game {
         let now = control::now();
         let Some(from) = self.feet(unit, now) else { return };
         let to = [self.world.gat.width as f32 * world::CELL / 2.0, 0.0, self.world.gat.height as f32 * world::CELL / 2.0];
-        self.effects.aimed(gpu, grf, table, effect, ((unit != self.account_id).then_some(unit), 0, self.account_id), from, to, 0, Instant::now());
+        self.launch_aimed(gpu, grf, table, effect, (unit, 0), from, to, 0);
     }
 
     /// A heal object on `unit`, standing where the unit is.

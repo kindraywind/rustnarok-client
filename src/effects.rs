@@ -2340,7 +2340,7 @@ pub fn moonlight_effect(hits: u16) -> u32 {
 /// Whether the server sends this effect (ZC_NOTIFY_EFFECT2) with no target, so it flies from its unit at the map's
 /// centre: Fire Ball's and Frost Diver's.
 pub fn aimed_at_centre(effect: u32) -> bool {
-    matches!(effect, FIRE_BALL | FROST_DIVER | JUPITEL | SPHERE | STRAIGHT_SPHERE | POTION_PITCHER | BERSERK_PITCHER | SPORE_EXPLOSION)
+    matches!(effect, FIRE_BALL | FROST_DIVER | JUPITEL | SPHERE | STRAIGHT_SPHERE) || throw::params(effect).is_some()
 }
 
 /// The effect that throws the item of a skill used (ZC_USE_SKILL): Potion Pitcher's, Berserk Pitcher's, Spore
@@ -2384,6 +2384,16 @@ const HUUJIN: u32 = 621;
 const POTION_PITCHER: u32 = 299;
 const BERSERK_PITCHER: u32 = 541;
 const SPORE_EXPLOSION: u32 = 914;
+/// The other item throws: Acid Terror's bottle, Stone Fling's stone, Throw Venom Knife's knife and the ninja throws (one a
+/// damage packet), Acid Demonstration's bottles (its cast), Kunai Splash's ring, Kunai Explosion's kunai and Release Ninja
+/// Spell's charms (their use).
+const ACID_TERROR: u32 = 298;
+const STONE_FLING: u32 = 308;
+const VENOM_KNIFE: u32 = 600;
+const SHURIKEN: u32 = 613;
+const KUNAI: u32 = 614;
+const HUUMA: u32 = 615;
+const ZENY: u32 = 616;
 /// EF_SHIELDBOOMERANG: Shield Boomerang's shield, out to the target, round and back past the caster (`prims::boomerang`).
 const SHIELD_BOOMERANG: u32 = 249;
 /// EF_SHIELDBOOMERANG2: Tomahawk's axe, thrown as the shield is.
@@ -2766,7 +2776,7 @@ pub const LISTENER: Vector = [f32::NAN; 3];
 const JUPITEL: u32 = 93;
 const GRIMTOOTH: u32 = 123;
 /// Effects launched on the caster and aimed at where the target stands, made in code (`aimed`).
-pub const AIMED: [u32; 59] = [
+pub const AIMED: [u32; 71] = [
     EF_TETRA,
     CANNON_LINES,
     STIN,
@@ -2826,6 +2836,18 @@ pub const AIMED: [u32; 59] = [
     POTION_PITCHER,
     BERSERK_PITCHER,
     SPORE_EXPLOSION,
+    ACID_TERROR,
+    STONE_FLING,
+    throw::FIRE_BOTTLE,
+    throw::ACID_BOTTLE,
+    VENOM_KNIFE,
+    SHURIKEN,
+    KUNAI,
+    HUUMA,
+    ZENY,
+    throw::KUNAI_SPLASH,
+    throw::KUNAI_EXPLOSION,
+    throw::CHARMS,
 ];
 /// EF_EARTHSPIKE and EF_HEAVENSDRIVE: stone spikes where they play (`prims`).
 const EARTH_SPIKE: u32 = 79;
@@ -4813,6 +4835,25 @@ impl Effects {
         self.prims.stone.jack_frost_star(from, now, rand);
     }
 
+    /// An item thrown by `caster` from its feet `from` at the feet `to` (`prims::throw`), with the effect's first sound
+    /// made as it leaves.
+    #[allow(clippy::too_many_arguments)]
+    fn throw_item(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, params: throw::Params, caster: Option<u32>, from: Vector, to: Vector, now: Instant) {
+        self.textures.entry(params.icon.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, params.icon, false).ok());
+        let sound = table.sounds.get(&id).and_then(|sounds| sounds.first()).map(|sound| format!("{}.wav", sound.file));
+        if let Some(throw) = throw::Throw::new(params, caster, from, to, now, sound) {
+            self.prims.throws.throw(throw);
+        }
+    }
+
+    /// Release Ninja Spell's charms, `charms` = (element, count) of them, thrown by `caster` from `from` at `to`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn throw_charms(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, charms: (u16, u16), caster: Option<u32>, from: Vector, to: Vector, now: Instant) {
+        if let Some(params) = throw::charms(charms.0, charms.1) {
+            self.throw_item(gpu, grf, table, throw::CHARMS, params, caster, from, to, now);
+        }
+    }
+
     /// An effect launched on the caster at `from`, aimed at `to` (one of `AIMED`), told the skill's hit count.
     #[allow(clippy::too_many_arguments)]
     pub fn aimed(
@@ -4827,6 +4868,13 @@ impl Effects {
         hits: u16,
         now: Instant,
     ) {
+        // The item throws; Release Ninja Spell's charms come through `throw_charms`, which knows them.
+        if let Some(params) = throw::params(id) {
+            if id != throw::CHARMS {
+                self.throw_item(gpu, grf, table, id, params, caster, from, to, now);
+            }
+            return;
+        }
         match id {
             SOUL_STRIKE => self.soul_strike(grf, from, to, hits, now, false),
             DARK_STRIKE => self.soul_strike(grf, from, to, hits, now, true),
@@ -4839,16 +4887,6 @@ impl Effects {
                     self.play_sounds(table, id, from, now);
                 }
                 self.prims.spheres.throw(tanji::Sphere::new(id == STRAIGHT_SPHERE, from, to, hits, now, self.dim));
-            }
-            POTION_PITCHER | BERSERK_PITCHER | SPORE_EXPLOSION => {
-                if let Some(path) = throw::icon_of(id) {
-                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, false).ok());
-                }
-                // Only Spore Explosion has a sound, made at the thrower's first update.
-                let sound = table.sounds.get(&id).and_then(|sounds| sounds.first()).map(|sound| format!("{}.wav", sound.file));
-                if let Some(throw) = throw::Throw::new(id, caster, from, to, now, sound) {
-                    self.prims.throws.throw(throw);
-                }
             }
             HUUJIN => {
                 self.textures.entry(huujin::WIND.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, huujin::WIND, true).ok());
@@ -5603,9 +5641,10 @@ impl Effects {
             .or_else(|| self.prims.snow.glow(unit, now))
     }
 
-    /// How many degrees `unit` has been turned since this was last asked (Falcon Assault's spin, Chase Walk's cast while it stands).
+    /// How many degrees `unit` has been turned since this was last asked (Falcon Assault's spin, Chase Walk's cast while it stands,
+    /// Kunai Splash's).
     pub fn turned(&mut self, unit: Option<u32>, now: Instant, standing: bool) -> f32 {
-        self.prims.sniper.turned(unit, now) + self.prims.guard.turned(unit, now, standing) + self.prims.brawl.turned(unit, now)
+        self.prims.sniper.turned(unit, now) + self.prims.guard.turned(unit, now, standing) + self.prims.brawl.turned(unit, now) + self.prims.throws.turned(unit)
     }
 
     /// A cast cut off: Twilight Alchemy's icons go.
@@ -7550,6 +7589,23 @@ mod tests {
         );
         assert!(table.skill(231, "effectId").is_empty());
         assert_eq!(table.sounds[&914].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\G스포어익스플로젼", 0)]);
+        // The other item throws: one a damage packet (the old `part` stand-ins and their `beforeHitEffectId` rows gone), Kunai
+        // Splash's, Kunai Explosion's and Release Ninja Spell's at the use, all aimed and from the server at the map's centre.
+        let throws = [298, 308, 539, 980, 600, 613, 614, 615, 616, 981, 983, 989];
+        assert!(throws.iter().all(|id| AIMED.contains(id) && aimed_at_centre(*id) && !table.parts.contains_key(id) && !table.floaters.contains_key(id)));
+        for (skill, effect) in [(230, 298), (152, 308), (1004, 600), (523, 613), (524, 614), (525, 615), (526, 616)] {
+            assert_eq!(table.struck(skill), Some(&[(Who::Caster, effect)][..]), "{skill}");
+            assert!(table.skill(skill, "beforeHitEffectId").is_empty(), "{skill}");
+        }
+        assert_eq!([table.used(3007), table.used(3006)], [Some(&[(Who::Caster, 981)][..]), Some(&[(Who::Caster, 983)][..])]);
+        assert_eq!(table.used(3019), Some(&[(Who::Caster, 989)][..]));
+        assert_eq!(table.struck(3019), Some(&[(Who::Target, 1008)][..]));
+        assert!(table.world(1008).is_some());
+        let first_sound = |id: u32| table.sounds.get(&id).map(|sounds| (sounds.len(), sounds[0].file.as_str(), sounds[0].delay_ms));
+        assert_eq!(first_sound(298), Some((1, "_heal_effect", 0)));
+        assert_eq!(first_sound(981), Some((1, "effect\\T_회오리차기", 0)));
+        assert!([613, 614, 615, 616, 983, 989].iter().all(|id| first_sound(*id) == Some((1, "effect\\닌자_던지기", 0))));
+        assert!([308, 539, 980, 600].iter().all(|id| !table.sounds.contains_key(id)));
         // Finger Offensive's sphere (265), Dark Strike's balls (451) and Huujin's blades (621): by the game's hit count, in the
         // aimed effects, with no generic part; Finger Offensive's first hit shows EF_HIT2 too, Dark Strike's `struck` is its own.
         assert_eq!([hit_count(265, 0, 8), hit_count(451, 37, 8), hit_count(621, 36, 9), hit_count(265, 5, 4), hit_count(24, 7, 8)], [1, 1, 36, 1, 7]);
