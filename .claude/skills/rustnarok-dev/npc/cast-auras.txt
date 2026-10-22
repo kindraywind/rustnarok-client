@@ -1,0 +1,20 @@
+// Cast auras (issue #797): whisper npc:RustnarokCastAuras a skill ID and a fresh Poring that stands 3 cells east of
+// prt_fild06 180,180 casts it on itself (a ground skill on the player's cell) with a 2 s cast, so its cast aura shows on it
+// without the skill's own costs; the last whisper's Poring goes. Loaded and unloaded by scenarios/cast-auras.json.
+prt_fild06,1,1,0	script	RustnarokCastAuras	-1,{
+	end;
+OnWhisperGlobal:
+	if (.gid)
+		unitkill .gid;
+	monster "prt_fild06", 183, 180, "--ja--", 1002, 1;
+	.gid = $@mobid[0];
+	setunitdata .gid, UMOB_MODE, MD_CANATTACK;
+	.@skill = atoi(@whispervar0$);
+	if (.@skill == 5279) {
+		getmapxy(.@map$, .@x, .@y);
+		unitskillusepos .gid, .@skill, 1, .@x, .@y, 2;
+	} else {
+		unitskilluseid .gid, .@skill, 1, .gid, 2;
+	}
+	end;
+}
