@@ -1412,6 +1412,20 @@ impl Game {
         }
     }
 
+    /// `unit`'s use of the STR world effect `effect` (D-Machine, the ABR Mother Net support); nothing for a unit not in sight.
+    pub(crate) fn used_world(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, unit: u32) {
+        if let Some(at) = self.feet(unit, control::now()) {
+            self.effects.used_world(gpu, grf, table, effect, (unit != self.account_id).then_some(unit), at);
+        }
+    }
+
+    /// A cast start by `source` of the STR world effect `effect` for `cast_ms`; nothing for a caster not in sight.
+    pub(crate) fn cast_world(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, source: u32, cast_ms: u32) {
+        if let Some(at) = self.feet(source, control::now()) {
+            self.effects.cast_world(gpu, grf, table, effect, (source != self.account_id).then_some(source), at, cast_ms);
+        }
+    }
+
     /// A use packet of Petitio (or its damage) or Gale Storm at `level` on `target`; nothing for a target not in sight.
     pub(crate) fn fourth_job_used(&mut self, gpu: &Gpu, grf: &Grf, skill: u16, target: u32, level: i32) {
         if let Some(at) = self.feet(target, control::now()) {

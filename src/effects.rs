@@ -2,7 +2,7 @@
 //! moving textures and sprites, cylinders, sprite animations, the models of skills' units on the ground (traps), and
 //! the camera shakes the client does in code.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -130,6 +130,8 @@ pub struct Table {
     statuses: HashMap<u16, Vec<u32>>,
     /// The effect started instead under /mineffect.
     min_ids: HashMap<u32, u32>,
+    /// The effects that start nothing under /mineffect (`minid` with a -).
+    min_none: HashSet<u32>,
     /// The STR world effects (world_str.txt), but for the ids a `str` row here plays.
     worlds: world_str::Table,
 }
@@ -194,6 +196,7 @@ impl Table {
             traps: HashMap::new(),
             statuses: HashMap::new(),
             min_ids: HashMap::new(),
+            min_none: HashSet::new(),
             worlds: world_str::Table::load(),
         };
         let parameters = |text: &str| -> HashMap<String, String> {
@@ -266,11 +269,15 @@ impl Table {
                         table.keeps.insert(kind, id);
                     }
                 }
-                ["minid", ..] => {
-                    if let (Some(id), Some(min)) = (number(1), number(2)) {
+                ["minid", ..] => match (number(1), number(2)) {
+                    (Some(id), Some(min)) => {
                         table.min_ids.insert(id, min);
                     }
-                }
+                    (Some(id), None) if fields.get(2) == Some(&"-") => {
+                        table.min_none.insert(id);
+                    }
+                    _ => {}
+                },
                 ["length", ..] => {
                     if let (Some(id), Some(ticks)) = (number(1), number(2)) {
                         table.lengths.insert(id, ticks);
@@ -421,6 +428,11 @@ impl Table {
     /// The effect that starts for `id`: its `minid` one under /mineffect.
     pub fn min_id(&self, id: u32, min: bool) -> u32 {
         if min { self.min_ids.get(&id).copied().unwrap_or(id) } else { id }
+    }
+
+    /// Whether starting `id` starts nothing under /mineffect (`min`).
+    pub fn off_in_min(&self, id: u32, min: bool) -> bool {
+        min && self.min_none.contains(&id)
     }
 
     /// What else a damaging skill shows as the packet comes, when the table has the skill.
@@ -2851,6 +2863,21 @@ const DIMENSION_CELL: u32 = 825;
 /// Tetra Vortex's cast, Boost Knuckle's fists, Shadow Form's silhouette, Body Painting's strokes, Deadly Infect's blink and the
 /// Masquerade debuffs' hairlines.
 const TETRA_CASTING: u32 = 805;
+/// Tetra Vortex's cast pictures: the ground ring and the ball, and their /mineffect ones.
+const TETRA_BALL: [u32; 4] = [1277, 1261, 1440, 1431];
+/// D-Machine's picture.
+const D_MACHINE: u32 = 1817;
+/// The ABR Mother Net support's net.
+const MOTHER_NET: u32 = 1904;
+/// The world effects a use packet starts through `used_world`: one copy a unit.
+pub const USED_WORLDS: [u32; 2] = [D_MACHINE, MOTHER_NET];
+/// D-Machine's picture starts this long (ms) after the use of its skill.
+const D_MACHINE_DELAY: i32 = 1430;
+
+/// The start delay (ms) of the world effect `id` launched by the use of a skill.
+fn used_delay(id: u32) -> i32 {
+    if id == D_MACHINE { D_MACHINE_DELAY } else { 0 }
+}
 const BOOST_KNUCKLE: u32 = 806;
 const SHADOW_FORM: u32 = 809;
 const BODY_PAINT: u32 = 811;
@@ -3384,6 +3411,29 @@ impl Effects {
         }
     }
 
+    /// A use of `effect` (an STR world effect) by `unit` (None = the player) standing at `at`: nothing while a copy of it runs
+    /// on the unit; D-Machine's waits 1 430 ms for the use of its skill.
+    pub fn used_world(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, effect: u32, unit: Option<u32>, at: Vector) {
+        let id = table.min_id(effect, self.min);
+        if table.off_in_min(effect, self.min) || self.worlds.playing(Some(unit), id) {
+            return;
+        }
+        if let Some(copy) = self.launch_world(gpu, grf, table, id, Some(unit), at, false, 0).and_then(|serial| self.worlds.get_mut(serial)) {
+            copy.timeline.delay = used_delay(id);
+        }
+    }
+
+    /// A cast start by `unit` (None = the player) standing at `at`: the STR world effect `effect` for the cast's `cast_ms`.
+    pub fn cast_world(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, effect: u32, unit: Option<u32>, at: Vector, cast_ms: u32) {
+        let id = table.min_id(effect, self.min);
+        if table.off_in_min(effect, self.min) {
+            return;
+        }
+        if let Some(copy) = self.launch_world(gpu, grf, table, id, Some(unit), at, false, 0).and_then(|serial| self.worlds.get_mut(serial)) {
+            copy.cut_with_cast(cast_ms);
+        }
+    }
+
     /// `unit`'s (None = the player) cast was cancelled: Competentia's sparkles, Nipelheim Requiem's cast STR and its funnel go.
     pub fn fourth_job_cast_cancelled(&mut self, unit: Option<u32>) {
         use world_fx::area4;
@@ -3391,6 +3441,9 @@ impl Effects {
             self.fx.remove(Some(unit), id);
         }
         self.worlds.remove(Some(unit), area4::NIPELHEIM_CAST);
+        for id in TETRA_BALL {
+            self.worlds.remove(Some(unit), id);
+        }
     }
 
     /// A use packet of Petitio (or its damage) or Gale Storm (at `level`) on `target` (None = the player) standing at `at`.
@@ -3449,6 +3502,15 @@ impl Effects {
         let mut counts = std::collections::BTreeMap::new();
         for object in self.fx.iter() {
             *counts.entry(object.fx.id.to_string()).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    /// How many STR world copies of each id are running (for the test driver).
+    pub fn world_str_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        let mut counts = std::collections::BTreeMap::new();
+        for copy in self.worlds.iter() {
+            *counts.entry(copy.id.to_string()).or_insert(0) += 1;
         }
         counts
     }
@@ -3576,6 +3638,9 @@ impl Effects {
     /// Plays effect `id` from `now` on `target` at `at`; parts that don't follow units stay there.
     pub fn play(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
         let asked = id;
+        if table.off_in_min(id, self.min) {
+            return;
+        }
         let id = table.min_id(id, self.min);
         // An STR world effect that names its file (the hat rows and the launcher-given ones play from their launchers): its own
         // sounds and shakes come with it.
@@ -7067,6 +7132,135 @@ mod tests {
         }
     }
 
+    /// Ticks of an STR whose last key is `last` for `steps` steps of a timeline: the shown frames (None for a wait).
+    fn shown(timeline: &mut world_str::Timeline, last: i32, steps: usize) -> Vec<Option<i32>> {
+        (0..steps).map(|_| if let world_str::Step::Show(frame) = timeline.step(last) { Some(frame) } else { None }).collect()
+    }
+
+    #[test]
+    fn d_machine_competentia_mother_net_and_tetra_vortex_have_their_rows() {
+        let table = Table::load();
+        assert_eq!(table.used(5299), Some(&[(Who::Caster, 1817)][..]));
+        assert_eq!(table.used(8604), Some(&[(Who::Target, 253), (Who::Caster, 1904)][..]));
+        assert_eq!(table.used(5304), Some(&[(Who::Caster, 1904)][..]));
+        assert_eq!(table.cast_extras(2217), [1277, 1261]);
+        assert!(table.cast_aura(2217, 12) == Some(TETRA_CASTING));
+        assert_eq!((table.min_id(1277, true), table.min_id(1261, true), table.min_id(1277, false)), (1440, 1431, 1277));
+        assert!(table.off_in_min(1852, true) && !table.off_in_min(1852, false) && !table.off_in_min(1853, true));
+        assert_eq!((table.min_id(1852, true), table.min_id(1852, false)), (1852, 1852));
+        assert_eq!(table.statuses[&1237], [1817, 2296]);
+        assert_eq!(table.statuses[&1201], [1853, 1852, 2300]);
+        for id in [1817, 1852, 1853] {
+            let row = table.world(id).unwrap();
+            assert!(row.single && row.looped, "{id}");
+        }
+        assert!(table.world(1817).unwrap().owner && !table.world(1904).unwrap().single);
+        // The head rules of the Tetra Vortex pictures and Competentia's.
+        let head = |id| table.world(id).unwrap().head;
+        assert_eq!(head(1277), world_str::Head::At { dx: 0.0, adjust: -2.0 });
+        assert_eq!(head(1261), world_str::Head::At { dx: 0.0, adjust: -5.0 });
+        assert_eq!(head(1852), world_str::Head::At { dx: 0.0, adjust: -1.0 });
+        assert_eq!(head(1431), world_str::Head::Feet);
+        assert_eq!(table.world(1904).unwrap().events, vec![world_str::Event::Sound(0, "effect\\MT_ABR_NET_SUPPORT.wav".into())]);
+    }
+
+    #[test]
+    fn a_status_copy_of_d_machine_or_competentia_is_one_and_goes_with_the_status() {
+        let table = Table::load();
+        let mut worlds = Worlds::default();
+        let launch = |id| world_str::Launch { id, owner: Some(Some(7)), point: [0.0; 3], unique: true, life: 0, min: false, roll: 0 };
+        let start = |worlds: &mut Worlds, id: u32, status: u16| {
+            let serial = worlds.launch(table.world(id).unwrap(), &launch(id), |_| Some(frames(59))).unwrap();
+            worlds.get_mut(serial).unwrap().status = Some(status);
+            serial
+        };
+        let machine = start(&mut worlds, 1817, 1237);
+        assert_eq!(start(&mut worlds, 1817, 1237), machine);
+        let (bottom, sparkles) = (start(&mut worlds, 1853, 1201), start(&mut worlds, 1852, 1201));
+        assert_eq!(start(&mut worlds, 1853, 1201), bottom);
+        assert_eq!(start(&mut worlds, 1852, 1201), sparkles);
+        assert_eq!(worlds.iter().count(), 3);
+        worlds.remove_status(Some(7), Some(1201));
+        assert_eq!(worlds.iter().map(|copy| copy.id).collect::<Vec<_>>(), [1817]);
+        worlds.remove_status(Some(7), None);
+        assert!(worlds.is_empty());
+    }
+
+    #[test]
+    fn the_looping_copies_start_again_at_their_last_key_plus_one() {
+        for last in [59, 88, 96] {
+            let mut timeline = world_str::Timeline::default();
+            timeline.looped = true;
+            let run = shown(&mut timeline, last, 2 * (last as usize + 1));
+            assert_eq!(run[last as usize], Some(last));
+            assert_eq!(run[last as usize + 1], Some(0), "{last}");
+        }
+    }
+
+    #[test]
+    fn the_use_of_d_machine_waits_1430_ms_and_the_status_does_not() {
+        assert_eq!((used_delay(1817), used_delay(1904), used_delay(1853)), (1430, 0, 0));
+        let mut used = world_str::Timeline::default();
+        used.delay = used_delay(1817);
+        let run = shown(&mut used, 58, 92);
+        assert_eq!(run.iter().position(Option::is_some), Some(90));
+        let mut status = world_str::Timeline::default();
+        assert_eq!(shown(&mut status, 58, 2), [Some(0), Some(1)]);
+        // A second launch while it runs returns the running copy, so its delay is not set again.
+        let table = Table::load();
+        let mut worlds = Worlds::default();
+        let launch = world_str::Launch { id: 1817, owner: Some(Some(7)), point: [0.0; 3], unique: false, life: 0, min: false, roll: 0 };
+        let first = worlds.launch(table.world(1817).unwrap(), &launch, |_| Some(frames(58))).unwrap();
+        assert_eq!(worlds.launch(table.world(1817).unwrap(), &launch, |_| None), Some(first));
+        assert!(worlds.playing(Some(Some(7)), 1817));
+    }
+
+    #[test]
+    fn the_mother_net_support_shows_once_and_again_after_it_ends() {
+        let table = Table::load();
+        let mut worlds = Worlds::default();
+        let units = HashMap::from([(7, [0.0; 3])]);
+        let launch = world_str::Launch { id: 1904, owner: Some(Some(7)), point: [0.0; 3], unique: false, life: 0, min: false, roll: 0 };
+        // The use starts it only when none runs, as `used_world` asks.
+        let used = |worlds: &mut Worlds| {
+            (!worlds.playing(Some(Some(7)), 1904)).then(|| worlds.launch(table.world(1904).unwrap(), &launch, |_| Some(frames(59))).unwrap())
+        };
+        assert!(used(&mut worlds).is_some());
+        cannon_ticks(&mut worlds, 30, &units);
+        assert!(used(&mut worlds).is_none());
+        cannon_ticks(&mut worlds, 40, &units);
+        assert!(used(&mut worlds).is_some());
+        assert!(world_end(&table, 1904, false, 59) <= 62);
+    }
+
+    #[test]
+    fn a_tetra_vortex_cast_cuts_both_pictures_at_the_cast_or_frame_91() {
+        let table = Table::load();
+        let end = |cast: u32| {
+            let mut worlds = Worlds::default();
+            let launch = world_str::Launch { id: 1261, owner: Some(Some(7)), point: [0.0; 3], unique: false, life: 0, min: false, roll: 0 };
+            let serial = worlds.launch(table.world(1261).unwrap(), &launch, |_| Some(frames(90))).unwrap();
+            worlds.get_mut(serial).unwrap().cut_with_cast(cast);
+            let units = HashMap::from([(7, [0.0; 3])]);
+            let mut ticks = 0;
+            while !worlds.is_empty() && ticks < 300 {
+                cannon_ticks(&mut worlds, 1, &units);
+                ticks += 1;
+            }
+            ticks - 2
+        };
+        assert_eq!(end(1000), 59);
+        assert_eq!(end(3000), 91);
+        // Both follow the caster, ground ring first.
+        assert_eq!(table.cast_extras(2217), [1277, 1261]);
+        for id in [1277, 1261, 1440, 1431] {
+            let mut worlds = Worlds::default();
+            let launch = world_str::Launch { id, owner: Some(Some(7)), point: [0.0; 3], unique: false, life: 0, min: id > 1300, roll: 0 };
+            worlds.launch(table.world(id).unwrap(), &launch, |_| Some(frames(90))).unwrap();
+            assert_eq!(worlds.iter().next().unwrap().owner, Some(Some(7)), "{id}");
+        }
+    }
+
     #[test]
     fn cannon_spear_starts_its_vortex_and_blade_once_a_vortex() {
         let table = Table::load();
@@ -7501,7 +7695,7 @@ mod tests {
         assert_eq!([5400, 6007, 6607].map(|skill| table.cast_aura(skill, 12)).len(), 3);
         // The table's rows, as the issue lists them: 766 skills and 5 None rows.
         assert_eq!(table.casts.len(), 776);
-        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 781);
+        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 783);
     }
 
     #[test]
@@ -8477,7 +8671,7 @@ mod tests {
         assert_eq!((table.used(252), table.struck(8401).map(|list| list.contains(&(Who::Target, 252)))), (Some(&[(Who::Caster, 252)][..]), Some(true)));
         assert_eq!(
             (table.used(262), table.used(335), table.used(8604)),
-            (Some(&[(Who::Caster, 253)][..]), Some(&[(Who::Target, 253)][..]), Some(&[(Who::Target, 253)][..]))
+            (Some(&[(Who::Caster, 253)][..]), Some(&[(Who::Target, 253)][..]), Some(&[(Who::Target, 253), (Who::Caster, 1904)][..]))
         );
         assert_eq!(table.sounds[&253].iter().map(|sound| sound.delay_ms).collect::<Vec<_>>(), [0]);
         // The Endows' sound comes at tick 10 (160 ms).

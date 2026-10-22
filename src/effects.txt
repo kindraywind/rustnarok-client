@@ -25,7 +25,7 @@
 # ground <skill> <ground|caster> <effect>: what a ground skill (ZC_NOTIFY_GROUNDSKILL) shows at its cell or on its caster
 # trap <skill unit type> <effect>: what a trap shows at its cell when it goes off (its look turning into 0x8c)
 # status <EFST id> <effect id>: what a status (ZC_MSG_STATE_CHANGE*) plays again and again on its unit while it's on
-# minid <effect id> <effect id under /mineffect>: with /mineffect on, starting the first starts the second instead
+# minid <effect id> <effect id under /mineffect>: with /mineffect on, starting the first starts the second instead (- : starts nothing)
 str	10	maemor	-	1
 str	13	safetywall	-	0
 str	23	stonecurse	-	1
@@ -3886,6 +3886,8 @@ cast	2213	1418
 cast	2214	-1
 cast	2216	12
 cast	2217	805
+cast	2217	1277
+cast	2217	1261
 cast	2230	12
 cast	2231	58
 cast	2233	12
@@ -4863,6 +4865,9 @@ used	8051	caster	2338
 used	8051	caster	2339
 used	8603	target	313
 used	8604	target	253
+used	8604	caster	1904
+used	5304	caster	1904
+used	5299	caster	1817
 used	2556	caster	153
 used	2596	target	424
 used	2597	target	424
@@ -5443,6 +5448,9 @@ minid	1386	1526
 minid	95	1161
 minid	90	1162
 minid	92	1163
+minid	1852	-
+minid	1277	1440
+minid	1261	1431
 # Poison Smoke's cell sends up a violet puff now and then: one draw a tick, 1 or 2 of 100.
 unitr	225	1546	1
 unitr	225	1547	2
