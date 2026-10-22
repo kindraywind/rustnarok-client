@@ -2,7 +2,7 @@
 //!
 //! README.md says what it does so far and how to set it up.
 //!
-//! Dev switches: `RUSTNAROK_CLIENT_GRF` (data.grf path), `RUSTNAROK_CLIENT_SERVER` (login server, over the data folder's
+//! Dev switches: `RUSTNAROK_CLIENT_GRF` (data.grf path, or a client folder's DATA.INI), `RUSTNAROK_CLIENT_SERVER` (login server, over the data folder's
 //! clientinfo.xml and the default 127.0.0.1:6900),
 //! `RUSTNAROK_CLIENT_LOGIN=user:password` (fill in and submit on start), `RUSTNAROK_CLIENT_AUTOSTART=<slot>` (then pick the saved
 //! server, or the first, and play that slot; any other value stops at character select), `RUSTNAROK_CLIENT_PIN=<4 digits>` (enter that PIN when
@@ -5334,7 +5334,12 @@ fn main() {
         let _ = std::env::set_current_dir(folder);
     }
     let grf_path = std::env::var("RUSTNAROK_CLIENT_GRF").unwrap_or_else(|_| "data.grf".into());
-    let mut grf = Grf::open(&grf_path).unwrap_or_else(|error| panic!("{grf_path}: {error}"));
+    // A client folder's DATA.INI: the archives it lists.
+    let grf = match grf_path.to_ascii_lowercase().ends_with(".ini") {
+        true => Grf::open_data_ini(std::path::Path::new(&grf_path), None),
+        false => Grf::open(&grf_path),
+    };
+    let mut grf = grf.unwrap_or_else(|error| panic!("{grf_path}: {error}"));
     // Like the official client, loose files in the data folder (here, a translation) go before the archive.
     let overlay = std::env::var("RUSTNAROK_CLIENT_DATA").unwrap_or_else(|_| ".".into());
     if overlay != "none" {
