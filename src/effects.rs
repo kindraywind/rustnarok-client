@@ -1451,6 +1451,7 @@ pub fn is_cast_aura(effect: u32) -> bool {
                 | 1998
                 | 2240
                 | 2249
+                | 2255
     )
 }
 
@@ -1498,6 +1499,7 @@ pub fn is_banded(effect: u32) -> bool {
                 | 1998
                 | 2240
                 | 2249
+                | 2255
     )
 }
 
@@ -1575,6 +1577,7 @@ fn aura_ticks(effect: u32, cast_ms: u32) -> u32 {
             | 1998
             | 2240
             | 2249
+            | 2255
     ) {
         56
     } else if effect == HOMUN_CASTING {
@@ -1641,6 +1644,7 @@ fn aura_look(effect: u32) -> (&'static str, [u8; 3], bool) {
         1998 => ("ring_white", [0xAC, 0x9A, 0x38], true),
         2240 => ("ring_white", [0x50, 0x14, 0x14], true),
         2249 => ("ring_white", [0xC8, 0x82, 0x54], true),
+        2255 => ("ring_white", [0xFF, 0xC6, 0x5B], true),
         _ => ("ring_yellow", [0xFF, 0xFF, 0xAA], true),
     }
 }
@@ -1838,6 +1842,7 @@ fn is_bloom(effect: u32) -> bool {
             | 1998
             | 2240
             | 2249
+            | 2255
     )
 }
 
@@ -3912,6 +3917,16 @@ impl Effects {
             _ if matches!(id, first::FLASHER_FX | first::REMOVE_TRAP | first::DETECTING) => Some(None),
             _ => None,
         };
+        // The 4th-job stat-up signs: DEX AGI UP's lettering sized by its picture and rising cyan streaks, one more with each packet.
+        if let (Some(path), Some(unit)) = (first::sign_picture(id), first_unit) {
+            for path in [path, first::STREAK] {
+                self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+            }
+            if let Some(Some(picture)) = self.textures.get(path) {
+                let picture = picture.size;
+                self.prims.first.sign(id, unit, picture, now, |n| pick(0, n.saturating_sub(1)));
+            }
+        }
         if let (true, Some(unit)) = (first::makes(id), first_unit) {
             for path in [
                 first::ALPHA_DOWN,
@@ -8638,6 +8653,27 @@ mod tests {
         for (skill, id) in [(5284, 1932), (5302, 1938), (5279, 1959), (5242, 1963), (5238, 1986), (5239, 1998), (5387, 2240), (5384, 2249), (5385, 2249)] {
             assert_eq!(table.cast_aura(skill, 12), Some(id), "{skill}");
         }
+    }
+
+    #[test]
+    fn fairy_dusty_casts_golden_cones_and_the_signs_sound() {
+        assert!(is_cast_aura(2255) && is_banded(2255) && is_bloom(2255));
+        assert_eq!([aura_ticks(2255, 0), aura_ticks(2255, 500), aura_ticks(2255, 2000)], [56, 56, 125]);
+        assert_eq!(aura_look(2255), ("ring_white", [0xFF, 0xC6, 0x5B], true));
+        let now = Instant::now();
+        let banded = Banded { effect: 2255, anchor: Anchor::Unit(None), start: now, ticks: 100, turns: [0.0; 3], extra: [0.0; 2], sparkles: Vec::new() };
+        let heights: Vec<f32> = banded.bands(0).iter().map(|(shape, _)| shape.height).collect();
+        assert_eq!(heights, [20.0, 19.0, 18.0, 17.0, 20.0, 19.0, 18.0, 17.0]);
+        let table = Table::load();
+        assert_eq!(table.cast_aura(5388, 12), Some(2255));
+        let sound = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        assert_eq!(sound(2255), [("effect\\ef_beginspell", 0)]);
+        for id in [2288, 2294, 2296, 2298, 2300] {
+            assert_eq!(sound(id), [("effect\\EF_IncAgility", 0)], "{id}");
+            assert!(first::sign_picture(id).is_some() && !first::makes(id));
+        }
+        assert!(table.status(1200).contains(&2288));
+        assert!(table.status(1201).contains(&2300));
     }
 
     #[test]

@@ -1,0 +1,113 @@
+{
+  "about": "Fairy Dusty's cast (issue #798) on open grass: a fresh Poring 3 cells east (npc/cast-auras.txt) casts Fairy Dusty (5388) with a 2 s cast and golden cones bloom round its feet (a shot 600 ms in).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild06 180 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/cast-auras.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/cast-auras.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            180,
+            180
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokCastAuras"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "5388"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "shot": "fairy-dusty-cast",
+      "crop": [
+        362,
+        184,
+        400,
+        320
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 4000
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/cast-auras.txt"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1000
+    }
+  ]
+}

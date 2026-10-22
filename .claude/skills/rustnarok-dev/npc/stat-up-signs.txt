@@ -1,0 +1,27 @@
+// The 4th-job stat-up signs (issue #798) at prt_fild08 170,360: whisper npc:RustnarokSigns "acies" (Pre Acies, C.RATE UP),
+// "powerful" (Powerful Faith, P.ATK UP), "firm" (Firm Faith, RES UP), "spell" (Spell Enchanting, S.MATK UP) or "comp"
+// (Competentia, P.ATK / S.MATK UP) and the player gets that status for a minute; "off" ends them all. Loaded and unloaded by
+// scenarios/stat-up-signs.json.
+prt_fild08,1,1,0	script	RustnarokSigns	-1,{
+	end;
+OnWhisperGlobal:
+	percentheal 100, 100;
+	if (@whispervar0$ == "acies") {
+		sc_start SC_PRE_ACIES, 60000, 1;
+	} else if (@whispervar0$ == "powerful") {
+		sc_start SC_POWERFUL_FAITH, 60000, 1;
+	} else if (@whispervar0$ == "firm") {
+		sc_start SC_FIRM_FAITH, 60000, 1;
+	} else if (@whispervar0$ == "spell") {
+		sc_start SC_SPELL_ENCHANTING, 60000, 1;
+	} else if (@whispervar0$ == "comp") {
+		sc_start SC_COMPETENTIA, 60000, 1;
+	} else if (@whispervar0$ == "off") {
+		sc_end SC_PRE_ACIES;
+		sc_end SC_POWERFUL_FAITH;
+		sc_end SC_FIRM_FAITH;
+		sc_end SC_SPELL_ENCHANTING;
+		sc_end SC_COMPETENTIA;
+	}
+	end;
+}
