@@ -1489,6 +1489,14 @@ impl Game {
         }
     }
 
+    /// A charm packet for `unit`: the charm orbs of its kind and count round it, none while it is hidden or cloaked.
+    pub(crate) fn charms(&mut self, gpu: &Gpu, grf: &Grf, unit: u32, kind: u16, count: u16) {
+        let actor = if unit == self.account_id { Some(&self.player) } else { self.units.get(&unit) };
+        let seen = actor.is_some_and(|actor| actor.hide_option & actor::UNSEEN_OPTIONS == 0);
+        let at = self.feet(unit, control::now());
+        self.effects.charms(gpu, grf, (unit != self.account_id).then_some(unit), (kind, count), at, seen);
+    }
+
     /// The spirit count of `unit`: the Abyss Chaser's shadow balls or the Dragon Knight's swords.
     pub(crate) fn spirit_objects(&mut self, gpu: &Gpu, grf: &Grf, unit: u32, count: u16) {
         if let Some((job, seen, at)) = self.spirit_owner(unit, crate::world_fx::status4::object_spheres) {

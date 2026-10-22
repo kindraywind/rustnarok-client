@@ -329,7 +329,6 @@ impl App {
                     shadow_scars: HashMap::new(),
                     sphere: gpu.try_load_texture(&self.grf, "data\\texture\\effect\\기구.bmp", true).ok(),
                     shield: render::load_image(&self.grf, "data\\texture\\effect\\shield.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
-                    charm: render::load_image(&self.grf, "data\\texture\\effect\\charm.bmp").ok().map(|image| gpu.texture(&render::glow(image), true)),
                     coin_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\동전"),
                     digits: Digits::load(gpu, &self.grf),
                     message_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\msg"),
@@ -1281,6 +1280,9 @@ impl App {
                 change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| {
                     orbs.charms = if (1..=4).contains(&kind) { (kind, count) } else { (0, 0) }
                 });
+                if let Some(gpu) = gpu {
+                    game.charms(gpu, grf, id, kind, count);
+                }
             }
             MapEvent::Souls { id, count } => change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.souls = count),
             MapEvent::ShadowScars { unit, amount } => {
