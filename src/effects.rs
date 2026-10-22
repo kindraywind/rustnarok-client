@@ -2152,6 +2152,8 @@ pub struct Effects {
     fx: WorldFx,
     /// The units (None = the player) whose Shadow Exceed double just ended: they start leaving afterimages.
     afterimages: Vec<Option<u32>>,
+    /// Severe Rainstorm's casts dropping light shafts; they tick with the STR world copies.
+    shafts: Vec<Shafts>,
 }
 
 /// What the world objects load, through the effects' caches.
@@ -2485,6 +2487,33 @@ pub fn storm_gust_effect(skill: u16, effect: u32, min: bool) -> u32 {
     if effect == STORM_GUST && min && matches!(skill, 89 | 723) { 708 } else { effect }
 }
 
+/// Whether effect `id` also plays in code beside its STR world copy (or the copy's /mineffect twin): Cart Tornado's spin.
+fn also_shown(id: u32) -> bool {
+    id == CART_TORNADO
+}
+
+/// Severe Rainstorm's cast aura on `unit`: `length` ticks, now `age` ticks old.
+struct Shafts {
+    unit: Option<u32>,
+    age: u32,
+    length: u32,
+}
+
+/// One tick of the casts: the points where a set of light shafts starts (the caster's feet then). A cast whose caster is gone
+/// starts no more.
+fn shafts_due(shafts: &mut Vec<Shafts>, feet: &dyn Fn(Option<u32>) -> Option<Vector>) -> Vec<Vector> {
+    let mut points = Vec::new();
+    shafts.retain_mut(|cast| {
+        let Some(at) = feet(cast.unit) else { return false };
+        if cast.age % SHAFTS_EVERY == 0 {
+            points.push(at);
+        }
+        cast.age += 1;
+        cast.age < cast.length
+    });
+    points
+}
+
 /// Rampage Blaster (2332) under /mineffect flashes only the body, 1545, where the chi burst (886) would also open its crescents.
 pub fn rampage_effect(skill: u16, effect: u32, min: bool) -> u32 {
     if effect == CHI_BURST && min && skill == 2332 { RAMPAGE_BODY } else { effect }
@@ -2623,8 +2652,11 @@ const VULCAN_HOLES: u32 = 1705;
 pub const DRAGON_BREATHS: [u16; 3] = [2008, 731, 5004];
 const WATER_BREATH: u16 = 5004;
 const BREATH_SOUND: &str = "effect\\폭염룡.wav";
-/// Cart Tornado's spin of its caster (`prims::brawl`).
+/// Cart Tornado's spin of its caster (`prims::brawl`), which also starts its whirlwind's STR world copy.
 const CART_TORNADO: u32 = 1365;
+/// Severe Rainstorm's light shafts, a set every `SHAFTS_EVERY` ticks of its cast aura, left where the caster stood.
+const RAINSTORM_SHAFTS: u32 = 1285;
+const SHAFTS_EVERY: u32 = 30;
 /// Cannon Spear's pale blue lines (`prims::brawl`).
 const CANNON_LINES: u32 = 1409;
 /// Sound of Destruction's red music notes (`prims::guard`).
@@ -3080,7 +3112,7 @@ impl Effects {
         let due = world_ticks(now.saturating_duration_since(*clock));
         // A long stall (a loading screen) skips ahead rather than running every tick.
         *clock = if due > WORLD_TICKS_MAX { now } else { *clock + WORLD_TICK * due };
-        if self.worlds.is_empty() && self.fx.is_empty() && self.unit_starts.is_empty() {
+        if self.worlds.is_empty() && self.fx.is_empty() && self.unit_starts.is_empty() && self.shafts.is_empty() {
             return;
         }
         for _ in 0..due.min(WORLD_TICKS_MAX) {
@@ -3092,6 +3124,9 @@ impl Effects {
             }
             for (world, owner, at) in starts {
                 self.launch_world(gpu, grf, table, world, owner, at, false, 0);
+            }
+            for point in shafts_due(&mut self.shafts, scene.feet) {
+                self.launch_world(gpu, grf, table, table.min_id(RAINSTORM_SHAFTS, self.min), None, point, false, 0);
             }
             let mut fired = self.worlds.tick(scene);
             let (fx, mut assets) = self.fx_assets(gpu, grf);
@@ -3468,6 +3503,7 @@ impl Effects {
 
     /// Plays effect `id` from `now` on `target` at `at`; parts that don't follow units stay there.
     pub fn play(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, target: Target, at: Vector, now: Instant) {
+        let asked = id;
         let id = table.min_id(id, self.min);
         // An STR world effect that names its file (the hat rows and the launcher-given ones play from their launchers): its own
         // sounds and shakes come with it.
@@ -3486,6 +3522,12 @@ impl Effects {
             if let Some(copy) = serial.filter(|_| id == VULCAN_HOLES).and_then(|serial| self.worlds.get_mut(serial)) {
                 copy.controls.turn = vulcan_turn(pick(0, 35));
             }
+            if !also_shown(asked) {
+                return;
+            }
+            // Cart Tornado's spin and its sound play beside the whirlwind.
+            self.play_sounds(table, asked, at, now);
+            self.show(gpu, grf, table, asked, target, at, now);
             return;
         }
         // A registered world object; the footprint classes come only with a hat effect, the heal objects only with a packet,
@@ -3607,6 +3649,7 @@ impl Effects {
             self.play_sounds(table, id, at, now);
             let ticks = cast_ms / crate::prims::TICK.as_millis() as u32;
             self.prims.songs.rain(unit, ticks, self.min, now);
+            self.shafts.push(Shafts { unit, age: 0, length: ticks.max(120) });
             return;
         }
         // The Sura casts: bubble cones over two blue squares.
@@ -9501,6 +9544,51 @@ mod tests {
         assert!(AIMED.contains(&CANNON_LINES) && !aimed_at_centre(CANNON_LINES));
         assert!(table.struck(2307).unwrap().contains(&(Who::Caster, CANNON_LINES)));
         assert_eq!(sounds(CANNON_LINES), [("effect\\LG_CANNONSPEAR", 0, true)]);
+    }
+
+    #[test]
+    fn severe_rainstorm_cart_tornado_and_rampage_blaster_start_their_world_copies() {
+        // Cart Tornado's rings, and Rampage Blaster's blast column and shock rings: STR world copies alone.
+        const CART_RINGS: u32 = 1366;
+        const RAMPAGE_COLUMN: u32 = 1310;
+        const RAMPAGE_RINGS: u32 = 1311;
+        let table = Table::load();
+        // Each id is an STR world effect, with its lighter twin under /mineffect.
+        for (id, min) in [(RAINSTORM_SHAFTS, 1533), (CART_TORNADO, 1501), (CART_RINGS, 1502), (RAMPAGE_COLUMN, 1461), (RAMPAGE_RINGS, 1462)] {
+            assert!(table.world(id).is_some() && table.world(min).is_some(), "{id}");
+            assert_eq!((table.min_id(id, true), table.min_id(id, false)), (min, id));
+        }
+        // Cart Tornado: the spin and the whirlwind, and the rings, on the caster; the spin plays beside either world copy.
+        let tornado = table.used(2476).unwrap();
+        assert!(tornado.contains(&(Who::Caster, CART_TORNADO)) && tornado.contains(&(Who::Caster, CART_RINGS)));
+        assert!(also_shown(CART_TORNADO) && !also_shown(CART_RINGS));
+        // Rampage Blaster: the column and the rings on the caster at each damage packet, beside the chi burst.
+        let rampage = table.struck(2332).unwrap();
+        assert!([CHI_BURST, RAMPAGE_COLUMN, RAMPAGE_RINGS].iter().all(|id| rampage.contains(&(Who::Caster, *id))));
+        // None of the copies follows by itself past its STR, and none sounds.
+        for id in [RAINSTORM_SHAFTS, CART_RINGS, RAMPAGE_COLUMN, RAMPAGE_RINGS] {
+            let row = table.world(id).unwrap();
+            assert!(!row.single && !row.looped && !row.owner && row.events.is_empty() && !table.sounds.contains_key(&id), "{id}");
+        }
+    }
+
+    #[test]
+    fn severe_rainstorm_cast_drops_shafts_every_30_ticks_where_the_caster_stood() {
+        // A cast aura of 120 ticks: sets at its ages 0, 30, 60 and 90, at the caster's feet at that tick.
+        let mut shafts = vec![Shafts { unit: Some(7), age: 0, length: 120 }];
+        let mut drops = Vec::new();
+        for tick in 0..200u32 {
+            let feet = move |unit: Option<u32>| (unit == Some(7)).then_some([tick as f32, 0.0, 0.0]);
+            drops.extend(shafts_due(&mut shafts, &feet));
+        }
+        assert_eq!(drops, [0.0, 30.0, 60.0, 90.0].map(|x| [x, 0.0, 0.0]));
+        assert!(shafts.is_empty());
+        // A long cast lasts its own length; a caster that is gone drops none and ends the sets.
+        let mut shafts = vec![Shafts { unit: Some(7), age: 0, length: 151 }];
+        let count = (0..200).map(|_| shafts_due(&mut shafts, &|_| Some([0.0; 3])).len()).sum::<usize>();
+        assert_eq!(count, 6);
+        let mut shafts = vec![Shafts { unit: Some(7), age: 0, length: 120 }];
+        assert!(shafts_due(&mut shafts, &|_| None).is_empty() && shafts.is_empty());
     }
 
     #[test]

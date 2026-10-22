@@ -4461,6 +4461,8 @@ struck	2327	caster	886
 struck	2327	caster	890
 struck	2330	target	889
 struck	2332	caster	886
+struck	2332	caster	1310
+struck	2332	caster	1311
 struck	2336	target	458
 struck	2426	target	466
 struck	2429	target	425
@@ -4818,6 +4820,7 @@ used	2455	target	931
 used	2461	caster	934
 used	5478	target	10010
 used	2476	caster	1365
+used	2476	caster	1366
 used	2480	target	216
 used	2493	caster	886
 used	2493	caster	439
@@ -5393,6 +5396,11 @@ length	1678	1678
 length	1053	999
 length	1054	9999
 length	1600	200
+minid	1285	1533
+minid	1365	1501
+minid	1366	1502
+minid	1310	1461
+minid	1311	1462
 minid	1296	1459
 minid	1297	1460
 minid	1314	1477
