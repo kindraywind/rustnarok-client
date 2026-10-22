@@ -26,6 +26,10 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_NOTIFY_TIME => MapEvent::ServerTime(u32_at(2), Instant::now()),
         ZC_NOTIFY_VANISH => MapEvent::Vanish { id: u32_at(2), reason: packet[6] },
+        ZC_NOTIFY_MOVE => {
+            let (from, to) = decode_move(&packet[6..12]);
+            MapEvent::UnitMove { id: u32_at(2), from, to, start_time: u32_at(12), sub: [packet[11] >> 4, packet[11] & 0x0F] }
+        }
         ZC_NOTIFY_PLAYERMOVE => {
             let (from, to) = decode_move(&packet[6..12]);
             MapEvent::PlayerMove { from, to, start_time: u32_at(2), sub: [packet[11] >> 4, packet[11] & 0x0F] }
@@ -69,6 +73,17 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             kind: packet[29],
             left_damage: u32_at(30) as i32,
         }),
+        ZC_NOTIFY_ACT_OLD => MapEvent::Act(Act {
+            source: u32_at(2),
+            target: u32_at(6),
+            source_speed: u32_at(14) as i32,
+            target_speed: u32_at(18) as i32,
+            damage: i32::from(u16_at(22) as i16),
+            sp: false,
+            hits: u16_at(24),
+            kind: packet[26],
+            left_damage: i32::from(u16_at(27) as i16),
+        }),
         ZC_PAR_CHANGE => MapEvent::Status { id: u16_at(2), value: i64::from(u32_at(4) as i32) },
         ZC_SKILLINFO_LIST => MapEvent::Skills(packet[4..].chunks_exact(SKILL_SIZE).map(decode_skill).collect()),
         ZC_ADD_SKILL => MapEvent::SkillChanged(decode_skill(&packet[2..])),
@@ -98,7 +113,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 .collect(),
         ),
         ZC_REPUTE_OPEN => MapEvent::ReputationOpen { group: u64::from_le_bytes(packet[2..10].try_into().unwrap()), repute: u32_at(10) },
-        ZC_USESKILL_ACK => MapEvent::Casting {
+        ZC_USESKILL_ACK | ZC_USESKILL_ACK2 => MapEvent::Casting {
             source: u32_at(2),
             target: u32_at(6),
             cell: [u16_at(10), u16_at(12)],

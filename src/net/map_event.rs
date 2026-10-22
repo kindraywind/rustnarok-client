@@ -22,6 +22,14 @@ pub enum MapEvent {
         /// Where in its start cell it is, in sixteenths (8: the centre).
         sub: [u8; 2],
     },
+    /// A unit already in view walks (ZC_NOTIFY_MOVE): from its start cell and sub-cell at the server's tick.
+    UnitMove {
+        id: u32,
+        from: [u16; 2],
+        to: [u16; 2],
+        start_time: u32,
+        sub: [u8; 2],
+    },
     Vanish {
         id: u32,
         reason: u8,

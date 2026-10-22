@@ -547,6 +547,9 @@ impl CharSession {
                 }
             })()
             .unwrap_err();
+            if std::env::var_os("RUSTNAROK_CLIENT_TRACE").is_some() {
+                eprintln!("char connection dropped: {error}");
+            }
             on_event(CharEvent::Disconnected(error));
         });
         Ok(Self { stream, account_id: login.account_id, pinged: Instant::now() })
@@ -732,8 +735,11 @@ fn lengths_for(version: u32) -> &'static HashMap<u16, i32> {
     if version >= PACKETVER_20250402 { &NEW } else { &OLD }
 }
 
+/// Then the lengths of older packets some servers still send (packet_lengths_extra.txt), so they don't drop the
+/// connection.
 fn packet_length(id: u16) -> Option<i32> {
-    lengths_for(packetver()).get(&id).copied()
+    static EXTRA: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("packet_lengths_extra.txt")));
+    lengths_for(packetver()).get(&id).or_else(|| EXTRA.get(&id)).copied()
 }
 
 /// Dev hook (the client's control socket): sees every packet read from the char and map servers.
@@ -873,6 +879,7 @@ const CZ_REQ_WHISPER_LIST: u16 = 0x00D3;
 const ZC_WHISPER_LIST: u16 = 0x00D4;
 const ZC_ACCEPT_ENTER: u16 = 0x02EB;
 const ZC_NOTIFY_VANISH: u16 = 0x0080;
+const ZC_NOTIFY_MOVE: u16 = 0x0086;
 const ZC_NOTIFY_PLAYERMOVE: u16 = 0x0087;
 const ZC_NOTIFY_TIME: u16 = 0x007F;
 const ZC_STOPMOVE: u16 = 0x0088;
@@ -911,6 +918,8 @@ const CZ_PROGRESS: u16 = 0x02F1;
 const ZC_PROGRESS_CANCEL: u16 = 0x02F2;
 const ZC_PROGRESS_ACTOR: u16 = 0x09D1;
 const ZC_NOTIFY_ACT: u16 = 0x08C8;
+/// The same act before 20071113: damage in 16 bits, no SP flag.
+const ZC_NOTIFY_ACT_OLD: u16 = 0x008A;
 const ZC_PAR_CHANGE: u16 = 0x00B0;
 const ZC_LONGLONGPAR_CHANGE: u16 = 0x0ACB;
 const ZC_HP_INFO: u16 = 0x0977;
@@ -956,6 +965,8 @@ const CZ_UPGRADE_SKILLLEVEL: u16 = 0x0112;
 const CZ_USE_SKILL: u16 = 0x0438;
 const CZ_USE_SKILL_TOGROUND: u16 = 0x0366;
 const ZC_USESKILL_ACK: u16 = 0x0B1A;
+/// The same cast before 20181212, without the attack motion at the end.
+const ZC_USESKILL_ACK2: u16 = 0x07FB;
 /// A unit's cast was cut off (rathena's clif_skillcastcancel).
 const ZC_DISPEL: u16 = 0x01B9;
 /// The server starts a navigation (rathena's clif_navigateTo).

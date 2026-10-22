@@ -963,6 +963,18 @@ impl App {
                 game.want_emblem(unit.guild, unit.emblem);
                 game.monster_hp(&unit);
             }
+            // A unit we already see walks, on the same shown clock as a move entry; one we don't know waits for its entry.
+            MapEvent::UnitMove { id, from, to, start_time, sub } => {
+                if let Some(actor) = game.units.get_mut(&id) {
+                    let now = control::now();
+                    self.server_clock.heard(start_time, Instant::now());
+                    let begin = self.server_clock.local(start_time).map_or(now, |at| at + actor::REMOTE_DELAY);
+                    let from = from.map(i32::from);
+                    if let Some(path) = world::find_unit_path(&game.world.gat, from, to.map(i32::from), actor.kind) {
+                        actor.walk_from(from, sub, path, begin, now, true);
+                    }
+                }
+            }
             // The bank: open on the server's word, then ask the balance; refusals by rathena's reasons.
             // ponytail: which message goes with which reason is read off their words.
             MapEvent::BankOpened => {
