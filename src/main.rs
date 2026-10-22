@@ -5021,7 +5021,6 @@ impl ApplicationHandler<NetEvent> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => gpu.resize(),
-            WindowEvent::Focused(focused) if control::driven() => gpu.hidden = !focused,
             // Driven over the control socket: the real mouse and keyboard would stray into the commands.
             WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } | WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. }
                 if control::driven() => {}

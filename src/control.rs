@@ -2,8 +2,8 @@
 //! (owner only, no TCP port; on Windows, a localhost port that `path` names with a token, see `bind`) for
 //! newline-delimited JSON commands and answers each with one line of JSON
 //! (`{"ok": true, ...}` or `{"ok": false, "error": ...}`). Without the variable none of this runs. A driven client
-//! ignores the real mouse and keyboard, opens behind the window in use and draws on screen only while it has the focus
-//! (click it to watch); screenshots don't need that.
+//! ignores the real mouse and keyboard and opens behind the window in use; it draws on screen whenever it's visible,
+//! focused or not, and screenshots don't need that.
 //!
 //! With `RUSTNAROK_CLIENT_CONTROL_SHARED` as well, the player plays the same client (see mcp.rs).
 //!

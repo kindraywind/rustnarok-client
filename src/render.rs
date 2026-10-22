@@ -71,9 +71,6 @@ pub struct Gpu {
     pub texture_layout: wgpu::BindGroupLayout,
     pixel_sampler: wgpu::Sampler,
     smooth_sampler: wgpu::Sampler,
-    /// Frames aren't presented: a client driven over the control socket opens behind the window in use, and waiting
-    /// for a drawable there can block for good. It presents while it has the focus (click it to watch).
-    pub hidden: bool,
     /// The window was fully covered at the last draw, so nothing was presented and nothing waits for the display; and
     /// when that draw began. `request_frame` paces frames by them.
     occluded: bool,
@@ -215,7 +212,6 @@ impl Gpu {
             texture_layout,
             pixel_sampler,
             smooth_sampler,
-            hidden: crate::control::driven(),
             occluded: false,
             drawn_at: Instant::now(),
             texts: RefCell::new(HashMap::new()),
@@ -316,11 +312,6 @@ impl Gpu {
     pub fn draw(&mut self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) {
         crate::control::on_draw(self, world, sprites, alphas);
         self.drawn_at = Instant::now();
-        if self.hidden {
-            // The frame's texture uploads still go out, or they'd pile up until the next screenshot.
-            self.queue.submit([]);
-            return;
-        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
