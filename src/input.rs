@@ -1789,7 +1789,7 @@ impl App {
                     // Rows go on the press; the buttons on the click.
                     let [ok, cancel] = npc_menu::buttons(menu.items.len()).map(|place| game.npc_menu.at(place));
                     if hit(ok, &assets.ok) {
-                        game.menu_ok();
+                        game.menu_ok(false);
                     } else if hit(cancel, &assets.cancel) {
                         game.choose(true);
                     }
@@ -3084,7 +3084,7 @@ impl App {
             if menu.grips(local) {
                 game.npc_menu.start_drag(cursor);
             } else if menu.press(local, Instant::now()) {
-                game.menu_ok();
+                game.menu_ok(false);
             }
             return;
         }
@@ -3923,19 +3923,27 @@ impl App {
             }
             Scene::Game(game) if game.dialog.is_some() => {
                 let dialog = game.dialog.as_mut().unwrap();
+                // Enter and Space: the input box's, else (Space only with nothing in the chat line) the menu's OK or
+                // Next and Close (see npc_say::dialog_key).
+                if let Key::Named(named @ (NamedKey::Enter | NamedKey::Space)) = key {
+                    let chat_text = game.chat_mode.chat_line_open() && !game.chat.input.is_empty();
+                    match npc_say::dialog_key(*named == NamedKey::Space, dialog.input.is_some(), dialog.menu.is_some(), chat_text) {
+                        npc_say::DialogKey::Submit => game.submit_input(),
+                        npc_say::DialogKey::TypeInput => dialog.input.as_mut().unwrap().type_text(" "),
+                        npc_say::DialogKey::TypeChat => game.chat.type_text(" "),
+                        npc_say::DialogKey::MenuOk => game.menu_ok(true),
+                        npc_say::DialogKey::Button => game.press_dialog_button(false),
+                    }
+                    return;
+                }
                 match (key, &mut dialog.input, &mut dialog.menu) {
-                    (Key::Named(NamedKey::Enter), Some(_), _) => game.submit_input(),
                     (Key::Named(NamedKey::Backspace), Some(input), _) => input.backspace(),
                     (_, Some(input), _) => input.type_text(event.text.as_deref().unwrap_or_default()),
                     (Key::Named(NamedKey::ArrowUp), _, Some(menu)) => menu.step(false),
                     (Key::Named(NamedKey::ArrowDown), _, Some(menu)) => menu.step(true),
-                    (Key::Named(NamedKey::Enter), _, Some(_)) => game.menu_ok(),
-                    // Without a menu Up and Down scroll the text, and Enter (or Space with the chat line closed)
-                    // presses Next or Close.
+                    // Without a menu Up and Down scroll the text.
                     (Key::Named(NamedKey::ArrowUp), None, None) => game.say.scroll_by(-npc_say::SCROLL_STEP),
                     (Key::Named(NamedKey::ArrowDown), None, None) => game.say.scroll_by(npc_say::SCROLL_STEP),
-                    (Key::Named(NamedKey::Enter), None, None) => game.press_dialog_button(false),
-                    (Key::Named(NamedKey::Space), None, None) if !game.chat_mode.chat_line_open() => game.press_dialog_button(false),
                     _ => {}
                 }
             }

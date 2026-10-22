@@ -30,13 +30,26 @@ impl Game {
         self.dialog.as_mut().unwrap()
     }
 
-    /// The dialog's next/close button, `clicked` or pressed by key: Next and a clicked Close wait out the throttle.
+    /// The dialog's next/close button, `clicked` or pressed by key: Next and a clicked Close wait out the throttle. A
+    /// key's Next that comes too soon goes through when the wait ends (`queued_dialog_press`); a click's is dropped.
     pub(crate) fn press_dialog_button(&mut self, clicked: bool) {
-        let Some(dialog) = &mut self.dialog else { return };
-        let throttled = dialog.button == DialogButton::Next || clicked;
-        if dialog.button == DialogButton::None || (throttled && !self.say.throttle.pass(Instant::now())) {
+        let Some(dialog) = &self.dialog else { return };
+        if dialog.button == DialogButton::None {
             return;
         }
+        if dialog.button == DialogButton::Next || clicked {
+            let now = Instant::now();
+            let through = if clicked { self.say.throttle.pass(now) } else { self.say.throttle.press(now, npc_say::Queued::Next) };
+            if !through {
+                return;
+            }
+        }
+        self.dialog_button();
+    }
+
+    /// Next or Close, now.
+    fn dialog_button(&mut self) {
+        let Some(dialog) = &mut self.dialog else { return };
         match dialog.button {
             DialogButton::Next => {
                 let _ = self.session.next(dialog.npc);
@@ -81,11 +94,63 @@ impl Game {
         self.say.end_talk();
     }
 
-    /// The menu's OK, on the say window's 300 ms timer.
-    pub(crate) fn menu_ok(&mut self) {
-        if self.say.throttle.pass(Instant::now()) {
+    /// The menu's OK, on the say window's 300 ms timer: by `key` (Enter, Space) one that comes too soon goes through
+    /// when the wait ends (`queued_dialog_press`), a click's is dropped.
+    pub(crate) fn menu_ok(&mut self, key: bool) {
+        let now = Instant::now();
+        let through = if key { self.say.throttle.press(now, npc_say::Queued::MenuOk) } else { self.say.throttle.pass(now) };
+        if through {
             self.choose(false);
         }
+    }
+
+    /// Each frame: a key's Next or menu OK that came inside the 300 ms wait goes through once the wait is over, if
+    /// what it pressed is still there.
+    pub(crate) fn queued_dialog_press(&mut self, now: Instant) {
+        let Some(queued) = self.say.throttle.queued() else { return };
+        let still = self.dialog.as_ref().is_some_and(|dialog| match queued {
+            npc_say::Queued::Next => dialog.button == DialogButton::Next,
+            npc_say::Queued::MenuOk => dialog.menu.is_some(),
+        });
+        if !still {
+            self.say.throttle.forget();
+            return;
+        }
+        match self.say.throttle.due(now) {
+            Some(npc_say::Queued::Next) => self.dialog_button(),
+            Some(npc_say::Queued::MenuOk) => self.choose(false),
+            None => {}
+        }
+    }
+
+    /// The NPC dialog's buttons as the control socket names them, with the boxes their clicks test: `npc_next` or
+    /// `npc_close`, each menu row shown as `npc_menu:<index>`, `npc_menu_ok` and `npc_menu_cancel`, and `npc_input_ok`.
+    /// `ok` and `cancel` are the buttons' image sizes.
+    pub(crate) fn dialog_button_boxes(&self, ok: [f32; 2], cancel: [f32; 2]) -> Vec<(String, [f32; 4])> {
+        let Some(dialog) = &self.dialog else { return Vec::new() };
+        let mut boxes = Vec::new();
+        if let Some(input) = &dialog.input {
+            let [x, y] = input.ok_on(screen());
+            boxes.push(("npc_input_ok".to_owned(), [x, y, ok[0], ok[1]]));
+        }
+        let name = match dialog.button {
+            DialogButton::Next => Some("npc_next"),
+            DialogButton::Close => Some("npc_close"),
+            DialogButton::None => None,
+        };
+        if let Some(name) = name.filter(|_| dialog.warp.is_none()) {
+            boxes.push((name.to_owned(), self.say.button_box()));
+        }
+        if let Some(menu) = &dialog.menu {
+            for (index, [x, y, width, height]) in menu.row_boxes() {
+                let [x, y] = self.npc_menu.at([x, y]);
+                boxes.push((format!("npc_menu:{index}"), [x, y, width, height]));
+            }
+            let [ok_at, cancel_at] = npc_menu::buttons(menu.items.len()).map(|place| self.npc_menu.at(place));
+            boxes.push(("npc_menu_ok".to_owned(), [ok_at[0], ok_at[1], ok[0], ok[1]]));
+            boxes.push(("npc_menu_cancel".to_owned(), [cancel_at[0], cancel_at[1], cancel[0], cancel[1]]));
+        }
+        boxes
     }
 
     /// The input box's OK: nothing for an empty field; otherwise the answer goes to an NPC still in view (a text

@@ -1,0 +1,25 @@
+// Two pages, a menu right after a Next, a second menu and an input box (issue #1036). Loaded and unloaded by
+// scenarios/npc-dialog-keys.json.
+iz_int01,20,24,4	script	Key Clerk	4_M_01,{
+	mes "[Key Clerk]";
+	mes "Page one.";
+	next;
+	mes "Page two.";
+	next;
+	mes "Page three.";
+	switch (select("Stay:Leave:Wave")) {
+	case 2:
+		mes "Leaving.";
+		break;
+	default:
+		mes "Staying.";
+		break;
+	}
+	next;
+	mes "Pick again.";
+	select("A:B:C");
+	mes "Some text?";
+	input .@s$;
+	mes "Got " + .@s$ + ".";
+	close;
+}
