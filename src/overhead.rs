@@ -190,6 +190,13 @@ pub fn corner(anchor: [f32; 2], size: [f32; 2], screen: [f32; 2]) -> [f32; 2] {
     [place(anchor[0] - (size[0] / 2.0).floor(), 0), place(anchor[1] - size[1], 1)]
 }
 
+/// The corner of a balloon showing a cut text whole over where it was drawn: its words start on the text's own
+/// `spot`, the box kept on a `screen` like the others.
+pub fn over_text_corner(spot: [f32; 2], size: [f32; 2], screen: [f32; 2]) -> [f32; 2] {
+    let place = |at: f32, axis: usize| at.clamp(-OVER_EDGE, screen[axis] - size[axis] + OVER_EDGE).round();
+    [place(spot[0] - TEXT_AT[0], 0), place(spot[1] - TEXT_AT[1], 1)]
+}
+
 /// A name's top-left corner: centred under `point`, kept on a `screen`.
 /// A hovered player's name block's lines: `[Title] Name (Party)`, then `Guild [Position]` when they have a guild.
 pub fn name_lines(name: &str, title: Option<&str>, party: &str, guild: &str, position: &str) -> Vec<String> {
@@ -379,6 +386,13 @@ mod tests {
         // Hangul counts two a character: 17 fit.
         assert_eq!(lines(&"가".repeat(20)), ["가".repeat(17), "가".repeat(3)]);
         assert_eq!(lines("a\nb"), ["a", "b"]);
+    }
+
+    #[test]
+    fn a_whole_text_balloon_starts_its_words_on_the_text() {
+        assert_eq!(over_text_corner([461.0, 274.0], [200.0, 20.0], [1024.0, 768.0]), [455.0, 270.0]);
+        // Near the right edge it moves left, at most 3 px past the edge.
+        assert_eq!(over_text_corner([900.0, 274.0], [200.0, 20.0], [1024.0, 768.0]), [827.0, 270.0]);
     }
 
     #[test]

@@ -184,10 +184,26 @@ pub fn draw_sign<'a>(layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, sig
         _ => 0,
     }];
     layer.sprites.push((icon, at(ICON), icon.size));
-    // ponytail: the client's 12-px font for the board isn't ours; the text keeps the window font in its box.
-    let text = window::fit(font, &sign.text(), w - SIGN_TEXT[0] - 3.0);
-    layer.texts.push((text, at(SIGN_TEXT), [0, 0, 0]));
+    layer.texts.push((shown_text(font, sign), at(SIGN_TEXT), [0, 0, 0]));
     rect
+}
+
+/// The words as the sign's text strip fits them, cut with "..." when too long.
+// ponytail: the client's 12-px font for the board isn't ours; the text keeps the window font in its box.
+fn shown_text(font: &Font, sign: &Sign) -> String {
+    window::fit(font, &sign.text(), SIGN[0] - SIGN_TEXT[0] - 3.0)
+}
+
+/// The text strip of the sign in `rect`: (31, 8), 34 px narrower than the board, 15 high. With the pointer on it, cut
+/// words show whole.
+pub fn text_strip(rect: [f32; 4]) -> [f32; 4] {
+    [rect[0] + SIGN_TEXT[0], rect[1] + SIGN_TEXT[1], rect[2] - rect[0] - 34.0, 15.0]
+}
+
+/// The sign's whole words, when its strip cuts them.
+pub fn whole_text(font: &Font, sign: &Sign) -> Option<String> {
+    let text = sign.text();
+    (shown_text(font, sign) != text).then_some(text)
 }
 
 /// The room the player is in.
@@ -455,6 +471,17 @@ impl Make {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tells_a_cut_sign_its_whole_words() {
+        let font = Font::load();
+        assert_eq!(whole_text(&font, &Sign::shop(7, "Cheap pots".to_owned())), None);
+        let long = Sign::shop(7, "Selling cheap Jellopy for every adve".to_owned());
+        assert!(shown_text(&font, &long).ends_with("..."));
+        assert_eq!(whole_text(&font, &long).as_deref(), Some(long.title.as_str()));
+        // The strip on a board at (430, 266): (461, 274), 106 x 15.
+        assert_eq!(text_strip([430.0, 266.0, 570.0, 300.0]), [461.0, 274.0, 106.0, 15.0]);
+    }
 
     #[test]
     fn places_the_boards() {
