@@ -448,7 +448,8 @@ impl App {
         {
             *arrived = Some(now);
         }
-        let player_feet = game.world.cell_position(player_cell);
+        let mut player_feet = game.world.cell_position(player_cell);
+        player_feet[1] += game.effects.lift(None);
         if game.weather.take_map_launch() && self.graphics.effects_on {
             for &(effect, count) in assets.weather.map_launches(&game.map) {
                 game.weather.launch(effect, count, now, player_feet);
@@ -601,7 +602,8 @@ impl App {
                 continue;
             }
             let silhouette = show == actor::Seen::Silhouette;
-            let feet = game.world.cell_position(cell);
+            let mut feet = game.world.cell_position(cell);
+            feet[1] += game.effects.lift(Some(id));
             feet_of.insert(id, feet);
             rises.insert(Some(id), actor::glint_rise(actor.kind == PLAYER, actor.job, actor.option));
             facings.insert(Some(id), actor.rot);
@@ -877,7 +879,8 @@ impl App {
             // Shields at the waist, souls over the spheres (the charms are world objects).
             let pictures = [
                 (game.shield.as_ref(), orbs.shields, SHIELD_HEIGHT, SHIELD_SCALE, [1.0; 4]),
-                (game.sphere.as_ref(), orbs.souls, SOUL_HEIGHT, SPHERE_SCALE, SOUL_TINT),
+                // A Soul Reaper's soul energy is a world object (1225).
+                (game.sphere.as_ref(), if crate::world_fx::star::object_souls(job) { 0 } else { orbs.souls }, SOUL_HEIGHT, SPHERE_SCALE, SOUL_TINT),
             ];
             for (picture, count, height, scale, tint) in pictures {
                 let Some(picture) = picture else { continue };
