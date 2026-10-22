@@ -3920,6 +3920,11 @@ impl Game {
 
     /// Starts the attacker's swing now; the number, the flinch and the sparks come when the hit lands, which is when
     /// this returns (now, for what isn't a hit).
+    /// The numbers shown on the player in the last 3 s: amount, kind and how long ago (for the test driver).
+    pub(crate) fn hits_taken(&self, now: Instant) -> Vec<(i32, &'static str, u64)> {
+        crate::hits_taken(&self.damages, now)
+    }
+
     pub(crate) fn act(&mut self, act: net::Act, tables: &LookTables, grf: &Grf) -> Instant {
         // Sitting down and standing up.
         if matches!(act.kind, 2 | 3) {
@@ -3955,6 +3960,7 @@ impl Game {
             if let Some(cell) = target_cell {
                 source.face(cell);
             }
+            source.note_hit(&act, crate::control::now());
             let attack = source.attack_motion(tables);
             bow = source.holds_bow(tables);
             let scale = actor::attack_scale(act.source_speed, bow);

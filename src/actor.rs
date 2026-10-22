@@ -1886,6 +1886,18 @@ pub fn angle_of(step: [i32; 2]) -> f32 {
     (step[0] as f32).atan2(-(step[1] as f32)).to_degrees().rem_euclid(360.0)
 }
 
+/// How long a hit counts as recent for the test driver's `attacking_me_ms` and `hits_taken`.
+pub const HIT_SHOWN: Duration = Duration::from_secs(3);
+
+/// Whether a unit on `from` facing `rot` faces the cell `to`: within 22.5° of the way there, and not on it.
+pub fn faces(rot: f32, from: [i32; 2], to: [i32; 2]) -> bool {
+    if from == to {
+        return false;
+    }
+    let off = (rot - angle_of([to[0] - from[0], to[1] - from[1]])).rem_euclid(360.0);
+    off.min(360.0 - off) <= 22.5 + 1e-3
+}
+
 /// The exact facing of one of the sprites' eight directions (0 south, turning west).
 pub fn rot_of(direction: u8) -> f32 {
     (360.0 - f32::from(direction % 8) * 45.0) % 360.0
@@ -2136,6 +2148,8 @@ pub struct Actor {
     /// What statuses do to how its own parts are drawn: by status, the body flags and colour (`status_body`).
     glows: Vec<(u16, u32, Option<[u8; 3]>)>,
     pub ghosts: Vec<Ghost>,
+    /// Whom it last hit (an attack or a skill that did damage), and when: what a player sees as it swinging at them.
+    pub last_hit: Option<(u32, Instant)>,
     /// Cursed Circle: the body darkened.
     pub cursed: bool,
     /// Magic Power's toggle: flips each frame the weapon is drawn.
@@ -2523,9 +2537,24 @@ impl Actor {
             launches: Vec::new(),
             glows: Vec::new(),
             ghosts: Vec::new(),
+            last_hit: None,
             cursed: false,
             flicker: std::cell::Cell::new(false),
         }
+    }
+
+    /// Notes a hit it dealt at `now`; a miss (no damage) isn't one.
+    pub fn note_hit(&mut self, act: &rustnarok_client::net::Act, now: Instant) {
+        if act.damage > 0 || act.left_damage > 0 {
+            self.last_hit = Some((act.target, now));
+        }
+    }
+
+    /// How long ago it last hit `target`, while that's under `HIT_SHOWN`.
+    pub fn hit_ms_ago(&self, target: u32, now: Instant) -> Option<u64> {
+        let (whom, at) = self.last_hit?;
+        let ago = now.saturating_duration_since(at);
+        (whom == target && ago < HIT_SHOWN).then_some(ago.as_millis() as u64)
     }
 
     /// The colour the body is drawn in: Cursed Circle's dark, else the body and health states' (see `status_tint`).
@@ -3243,6 +3272,55 @@ impl Actor {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn faces_a_cell_within_a_sixteenth_turn() {
+        let at = [10, 10];
+        // The eight neighbours: facing each one, and not the opposite one.
+        for step in [[0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [1, -1]] {
+            let to = [at[0] + step[0], at[1] + step[1]];
+            let rot = angle_of(step);
+            assert!(faces(rot, at, to), "{step:?}");
+            assert!(!faces((rot + 180.0) % 360.0, at, to), "{step:?}");
+            // The edges: 22.5° either way still faces it, a degree more doesn't.
+            assert!(faces((rot + 22.5) % 360.0, at, to) && faces((rot + 337.5) % 360.0, at, to), "{step:?}");
+            assert!(!faces((rot + 23.5) % 360.0, at, to) && !faces((rot + 336.5) % 360.0, at, to), "{step:?}");
+        }
+        // South (0°) to a cell straight south; 0° and 359° wrap.
+        assert!(faces(0.0, [5, 5], [5, 2]) && faces(359.0, [5, 5], [5, 2]));
+        // On the same cell it faces nobody.
+        assert!(!faces(0.0, at, at));
+    }
+
+    #[test]
+    fn notes_hits_on_the_player_for_three_seconds() {
+        let me = 2_000_001;
+        let act = |target, damage| rustnarok_client::net::Act {
+            source: 110_000,
+            target,
+            source_speed: 864,
+            target_speed: 576,
+            damage,
+            sp: false,
+            hits: 1,
+            kind: 0,
+            left_damage: 0,
+        };
+        let start = Instant::now();
+        let mut monster = Actor::new("Poring".into(), None, [11, 10], 0, 150);
+        // A miss isn't a hit.
+        monster.note_hit(&act(me, 0), start);
+        assert_eq!(monster.hit_ms_ago(me, start), None);
+        // A hit on the player.
+        monster.note_hit(&act(me, 12), start);
+        assert_eq!(monster.hit_ms_ago(me, start + Duration::from_millis(400)), Some(400));
+        // Gone after 3 s.
+        assert_eq!(monster.hit_ms_ago(me, start + Duration::from_millis(3000)), None);
+        // A hit on another unit: not on the player.
+        monster.note_hit(&act(110_001, 12), start);
+        assert_eq!(monster.hit_ms_ago(me, start), None);
+        assert_eq!(monster.hit_ms_ago(110_001, start), Some(0));
+    }
 
     #[test]
     fn some_bodies_draw_only_their_own_glow() {
