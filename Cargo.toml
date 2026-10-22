@@ -23,6 +23,12 @@ symphonia = { version = "0.5", default-features = false, features = ["mp3", "pcm
 wgpu = "29"
 winit = "0.30"
 
+# The Dock icon when the client runs outside the app bundle; the versions winit already uses.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.2", features = ["NSData"] }
+
 # Rebuilds after an edit reuse what didn't change: several times less work for a small change. tools/bundle.sh turns it
 # off for the app it builds (full optimization across modules).
 [profile.release]
