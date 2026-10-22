@@ -748,6 +748,8 @@ pub struct World {
     /// RSM 2 instances whose tracks play, and the buffer they're posed into each frame.
     animated: Vec<Animated>,
     animated_buffer: Option<wgpu::Buffer>,
+    /// The frame each of them was last posed at: a frame that moves none of them leaves the buffer as it is.
+    animated_frames: Vec<u32>,
     /// How many RSM 2 model instances stand on the map.
     pub rsm_2_models: usize,
     /// The map's ambient sound sources.
@@ -1062,6 +1064,7 @@ impl World {
         Ok(Self {
             animated,
             animated_buffer,
+            animated_frames: Vec::new(),
             rsm_2_models,
             ambient,
             map_effects,
@@ -2204,9 +2207,8 @@ impl World {
     /// passed (`model::rsm1_step`) and keeps its frame-0 light.
     pub fn animate(&mut self, gpu: &Gpu, now: std::time::Instant) {
         let Some(buffer) = &self.animated_buffer else { return };
-        let mut vertices = Vec::new();
-        let mut posed: HashMap<(*const Rsm, u32), Vec<model::Triangle>> = HashMap::new();
         let tick = crate::whole_ms(now) / 16;
+        let mut frames = Vec::with_capacity(self.animated.len());
         for instance in &mut self.animated {
             let frame = if instance.rsm.version >= (2, 0) {
                 let start = *instance.start.get_or_insert(now);
@@ -2223,7 +2225,15 @@ impl World {
                 instance.tick = Some(tick);
                 instance.frame as f32
             };
-            let triangles = posed.entry((std::rc::Rc::as_ptr(&instance.rsm), frame.to_bits())).or_insert_with(|| instance.rsm.triangles_at(frame));
+            frames.push(frame.to_bits());
+        }
+        if frames == self.animated_frames {
+            return;
+        }
+        let mut vertices = Vec::new();
+        let mut posed: HashMap<(*const Rsm, u32), Vec<model::Triangle>> = HashMap::new();
+        for (instance, &frame) in self.animated.iter().zip(&frames) {
+            let triangles = posed.entry((std::rc::Rc::as_ptr(&instance.rsm), frame)).or_insert_with(|| instance.rsm.triangles_at(f32::from_bits(frame)));
             for (place, &triangle) in instance.order.iter().enumerate() {
                 if let (Some(triangle), Some(&colors)) = (triangles.get(triangle), instance.colors.get(place)) {
                     vertices.extend(placed_vertices(&instance.placement, colors, triangle, instance.mirror));
@@ -2231,6 +2241,7 @@ impl World {
             }
         }
         gpu.queue.write_buffer(buffer, 0, bytemuck::cast_slice(&vertices));
+        self.animated_frames = frames;
     }
 }
 
