@@ -11,6 +11,7 @@
 # length <effect id> <ticks>: how long an effect lasts (16 ms ticks): an STR plays that long when shorter than its keys (a `hold` one, longer); on a ground unit it starts again 8 ticks before that (Quagmire's 95: 20)
 # unit <skill unit type> <effect id> [once]: what a skill's unit on the ground (ZC_SKILL_ENTRY, rathena's UNT_) shows while it's there (once: played once and kept, not started again)
 # unitw <skill unit type> <world id>: the STR world effect (world_str.txt) such a unit also starts once as it comes into sight, owned by the unit (it follows the unit's cell and ends with it)
+# wdelay <world id> <ms>: every launch of that STR world effect (world_str.txt) waits that long before its first step
 # area <skill unit type> <effect id> <lift>: the effect plays on a grid of points round each such unit's cell (one point at range 0, 6 units apart), now and every length less 20 ticks while it stands; lift is how far below the ground its anchor goes
 # rsm <skill unit type> <model under data\model\ without .rsm, or an .rsm2 with its extension>: the model standing on such a unit's cell (traps)
 # wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
@@ -4325,6 +4326,7 @@ struck	2004	caster	723
 struck	2004	caster	835
 struck	2012	target	589
 struck	2022	caster	1568
+struck	2022	target	1566
 struck	6506	caster	1568
 struck	2023	caster	457
 struck	2023	caster	439
@@ -4369,6 +4371,9 @@ struck	2336	caster	886
 struck	2336	caster	893
 struck	2340	caster	886
 struck	2343	caster	1575
+struck	2343	target	1574
+struck	2329	target	1572
+wdelay	1572	100
 struck	2344	caster	885
 struck	2344	caster	886
 struck	2413	caster	1584
@@ -4793,6 +4798,7 @@ used	2455	target	886
 used	2455	target	441
 used	2455	target	931
 used	2461	caster	934
+used	5478	target	10010
 used	2476	caster	1365
 used	2480	target	216
 used	2493	caster	886

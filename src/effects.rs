@@ -234,6 +234,11 @@ impl Table {
                         table.unit_worlds.insert(kind, id);
                     }
                 }
+                ["wdelay", ..] => {
+                    if let (Some(id), Some(ms)) = (number(1), number(2)) {
+                        table.worlds.set_delay(id, ms as i32);
+                    }
+                }
                 ["minid", ..] => {
                     if let (Some(id), Some(min)) = (number(1), number(2)) {
                         table.min_ids.insert(id, min);
@@ -10031,5 +10036,89 @@ mod tests {
         assert!([47, 48, 49].iter().all(|&frame| held_frame(&str, true, frame as f32) == 47.0));
         let shown = |frame: u32| str.layers.iter().map(|layer| layer.state(held_frame(&str, true, frame as f32)).is_some()).collect::<Vec<_>>();
         assert_eq!([47, 48, 49].map(shown), [[false, false, true]; 3]);
+    }
+
+    #[test]
+    fn cross_impact_gate_of_hell_fallen_empire_and_akumukesu_start_on_their_targets() {
+        let table = Table::load();
+        assert!(table.struck(2022).unwrap().contains(&(Who::Target, 1566)) && table.struck(2022).unwrap().contains(&(Who::Caster, 1568)));
+        assert!(table.struck(2343).unwrap().contains(&(Who::Target, 1574)) && table.struck(2343).unwrap().contains(&(Who::Caster, 1575)));
+        assert!(table.struck(2329).unwrap().contains(&(Who::Target, 1572)));
+        assert!(table.used(5478).unwrap().contains(&(Who::Target, 10010)));
+        assert!([1566, 1572, 1574, 10010].iter().all(|id| table.world(*id).is_some() && !table.has_str(*id)));
+        assert_eq!([1566, 1572, 1574, 10010].map(|id| table.world(id).unwrap().delay), [0, 100, 0, 0]);
+        // The last key of each file (the lighter one in brackets): 1566 46 (45), 1572 13, 1574 90, 10010 29.
+        let last = |id: u32, min: bool| match (id, min) {
+            (1566, false) => 46,
+            (1566, true) => 45,
+            (1572, _) => 13,
+            (1574, _) => 90,
+            _ => 29,
+        };
+        let units = HashMap::from([(7, [10.0, 0.0, 10.0])]);
+        let start = |worlds: &mut Worlds, id: u32, min: bool| {
+            let launch = world_str::Launch { id, owner: Some(Some(7)), point: [0.0; 3], unique: false, life: 0, min, roll: 0 };
+            worlds.launch(table.world(id).unwrap(), &launch, |_| Some(frames(last(id, min)))).unwrap()
+        };
+        // Ticks a copy alone until it is over: the tick it ends at, its first STR step, and its sounds by age.
+        let play = |id: u32, min: bool| {
+            let mut worlds = Worlds::default();
+            let serial = start(&mut worlds, id, min);
+            let feet = |unit: Option<u32>| unit.and_then(|unit| units.get(&unit).copied());
+            let body = |_: Option<u32>| None;
+            let scene = world_str::Scene {
+                player: [0.0; 3],
+                feet: &feet,
+                body: &body,
+                longitude: 0.0,
+                right: [1.0, 0.0, 0.0],
+                up: [0.0, 1.0, 0.0],
+                ground: &|_, _| 0.0,
+            };
+            let (mut first, mut sounds) = (None, Vec::new());
+            for tick in 0..200 {
+                let fired = worlds.tick(&scene);
+                sounds.extend(fired.into_iter().filter_map(|fired| match fired {
+                    world_str::Fired::Sound(file, _) => Some((tick, file)),
+                    _ => None,
+                }));
+                let copy = worlds.get_mut(serial).unwrap();
+                if first.is_none() && copy.timeline.frame > 0 {
+                    first = Some(tick);
+                }
+                if !worlds.playing(Some(Some(7)), id) {
+                    return (tick, first, sounds);
+                }
+            }
+            panic!("{id} never ends");
+        };
+        let ends = |id: u32| play(id, false).0;
+        assert_eq!([ends(1566), ends(1574), ends(10010)], [47, 91, 30]);
+        // Fallen Empire: its first step at tick 7, its last at 20, over at 14 + the delay's 7 ticks.
+        let (end, first, _) = play(1572, false);
+        assert_eq!((first, end), (Some(7), 21));
+        // The sounds: Cross Impact's at age 0, Akumukesu's at age 1, none for the other two.
+        assert_eq!(play(1566, false).2, [(0, "effect\\EF_StoneCurse.wav".to_owned())]);
+        assert_eq!(play(10010, false).2, [(1, "effect\\SHINKIRO_SHIRANUI\\SS_AKUMUKESU.wav".to_owned())]);
+        assert!(play(1572, false).2.is_empty() && play(1574, false).2.is_empty());
+        // `/mineffect` plays the lighter files: Cross Impact's with 46 frames.
+        let min = |id: u32| Worlds::file_of(table.world(id).unwrap(), true, 0);
+        assert_eq!(min(1566).as_deref(), Some("mineffect/new_crossimpact/new_crossimpact/new_crossimpact"));
+        assert_eq!(min(1572).as_deref(), Some("mineffect/new_fallenempire/new_fallenempire_hit/new_fallenempire_hit"));
+        assert_eq!(min(1574).as_deref(), Some("mineffect/new_gateofhell/new_gateofhell_target/new_gateofhell_target"));
+        assert_eq!(min(10010).as_deref(), Some("SHINKIRO_SHIRANUI/SS_AKUMUKESU/min_akumukesu"));
+        assert_eq!(play(1566, true).0, 46);
+        // Each damage packet makes its own copy, and each follows the target.
+        let mut worlds = Worlds::default();
+        let (one, two) = (start(&mut worlds, 1566, false), start(&mut worlds, 1566, false));
+        assert_ne!(one, two);
+        assert_eq!(worlds.iter().count(), 2);
+        let moved = HashMap::from([(7, [30.0, 0.0, 40.0])]);
+        let feet = |unit: Option<u32>| unit.and_then(|unit| moved.get(&unit).copied());
+        let body = |_: Option<u32>| None;
+        let scene =
+            world_str::Scene { player: [0.0; 3], feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], ground: &|_, _| 0.0 };
+        worlds.tick(&scene);
+        assert!(worlds.iter().all(|copy| copy.position == [30.0, 0.0, 40.0]));
     }
 }

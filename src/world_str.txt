@@ -1,6 +1,6 @@
 # The STR world effects: id, file under data\texture\effect\ (forward slashes, no .str; %d = a number from 1 to 3; lua = named by the hat tables), the file /mineffect plays instead (- none), flags, head rule, tint, sounds and quakes.
 # flags: single (a second launch for the same owner and id returns the running copy), loop (the STR starts again at its end), owner (lives while its owner exists; otherwise it ends with its STR); - none.
-# head: dx,dy_adjust of the head-height rule (- : the STR sits 80 px over the feet; lua: from the hat tables).
+# head: dx,dy_adjust of the head-height rule (- : the STR sits 80 px over the feet; lua: from the hat tables; view:dx,dy: dx units along the camera's right and dy along its up from the feet).
 # tint: the full-screen black fill grows by this much of alpha a tick up to 170 (- none).
 # events: w<tick>:<sound under data\wav\> plays that sound at the effect's place, q<tick> shakes the camera (650 ms), both when the effect's age reaches the tick; ; separates them.
 141	Pneuma%d	-	owner	-	-	-
@@ -1314,3 +1314,4 @@
 2764	efst_C_CLB_GAT_doc/Gatchamanvi	-	single,loop,owner	lua	-	-
 2765	lua	-	single,loop,owner	lua	-	-
 2766	lua	-	single,loop,owner	lua	-	-
+10010	SHINKIRO_SHIRANUI/SS_AKUMUKESU/akumukesu	SHINKIRO_SHIRANUI/SS_AKUMUKESU/min_akumukesu	-	view:0,10	-	w1:effect\SHINKIRO_SHIRANUI\SS_AKUMUKESU.wav
