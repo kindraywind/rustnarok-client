@@ -1,0 +1,16 @@
+{
+  "about": "click_unit by id (issue #1035): five Chonchons (fast walkers) spawned beside the player; the socket's click_unit clicks the nearest one that is walking where it's drawn at that moment, through the mouse path, and the attack on it starts (player.attack.target is its id). The first shot has the pointer on it, the second the attack two seconds on. Main has no click_unit command.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 375"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@monster 1011 5"}, {"wait": 1500},
+    {"expect": {"units_at_least": {"monster": 5}}},
+    {"click_unit_id": {"kind": "monster", "name": "Chonchon", "walking": true}, "attack": true},
+    {"shot": "click-unit-id", "threshold": 100},
+    {"wait": 2000},
+    {"shot": "click-unit-id-after", "threshold": 100},
+    {"say": "@killmonster2"}, {"wait": 500}
+  ]
+}

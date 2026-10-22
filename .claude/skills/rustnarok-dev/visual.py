@@ -24,6 +24,9 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_
   {"mouse_down": <target>} ... {"mouse_up": <target>}  (a button held down between steps; "button": "right")
   {"click_unit": {"kind": "pet", "name": "Poring"}, "button": "right", "mods": "shift"}  (the middle of the nearest
     unit of that kind, and name if given, on screen)
+  {"click_unit_id": {"kind": "monster", "name": "Chonchon", "walking": true}, "attack": true}  (the client's own
+    click_unit by the id of the nearest such unit, which clicks it where it's drawn then; "walking": first wait up to 5 s
+    for one that's moving; "attack": then the player's attack target must be it within 3 s; also button/mods/count)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
   {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command; or "sent":
     "0x0447": a packet the client sent the map server; {"wait_for": {...}, "none": true} passes only if nothing came)
@@ -403,6 +406,42 @@ def step_on_client(action, shots_dir, name):
             if key in action:
                 command[key] = action[key]
         return drive.send(command)
+    if "click_unit_id" in action:
+        want = action["click_unit_id"]
+
+        def matching():
+            units = drive.send({"cmd": "state"}).get("game", {}).get("units", [])
+            return [unit for unit in units if unit.get("kind") == want["kind"] and want.get("name", unit.get("name")) == unit.get("name")]
+
+        found = matching()
+        if want.get("walking"):
+            # One whose position moved between two looks, on screen.
+            found, deadline = [], time.time() + 5
+            before = {unit["id"]: unit["position"] for unit in matching()}
+            while not found and time.time() < deadline:
+                time.sleep(0.1)
+                now = matching()
+                found = [unit for unit in now if unit.get("screen") and before.get(unit["id"], unit["position"]) != unit["position"]]
+                before = {unit["id"]: unit["position"] for unit in now}
+        if not found:
+            return [f"click_unit_id {want}: no such unit"]
+        command = {"cmd": "click_unit", "id": found[0]["id"]}
+        for key in ("button", "count", "mods"):
+            if key in action:
+                command[key] = action[key]
+        reply = drive.send(command)
+        if not reply.get("ok"):
+            return [f"click_unit_id {want}: {reply.get('error')}"]
+        print(f"  click_unit {found[0]['id']} at {reply.get('point')}")
+        if action.get("attack"):
+            deadline = time.time() + 3
+            while time.time() < deadline:
+                attack = drive.send({"cmd": "state"}).get("game", {}).get("player", {}).get("attack")
+                if attack and attack.get("target") == found[0]["id"]:
+                    return None
+                time.sleep(0.1)
+            return [f"click_unit_id {want}: no attack on {found[0]['id']}"]
+        return None
     if "drag_on" in action:
         start, end = (locate(target) for target in action["drag_on"])
         if start is None or end is None:

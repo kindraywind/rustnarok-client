@@ -57,6 +57,12 @@ fn tools() -> Value {
             &["x", "y"],
         ),
         tool(
+            "click_unit",
+            "Click a unit where it is drawn now, through the client's own mouse handling, at a point that picks it (answers {\"point\": [x, y]}). Use the unit's id from state. Refused for a unit that's hidden, off the screen or covered.",
+            json!({"id": {"type": "integer", "description": "the unit's id from state"}, "button": button, "mods": mods, "count": {"type": "integer", "description": "2 for a double click"}}),
+            &["id"],
+        ),
+        tool(
             "cell_point",
             "Where map cell (x, y)'s middle is on the screen, as {\"point\": [x, y]} in the same 1024x768 pixels as click. Use it to click the ground at a cell. Errors outside the game and for a cell behind the camera.",
             json!({"x": {"type": "integer"}, "y": {"type": "integer"}}),
@@ -283,6 +289,18 @@ fn picks_an_account_from_the_file() {
     assert_eq!(account(file, ""), Some(("one".into(), "p1".into())));
     assert_eq!(account(file, "2"), Some(("two".into(), "p2".into())));
     assert_eq!(account(file, "3"), None);
+}
+
+#[cfg(test)]
+#[test]
+fn offers_click_unit() {
+    let tools = tools();
+    let tool = tools.as_array().unwrap().iter().find(|tool| tool["name"] == "click_unit").expect("a click_unit tool");
+    assert_eq!(tool["inputSchema"]["required"], json!(["id"]));
+    let properties = tool["inputSchema"]["properties"].as_object().unwrap();
+    let mut names: Vec<_> = properties.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["button", "count", "id", "mods"]);
 }
 
 #[cfg(test)]
