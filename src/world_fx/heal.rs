@@ -672,6 +672,8 @@ mod tests {
             released: false,
             min: false,
             delay: 0,
+            turn: 0.0,
+            lift: 0.0,
             updated: false,
         }
     }

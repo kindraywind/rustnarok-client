@@ -3297,6 +3297,12 @@ impl Effects {
     /// A status going off on `unit` (None = the player): the world objects it shows go.
     pub fn status_objects_off(&mut self, unit: Option<u32>, shown: &[u32]) {
         for &effect in shown {
+            // Gravity Control ending drops the unit at once, with a thud where it hung.
+            if effect == world_fx::star::GRAVITY
+                && let Some(object) = self.fx.iter().find(|object| object.fx.owner == Some(unit) && object.fx.id == effect)
+            {
+                self.sounds.push((Instant::now(), "effect\\t_공격력.wav".to_owned(), object.fx.position));
+            }
             self.fx.remove(Some(unit), effect);
         }
     }
@@ -3493,6 +3499,19 @@ impl Effects {
         let min = self.min;
         let (fx, mut assets) = self.fx_assets(gpu, grf);
         world_fx::status4::spirits(fx, Some(unit), job, count, seen, at, min, &mut assets)
+    }
+
+    /// The soul-energy packet for `unit` (None = the player), a Soul Reaper standing at `at`: its orbs, `count` of them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn soul_objects(&mut self, gpu: &Gpu, grf: &Grf, unit: Option<u32>, count: u16, seen: bool, at: Vector) {
+        let min = self.min;
+        let (fx, mut assets) = self.fx_assets(gpu, grf);
+        world_fx::star::souls(fx, Some(unit), count, seen, at, min, &mut assets);
+    }
+
+    /// Round Trip's use packet from a caster standing at `at`: the funnel stands there.
+    pub fn round_trip(&mut self, gpu: &Gpu, grf: &Grf, at: Vector) {
+        self.launch_fx(gpu, grf, &world_fx::star::round_trip(at, self.min));
     }
 
     /// The cast start of Servant Weapon Sign by `unit` (None = the player): a sword flies off.
@@ -3696,6 +3715,7 @@ impl Effects {
             && !world_fx::status4::is_class(id)
             && !world_fx::shots::is_class(id)
             && !world_fx::ninja::is_charm(id)
+            && !world_fx::star::is_class(id)
         {
             let owner = match target {
                 Target::Unit(unit) | Target::Status(unit, _) => Some(unit),
@@ -3705,7 +3725,11 @@ impl Effects {
             // A status sent again keeps its copy, but Spirit Marble's spirits and Flower Leaf's glints start afresh.
             if matches!(target, Target::Status(..)) {
                 launch.unique = true;
-                if world_fx::summoner::restarts_on_status(id) || world_fx::jobs3::restarts_on_status(id) || world_fx::ninja::restarts_on_status(id) {
+                if world_fx::summoner::restarts_on_status(id)
+                    || world_fx::jobs3::restarts_on_status(id)
+                    || world_fx::ninja::restarts_on_status(id)
+                    || world_fx::star::restarts_on_status(id)
+                {
                     self.fx.remove(owner, id);
                 }
             }
@@ -6062,7 +6086,16 @@ impl Effects {
     /// How many degrees `unit` has been turned since this was last asked (Falcon Assault's spin, Chase Walk's cast while it stands,
     /// Kunai Splash's).
     pub fn turned(&mut self, unit: Option<u32>, now: Instant, standing: bool) -> f32 {
-        self.prims.sniper.turned(unit, now) + self.prims.guard.turned(unit, now, standing) + self.prims.brawl.turned(unit, now) + self.prims.throws.turned(unit)
+        self.prims.sniper.turned(unit, now)
+            + self.prims.guard.turned(unit, now, standing)
+            + self.prims.brawl.turned(unit, now)
+            + self.prims.throws.turned(unit)
+            + self.fx.turned(unit)
+    }
+
+    /// How far world objects raise `unit`'s body (Gravity Control's lift).
+    pub fn lift(&self, unit: Option<u32>) -> f32 {
+        self.fx.lifted(unit)
     }
 
     /// A cast cut off: Twilight Alchemy's icons go.
@@ -11235,5 +11268,37 @@ mod tests {
             world_str::Scene { player: [0.0; 3], feet: &feet, body: &body, longitude: 0.0, right: [1.0, 0.0, 0.0], up: [0.0, 1.0, 0.0], ground: &|_, _| 0.0 };
         worlds.tick(&scene);
         assert!(worlds.iter().all(|copy| copy.position == [30.0, 0.0, 40.0]));
+    }
+
+    #[test]
+    fn the_star_emperor_and_soul_reaper_skills_have_their_rows() {
+        let table = Table::load();
+        let used = |skill: u16| table.used(skill).unwrap().to_vec();
+        // Full Moon Kick: the old effect, the ribbons, then the STR.
+        assert_eq!(used(2576), [(Who::Caster, 399), (Who::Caster, 1223), (Who::Caster, 1230)]);
+        assert!(used(2565).contains(&(Who::Caster, 637)));
+        assert!(used(2590).contains(&(Who::Caster, 1197)) && used(2574).contains(&(Who::Caster, 1198)) && used(2577).contains(&(Who::Caster, 1199)));
+        // Star Emperor Advent: the existing 446, then the globe.
+        assert_eq!(used(2581), [(Who::Caster, 446), (Who::Caster, 1203)]);
+        assert!(used(2586).contains(&(Who::Caster, 1231)) && used(2607).contains(&(Who::Caster, 1234)));
+        // The souls' sprites land on the target, after the existing rows.
+        for (skill, effect) in [(2597, 1235), (2598, 1237), (2599, 1236)] {
+            assert!(used(skill).contains(&(Who::Target, 503)) && used(skill).contains(&(Who::Target, effect)), "{skill}");
+        }
+        for (skill, effect) in [(2582, 1202), (2600, 1233), (2610, 1242)] {
+            assert!(table.struck(skill).unwrap().contains(&(Who::Target, effect)), "{skill}");
+        }
+        assert_eq!(table.ground(2587).unwrap(), [(Who::Caster, 1232)]);
+        assert_eq!(table.units.get(&265), Some(&1200));
+        assert!(table.units_once.contains(&265));
+        assert_eq!([1050, 1040, 1038, 1043, 1039, 1055].map(|status| table.status(status).to_vec()), [[1201], [1214], [1215], [1216], [1217], [1222]]);
+        let sound = |id: u32| table.sounds[&id].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>();
+        assert_eq!(sound(1197), [("effect\\t_피링", 0)]);
+        assert_eq!(sound(1200), [("effect\\g카트토네이도", 0)]);
+        assert_eq!(sound(1242), [("effect\\hunter_landmine", 0)]);
+        // Storm Kick keeps the old effect: the funnel is launched in code.
+        assert!(world_fx::star::is_class(435) && world_fx::star::is_class(1225) && !world_fx::star::is_class(1223));
+        assert!(WorldFx::default().registered(435) && WorldFx::default().registered(1242));
+        assert!([1214, 1215, 1216, 1217, 1225].iter().all(|&id| force_drawn(id)));
     }
 }

@@ -1827,6 +1827,15 @@ wav	415	effect\EF_hit2	272
 wav	415	effect\EF_hit4	400
 wav	426	effect\복호격	0
 wav	435	effect\T_회오리차기	80
+wav	1197	effect\t_피링	0
+wav	1198	effect\t_피링	0
+wav	1199	effect\t_피링	0
+wav	1200	effect\g카트토네이도	0
+wav	1201	effect\t_캐스팅	0
+wav	1222	effect\t_바람방출	0
+wav	1231	effect\so_elemental_shield	0
+wav	1234	effect\ef_signum	0
+wav	1242	effect\hunter_landmine	0
 wav	439	effect\G스포어익스플로젼	0	listener
 wav	440	effect\아숨프티오	0
 wav	443	effect\T_벽튕김	0
@@ -4490,6 +4499,9 @@ struck	525	caster	615
 struck	526	caster	616
 struck	3019	target	1008
 struck	3006	target	990
+struck	2582	target	1202
+struck	2600	target	1233
+struck	2610	target	1242
 used	6	target	67
 used	7	caster	17
 used	8202	caster	17
@@ -4844,11 +4856,23 @@ used	2496	caster	911
 used	2497	caster	911
 used	2564	caster	446
 used	2565	caster	637
+used	2574	caster	1198
+used	2576	caster	399
+used	2576	caster	1223
+used	2576	caster	1230
 used	2581	caster	446
+used	2581	caster	1203
+used	2577	caster	1199
+used	2586	caster	1231
+used	2590	caster	1197
+used	2607	caster	1234
 used	2596	target	503
 used	2597	target	503
+used	2597	target	1235
 used	2598	target	503
+used	2598	target	1237
 used	2599	target	503
+used	2599	target	1236
 used	2605	target	1210
 used	2612	caster	1208
 used	2612	target	1207
@@ -4949,6 +4973,7 @@ ground	5319	ground	2087
 ground	3009	ground	984
 ground	3009	ground	1000
 ground	3009	ground	1002
+ground	2587	caster	1232
 trap	143	106
 trap	149	139
 trap	150	99
@@ -5058,6 +5083,7 @@ unit	264	1120
 unit	273	1804	once
 unit	274	1768	once
 unit	276	1957	once
+unit	265	1200	once
 area	245	959	20
 area	246	964	0
 area	247	975	20

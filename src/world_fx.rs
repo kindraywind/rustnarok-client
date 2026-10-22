@@ -14,6 +14,7 @@ pub mod heal;
 pub mod jobs3;
 pub mod ninja;
 pub mod shots;
+pub mod star;
 pub mod status4;
 pub mod summoner;
 
@@ -642,6 +643,10 @@ pub struct Fx {
     pub min: bool,
     /// Its start delay in ms, for the classes that hold for one.
     pub delay: i32,
+    /// Degrees its owner's facing has yet to turn (`WorldFx::turned`).
+    pub turn: f32,
+    /// How far its owner's body is raised (`WorldFx::lifted`).
+    pub lift: f32,
     /// Its first update has run.
     updated: bool,
 }
@@ -666,6 +671,8 @@ impl Fx {
             released: false,
             min: launch.min,
             delay: launch.delay,
+            turn: 0.0,
+            lift: 0.0,
             updated: false,
         }
     }
@@ -773,6 +780,7 @@ impl Default for WorldFx {
         jobs3::register(&mut fx);
         ninja::register(&mut fx);
         shots::register(&mut fx);
+        star::register(&mut fx);
         status4::register(&mut fx);
         summoner::register(&mut fx);
         fx
@@ -801,6 +809,16 @@ impl WorldFx {
 
     pub fn is_empty(&self) -> bool {
         self.objects.is_empty()
+    }
+
+    /// The degrees the objects of `owner` have turned its facing since the last call.
+    pub fn turned(&mut self, owner: Option<u32>) -> f32 {
+        self.objects.iter_mut().filter(|object| object.fx.owner == Some(owner)).map(|object| std::mem::take(&mut object.fx.turn)).sum()
+    }
+
+    /// How far the objects of `owner` raise its body.
+    pub fn lifted(&self, owner: Option<u32>) -> f32 {
+        self.objects.iter().filter(|object| object.fx.owner == Some(owner)).map(|object| object.fx.lift).fold(0.0, f32::max)
     }
 
     pub fn get_mut(&mut self, serial: u32) -> Option<&mut Object> {

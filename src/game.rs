@@ -1521,6 +1521,20 @@ impl Game {
         Some((job, seen, self.feet(unit, control::now())?))
     }
 
+    /// The soul-energy packet for `unit`: a Soul Reaper's orbs, none while it is out of sight or hidden.
+    pub(crate) fn soul_objects(&mut self, gpu: &Gpu, grf: &Grf, unit: u32, count: u16) {
+        if let Some((_, seen, at)) = self.spirit_owner(unit, crate::world_fx::star::object_souls) {
+            self.effects.soul_objects(gpu, grf, (unit != self.account_id).then_some(unit), count, seen, at);
+        }
+    }
+
+    /// Round Trip's use packet from `source`: the funnel stands where the caster is; nothing for one not in sight.
+    pub(crate) fn round_trip(&mut self, gpu: &Gpu, grf: &Grf, source: u32) {
+        if let Some(at) = self.feet(source, control::now()) {
+            self.effects.round_trip(gpu, grf, at);
+        }
+    }
+
     /// The use packet of Eternal Slash or Shadow Exceed from `source`; nothing for a caster not in sight.
     pub(crate) fn status4_used(&mut self, gpu: &Gpu, grf: &Grf, skill: u16, source: u32) {
         if let Some(at) = self.feet(source, control::now()) {

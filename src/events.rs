@@ -1285,7 +1285,12 @@ impl App {
                     game.charms(gpu, grf, id, kind, count);
                 }
             }
-            MapEvent::Souls { id, count } => change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.souls = count),
+            MapEvent::Souls { id, count } => {
+                change_orbs(&mut game.spirits, (id != game.account_id).then_some(id), |orbs| orbs.souls = count);
+                if let Some(gpu) = gpu {
+                    game.soul_objects(gpu, grf, id, count);
+                }
+            }
             MapEvent::ShadowScars { unit, amount } => {
                 let effects_on = !game.effects.only_forced;
                 if shadow_scars_rose(&mut game.shadow_scars, unit, amount, effects_on)
@@ -3607,6 +3612,7 @@ impl App {
                         crate::world_fx::status4::ETERNAL_SLASH_SKILL | crate::world_fx::status4::SHADOW_EXCEED_SKILL => {
                             game.status4_used(gpu, grf, skill, source)
                         }
+                        crate::world_fx::star::ROUND_TRIP_SKILL => game.round_trip(gpu, grf, source),
                         _ => {}
                     }
                 }
