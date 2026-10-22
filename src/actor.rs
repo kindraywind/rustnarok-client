@@ -22,30 +22,38 @@ pub const PUSH_CART: u16 = 673;
 pub const CHANGE_SIZE: u16 = 1420;
 pub const CHANGE_SIZE_MONSTER: u16 = 1421;
 
-/// Jobs of the Super Novice line, whose cart is always their own.
-const SUPER_NOVICE_JOBS: [u16; 4] = [23, 4045, 4190, 4191];
+/// Jobs of the Super Novice line (and the Hyper Novice), whose cart is always their own.
+const SUPER_NOVICE_JOBS: [u16; 5] = [23, 4045, 4190, 4191, 4307];
 
 /// Baby jobs (rathena's JOB_BABY… and JOB_SUPER_BABY…), whose carts move by a baby cart's ACT.
 fn baby_job(job: u16) -> bool {
     matches!(job, 4023..=4045 | 4096..=4112 | 4191 | 4220 | 4222..=4229 | 4238 | 4241 | 4242 | 4244)
 }
 
-// ponytail: types 10 to 13 follow the names (손수레9 …), which this data doesn't have; Hyper Novice's cart isn't known.
-/// The sprite (without extension) and ACT of a pushcart type for a job: 손수레, 손수레1 … by type, the Super Novice's
-/// 슈노손수레 whatever the type; a baby's by its own ACT (베이비손수레…, with the grown-up's sprite) or, for types 6 to
-/// 9, a sprite of its own (손수레5베이비 …).
+/// Pushcart types from 10 on: the gift box, poring-loaded, poring and Mado carts.
+const NAMED_CARTS: [&str; 4] = ["선물상자카트", "포링싣은카트", "포링카트", "마도카트"];
+
+/// The sprite (without extension) and ACT of a pushcart type for a job: 손수레, 손수레1 … 손수레8 for types 1 to 9, then
+/// the named carts, the Super Novice's 슈노손수레 whatever the type. A baby's moves by its own ACT (베이비손수레…, with
+/// the grown-up's sprite), or has a sprite of its own: 손수레5베이비 … for types 6 to 9, 선물상자카트_미니 … from 10.
 pub fn cart_path(kind: i32, job: u16) -> (String, String) {
     let folder = "data\\sprite\\이팩트\\";
     let baby = baby_job(job);
-    let name = if SUPER_NOVICE_JOBS.contains(&job) {
+    let super_novice = SUPER_NOVICE_JOBS.contains(&job);
+    let named = usize::try_from(kind - 10).ok().and_then(|index| NAMED_CARTS.get(index)).filter(|_| !super_novice);
+    let name = if super_novice {
         "슈노손수레".to_string()
+    } else if let Some(name) = named {
+        name.to_string()
     } else if kind > 1 {
         format!("손수레{}", kind - 1)
     } else {
         "손수레".to_string()
     };
-    let (sprite, act) = match name.strip_prefix("손수레").and_then(|number| number.parse::<i32>().ok()) {
+    let numbered = name.strip_prefix("손수레").and_then(|number| number.parse::<i32>().ok());
+    let (sprite, act) = match numbered {
         Some(5..) if baby => (format!("{name}베이비"), format!("{name}베이비")),
+        _ if baby && named.is_some() => (format!("{name}_미니"), format!("{name}_미니")),
         _ if baby => (name.clone(), format!("베이비{name}")),
         _ => (name.clone(), name),
     };
@@ -1526,7 +1534,7 @@ pub fn number_drift(rot: f32, from_server: bool) -> [f32; 2] {
 
 /// How far the cart's rope lets it lag: one cell.
 pub const CART_ROPE: f32 = world::CELL;
-/// Cart frames a world unit rolled.
+/// Cart frames a world unit rolled, at an ACT delay of 1 (a delay of 4 makes it 0.23).
 const CART_FRAMES: f32 = 0.92;
 /// The falcon flies this far above the ground.
 pub const FALCON_HEIGHT: f32 = 25.0;
@@ -1706,18 +1714,18 @@ pub struct Cart {
 }
 
 impl Cart {
-    /// A rope's length behind a leader facing `direction`.
-    pub fn behind(sprites: SpriteSet, leader: [f32; 2], direction: u8) -> Self {
-        Self { sprites, at: place_behind(leader, direction, CART_ROPE), rot: rot_of(direction), rolled: 0.0 }
+    /// A new cart stands on its leader's spot, facing the leader's way, until the leader walks off.
+    pub fn new(sprites: SpriteSet, leader: [f32; 2], direction: u8) -> Self {
+        Self { sprites, at: leader, rot: rot_of(direction), rolled: 0.0 }
     }
 
     /// Pulled in to a rope's length when the leader is farther, turned toward it. A leader suddenly far off (a warp,
-    /// a teleport) has the cart placed behind it again.
+    /// a teleport) has the cart start over on its spot.
     pub fn step(&mut self, leader: [f32; 2], direction: u8) {
         let [dx, dz] = [leader[0] - self.at[0], leader[1] - self.at[1]];
         // ponytail: more than two ropes away counts as a jump, not a pull.
         if f32::hypot(dx, dz) > CART_ROPE * 3.0 {
-            (self.at, self.rot) = (place_behind(leader, direction, CART_ROPE), rot_of(direction));
+            (self.at, self.rot) = (leader, rot_of(direction));
             return;
         }
         let at = rope_step(self.at, leader, CART_ROPE);
@@ -1729,9 +1737,10 @@ impl Cart {
         }
     }
 
-    /// Which of `count` frames shows: the wheels turn with the distance rolled, looping.
+    /// Which of `count` frames shows: the wheels turn with the distance rolled over the ACT's delay, looping.
     pub fn frame(&self, count: usize) -> usize {
-        (self.rolled * CART_FRAMES) as usize % count.max(1)
+        let delay = self.sprites.layers.first().and_then(|layer| layer.act.delays.first()).copied().filter(|delay| *delay > 0.0);
+        (self.rolled * CART_FRAMES / delay.map_or(4.0, |delay| delay.max(1.0))) as usize % count.max(1)
     }
 }
 
@@ -4226,26 +4235,28 @@ mod tests {
             unmounted: None,
             delay: Default::default(),
         };
-        // Placed a rope's length behind a leader facing south (0): to its north, facing south.
-        let mut cart = Cart::behind(sprites, [50.0, 50.0], 0);
-        assert_near(cart.at, [50.0, 55.0]);
+        // A new cart stands on its leader's spot, facing its way (south, 0).
+        let mut cart = Cart::new(sprites, [50.0, 50.0], 0);
+        assert_near(cart.at, [50.0, 50.0]);
         assert_eq!(cart.rot, 0.0);
         // Closer than the rope: it stays, turning to face the leader (east of it: 90).
-        cart.step([53.0, 55.0], 6);
-        assert_near(cart.at, [50.0, 55.0]);
+        cart.step([53.0, 50.0], 6);
+        assert_near(cart.at, [50.0, 50.0]);
         assert!((cart.rot - 90.0).abs() < 1e-3, "{}", cart.rot);
         assert_eq!(cart.rolled, 0.0);
         // Farther: pulled straight in to exactly a rope's length, rolling as far as it moved.
-        cart.step([58.0, 55.0], 6);
-        assert_near(cart.at, [53.0, 55.0]);
+        cart.step([58.0, 50.0], 6);
+        assert_near(cart.at, [53.0, 50.0]);
         assert!((cart.rolled - 3.0).abs() < 1e-4);
-        // The wheels turn 0.92 frames a world unit, looping.
-        assert_eq!(cart.frame(4), 2);
+        // The wheels turn 0.92 frames a world unit over the ACT's delay (4 when the ACT has none): 0.23, looping.
+        assert_eq!(cart.frame(6), 0);
         cart.rolled = 5.0;
-        assert_eq!(cart.frame(4), 0);
-        // A jump (a warp) puts it behind the leader again.
+        assert_eq!(cart.frame(6), 1);
+        cart.rolled = 30.0;
+        assert_eq!(cart.frame(6), 0);
+        // A jump (a warp) starts it over on the leader's spot.
         cart.step([200.0, 200.0], 4);
-        assert_near(cart.at, [200.0, 195.0]);
+        assert_near(cart.at, [200.0, 200.0]);
     }
 
     #[test]
@@ -4256,16 +4267,25 @@ mod tests {
         };
         let same = |name: &str| (name.to_string(), format!("{name}.act"));
         assert_eq!(path(1, 5), same("손수레"));
-        for kind in 2..=13 {
+        for kind in 2..=9 {
             assert_eq!(path(kind, 10), same(&format!("손수레{}", kind - 1)));
         }
-        // The Super Novice's own, whatever the type.
+        // From 10 on, the named carts.
+        assert_eq!(path(10, 5), same("선물상자카트"));
+        assert_eq!(path(11, 10), same("포링싣은카트"));
+        assert_eq!(path(12, 18), same("포링카트"));
+        assert_eq!(path(13, 4058), same("마도카트"));
+        // The Super Novice's own, whatever the type, and the Hyper Novice's too.
         assert_eq!(path(3, 23), same("슈노손수레"));
+        assert_eq!(path(13, 23), same("슈노손수레"));
+        assert_eq!(path(2, 4307), same("슈노손수레"));
         assert_eq!(path(1, 4045), ("슈노손수레".to_string(), "베이비슈노손수레.act".to_string()));
-        // Babies: a baby ACT on the grown-up sprite, or a baby sprite of its own from type 6.
+        // Babies: a baby ACT on the grown-up sprite, a baby sprite of its own from type 6, a mini cart from 10.
         assert_eq!(path(1, 4028), ("손수레".to_string(), "베이비손수레.act".to_string()));
         assert_eq!(path(5, 4036), ("손수레4".to_string(), "베이비손수레4.act".to_string()));
         assert_eq!(path(6, 4107), same("손수레5베이비"));
+        assert_eq!(path(10, 4028), same("선물상자카트_미니"));
+        assert_eq!(path(13, 4107), same("마도카트_미니"));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 {
-  "about": "A pushcart on a one-cell rope (issue #196): placed a cell behind the player's facing, it stays put while the player is within a cell, gets pulled along at exactly one cell when they walk, faces them, rolls its wheels with the distance and casts a shadow. A walk east, then north, then back; shots at each corner and mid-walk. state reports the cart's spot, facing and frame.",
+  "about": "A pushcart on a one-cell rope (issue #196): starting on the player's spot, it stays put while the player is within a cell, gets pulled along at exactly one cell when they walk, faces them, rolls its wheels with the distance and casts a shadow. A walk east, then north, then back; shots at each corner and mid-walk. state reports the cart's spot, facing and frame.",
   "account": "",
   "slot": 0,
   "steps": [

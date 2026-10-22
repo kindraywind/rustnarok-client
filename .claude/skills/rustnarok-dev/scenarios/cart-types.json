@@ -1,0 +1,280 @@
+{
+ "about": "Pushcart types 10 to 13 (gift box, poring-loaded, poring, Mado), a baby merchant's mini versions and the Hyper Novice's cart: each new cart starts on the player's spot, then trails a cell behind as they walk seven cells north or back south on open grass.",
+ "account": "",
+ "slot": 0,
+ "steps": [
+  {
+   "say": "@warp gef_fild07 61 229"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "say": "@job 5"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@cart 0"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@cart 10"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "click_on": {
+    "cell": [
+     61,
+     236
+    ]
+   }
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "cart-gift-box",
+   "crop": [
+    362,
+    214,
+    300,
+    320
+   ],
+   "threshold": 5
+  },
+  {
+   "say": "@cart 11"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "click_on": {
+    "cell": [
+     61,
+     229
+    ]
+   }
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "cart-poring-loaded",
+   "crop": [
+    362,
+    214,
+    300,
+    320
+   ],
+   "threshold": 5
+  },
+  {
+   "say": "@cart 12"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "click_on": {
+    "cell": [
+     61,
+     236
+    ]
+   }
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "cart-poring",
+   "crop": [
+    362,
+    214,
+    300,
+    320
+   ],
+   "threshold": 5
+  },
+  {
+   "say": "@cart 13"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "click_on": {
+    "cell": [
+     61,
+     229
+    ]
+   }
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "cart-mado",
+   "crop": [
+    362,
+    214,
+    300,
+    320
+   ],
+   "threshold": 5
+  },
+  {
+   "say": "@job 4028"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@cart 10"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "click_on": {
+    "cell": [
+     61,
+     236
+    ]
+   }
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "cart-baby-gift-box",
+   "crop": [
+    362,
+    214,
+    300,
+    320
+   ],
+   "threshold": 5
+  },
+  {
+   "say": "@cart 13"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "click_on": {
+    "cell": [
+     61,
+     229
+    ]
+   }
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "cart-baby-mado",
+   "crop": [
+    362,
+    214,
+    300,
+    320
+   ],
+   "threshold": 5
+  },
+  {
+   "say": "@job 4307"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@cart 12"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "click_on": {
+    "cell": [
+     61,
+     236
+    ]
+   }
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "cart-hyper-novice",
+   "crop": [
+    362,
+    214,
+    300,
+    320
+   ],
+   "threshold": 5
+  },
+  {
+   "say": "@cart 0"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@job 0"
+  },
+  {
+   "wait": 500
+  }
+ ]
+}
