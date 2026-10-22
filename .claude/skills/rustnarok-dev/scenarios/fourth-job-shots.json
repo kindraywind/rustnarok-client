@@ -1,0 +1,506 @@
+{
+  "about": "The fourth-job shots and throws (issue #852) on open grass at prt_fild08 170,360, from npc/fourth-job-shots.txt with a training dummy 5 cells east casting them on the player (a new dummy each time; @alive before each, then 6 s for its revival's invincibility to pass, as these skills outdo a Novice's HP): Crimson Arrow (1756), Frenzy Shot (2114), Unlucky Rush (2154, from its damage packet) and Savage Impact (1837) turned toward the player, Jupitel Thunderstorm's ball rolling and then its bolts round the player (2366), Storm Cannon's sweep (1755) on its way and just past the player, and last the acid blob in flight and then its splash (2206), whose zone keeps hitting the player.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/fourth-job-shots.txt"
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/fourth-job-shots.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            170,
+            360
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokShots"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 6000
+    },
+    {
+      "type": "crimson"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 12000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 160
+      }
+    },
+    {
+      "shot": "crimson-arrow",
+      "threshold": 30,
+      "crop": [
+        300,
+        40,
+        560,
+        430
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 6000
+    },
+    {
+      "type": "frenzy"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 12000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 112
+      }
+    },
+    {
+      "shot": "frenzy-shot",
+      "threshold": 30,
+      "crop": [
+        300,
+        40,
+        560,
+        430
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 6000
+    },
+    {
+      "type": "unlucky"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillHit",
+        "pause": true,
+        "ms": 12000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 80
+      }
+    },
+    {
+      "shot": "unlucky-rush",
+      "threshold": 30,
+      "crop": [
+        300,
+        40,
+        560,
+        430
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 6000
+    },
+    {
+      "type": "savage"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 12000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 64
+      }
+    },
+    {
+      "shot": "savage-impact",
+      "threshold": 30,
+      "crop": [
+        300,
+        40,
+        560,
+        430
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 6000
+    },
+    {
+      "type": "jupitel"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 12000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 96
+      }
+    },
+    {
+      "shot": "jupitel-ball",
+      "threshold": 30,
+      "crop": [
+        300,
+        40,
+        560,
+        430
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 400
+      }
+    },
+    {
+      "shot": "jupitel-bolts",
+      "threshold": 30,
+      "crop": [
+        300,
+        40,
+        560,
+        430
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 6000
+    },
+    {
+      "type": "cannon"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 12000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 48
+      }
+    },
+    {
+      "shot": "storm-cannon",
+      "threshold": 30,
+      "crop": [
+        300,
+        40,
+        560,
+        430
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 256
+      }
+    },
+    {
+      "shot": "storm-cannon-past",
+      "threshold": 30,
+      "crop": [
+        300,
+        40,
+        560,
+        430
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 6000
+    },
+    {
+      "type": "acid"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 12000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 64
+      }
+    },
+    {
+      "shot": "acid-throw",
+      "threshold": 30,
+      "crop": [
+        300,
+        40,
+        560,
+        430
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 400
+      }
+    },
+    {
+      "shot": "acid-splash",
+      "threshold": 30,
+      "crop": [
+        300,
+        40,
+        560,
+        430
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 3000
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/fourth-job-shots.txt"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@alive"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
