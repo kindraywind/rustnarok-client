@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 pub mod area4;
+pub mod chains;
 pub mod drops;
 pub mod footprints;
 pub mod heal;
@@ -763,6 +764,7 @@ impl Default for WorldFx {
     fn default() -> Self {
         let mut fx = Self { classes: HashMap::new(), objects: Vec::new(), serial: 0 };
         area4::register(&mut fx);
+        chains::register(&mut fx);
         drops::register(&mut fx);
         footprints::register(&mut fx);
         heal::register(&mut fx);
