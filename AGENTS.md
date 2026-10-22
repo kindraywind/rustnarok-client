@@ -8,9 +8,9 @@ screenshots in git; `cargo fmt` and `clippy -D warnings` stay clean; dev switche
 ## Where things are
 
 - The library (`src/lib.rs`) draws nothing: `net` (every packet), `grf`, `lua` (the data's Lua tables), `map`, `model`,
-  `sprite`, `effect`, `text`, `messages`. `net.rs` has the login and char protocol, the packet IDs, the data types and
-  the `encode_*` functions; `net/map_event.rs` the `MapEvent` enum, `net/map_session.rs` the `MapSession` requests,
-  `net/decode.rs` `decode_map_packet`, and `net/tests.rs` the tests.
+  `sprite`, `effect`, `text`, `messages`, and `pathfinding` (the server's walk search). `net.rs` has the login and char
+  protocol, the packet IDs, the data types and the `encode_*` functions; `net/map_event.rs` the `MapEvent` enum,
+  `net/map_session.rs` the `MapSession` requests, `net/decode.rs` `decode_map_packet`, and `net/tests.rs` the tests.
 - The binary is the game:
   - `main.rs`: message IDs and other constants, the scene types, `struct Game` (the game scene's state), `struct App`,
     `Assets` and its `load`, `main()` with the dev switches, and its tests.
