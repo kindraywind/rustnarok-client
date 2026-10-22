@@ -801,8 +801,24 @@ fn exp_color(level: u32) -> [u8; 3] {
 pub fn decode_emblem(data: &[u8]) -> Option<RgbaImage> {
     let mut bmp = Vec::new();
     flate2::read::ZlibDecoder::new(data).take(EMBLEM_BYTES).read_to_end(&mut bmp).ok()?;
-    let image = image::load_from_memory_with_format(&bmp, image::ImageFormat::Bmp).ok()?;
+    decode_emblem_file(&bmp)
+}
+
+/// An emblem as the web server gives it: the BMP file itself.
+// ponytail: BMP only; rathena's web server also keeps GIF emblems, which need the image crate's gif feature.
+pub fn decode_emblem_file(bmp: &[u8]) -> Option<RgbaImage> {
+    let image = image::load_from_memory_with_format(bmp, image::ImageFormat::Bmp).ok()?;
     Some(crate::render::key_out(image.to_rgba8()))
+}
+
+/// Downloads a guild's emblem from rathena's web server (`/emblem/download`), for servers that keep emblems there
+/// rather than answer CZ_REQ_GUILD_EMBLEM_IMG. It waits on the network: call it off the frame.
+pub fn download_emblem(address: &str, auth: &crate::booking::Auth, guild: u32) -> std::io::Result<Vec<u8>> {
+    crate::booking::post(address, "/emblem/download", &emblem_fields(auth, guild))
+}
+
+fn emblem_fields(auth: &crate::booking::Auth, guild: u32) -> [(&'static str, String); 4] {
+    [("AID", auth.account.to_string()), ("AuthToken", auth.token.clone()), ("WorldName", auth.world.clone()), ("GDID", guild.to_string())]
 }
 
 /// A cell of the grid (column, row 0 the header): (5 + Σ(w + 1), 46 + 19·row, w, 18), kept inside the grid.
@@ -1568,6 +1584,47 @@ impl GuildWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn downloads_an_emblem_from_the_web_server() {
+        use std::io::{Read, Write};
+        // A 2x1 BMP: one red pixel, one magenta (keyed out).
+        let mut bmp = image::RgbImage::new(2, 1);
+        bmp.put_pixel(0, 0, image::Rgb([255, 0, 0]));
+        bmp.put_pixel(1, 0, image::Rgb([255, 0, 255]));
+        let mut file = std::io::Cursor::new(Vec::new());
+        bmp.write_to(&mut file, image::ImageFormat::Bmp).unwrap();
+        let file = file.into_inner();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let reply = file.clone();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 4096];
+            while !String::from_utf8_lossy(&request).contains("--rustnarok-booking--") {
+                let read = stream.read(&mut chunk).unwrap();
+                request.extend(&chunk[..read]);
+            }
+            let mut answer = format!("HTTP/1.1 200 OK\r\nContent-Type: image/bmp\r\nContent-Length: {}\r\n\r\n", reply.len()).into_bytes();
+            answer.extend(&reply);
+            stream.write_all(&answer).unwrap();
+            String::from_utf8_lossy(&request).into_owned()
+        });
+        let auth = crate::booking::Auth { account: 2000001, token: "0123456789abcdef".into(), world: "rAthena".into() };
+        let got = download_emblem(&address, &auth, 7).unwrap();
+        let request = server.join().unwrap();
+        assert!(request.starts_with("POST /emblem/download HTTP/1.1\r\n"));
+        for (name, value) in [("AID", "2000001"), ("AuthToken", "0123456789abcdef"), ("WorldName", "rAthena"), ("GDID", "7")] {
+            assert!(request.contains(&format!("name=\"{name}\"\r\n\r\n{value}\r\n")), "{name}");
+        }
+        assert_eq!(got, file, "the BMP's bytes as sent");
+        let image = decode_emblem_file(&got).unwrap();
+        assert_eq!((image.get_pixel(0, 0).0, image.get_pixel(1, 0).0[3]), ([255, 0, 0, 255], 0));
+        // A guild the server has no emblem for (404) is an error, and the map server's copy stays.
+        assert!(crate::booking::response_body(b"HTTP/1.1 404 Not Found\r\n\r\nError").is_err());
+    }
 
     fn member(name: &str, level: u16, online: bool, contribution: u32) -> GuildMember {
         GuildMember { name: name.into(), level, online, contribution, character: u32::from(level), ..Default::default() }

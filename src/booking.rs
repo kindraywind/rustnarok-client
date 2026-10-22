@@ -3,7 +3,7 @@
 //! and its web auth token from the login. Asking a post's leader to join goes over the map server (`net`).
 
 use std::io::{self, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 /// What a post is for (rathena's `e_booking_purpose`; 0 means any in a search).
@@ -105,13 +105,18 @@ pub fn form(fields: &[(&str, String)], boundary: &str) -> Vec<u8> {
 
 /// The body of an HTTP response, if its status is 200.
 pub fn response_body(response: &[u8]) -> io::Result<String> {
-    let text = String::from_utf8_lossy(response);
-    let (head, body) = text.split_once("\r\n\r\n").ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no HTTP header"))?;
+    response_bytes(response).map(|body| String::from_utf8_lossy(body).into_owned())
+}
+
+/// The body's bytes of an HTTP response (an image, say), if its status is 200.
+fn response_bytes(response: &[u8]) -> io::Result<&[u8]> {
+    let split = response.windows(4).position(|window| window == b"\r\n\r\n").ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no HTTP header"))?;
+    let head = String::from_utf8_lossy(&response[..split]);
     let status = head.split_whitespace().nth(1).unwrap_or_default();
     if status != "200" {
         return Err(io::Error::other(format!("the web server answered {status}")));
     }
-    Ok(body.to_owned())
+    Ok(&response[split + 4..])
 }
 
 /// The posts in a reply (`{"Type": 1, "data": [...]}`, or one post under `data`); none when it has none.
@@ -146,24 +151,29 @@ pub fn posts(body: &str) -> io::Result<Vec<Post>> {
 /// Sends a request to the web server at `address` (host:port) and reads its answer. It waits on the network: call it
 /// off the frame.
 pub fn send(address: &str, auth: &Auth, request: &Request) -> io::Result<Reply> {
+    let body = String::from_utf8_lossy(&post(address, request.path(), &request.fields(auth))?).into_owned();
+    match request {
+        Request::Search { .. } | Request::List => Ok(Reply::Posts(posts(&body)?)),
+        Request::Add(_) | Request::Delete => posts(&body).map(|_| Reply::Done),
+    }
+}
+
+/// Posts a multipart form to `path` on the web server at `address` (host:port) and gives the answer's body. It waits
+/// on the network: call it off the frame.
+pub fn post(address: &str, path: &str, fields: &[(&str, String)]) -> io::Result<Vec<u8>> {
     let boundary = "rustnarok-booking";
-    let body = form(&request.fields(auth), boundary);
-    let mut stream = TcpStream::connect(address)?;
+    let body = form(fields, boundary);
+    let mut stream = TcpStream::connect_timeout(&address.to_socket_addrs()?.next().ok_or_else(|| io::Error::other("no address"))?, Duration::from_secs(5))?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     let head = format!(
-        "POST {} HTTP/1.1\r\nHost: {address}\r\nContent-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        request.path(),
+        "POST {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: multipart/form-data; boundary={boundary}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(head.as_bytes())?;
     stream.write_all(&body)?;
     let mut response = Vec::new();
     stream.read_to_end(&mut response)?;
-    let body = response_body(&response)?;
-    match request {
-        Request::Search { .. } | Request::List => Ok(Reply::Posts(posts(&body)?)),
-        Request::Add(_) | Request::Delete => posts(&body).map(|_| Reply::Done),
-    }
+    response_bytes(&response).map(<[u8]>::to_vec)
 }
 
 #[cfg(test)]

@@ -339,6 +339,7 @@ impl App {
             game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, now);
         }
         game.poll_booking();
+        game.poll_web_emblems(gpu);
         // The map's own effects: those started at its load, then each on its timer while the player is near.
         let near = actor::world_xz(game.player.position(now));
         for (effect, at) in game.world.map_effects.due(crate::whole_ms(now), near) {
