@@ -41,6 +41,8 @@ pub enum Head {
     Hat,
     /// `dx,dy_adjust` of the head-height rule.
     At { dx: f32, adjust: f32 },
+    /// `view:dx,dy`: the feet moved dx units along the camera's right and dy along its up, as they are.
+    View { dx: f32, dy: f32 },
 }
 
 /// A sound or a camera shake at the copy's age in ticks.
@@ -63,6 +65,8 @@ pub struct Row {
     /// How much alpha a frame the black fill gains (0 none).
     pub tint: u32,
     pub events: Vec<Event>,
+    /// The start delay in ms every launch gets (effects.txt's `wdelay`).
+    pub delay: i32,
 }
 
 /// The ids' data (world_str.txt).
@@ -83,6 +87,10 @@ impl Table {
             let head = match head {
                 "-" => Head::Feet,
                 "lua" => Head::Hat,
+                view if view.starts_with("view:") => match view[5..].split_once(',').and_then(|(dx, dy)| Some((dx.parse().ok()?, dy.parse().ok()?))) {
+                    Some((dx, dy)) => Head::View { dx, dy },
+                    None => Head::Feet,
+                },
                 pair => match pair.split_once(',').and_then(|(dx, adjust)| Some((dx.parse().ok()?, adjust.parse().ok()?))) {
                     Some((dx, adjust)) => Head::At { dx, adjust },
                     None => Head::Feet,
@@ -110,6 +118,7 @@ impl Table {
                 head,
                 tint: tint.parse().unwrap_or(0),
                 events,
+                delay: 0,
             };
             rows.insert(id, row);
         }
@@ -118,6 +127,13 @@ impl Table {
 
     pub fn get(&self, id: u32) -> Option<&Row> {
         self.0.get(&id)
+    }
+
+    /// Gives every launch of `id` a start delay of `ms`.
+    pub fn set_delay(&mut self, id: u32, ms: i32) {
+        if let Some(row) = self.0.get_mut(&id) {
+            row.delay = ms;
+        }
     }
 
     /// Drops the ids another table already plays.
@@ -423,6 +439,7 @@ impl World {
         self.longitude = Some(scene.longitude);
         let head = match (self.row.head, self.owner) {
             (Head::At { dx, adjust }, Some(unit)) => (scene.body)(unit).and_then(|body| head_offset(self.id, dx, adjust, body)),
+            (Head::View { dx, dy }, _) => Some([dx, dy]),
             _ => None,
         };
         self.point = match head {
@@ -518,7 +535,7 @@ impl Worlds {
         }
         let loaded = Self::file_of(&row, launch.min, launch.roll).and_then(|file| load(&file));
         self.serial += 1;
-        let timeline = Timeline { looped: row.looped, ..Timeline::default() };
+        let timeline = Timeline { looped: row.looped, delay: row.delay, ..Timeline::default() };
         self.copies.push(World {
             serial: self.serial,
             id: launch.id,
@@ -585,7 +602,7 @@ mod tests {
     fn the_table_has_its_rows() {
         let table = table();
         let rows = table.rows();
-        assert_eq!(rows.len(), 1311);
+        assert_eq!(rows.len(), 1312);
         let lines: Vec<&str> = include_str!("world_str.txt").lines().filter(|line| !line.starts_with('#') && !line.is_empty()).collect();
         let ids: Vec<u32> = lines.iter().map(|line| line.split('\t').next().unwrap().parse().unwrap()).collect();
         assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
@@ -695,7 +712,17 @@ mod tests {
 
     fn row(flags: &str, events: Vec<Event>) -> Row {
         let has = |name: &str| flags.split(',').any(|each| each == name);
-        Row { file: Source::Named("a/b".into()), min: None, single: has("single"), looped: has("loop"), owner: has("owner"), head: Head::Feet, tint: 0, events }
+        Row {
+            file: Source::Named("a/b".into()),
+            min: None,
+            single: has("single"),
+            looped: has("loop"),
+            owner: has("owner"),
+            head: Head::Feet,
+            tint: 0,
+            events,
+            delay: 0,
+        }
     }
 
     fn launch(id: u32, owner: Option<Option<u32>>) -> Launch {
@@ -952,6 +979,40 @@ mod tests {
         let copy = worlds.get_mut(serial).unwrap();
         assert!((copy.point[2] - 15.0).abs() < 1e-4 && (copy.point[1] - 43.2).abs() < 1e-3 && copy.point[0] == 10.0);
         assert!(!copy.lifted);
+    }
+
+    #[test]
+    fn the_view_head_moves_the_point_along_the_camera() {
+        let table = table();
+        assert_eq!(table.get(10010).unwrap().head, Head::View { dx: 0.0, dy: 10.0 });
+        let mut worlds = Worlds::default();
+        let serial = worlds.launch(table.get(10010).unwrap(), &launch(10010, Some(Some(7))), |_| Some(small(29))).unwrap();
+        let feet = |_: Option<u32>| Some([10.0, 0.0, 10.0]);
+        // No body is needed: no base, adjustment or size factor.
+        let body = |_: Option<u32>| None;
+        let scene =
+            Scene { player: [10.0, 0.0, 10.0], feet: &feet, body: &body, longitude: 0.0, right: [0.0, 0.0, 1.0], up: [0.0, 0.6, 0.8], ground: &|_, _| 0.0 };
+        worlds.tick(&scene);
+        let copy = worlds.get_mut(serial).unwrap();
+        assert_eq!(copy.point, [10.0, 6.0, 18.0]);
+        // The anchor is the point itself, with no 80 px rise.
+        assert!(!copy.lifted);
+        // dx goes along the camera's right.
+        let mut side = row("", Vec::new());
+        side.head = Head::View { dx: 4.0, dy: 0.0 };
+        let serial = worlds.launch(&side, &launch(1, Some(Some(7))), |_| Some(small(29))).unwrap();
+        worlds.tick(&scene);
+        assert_eq!(worlds.get_mut(serial).unwrap().point, [10.0, 0.0, 14.0]);
+        assert!(!worlds.head_owners().contains(&Some(7)));
+    }
+
+    #[test]
+    fn a_row_delay_holds_every_launch() {
+        let mut delayed = row("", Vec::new());
+        delayed.delay = 100;
+        let mut worlds = Worlds::default();
+        let serial = worlds.launch(&delayed, &launch(1, None), |_| Some(small(13))).unwrap();
+        assert_eq!(worlds.get_mut(serial).unwrap().timeline.delay, 100);
     }
 
     #[test]
