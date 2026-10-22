@@ -26,6 +26,10 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_NOTIFY_TIME => MapEvent::ServerTime(u32_at(2), Instant::now()),
         ZC_NOTIFY_VANISH => MapEvent::Vanish { id: u32_at(2), reason: packet[6] },
+        ZC_NOTIFY_MOVE => {
+            let (from, to) = decode_move(&packet[6..12]);
+            MapEvent::UnitMove { id: u32_at(2), from, to, start_time: u32_at(12), sub: [packet[11] >> 4, packet[11] & 0x0F] }
+        }
         ZC_NOTIFY_PLAYERMOVE => {
             let (from, to) = decode_move(&packet[6..12]);
             MapEvent::PlayerMove { from, to, start_time: u32_at(2), sub: [packet[11] >> 4, packet[11] & 0x0F] }

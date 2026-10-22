@@ -547,6 +547,9 @@ impl CharSession {
                 }
             })()
             .unwrap_err();
+            if std::env::var_os("RUSTNAROK_CLIENT_TRACE").is_some() {
+                eprintln!("char connection dropped: {error}");
+            }
             on_event(CharEvent::Disconnected(error));
         });
         Ok(Self { stream, account_id: login.account_id, pinged: Instant::now() })
@@ -732,8 +735,12 @@ fn lengths_for(version: u32) -> &'static HashMap<u16, i32> {
     if version >= PACKETVER_20250402 { &NEW } else { &OLD }
 }
 
+/// Packets some servers send that rathena's tables leave out. ZC_NOTIFY_MOVE is in rathena's packets.hpp, commented
+/// out as unused: id, move data, start tick.
+const EXTRA_LENGTHS: [(u16, i32); 1] = [(ZC_NOTIFY_MOVE, 16)];
+
 fn packet_length(id: u16) -> Option<i32> {
-    lengths_for(packetver()).get(&id).copied()
+    lengths_for(packetver()).get(&id).copied().or_else(|| EXTRA_LENGTHS.iter().find(|(extra, _)| *extra == id).map(|(_, length)| *length))
 }
 
 /// Dev hook (the client's control socket): sees every packet read from the char and map servers.
@@ -873,6 +880,7 @@ const CZ_REQ_WHISPER_LIST: u16 = 0x00D3;
 const ZC_WHISPER_LIST: u16 = 0x00D4;
 const ZC_ACCEPT_ENTER: u16 = 0x02EB;
 const ZC_NOTIFY_VANISH: u16 = 0x0080;
+const ZC_NOTIFY_MOVE: u16 = 0x0086;
 const ZC_NOTIFY_PLAYERMOVE: u16 = 0x0087;
 const ZC_NOTIFY_TIME: u16 = 0x007F;
 const ZC_STOPMOVE: u16 = 0x0088;

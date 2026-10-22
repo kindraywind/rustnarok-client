@@ -2757,3 +2757,23 @@ fn decodes_effect_with_and_without_number() {
     let Some(MapEvent::Effect { id, effect, num }) = decode_map_packet(&effect2) else { panic!("effect2 not decoded") };
     assert_eq!((id, effect, num), (2000001, 312, None));
 }
+
+#[test]
+fn decodes_notify_move() {
+    // 0086: id.L, move data (start, destination, sub-cell nibbles), start tick.L. rathena never sends it, other servers do.
+    assert_eq!(packet_length(0x0086), Some(16));
+    let mut packet = vec![0x86, 0x00];
+    packet.extend_from_slice(&110_000_123u32.to_le_bytes());
+    let (x0, y0, x1, y1) = (156u16, 191u16, 160u16, 185u16);
+    packet.extend_from_slice(&[
+        (x0 >> 2) as u8,
+        ((x0 << 6) | ((y0 >> 4) & 0x3F)) as u8,
+        ((y0 << 4) | ((x1 >> 6) & 0x0F)) as u8,
+        ((x1 << 2) | ((y1 >> 8) & 0x03)) as u8,
+        y1 as u8,
+        0x4C,
+    ]);
+    packet.extend_from_slice(&5_000u32.to_le_bytes());
+    let Some(MapEvent::UnitMove { id, from, to, start_time, sub }) = decode_map_packet(&packet) else { panic!("notify move not decoded") };
+    assert_eq!((id, from, to, start_time, sub), (110_000_123, [156, 191], [160, 185], 5_000, [4, 12]));
+}
