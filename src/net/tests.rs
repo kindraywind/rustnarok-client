@@ -2763,7 +2763,7 @@ fn decodes_notify_move() {
     // 0086: id.L, move data (start, destination, sub-cell nibbles), start tick.L. rathena never sends it, other servers do.
     assert_eq!(packet_length(0x0086), Some(16));
     // Older packets from the extra table; an id both tables know keeps the main table's length.
-    assert_eq!([0x07FB, 0x01B4, 0x0B1A].map(packet_length), [Some(25), Some(12), Some(29)]);
+    assert_eq!([0x07FB, 0x01B4, 0x008A, 0x0B1A].map(packet_length), [Some(25), Some(12), Some(29), Some(29)]);
     let mut packet = vec![0x86, 0x00];
     packet.extend_from_slice(&110_000_123u32.to_le_bytes());
     let (x0, y0, x1, y1) = (156u16, 191u16, 160u16, 185u16);
@@ -2796,4 +2796,21 @@ fn decodes_old_cast() {
     packet.push(0);
     let Some(MapEvent::Casting { source, target, skill, element, cast_ms, .. }) = decode_map_packet(&packet) else { panic!("old cast not decoded") };
     assert_eq!((source, target, skill, element, cast_ms), (110_000_123, 150_005, 28, 6, 1_500));
+}
+
+#[test]
+fn decodes_old_act() {
+    // 008a: source.L, target.L, tick.L, source speed.L, target speed.L, damage.W, hits.W, type.B, left damage.W.
+    let mut packet = vec![0x8A, 0x00];
+    for value in [150_005u32, 110_000_123, 5_000, 432, 288] {
+        packet.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [320u16, 1] {
+        packet.extend_from_slice(&value.to_le_bytes());
+    }
+    packet.push(2);
+    packet.extend_from_slice(&0u16.to_le_bytes());
+    let Some(MapEvent::Act(act)) = decode_map_packet(&packet) else { panic!("old act not decoded") };
+    assert_eq!((act.source, act.target, act.source_speed, act.target_speed), (150_005, 110_000_123, 432, 288));
+    assert_eq!((act.damage, act.sp, act.hits, act.kind, act.left_damage), (320, false, 1, 2, 0));
 }

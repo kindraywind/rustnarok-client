@@ -918,6 +918,8 @@ const CZ_PROGRESS: u16 = 0x02F1;
 const ZC_PROGRESS_CANCEL: u16 = 0x02F2;
 const ZC_PROGRESS_ACTOR: u16 = 0x09D1;
 const ZC_NOTIFY_ACT: u16 = 0x08C8;
+/// The same act before 20071113: damage in 16 bits, no SP flag.
+const ZC_NOTIFY_ACT_OLD: u16 = 0x008A;
 const ZC_PAR_CHANGE: u16 = 0x00B0;
 const ZC_LONGLONGPAR_CHANGE: u16 = 0x0ACB;
 const ZC_HP_INFO: u16 = 0x0977;
