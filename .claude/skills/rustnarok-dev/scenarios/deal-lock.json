@@ -1,0 +1,32 @@
+{
+  "about": "No walking while a deal is open. In prt_in the Tool Dealer's buy-or-sell question opens: a click on the floor sends no walk request. Buy opens the shop: a click on the floor still sends none. Cancel ends the deal, and the same click walks.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 134 220"},
+    {"settle": 2000},
+    {"expect": {"map": "prt_in.gat"}},
+    {"click": [187, 317]},
+    {"wait": 1500},
+    {"expect": {"windows_open": ["DealChoice"]}},
+    {"click": [700, 620]},
+    {"wait_for": {"sent": "0x035f", "ms": 1500}, "none": true},
+    {"move": [1000, 750]},
+    {"shot": "deal-choice-locked", "crop": [0, 0, 1024, 768], "threshold": 5},
+    {"click_on": {"button": "deal_buy"}},
+    {"wait": 1000},
+    {"expect": {"windows_open": ["Shop"]}},
+    {"click": [700, 620]},
+    {"wait_for": {"sent": "0x035f", "ms": 1500}, "none": true},
+    {"move": [1000, 750]},
+    {"shot": "shop-locked", "crop": [0, 0, 1024, 768], "threshold": 5},
+    {"click_on": {"button": "shop_cancel"}},
+    {"wait": 800},
+    {"expect": {"windows_closed": ["Shop"]}},
+    {"click": [700, 620]},
+    {"wait_for": {"sent": "0x035f", "ms": 2000}},
+    {"wait": 1500},
+    {"say": "@warp prontera 156 180"},
+    {"wait": 800}
+  ]
+}

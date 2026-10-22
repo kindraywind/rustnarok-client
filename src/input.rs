@@ -1818,7 +1818,7 @@ impl App {
                 game.special_popup = None;
             }
             Scene::Game(game) => {
-                if game.store_open() || game.trade_or_storage() {
+                if game.store_open() || game.world_locked() {
                     return;
                 }
                 // Whatever is under the cursor (see `picking::pick`): talk to NPCs, attack monsters, pick items up. The
@@ -2839,9 +2839,9 @@ impl App {
         game.dragging.is_none() && !game.on_ui(self.cursor, assets.message.size) && !game.store_open() && game.targeting.is_none() && !game.capturing
     }
 
-    /// Whether a world press does anything: not with the trade or storage window open (it's taken, and dropped).
+    /// Whether a world press does anything: not while the world is locked (it's taken, and dropped).
     fn world_acts(&self) -> bool {
-        matches!(&self.scene, Scene::Game(game) if !game.trade_or_storage())
+        matches!(&self.scene, Scene::Game(game) if !game.world_locked())
     }
 
     /// The left button read once a frame (`ButtonRead`): a press since the last read, still down, acts in the world

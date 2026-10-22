@@ -5142,7 +5142,7 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 // Each try decides again: Ctrl does nothing, Shift, a chat room or sitting turn, else a walk.
                 if follows_pointer(game.walk_held, game.pending.is_some() || game.attack.is_some(), game.last_walk_try, whole_ms(now))
-                    && !game.trade_or_storage()
+                    && !game.world_locked()
                     && let Some(assets) = &self.assets
                     && !game.on_ui(self.cursor, assets.message.size)
                 {
