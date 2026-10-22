@@ -10,17 +10,17 @@ pub fn find_path(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]
     search(gat, from, to, Some(WALK_NODES), None)
 }
 
-/// A unit's walk heard from the server, by its object type: an NPC with a monster's look (12) may step onto type-5
-/// cells.
+/// A unit's walk heard from the server, by its object type: an NPC with a monster's look ([`MONSTER_LOOK`]) may step
+/// onto type-5 cells.
 pub fn find_unit_path(gat: &Gat, from: [i32; 2], to: [i32; 2], kind: u8) -> Option<Vec<[i32; 2]>> {
     search(gat, from, to, Some(WALK_NODES), Some(kind))
 }
 
 /// rathena's object type for an NPC whose look is a monster class (`clif_bl_type`).
-const MONSTER_LOOK: u8 = 12;
+pub const MONSTER_LOOK: u8 = 12;
 
-/// The navigation trail's path: the same search with no limit.
-pub fn find_trail(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]>> {
+/// The same search with no node limit, for a path longer than a walk can take (the navigation trail).
+pub fn find_unlimited_path(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2]>> {
     search(gat, from, to, None, None)
 }
 
@@ -214,19 +214,19 @@ mod tests {
             Gat { width, height, cells }
         };
         let across = gat(3, 1, &[[1, 0]]);
-        assert_eq!(find_unit_path(&across, [0, 0], [2, 0], 12), Some(vec![[1, 0], [2, 0]]));
+        assert_eq!(find_unit_path(&across, [0, 0], [2, 0], MONSTER_LOOK), Some(vec![[1, 0], [2, 0]]));
         assert_eq!(find_unit_path(&across, [0, 0], [2, 0], 6), None);
         let goal = gat(3, 1, &[[2, 0]]);
-        assert_eq!(find_unit_path(&goal, [0, 0], [2, 0], 12), Some(vec![[1, 0], [2, 0]]));
+        assert_eq!(find_unit_path(&goal, [0, 0], [2, 0], MONSTER_LOOK), Some(vec![[1, 0], [2, 0]]));
         assert_eq!(find_unit_path(&goal, [0, 0], [2, 0], 6), None);
         // The diagonal past a type-5 side cell stays shut, so kind 12 goes through it and kind 6 round it.
         let corner = gat(2, 2, &[[1, 0]]);
-        assert_eq!(find_unit_path(&corner, [0, 0], [1, 1], 12), Some(vec![[1, 0], [1, 1]]));
+        assert_eq!(find_unit_path(&corner, [0, 0], [1, 1], MONSTER_LOOK), Some(vec![[1, 0], [1, 1]]));
         assert_eq!(find_unit_path(&corner, [0, 0], [1, 1], 6), Some(vec![[0, 1], [1, 1]]));
         // Type 1 blocks everyone; clicks and the trail (no kind) treat 5 as blocked.
         let mut wall = gat(3, 1, &[]);
         wall.cells[1].1 = 1;
-        assert_eq!(find_unit_path(&wall, [0, 0], [2, 0], 12), None);
+        assert_eq!(find_unit_path(&wall, [0, 0], [2, 0], MONSTER_LOOK), None);
         assert_eq!(find_path(&across, [0, 0], [2, 0]), None);
     }
 
@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(find_path(&open, [40, 40], [69, 69]).map(|path| path.len()), Some(29));
         assert_eq!(find_path(&open, [40, 40], [70, 70]), None);
         // The trail has no limit.
-        assert_eq!(find_trail(&open, [60, 60], [108, 60]).map(|path| path.len()), Some(48));
+        assert_eq!(find_unlimited_path(&open, [60, 60], [108, 60]).map(|path| path.len()), Some(48));
         // A wall across rows: round it is too far for a walk, not for the trail.
         let mut cells = vec![([0.0; 4], 0); 27 * 12];
         for x in 3..=23 {
@@ -246,10 +246,10 @@ mod tests {
         }
         let walled = Gat { width: 27, height: 12, cells };
         assert_eq!(find_path(&walled, [13, 3], [13, 7]), None);
-        assert!(find_trail(&walled, [13, 3], [13, 7]).is_some_and(|path| path.last() == Some(&[13, 7])));
+        assert!(find_unlimited_path(&walled, [13, 3], [13, 7]).is_some_and(|path| path.last() == Some(&[13, 7])));
         // No path from a cell to itself.
         assert_eq!(find_path(&open, [5, 5], [5, 5]), None);
-        assert_eq!(find_trail(&open, [5, 5], [5, 5]), None);
+        assert_eq!(find_unlimited_path(&open, [5, 5], [5, 5]), None);
     }
 
     #[test]

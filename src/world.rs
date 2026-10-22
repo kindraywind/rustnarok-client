@@ -2409,7 +2409,7 @@ fn model_mesh(grf: &Grf, rsw: &Rsw, gnd: &Gnd, alpha_of: &mut impl FnMut(&str) -
 }
 
 /// The walk search lives in the library; the binary keeps calling it from here.
-pub use rustnarok_client::pathfinding::{find_path, find_trail, find_unit_path};
+pub use rustnarok_client::pathfinding::{find_path, find_unit_path, find_unlimited_path};
 
 /// Where a click on `target` walks from `from` (the cell the player is drawn on): the target when it's `free` (in the
 /// map, walkable, not blocked by a unit) and `reachable` (the path search); otherwise the game's fallback line. Along
@@ -2685,6 +2685,7 @@ mod tests {
         assert_eq!(direction([0, 1]), 4);
         assert_eq!(direction([1, -1]), 7);
     }
+
     #[test]
     fn the_ground_cursor_takes_its_tiles_heights() {
         // Two tiles a row: cell (3, 1) is the north-east quarter of tile (1, 0) but keeps that tile's whole slope.
