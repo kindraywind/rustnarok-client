@@ -31,6 +31,20 @@ pub fn map_key(map: &str) -> String {
     map.trim_end_matches(".gat").trim_end_matches(".rsw").to_ascii_lowercase()
 }
 
+/// A map as the tables know it: a copy (`iz_ac01_a`: a trailing `_` and a letter) the tables don't have counts as the
+/// map it copies when they have that one; the copies have the same warps at the same cells.
+pub fn navi_map(tables: &NaviTables, map: &str) -> String {
+    let map = map_key(map);
+    match map.rsplit_once('_') {
+        Some((base, letter))
+            if !tables.maps.contains_key(&map) && letter.len() == 1 && letter.as_bytes()[0].is_ascii_lowercase() && tables.maps.contains_key(base) =>
+        {
+            base.to_owned()
+        }
+        _ => map,
+    }
+}
+
 /// Whether a way between maps may be taken with these services (the digits of rathena's NAV_ flags: ones the airship,
 /// tens scrolls, hundreds Kafra). Warps and NPCs that send you always may.
 // ponytail: which of the tables' kinds 204 and 205 is the Kafra and which the airship is a reading of the data.
@@ -45,7 +59,7 @@ pub fn allowed(kind: u32, services: u8) -> bool {
 
 /// The ways to take from `from` to `to`, fewest maps first (ties: the tables' order); empty when already there.
 pub fn route<'a>(tables: &'a NaviTables, from: &str, to: &str, services: u8) -> Option<Vec<&'a NaviLink>> {
-    let (from, to) = (map_key(from), map_key(to));
+    let (from, to) = (navi_map(tables, from), navi_map(tables, to));
     if from == to {
         return Some(Vec::new());
     }
@@ -79,15 +93,15 @@ pub fn route<'a>(tables: &'a NaviTables, from: &str, to: &str, services: u8) -> 
 /// Where to head on `here`: the first way off this map on the route, or the target's cell on its own map (None for a
 /// map or monster target there: that's arrived, as is a map with no route).
 pub fn next_cell(tables: &NaviTables, here: &str, target: &Target, services: u8) -> Option<[u16; 2]> {
-    if map_key(here) == map_key(&target.map) {
+    if navi_map(tables, here) == navi_map(tables, &target.map) {
         return target.cell;
     }
     route(tables, here, &target.map, services)?.first().map(|link| link.cell)
 }
 
 /// Whether the player at `cell` on `here` has got there.
-pub fn arrived(here: &str, cell: [i32; 2], target: &Target) -> bool {
-    map_key(here) == map_key(&target.map)
+pub fn arrived(tables: &NaviTables, here: &str, cell: [i32; 2], target: &Target) -> bool {
+    navi_map(tables, here) == navi_map(tables, &target.map)
         && target.cell.is_none_or(|goal| (cell[0] - i32::from(goal[0])).abs().max((cell[1] - i32::from(goal[1])).abs()) <= ARRIVED)
 }
 
@@ -347,10 +361,34 @@ mod tests {
         assert_eq!(active.next_cell(&tables, "prt_fild08.gat"), Some([170, 375]));
         assert_eq!(active.next_cell(&tables, "prt_fild08"), Some([170, 375]));
         assert_eq!(active.next_cell(&tables, "prontera.gat"), Some([150, 150]));
-        assert!(!arrived("prontera", [150, 147], &target) && arrived("prontera", [148, 152], &target));
-        assert!(!arrived("prt_fild08", [150, 150], &target));
+        assert!(!arrived(&tables, "prontera", [150, 147], &target) && arrived(&tables, "prontera", [148, 152], &target));
+        assert!(!arrived(&tables, "prt_fild08", [150, 150], &target));
         let map_only = Target { cell: None, ..target };
-        assert!(arrived("prontera.gat", [1, 1], &map_only));
+        assert!(arrived(&tables, "prontera.gat", [1, 1], &map_only));
+    }
+
+    #[test]
+    fn takes_a_copy_map_for_the_map_it_copies() {
+        let mut tables = tables();
+        tables.maps.extend(
+            [("iz_ac01", "Academy"), ("iz_ac02", "Academy 2"), ("rag_fes", "Festival"), ("rag_fes_a", "Festival A")]
+                .map(|(map, shown)| (map.to_owned(), shown.to_owned())),
+        );
+        tables.links.extend([link("iz_ac01", 200, [100, 39], "iz_ac02"), link("rag_fes_a", 200, [10, 10], "prontera")]);
+        // From the copy: the warp the map it copies has; on the target map's copy: the target's cell, and there.
+        let chuck = Target { map: "iz_ac02".into(), cell: Some([148, 110]), monster: None, name: String::new() };
+        assert_eq!(route(&tables, "iz_ac01_a", "iz_ac02", 0).unwrap().len(), 1);
+        assert_eq!(next_cell(&tables, "iz_ac01_a.gat", &chuck, 0), Some([100, 39]));
+        assert_eq!(next_cell(&tables, "iz_ac02_a", &chuck, 0), Some([148, 110]));
+        assert!(arrived(&tables, "iz_ac02_a", [148, 112], &chuck) && !arrived(&tables, "iz_ac02_a", [148, 115], &chuck));
+        assert!(arrived(&tables, "iz_ac02", [148, 112], &Target { map: "iz_ac02_b".into(), ..chuck.clone() }));
+        // A map the tables have under its own name keeps it; a copy of a map they don't have stays itself.
+        assert_eq!(
+            (navi_map(&tables, "rag_fes_a"), navi_map(&tables, "geffen_a"), navi_map(&tables, "iz_ac01_ab")),
+            ("rag_fes_a".into(), "geffen_a".into(), "iz_ac01_ab".into())
+        );
+        assert_eq!(route(&tables, "rag_fes_a", "prontera", 0).unwrap()[0].cell, [10, 10]);
+        assert!(!arrived(&tables, "rag_fes_a", [1, 1], &Target { map: "rag_fes".into(), cell: None, monster: None, name: String::new() }));
     }
 
     #[test]
