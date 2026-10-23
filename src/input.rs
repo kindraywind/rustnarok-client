@@ -111,7 +111,7 @@ impl App {
             Scene::Game(game) if game.link_at(cursor).is_some() => match game.link_at(cursor).cloned().unwrap() {
                 links::Target::Item(item) => {
                     let card = self.card_pictures.name(item.id).is_some();
-                    game.show_item(iteminfo::Shown::of_link(item.id, item.refine, item.cards, card, &self.items));
+                    game.show_item(iteminfo::Shown::of_link(item.id, item.refine, item.cards, card, &self.items).with_link_options(&item.options));
                 }
                 links::Target::Navi { map, cell } => {
                     let map = navigation::map_key(&map);

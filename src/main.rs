@@ -4374,7 +4374,7 @@ struct App {
     upgrade_boxes: HashMap<u32, lua::UpgradeBox>,
     title_names: HashMap<u32, String>,
     /// Random options' texts by option ID (empty without the table: then items show no option rows).
-    random_options: HashMap<u16, String>,
+    random_option_texts: HashMap<u16, String>,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
     /// The battlegrounds the queue window lists.
@@ -5402,7 +5402,7 @@ fn main() {
         HashMap::new()
     });
     let title_names = lua::titles(&grf).unwrap_or_default();
-    let random_options = lua::random_options(&grf).unwrap_or_else(|error| {
+    let random_option_texts = lua::random_options(&grf).unwrap_or_else(|error| {
         eprintln!("random option texts: {error}");
         HashMap::new()
     });
@@ -5508,7 +5508,7 @@ fn main() {
         synthesis_boxes,
         upgrade_boxes,
         title_names,
-        random_options,
+        random_option_texts,
         items,
         battlegrounds,
         card_names,

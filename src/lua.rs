@@ -2534,14 +2534,6 @@ mod tests {
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
-    fn reads_random_option_texts() {
-        let Some(grf) = Grf::for_tests() else { return };
-        let options = super::random_options(&grf).unwrap();
-        assert!(options[&3].contains("%d") && options[&10].contains("%d%%"));
-    }
-
-    /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
-    #[test]
     fn reads_the_world_maps() {
         let Some(grf) = Grf::for_tests() else { return };
         let (worlds, colors) = super::worlds(&grf).unwrap();

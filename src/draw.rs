@@ -311,7 +311,7 @@ impl App {
             (&self.grf, &self.items, &self.messages, &mut self.icons, &mut self.cursor_look, &self.pc_job_names);
         let (audio, sound) = (&mut self.audio, &self.sound);
         let (worlds, map_names, quest_texts) = (&self.worlds, &self.map_names, &self.quest_texts);
-        let (card_names, random_options) = (&self.card_names, &self.random_options);
+        let (card_names, option_texts) = (&self.card_names, &self.random_option_texts);
         let (achievement_info, title_names) = (&self.achievement_info, &self.title_names);
         let (skill_info, skill_trees, status_icon_files) = (&self.skill_info, &self.skill_trees, &self.status_icon_files);
         let state_infos = &self.state_infos;
@@ -2630,18 +2630,12 @@ impl App {
         // The description and the worn piece beside it, their option rows level.
         let unix_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |time| time.as_secs());
         let mut compared = compared.map(|mut window| {
-            let lines = window.lines(items, messages, unix_now);
-            window.fit(lines.len());
-            let options = window.shown.option_lines(random_options);
-            window.set_rows(options.len());
+            let (lines, options) = window.layout(items, messages, unix_now, option_texts);
             (window, lines, options)
         });
         if let Some(window) = &mut game.item_window {
-            let lines = window.lines(items, messages, unix_now);
-            window.fit(lines.len());
+            let (lines, options) = window.layout(items, messages, unix_now, option_texts);
             game.item_lines = lines.len();
-            let options = window.shown.option_lines(random_options);
-            window.set_rows(options.len());
             if let Some((beside, ..)) = &mut compared {
                 iteminfo::pair(window, beside);
             }

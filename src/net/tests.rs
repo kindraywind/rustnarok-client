@@ -2817,7 +2817,7 @@ fn decodes_old_act() {
 
 #[test]
 fn keeps_random_options() {
-    // Each option is its id (i16), value (i16) and parameter (u8); an empty one has id 0.
+    // Each option is its id (u16), value (i16) and parameter (u8); an empty one has id 0.
     let options = |packet: &mut [u8], at: usize| {
         for (n, (id, value, param)) in [(3u16, 1i16, 0u8), (10, 3, 0), (0, 0, 0), (25, -2, 4)].into_iter().enumerate() {
             packet[at + n * 5..at + n * 5 + 2].copy_from_slice(&id.to_le_bytes());

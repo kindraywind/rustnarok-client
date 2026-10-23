@@ -173,6 +173,12 @@ impl Shown {
         Self { item: id, identified: true, refine, cards, kind, grade: 0, broken: false, expires: 0, card, location: 0, worn: false, options: Vec::new() }
     }
 
+    /// A link's item with its random options (id, parameter, value).
+    pub fn with_link_options(self, options: &[[u32; 3]]) -> Self {
+        let options = options.iter().map(|&[id, param, value]| ItemOption { id: id as u16, value: value as i16, param: param as u8 }).collect();
+        Self { options, ..self }
+    }
+
     /// The same item to describe: ID, refine, cards and options (not which stack, how many, or where it was clicked).
     pub fn same_item(&self, other: &Shown) -> bool {
         (self.item, self.refine, self.cards, &self.options) == (other.item, other.refine, other.cards, &other.options)
@@ -219,6 +225,7 @@ pub fn option_text(texts: &HashMap<u16, String>, option: &ItemOption) -> Option<
 
 /// The description and the compare window beside it: both take the longer option list and the taller height, so
 /// their rows sit level. Only two with card strips: an unidentified item's description has neither rows nor a strip.
+/// Call it after both windows' `set_rows`, which clears what it sets.
 pub fn pair(description: &mut ItemWindow, compare: &mut ItemWindow) {
     if !(description.shown.has_strip() && compare.shown.has_strip()) {
         return;
@@ -400,6 +407,15 @@ impl ItemWindow {
         self.shown = shown;
         self.scroll = 0;
         self.fitted = false;
+    }
+
+    /// Its text and option rows for this frame: fitted once, the rows each time.
+    pub fn layout(&mut self, items: &HashMap<u32, ItemInfo>, messages: &[String], now: u64, texts: &HashMap<u16, String>) -> (ColoredLines, Vec<String>) {
+        let lines = self.lines(items, messages, now);
+        self.fit(lines.len());
+        let options = self.shown.option_lines(texts);
+        self.set_rows(options.len());
+        (lines, options)
     }
 
     /// Sets the height from the text, once for the item shown.
@@ -840,6 +856,8 @@ mod tests {
         // A link: equipment when it has slots.
         assert_eq!(Shown::of_link(1201, 0, [0; 4], false, &items()).kind, net::ITEM_ARMOR);
         assert_eq!(Shown::of_link(4001, 0, [0; 4], true, &items()).kind, 0);
+        let linked = Shown::of_link(1201, 0, [0; 4], false, &items()).with_link_options(&[[3, 0, 1]]);
+        assert_eq!(linked.options, [ItemOption { id: 3, value: 1, param: 0 }]);
     }
 
     #[test]
