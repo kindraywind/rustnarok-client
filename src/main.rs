@@ -2233,8 +2233,8 @@ enum Asked {
     Take(u16),
     /// An inventory item, into the deal.
     Trade(u16),
-    /// The price of a cart item going on sale.
-    VendPrice(u16),
+    /// A cart item, onto the vending setup.
+    Vend(u16),
     /// The price, then the quantity, of an inventory item for a buying store: `(index, item_id)`.
     BuyingPrice(u16, u32),
     BuyingAmount(u16),
@@ -2274,6 +2274,7 @@ impl Asked {
                 | Asked::CartToStore(_)
                 | Asked::Mail(_)
                 | Asked::Material(_)
+                | Asked::Vend(_)
         )
     }
 }
@@ -2497,6 +2498,9 @@ enum Dragged {
     /// A shop's offer (by row), or a row of its deal.
     ShopOffer(usize),
     ShopDeal(usize),
+    /// Out of the vending setup's cart mirror (by cart index), or a row on sale (by place).
+    VendMirror(u16),
+    VendGood(usize),
 }
 
 /// What a sprite on the map belongs to.
@@ -4739,7 +4743,7 @@ impl App {
                 None if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {
                     game.macro_window.as_ref().unwrap().type_text(&mut game.macro_lines, text)
                 }
-                None if game.vend_setup.as_ref().is_some_and(|setup| setup.typing) => game.vend_setup.as_mut().unwrap().type_text(text),
+                None if game.vend_setup.as_ref().is_some_and(vend::Setup::typing) => game.vend_setup.as_mut().unwrap().type_text(text),
                 None if game.buying_setup.as_ref().is_some_and(|setup| setup.focus.is_some()) => game.buying_setup.as_mut().unwrap().type_text(text),
                 None if game.mail.typing() => game.mail.type_text(text),
                 None if game.room.is_some() => game.room.as_mut().unwrap().input.push_str(text),

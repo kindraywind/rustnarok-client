@@ -429,11 +429,6 @@ impl<T> Amount<T> {
         Self { what, typed: String::new(), message: 1721, label: None, ok_only: false, max_digits: 8 }
     }
 
-    /// Asks for a vending price ("Price: "), up to 10 digits: past 1,000,000,000 is held there by the setup.
-    pub fn vend_price(what: T) -> Self {
-        Self { what, typed: String::new(), message: crate::vend::PRICE_ASKS, label: None, ok_only: false, max_digits: 10 }
-    }
-
     /// Asks for a name, under that message.
     pub fn name(what: T, message: usize) -> Self {
         Self { what, typed: String::new(), message, label: None, ok_only: false, max_digits: 0 }
@@ -583,17 +578,6 @@ mod tests {
         let mut name = Amount::name((), 0);
         name.type_text("A name longer than twenty-three");
         assert_eq!(name.typed, "A name longer than twen");
-    }
-
-    #[test]
-    fn vend_prices_take_ten_digits_without_commas() {
-        let mut price = Amount::vend_price(());
-        price.type_text("2,500,000");
-        assert_eq!(price.value(), 2_500_000);
-        price.typed.clear();
-        price.type_text("99999999999");
-        assert_eq!(price.typed, "9999999999");
-        assert_eq!(price.value(), u32::MAX);
     }
 
     #[test]

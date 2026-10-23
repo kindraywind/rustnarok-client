@@ -2228,9 +2228,15 @@ impl App {
                 .as_ref()
                 .and_then(|shop| shop.offer_at(1, row))
                 .and_then(|offer| items.get(&offer.item).map(|info| inventory::icon_path(info, offer.identified))),
-            Some((Dragged::Carted(index), _, true)) => {
+            Some((Dragged::Carted(index) | Dragged::VendMirror(index), _, true)) => {
                 game.cart.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
             }
+            Some((Dragged::VendGood(row), _, true)) => game
+                .vend_setup
+                .as_ref()
+                .and_then(|setup| setup.goods.get(row))
+                .and_then(|good| game.cart.get(good.index))
+                .and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified))),
             Some((Dragged::Hotkey(slot), _, true)) => match game.hotkeys.keys.get(slot).copied().flatten() {
                 Some(net::Hotkey { skill: true, id, .. }) => u16::try_from(id).ok().and_then(|id| skill_info.get(&id)).map(skills::icon_path),
                 Some(net::Hotkey { id, .. }) => items.get(&id).map(|info| inventory::icon_path(info, true)),

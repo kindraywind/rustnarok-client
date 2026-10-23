@@ -1982,7 +1982,7 @@ impl App {
             }
             // Vending: setting up, our shop, others' signs and goods.
             MapEvent::VendSetup(most) => {
-                let mut setup = vend::Setup::new(most, game.vend_size);
+                let mut setup = vend::Setup::new(most);
                 // Dev switch RUSTNAROK_CLIENT_VEND=<name>:<price>: everything in the cart at that price, and open.
                 if let Some((name, price)) = std::env::var("RUSTNAROK_CLIENT_VEND")
                     .ok()
@@ -1990,9 +1990,12 @@ impl App {
                 {
                     setup.type_text(&name);
                     for item in game.cart.items.iter().take(usize::from(most)) {
-                        setup.prices.insert(item.index, price);
+                        let _ = setup.put(item.index, u32::from(item.amount));
+                        setup.focus = Some(vend::Focus::Price(setup.goods.len() - 1));
+                        setup.type_text(&price.to_string());
                     }
-                    let _ = game.session.open_shop(&name, true, &setup.goods(&game.cart.items));
+                    setup.focus = None;
+                    let _ = game.session.open_shop(&name, true, &setup.for_sale());
                 }
                 game.vend_setup = Some(setup);
             }
