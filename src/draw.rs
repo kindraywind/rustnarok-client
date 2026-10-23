@@ -1606,7 +1606,7 @@ impl App {
         }
         // Navigation: there is the end of it; else the trail to where it heads on this map, and the arrow over the head.
         let here = navigation::map_key(&game.map);
-        if game.navigation.as_ref().is_some_and(|active| navigation::arrived(&here, game.player.cell, &active.target)) {
+        if game.navigation.as_ref().is_some_and(|active| navigation::arrived(&self.navi_tables, &here, game.player.cell, &active.target)) {
             game.navigation = None;
         }
         let navi_next = game.navigation.as_mut().and_then(|active| active.next_cell(&self.navi_tables, &here));

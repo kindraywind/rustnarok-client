@@ -1,0 +1,190 @@
+{
+  "about": "Navigation on a map copy (issue #1122): the navi tables have iz_ac01 and iz_ac02 but not their copies, which rathena runs with the same NPCs at the same cells. On iz_ac01_a the Academy Receptionist's [Chuck] link (iz_ac02,148,110; rathena npc/re/jobs/novice/academy.txt) draws the arrow and a trail to the base map's warp; on iz_ac02_a the trail leads to Chuck, and two cells from him the navigation ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp iz_ac01_a 102 43"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            102,
+            43
+          ]
+        }
+      }
+    },
+    {
+      "click_unit": {
+        "kind": "npc",
+        "name": "Academy Receptionist#1_"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x00b4",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 700
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 700
+    },
+    {
+      "expect": {
+        "state": {
+          "dialog.menu.items.2": "Location for trainers"
+        }
+      }
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 700
+    },
+    {
+      "expect": {
+        "state": {
+          "dialog.menu.items.1": "1st job trainers"
+        }
+      }
+    },
+    {
+      "key": "ArrowDown"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 700
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 700
+    },
+    {
+      "click_on": {
+        "navi_link": "iz_ac02",
+        "offset": [
+          -25,
+          63
+        ]
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "navigation.map": "iz_ac02",
+          "navigation.cell": [
+            148,
+            110
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "navigation.trail": 5
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "copy-map-trail",
+      "threshold": 10
+    },
+    {
+      "say": "@warp iz_ac02_a 148 114"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "map": "iz_ac02_a.gat",
+        "state": {
+          "navigation.map": "iz_ac02"
+        }
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "navigation.trail": 3
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "copy-map-to-chuck",
+      "threshold": 10
+    },
+    {
+      "say": "@warp iz_ac02_a 148 112"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "navigation": null
+        }
+      }
+    }
+  ]
+}
