@@ -1579,7 +1579,8 @@ impl WorldPass for WorldFrame<'_> {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: DEPTH_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                // Nothing reads the depth after the world pass, so on Apple GPUs it can live in tile memory only.
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TRANSIENT,
                 view_formats: &[],
             });
             *depth = Some((size, texture.create_view(&Default::default())));
@@ -1747,7 +1748,7 @@ impl WorldPass for WorldFrame<'_> {
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
-                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
                 stencil_ops: None,
             }),
             timestamp_writes: None,
