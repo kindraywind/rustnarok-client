@@ -1317,6 +1317,13 @@ impl App {
                             Some(window::Amount::new(Asked::Shop(row), None))
                         };
                     }
+                    // "Toggle Item Amount." is kept for the next shop.
+                    None if hit == shop::Hit::Whole => {
+                        game.shop_whole = shop.whole;
+                        if let Some(path) = settings_path("shop_whole") {
+                            shop::keep_whole(&path, shop.whole);
+                        }
+                    }
                     Some(shop::Action::AskOut(..) | shop::Action::Say(..)) | None => {}
                 }
             }
