@@ -8,8 +8,21 @@ pub const SIZE: f32 = 12.0;
 /// Set to false (thresholded coverage) once a hinted bitmap-friendly font like Gulim is in use.
 const ANTIALIAS: bool = true;
 
-/// The font (`RUSTNAROK_CLIENT_FONT`, Tahoma by default), then the fallbacks.
-pub struct Font(Vec<fontdue::Font>);
+/// The font (`RUSTNAROK_CLIENT_FONT`, Tahoma by default), then the fallbacks. A fallback is read the first time a
+/// character needs it: fontdue builds every glyph's outline up front, and AppleGothic's Hangul alone is ~185 MB.
+pub struct Font {
+    first: fontdue::Font,
+    fallbacks: Vec<Fallback>,
+}
+
+struct Fallback {
+    path: String,
+    font: std::sync::OnceLock<Option<fontdue::Font>>,
+}
+
+fn read(path: &str) -> Option<fontdue::Font> {
+    fontdue::Font::from_bytes(std::fs::read(path).ok()?, fontdue::FontSettings::default()).ok()
+}
 
 /// Tahoma, then a font for what it lacks (Tahoma has no Hangul), from the system's fonts.
 fn system_fonts() -> Vec<String> {
@@ -29,19 +42,30 @@ fn system_fonts() -> Vec<String> {
 impl Font {
     pub fn load() -> Self {
         let paths: Vec<String> = std::env::var("RUSTNAROK_CLIENT_FONT").into_iter().chain(system_fonts()).collect();
-        let fonts: Vec<_> =
-            paths.iter().filter_map(|path| fontdue::Font::from_bytes(std::fs::read(path).ok()?, fontdue::FontSettings::default()).ok()).collect();
-        assert!(!fonts.is_empty(), "no font at {paths:?}");
-        Self(fonts)
+        Self::from_paths(&paths)
     }
 
-    /// The first font that has the character.
+    /// The first path that reads is the font; the paths after it are fallbacks, read when first needed.
+    fn from_paths(paths: &[String]) -> Self {
+        let (index, first) = paths.iter().enumerate().find_map(|(index, path)| Some((index, read(path)?))).unwrap_or_else(|| panic!("no font at {paths:?}"));
+        let fallbacks = paths[index + 1..].iter().map(|path| Fallback { path: path.clone(), font: std::sync::OnceLock::new() }).collect();
+        Self { first, fallbacks }
+    }
+
+    /// The first font that has the character, else the font's own missing glyph.
     fn face(&self, character: char) -> &fontdue::Font {
-        self.0.iter().find(|font| font.lookup_glyph_index(character) != 0).unwrap_or(&self.0[0])
+        if self.first.lookup_glyph_index(character) != 0 {
+            return &self.first;
+        }
+        self.fallbacks
+            .iter()
+            .filter_map(|fallback| fallback.font.get_or_init(|| read(&fallback.path)).as_ref())
+            .find(|font| font.lookup_glyph_index(character) != 0)
+            .unwrap_or(&self.first)
     }
 
     pub fn line_height(&self) -> f32 {
-        self.0[0].horizontal_line_metrics(SIZE).map_or(SIZE, |line| line.new_line_size.ceil())
+        self.first.horizontal_line_metrics(SIZE).map_or(SIZE, |line| line.new_line_size.ceil())
     }
 
     pub fn width(&self, text: &str) -> f32 {
@@ -55,7 +79,7 @@ impl Font {
 
     /// One line at another pixel size (the client draws a few labels larger).
     pub fn render_sized(&self, text: &str, color: [u8; 3], size: f32) -> RgbaImage {
-        let line = self.0[0].horizontal_line_metrics(size);
+        let line = self.first.horizontal_line_metrics(size);
         let ascent = line.map_or(size, |line| line.ascent).round() as i32;
         let width: f32 = text.chars().map(|character| self.face(character).metrics(character, size).advance_width).sum();
         let height = line.map_or(size, |line| line.new_line_size.ceil());
@@ -87,6 +111,20 @@ impl Font {
 
 #[cfg(test)]
 mod tests {
+    /// The first font that reads is used; a missing fallback is only touched for a character the font lacks, and then
+    /// leaves the font's own glyph, as before.
+    #[test]
+    fn reads_a_fallback_only_when_a_character_needs_it() {
+        let Some(first) = super::system_fonts().into_iter().find(|path| super::read(path).is_some()) else { return };
+        let paths = ["/no/such/font.ttf".to_string(), first, "/no/such/fallback.ttf".to_string()];
+        let font = super::Font::from_paths(&paths);
+        assert_eq!(font.fallbacks.len(), 1);
+        font.width("Prontera 123");
+        assert!(font.fallbacks[0].font.get().is_none(), "Latin text read the fallback");
+        assert!(font.width("\u{10FFFD}") >= 0.0);
+        assert!(matches!(font.fallbacks[0].font.get(), Some(None)), "the missing fallback was not tried");
+    }
+
     #[test]
     fn renders_hangul_and_latin_inside_the_line() {
         let font = super::Font::load();
