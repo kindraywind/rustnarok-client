@@ -1,8 +1,9 @@
 {
-  "about": "An NPC shop (issues #390, the drags from #393): a right click on a row describes the item (a second one on it closes that, a third opens it again, Esc closes it). Butterfly Wings dragged onto the Buying Items window ask how many (the box holds 1; 3 are typed), a Magnifier goes in the same way (its box covers the Buying Items rows behind it), then the wings dragged back onto the shop's list ask how many to take out (the box holds all 3) and go. Esc leaves the shop open (it opens the game menu; a second Esc closes that); Cancel ends the deal (and tells the server, so the NPC can be clicked again). The deal-type box sits at (377, 480); a row under the pointer shows its name and price. Selling 10 Jellopy: with Toggle Item Amount ticked, a double click puts the whole stack in the deal; Cancel, and the Jellopy are deleted again.",
+  "about": "With 10,000 z (the deal's buying checks count the zeny carried), an NPC shop (issues #390, the drags from #393): a right click on a row describes the item (a second one on it closes that, a third opens it again, Esc closes it). Butterfly Wings dragged onto the Buying Items window ask how many (the box holds 1; 3 are typed), a Magnifier goes in the same way (its box covers the Buying Items rows behind it), then the wings dragged back onto the shop's list ask how many to take out (the box holds all 3) and go. Esc leaves the shop open (it opens the game menu; a second Esc closes that); Cancel ends the deal (and tells the server, so the NPC can be clicked again). The deal-type box sits at (377, 480); a row under the pointer shows its name and price. Selling 10 Jellopy: with Toggle Item Amount ticked, a double click puts the whole stack in the deal; Cancel, and the Jellopy are deleted again.",
   "account": "",
   "slot": 0,
   "steps": [
+    {"say": "@zeny -2000000000"}, {"wait": 400}, {"say": "@zeny 10000"}, {"wait": 400},
     {"say": "@item 909 10"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"say": "@warp prontera 134 220"}, {"settle": 2000},
     {"expect": {"map": "prt_in.gat"}},
@@ -49,6 +50,7 @@
     {"shot": "shop-sell-whole", "crop": [0, 110, 570, 330]},
     {"click_on": {"button": "shop_cancel"}}, {"wait": 500},
     {"expect": {"windows_closed": ["Shop"]}},
-    {"say": "@delitem 909 10"}, {"wait": 500}
+    {"say": "@delitem 909 10"}, {"wait": 500},
+    {"say": "@zeny -2000000000"}, {"wait": 400}
   ]
 }
