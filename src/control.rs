@@ -2035,6 +2035,166 @@ fn game_state(app: &App, game: &Game) -> Value {
 /// The animation internals of a unit in `state`, for tests (#1018).
 const INTERNALS: [&str; 8] = ["action", "frame", "rot", "alpha", "tint", "combo_ms", "held", "ghosts"];
 
+/// The grade of each field of the game's `state`, by key (#1095). A play mode leaves out a field above it, and a field
+/// that isn't here. Fair: what the screen shows, the player's own windows and settings. Assist: boxes, cells and
+/// timers of what shows. Test: what lists units or effects off screen too, and the drawing's internals.
+const FIELD_GRADES: &[(&str, Grade)] = {
+    use Grade::{Assist, Fair, Test};
+    &[
+        ("achievements", Fair),
+        ("aimed_skill", Fair),
+        ("announcements", Fair),
+        ("bars", Assist),
+        ("basic_info", Fair),
+        ("battle_mode", Fair),
+        ("battle_queue", Fair),
+        ("battleground", Fair),
+        ("blind", Fair),
+        ("block_names", Fair),
+        ("booking", Fair),
+        ("booking_asked", Fair),
+        ("boss", Test),
+        ("camera", Assist),
+        ("capturing", Fair),
+        ("card_view", Fair),
+        ("card_window_box", Fair),
+        ("cast_squares", Test),
+        ("catalog", Fair),
+        ("chat", Fair),
+        ("chat_corner", Fair),
+        ("chat_height", Fair),
+        ("chat_input", Fair),
+        ("chat_line_open", Fair),
+        ("chat_locked", Fair),
+        ("chat_log_first", Fair),
+        ("chat_log_last", Fair),
+        ("chat_log_rows", Fair),
+        ("chat_mode_icon", Fair),
+        ("chat_names", Fair),
+        ("chat_scroll", Fair),
+        ("chat_send_to", Fair),
+        ("chat_tab", Fair),
+        ("chat_tabs", Fair),
+        ("chat_whisper", Fair),
+        ("cooldowns", Assist),
+        ("costumes_shown", Fair),
+        ("cursor", Fair),
+        ("cutin", Fair),
+        ("cutin_window", Fair),
+        ("dialog", Fair),
+        ("dressroom", Fair),
+        ("dusk", Fair),
+        ("enemies", Test),
+        ("entered_facing", Test),
+        ("esc_order", Assist),
+        ("escape", Fair),
+        ("first_place_seconds", Fair),
+        ("ground_cursor", Assist),
+        ("ground_items", Fair),
+        ("ground_unit_kinds", Test),
+        ("guild", Fair),
+        ("guild_window", Fair),
+        ("head_emblems", Assist),
+        ("hit_sparks", Test),
+        ("homunculus", Fair),
+        ("hotkey_position", Fair),
+        ("hotkey_quick", Fair),
+        ("hotkey_rotations", Fair),
+        ("hotkey_tab", Fair),
+        ("hotkeys", Fair),
+        ("hover_name", Fair),
+        ("instance", Fair),
+        ("inventory", Fair),
+        ("inventory_items", Fair),
+        ("inventory_new", Fair),
+        ("inventory_window", Fair),
+        ("item_window", Fair),
+        ("item_window_box", Fair),
+        ("level_ups", Fair),
+        ("map", Fair),
+        ("map_effect_fired_ms_ago", Test),
+        ("map_effect_timers", Test),
+        ("map_effects_fired", Test),
+        ("map_property", Test),
+        ("map_type", Test),
+        ("marks", Test),
+        ("mercenary", Fair),
+        ("merge", Fair),
+        ("minimap", Fair),
+        ("minimap_window", Fair),
+        ("monster_info", Fair),
+        ("mvp_sprites", Test),
+        ("name_tags", Test),
+        ("navigation", Assist),
+        ("opened_page", Fair),
+        ("partner", Fair),
+        ("party", Fair),
+        ("party_window", Fair),
+        ("party_window_size", Fair),
+        ("pet", Fair),
+        ("pickup_popup", Fair),
+        ("player", Fair),
+        ("pvp_rank", Fair),
+        ("quest_banners", Fair),
+        ("quest_icon", Fair),
+        ("quest_list", Fair),
+        ("quest_picked", Fair),
+        ("quest_tracker", Fair),
+        ("quests", Fair),
+        ("ranking", Fair),
+        ("refusing_party", Fair),
+        ("reputation", Fair),
+        ("room", Fair),
+        ("roulette", Fair),
+        ("rsm1_moving", Test),
+        ("rsm2_models", Test),
+        ("rsm2_moving", Test),
+        ("save_asked", Fair),
+        ("settings", Fair),
+        ("shop_deal", Fair),
+        ("shop_size", Fair),
+        ("shortcuts", Fair),
+        ("show_emblems", Fair),
+        ("signs", Assist),
+        ("skill_description", Fair),
+        ("skill_list_rows", Fair),
+        ("skills", Fair),
+        ("sky_puffs", Test),
+        ("sky_shown", Test),
+        ("slot_machine", Fair),
+        ("small_windows", Fair),
+        ("sounds_recent", Test),
+        ("special_popup", Fair),
+        ("standing_models", Test),
+        ("status_icons", Assist),
+        ("status_icons_drawn", Fair),
+        ("status_tip", Fair),
+        ("storage_box_text", Fair),
+        ("storage_categories_open", Fair),
+        ("storage_found", Fair),
+        ("storage_list", Fair),
+        ("storage_log", Fair),
+        ("storage_mask", Fair),
+        ("storage_rows", Fair),
+        ("storage_title", Fair),
+        ("talkie", Test),
+        ("targets", Assist),
+        ("tint", Fair),
+        ("title", Fair),
+        ("top_rank_auras", Test),
+        ("unit_str_ms", Test),
+        ("unit_strs", Test),
+        ("units", Fair),
+        ("vend_size", Fair),
+        ("weather", Fair),
+        ("whisper_name", Fair),
+        ("whisper_open", Fair),
+        ("windows", Fair),
+        ("world_objects", Test),
+        ("world_strs", Test),
+    ]
+};
+
 /// Leaves out of the game's `state` what the play mode doesn't allow (#1095). Test: units and ground items off screen,
 /// the invisible script NPCs, where a walk ends, the animation internals, a monster's HP as numbers (it shows as a bar).
 /// Assist, under fair: cells, a monster's HP bar, the aggro cues, and the quests while the quest window is closed.
@@ -2079,6 +2239,9 @@ fn grade(state: &mut Value, mode: Grade, quests_open: bool) {
         if !quests_open {
             state["quests"] = json!([]);
         }
+    }
+    if let Some(fields) = state.as_object_mut() {
+        fields.retain(|key, _| FIELD_GRADES.iter().any(|&(graded, grade)| graded == key && grade <= mode));
     }
 }
 
@@ -2217,6 +2380,28 @@ mod tests {
         let mut open = scene();
         grade(&mut open, Grade::Fair, true);
         assert_eq!(open["quests"], json!([{"id": 1}]));
+    }
+
+    /// Every top-level field `game_state` writes, read from its source: the keys of its `json!` and the `state["…"]`
+    /// lines.
+    #[test]
+    fn grades_every_state_field() {
+        let source = include_str!("control.rs");
+        let body = &source[source.find("fn game_state(").unwrap()..source.find("\nfn grade(").unwrap()];
+        let start = body.find("let mut state = json!({").unwrap();
+        let block = &body[start..start + body[start..].find("\n    });").unwrap()];
+        let key = |line: &str, prefix: &str, end: &str| line.strip_prefix(prefix).and_then(|rest| rest.split_once(end)).map(|(key, _)| key.to_owned());
+        let mut keys: Vec<String> = block.lines().filter_map(|line| key(line, "        \"", "\":")).collect();
+        keys.extend(body.lines().filter_map(|line| key(line, "    state[\"", "\"] =")).filter(|key| !key.contains('"')));
+        assert!(keys.len() > 140, "found {} fields", keys.len());
+        let ungraded: Vec<_> = keys.iter().filter(|key| !FIELD_GRADES.iter().any(|(graded, _)| graded == key)).collect();
+        assert!(ungraded.is_empty(), "state fields without a grade in FIELD_GRADES: {ungraded:?}");
+        let mut scene = json!({"map": "prontera.gat", "enemies": ["Someone"], "targets": [], "boss": null, "made_up": 1});
+        let has = |scene: &Value, key: &str| scene.get(key).is_some();
+        grade(&mut scene, Grade::Assist, false);
+        assert!(has(&scene, "map") && has(&scene, "targets") && !["enemies", "boss", "made_up"].iter().any(|key| has(&scene, key)));
+        grade(&mut scene, Grade::Fair, false);
+        assert!(has(&scene, "map") && !has(&scene, "targets"));
     }
 
     #[test]
