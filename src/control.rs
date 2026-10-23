@@ -1590,6 +1590,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         "windows": windows,
         // An open shop's deal: what's in it and how many.
         "shop_deal": game.shop.as_ref().map(|shop| shop.deal.iter().map(|&(offer, amount)| json!({"item": shop.offers[offer].item, "amount": amount})).collect::<Vec<_>>()),
+        // Its goods by item ID with the number on their icons (selling to an NPC: what's left to sell), and the
+        // "Toggle Item Amount." box.
+        "shop_goods": game.shop.as_ref().map(|shop| shop.goods().into_iter().map(|(item, count)| (item.to_string(), json!(count))).collect::<serde_json::Map<_, _>>()),
+        "shop_whole": game.shop.as_ref().map(|shop| shop.whole),
         // The windows Esc closes, in the order it closes them (newest first).
         "esc_order": game.esc_names(),
         // The game menu's buttons, when it is open (null when it isn't). Newest-first `windows` does not include it.
@@ -2187,7 +2191,9 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("save_asked", Fair),
         ("settings", Fair),
         ("shop_deal", Fair),
+        ("shop_goods", Fair),
         ("shop_size", Fair),
+        ("shop_whole", Fair),
         ("shortcuts", Fair),
         ("show_emblems", Fair),
         ("signs", Assist),

@@ -1403,6 +1403,8 @@ struct Game {
     web_emblems: (std::sync::mpsc::Sender<WebEmblem>, std::sync::mpsc::Receiver<WebEmblem>),
     /// The NPC shop windows' sizes (goods width, goods and deal rows): kept, and given to the next shop.
     shop_sizes: (f32, [usize; 2]),
+    /// The NPC shops' "Toggle Item Amount." box: given to the next shop (saved).
+    shop_whole: bool,
     trade_with: String,
     /// /notrade: deal requests are refused at once.
     no_trade: bool,

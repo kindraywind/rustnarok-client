@@ -465,6 +465,7 @@ impl App {
                     web_emblems: std::sync::mpsc::channel(),
                     trade_with: String::new(),
                     shop_sizes: shop::default_sizes(),
+                    shop_whole: settings_path("shop_whole").is_some_and(|path| shop::kept_whole(&path)),
                     no_trade: false,
                     trade_give: VecDeque::new(),
                     trade_give_zeny: None,

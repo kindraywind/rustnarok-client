@@ -445,9 +445,10 @@ impl Game {
     }
 
     /// A shop's windows open at the sizes the last one was left at (an NPC's shop or a market; the others keep
-    /// theirs).
+    /// theirs), with "Toggle Item Amount." as it was left.
     pub(crate) fn open_shop(&mut self, mut shop: shop::Shop) {
         shop.apply_sizes(self.shop_sizes);
+        shop.whole = self.shop_whole;
         self.shop = Some(shop);
     }
 

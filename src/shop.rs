@@ -217,8 +217,8 @@ pub struct Shop {
     clicks: Clicks,
     /// The zeny carried, for what buying from an NPC may add.
     pub zeny: u64,
-    /// "Toggle Item Amount." is ticked: off at start, not kept.
-    whole: bool,
+    /// "Toggle Item Amount." is ticked: the game keeps it for the next shop (`kept_whole`).
+    pub whole: bool,
 }
 
 impl Shop {
@@ -357,11 +357,12 @@ impl Shop {
             return self.add_checked(row, u32::from(offer.have)).map(|(message, arg)| Action::Say(message, arg));
         }
         let selling = self.selling || self.vendor.is_some();
-        let single = matches!(offer.kind, ITEM_WEAPON | ITEM_ARMOR | ITEM_PET_EGG | ITEM_PET_ARMOR) || (selling && offer.have == 1);
+        let left = self.left(row);
+        let single = matches!(offer.kind, ITEM_WEAPON | ITEM_ARMOR | ITEM_PET_EGG | ITEM_PET_ARMOR) || (selling && left == 1);
         if single {
             return self.add_checked(row, 1).map(|(message, arg)| Action::Say(message, arg));
         }
-        Some(Action::Ask(row, if self.selling { u32::from(offer.have) } else { 1 }))
+        Some(Action::Ask(row, if self.selling { left } else { 1 }))
     }
 
     /// A deal row dragged back onto the goods: one (or with the box ticked, all) comes out at once, more asks how
@@ -425,10 +426,22 @@ impl Shop {
         (self.selling && self.plain()).then(|| [12.0, self.height(0) - WHOLE_UP])
     }
 
-    /// The rows a window lists: offers, or the deal's offers with their amounts.
+    /// Selling to an NPC, items move into the deal: the goods list what's still carried, not what's in it.
+    fn moves_rows(&self) -> bool {
+        self.selling && self.plain()
+    }
+
+    /// How many of an offer are carried and not yet in the deal.
+    fn left(&self, offer: usize) -> u32 {
+        let dealt: u32 = self.deal.iter().filter(|&&(row, _)| row == offer).map(|&(_, amount)| amount).sum();
+        self.offers.get(offer).map_or(0, |offer| u32::from(offer.have).saturating_sub(dealt))
+    }
+
+    /// The rows a window lists: offers (selling to an NPC, those with some left), or the deal's offers with their
+    /// amounts.
     fn rows(&self, window: usize) -> Vec<(usize, Option<u32>)> {
         if window == 0 {
-            (0..self.offers.len()).map(|offer| (offer, None)).collect()
+            (0..self.offers.len()).filter(|&offer| !self.moves_rows() || self.left(offer) > 0).map(|offer| (offer, None)).collect()
         } else {
             self.deal.iter().map(|&(offer, amount)| (offer, Some(amount))).collect()
         }
@@ -464,9 +477,10 @@ impl Shop {
             }
             let top = TITLE_HEIGHT;
             if local[1] >= top && local[1] < top + self.rows[window] as f32 * ROW {
+                // The goods' rows are offers (some may be hidden), the deal's its rows.
                 let row = ((local[1] - top) / ROW) as usize + self.scroll[window];
-                if row < self.rows(window).len() {
-                    return Some(Hit::Row(window, row));
+                if let Some(&(offer, _)) = self.rows(window).get(row) {
+                    return Some(Hit::Row(window, if window == 0 { offer } else { row }));
                 }
             }
             return Some(Hit::Window(window));
@@ -739,7 +753,7 @@ impl Shop {
             for (place, (offer_index, amount)) in self.rows(window).into_iter().enumerate().skip(self.scroll[window]).take(self.rows[window]) {
                 let top = TITLE_HEIGHT + (place - self.scroll[window]) as f32 * ROW;
                 let offer = &self.offers[offer_index];
-                if self.selected[window] == Some(place) {
+                if self.selected[window] == Some(if window == 0 { offer_index } else { place }) {
                     let [x, y] = SELECTED_BOX;
                     layer.sprites.push((&assets.selected, frame.at([x, top + y]), [width - x - 17.0, SELECTED_HEIGHT]));
                 }
@@ -750,7 +764,7 @@ impl Shop {
                 if let Some(icon) = icon {
                     layer.sprites.push((icon, frame.at([icon_x, top + ICON[1]]), icon.size));
                 }
-                if let Some(count) = self.icon_count(window, offer, amount) {
+                if let Some(count) = self.icon_count(window, offer_index, amount) {
                     let text = count.to_string();
                     // From 1000 up the number starts at the icon's left.
                     let place = frame.at([icon_x + if count < 1000 { 14.0 } else { 0.0 }, top + ICON[1] + 14.0]);
@@ -813,29 +827,38 @@ impl Shop {
         // An NPC shop's row under the pointer: its name and price over it.
         if let (Some(Hit::Row(window, row)), true) = (hit, self.plain()) {
             let (Some(offer), frame) = (self.offer_at(window, row), &self.frames[window]) else { return };
-            let count = if window == 0 { u32::from(offer.have) } else { self.deal[row].1 };
+            let count = if window == 0 { self.left(row) } else { self.deal[row].1 };
             let item = InventoryItem { id: offer.item, kind: offer.kind, identified: offer.identified, refine: offer.refine, ..Default::default() };
             let text = tooltip_text(&inventory::item_name(items, offer.item, offer.identified, offer.refine), offer, count, self.selling);
             let local = pointer.0[0] - frame.position[0];
             let x = TIP_STEP[0] + TIP_STEP[1] * ((local - TIP_STEP[0]) / TIP_STEP[1]).floor();
-            let top = TITLE_HEIGHT + (row - self.scroll[window]) as f32 * ROW - TIP_ABOVE;
+            let place = if window == 0 { self.rows(0).iter().position(|&(offer, _)| offer == row).unwrap_or(row) } else { row };
+            let top = TITLE_HEIGHT + place.saturating_sub(self.scroll[window]) as f32 * ROW - TIP_ABOVE;
             window::tooltip(layer.window(), chrome, font, &text, frame.at([x, top]), inventory::name_color(&item, items));
         }
     }
 
     /// The number on a row's icon: how many are in the deal, carried (selling, a vendor's shop) or left (a market or
     /// buying store); none for 0.
-    fn icon_count(&self, window: usize, offer: &Offer, amount: Option<u32>) -> Option<u32> {
+    fn icon_count(&self, window: usize, offer_index: usize, amount: Option<u32>) -> Option<u32> {
+        let offer = &self.offers[offer_index];
         let count = amount.or(if window != 0 {
             None
         } else if self.buying_store.is_some() || self.market == Some(MarketKind::Market) {
             offer.stock
+        } else if self.moves_rows() {
+            Some(self.left(offer_index))
         } else if self.selling || self.vendor.is_some() {
             Some(u32::from(offer.have))
         } else {
             None
         });
         count.filter(|&count| count > 0)
+    }
+
+    /// The goods listed and the number on each one's icon (0 for none), for the test driver.
+    pub fn goods(&self) -> Vec<(u32, u32)> {
+        self.rows(0).into_iter().map(|(offer, _)| (self.offers[offer].item, self.icon_count(0, offer, None).unwrap_or(0))).collect()
     }
 
     pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
@@ -866,6 +889,15 @@ impl Shop {
             })
             .collect()
     }
+}
+
+/// "Toggle Item Amount." as the player last left it ("1" ticked; off when never saved).
+pub fn kept_whole(path: &std::path::Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|text| text.trim() == "1")
+}
+
+pub fn keep_whole(path: &std::path::Path, on: bool) {
+    let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if on { "1" } else { "0" }));
 }
 
 /// An NPC shop row's tooltip: buying "name 1,200 Zeny" or "name 1500 -> 1,200 Zeny"; selling the count carried (or
@@ -1067,9 +1099,9 @@ mod tests {
         market.bought(&[(1010, 2)]);
         assert_eq!((market.offers[0].stock, market.deal.is_empty()), (Some(1), true));
         // What's left shows on the goods' icon, the amount on the deal's, and nothing once it's sold out.
-        let left = market.offers[0].clone();
-        assert_eq!((market.icon_count(0, &left, None), market.icon_count(1, &left, Some(1))), (Some(1), Some(1)));
-        assert_eq!(market.icon_count(0, &Offer { stock: Some(0), ..left }, None), None);
+        assert_eq!((market.icon_count(0, 0, None), market.icon_count(1, 0, Some(1))), (Some(1), Some(1)));
+        market.offers[0].stock = Some(0);
+        assert_eq!(market.icon_count(0, 0, None), None);
     }
 
     #[test]
@@ -1157,6 +1189,61 @@ mod tests {
         buying.click(Hit::Row(0, 0));
         assert_eq!(buying.click(Hit::Row(0, 0)), None);
         assert!(buying.deal.is_empty());
+    }
+
+    #[test]
+    fn keeps_the_whole_box_for_the_next_shop() {
+        let path = std::env::temp_dir().join(format!("rustnarok-shop-{}-whole", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        assert!(!kept_whole(&path), "off when never saved");
+        let mut shop = Shop::new(true, vec![offer(909, 3, 40, 3)]);
+        shop.click(Hit::Whole);
+        keep_whole(&path, shop.whole);
+        // The next shop starts ticked: a double click sells the whole stack.
+        let mut next = Shop::new(true, vec![offer(909, 3, 40, 3)]);
+        next.whole = kept_whole(&path);
+        next.click(Hit::Row(0, 0));
+        next.click(Hit::Row(0, 0));
+        assert_eq!(next.deal, [(0, 40)]);
+        keep_whole(&path, false);
+        assert!(!kept_whole(&path));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_sold_stack_leaves_the_goods_and_comes_back() {
+        let mut shop = Shop::new(true, vec![offer(909, 3, 40, 3), offer(910, 5, 7, 3)]);
+        let goods = |shop: &Shop| shop.row_boxes().into_iter().map(|(item, _)| item).collect::<Vec<_>>();
+        let [x, y] = shop.frames[0].position;
+        shop.whole = true;
+        // A double click moves the stack: its row goes, and the row under it is the next offer.
+        shop.click(Hit::Row(0, 0));
+        shop.click(Hit::Row(0, 0));
+        assert_eq!((shop.deal.clone(), goods(&shop)), (vec![(0, 40)], vec![910]));
+        assert_eq!(shop.hit([x + 100.0, y + 20.0]), Some(Hit::Row(0, 1)));
+        // Out again by a double click on the deal row, by a drag back too.
+        shop.click(Hit::Row(1, 0));
+        shop.click(Hit::Row(1, 0));
+        assert_eq!((shop.deal.is_empty(), goods(&shop)), (true, vec![909, 910]));
+        assert_eq!(shop.drop_offer(1), None);
+        assert_eq!(goods(&shop), [909]);
+        assert_eq!(shop.drop_deal(0), None);
+        assert_eq!(goods(&shop), [909, 910]);
+        // Asking how many: the goods show what's left, the box is filled with it, and no more than carried goes in.
+        shop.whole = false;
+        assert_eq!(shop.drop_offer(0), Some(Action::Ask(0, 40)));
+        assert_eq!(shop.add_checked(0, 15), None);
+        assert_eq!((shop.icon_count(0, 0, None), shop.icon_count(1, 0, Some(15))), (Some(25), Some(15)));
+        assert_eq!(shop.drop_offer(0), Some(Action::Ask(0, 25)));
+        shop.add(0, 40);
+        shop.add(0, 40);
+        assert_eq!((shop.deal.clone(), goods(&shop)), (vec![(0, 40)], vec![910]), "the same stack isn't sold twice");
+        shop.take_out(0, 10);
+        assert_eq!((shop.icon_count(0, 0, None), goods(&shop)), (Some(10), vec![909, 910]));
+        // Buying, the goods stay as they are.
+        let mut buying = Shop::new(false, vec![offer(501, 50, 0, 0)]);
+        buying.add(0, 3);
+        assert_eq!(goods(&buying), [501]);
     }
 
     #[test]
