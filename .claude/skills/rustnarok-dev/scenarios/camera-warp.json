@@ -1,0 +1,14 @@
+{
+  "about": "A teleport on the same map cuts the view to the player (issue #1131): a moment after @jump across prt_fild08 the player stands in the middle of the screen, not at the end of a glide across the map. Turn and zoom stay.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild08 170 360"}, {"settle": 1500},
+    {"say": "@jump 250 200"},
+    {"wait_for": {"packet": "0x0091", "ms": 5000}},
+    {"wait": 150},
+    {"expect": {"map": "prt_fild08.gat", "state": {"player.cell": [250, 200], "camera.distance": 300}}},
+    {"move": [1000, 750]},
+    {"shot": "after-jump", "threshold": 20}
+  ]
+}

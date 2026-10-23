@@ -493,9 +493,10 @@ impl Game {
     }
 
     /// After a warp (to this map or another) the character stands on the cell's centre, facing the way it did on
-    /// entering the map server.
+    /// entering the map server, and the camera looks there at once.
     pub(crate) fn put_after_warp(&mut self, position: [u16; 2]) {
-        after_warp(&mut self.player, position, self.entered_facing);
+        let feet = self.world.cell_position(position.map(f32::from));
+        after_warp(&mut self.player, &mut self.camera, feet, position, self.entered_facing);
     }
 
     /// Talks to an NPC, turned toward the cell where it's drawn; only standing or sitting (`may_talk`), else nothing at
