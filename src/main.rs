@@ -990,9 +990,11 @@ fn name_color(kind: u8, job: u16, level: u16, ours: bool, own_level: i64) -> [u8
     }
 }
 
-/// The character after a warp: standing on `position`'s centre, facing the way it did on entering the map server.
-fn after_warp(player: &mut Actor, position: [u16; 2], entered_facing: u8) {
+/// The character after a warp: standing on `position`'s centre, facing the way it did on entering the map server, with the
+/// camera looking at its `feet` at once (no glide across the map).
+fn after_warp(player: &mut Actor, camera: &mut Camera, feet: world::Vector, position: [u16; 2], entered_facing: u8) {
     player.stop_at(position.map(i32::from));
+    camera.target = feet;
     player.sitting = false;
     player.set_direction(entered_facing);
 }
@@ -5859,8 +5861,11 @@ mod tests {
         let mut player = Actor::new("Me".into(), None, [10, 10], 5, 150);
         player.set_direction(0);
         player.sitting = true;
-        after_warp(&mut player, [40, 41], 5);
+        let mut camera = Camera { target: [50.0, 0.0, 50.0], distance: 200.0, pitch: 45f32.to_radians(), yaw: 1.0, ground: f32::MIN };
+        after_warp(&mut player, &mut camera, [400.0, 3.0, 410.0], [40, 41], 5);
         assert_eq!((player.cell, player.direction, player.sitting, player.moving()), ([40, 41], 5, false, false));
+        // The view cuts to the new spot at once, not gliding across the map; turn, tilt and zoom stay.
+        assert_eq!((camera.target, camera.distance, camera.yaw), ([400.0, 3.0, 410.0], 200.0, 1.0));
     }
 
     #[test]
