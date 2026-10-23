@@ -23,7 +23,7 @@ const BAND: f32 = 15.0;
 /// The list: at (12, 26), the window's size less 24 across and 55 down.
 const LIST_AT: [f32; 2] = [12.0, 26.0];
 const LIST_LESS: [f32; 2] = [24.0, 55.0];
-const BAND_FILL: [u8; 4] = [0xF0, 0xF0, 0xF0, 0xFF];
+const LIST_FILL: [u8; 4] = [0xF0, 0xF0, 0xF0, 0xFF];
 /// The text's left inside the list.
 const TEXT_X: f32 = 3.0;
 /// OK and Cancel, this far left of the window's right edge and up from its bottom.
@@ -65,8 +65,7 @@ pub fn buttons(count: usize) -> [[f32; 2]; 2] {
     [[width - OK_LEFT, height - BUTTONS_UP], [width - CANCEL_LEFT, height - BUTTONS_UP]]
 }
 
-/// The list's fill, pixel (14, 10) of colorchip.bmp (white without it), and the selected row's band, a grey on it. The
-/// game has the two the other way round.
+/// The list's fill, a light grey, and the selected row's band on it, pixel (14, 10) of colorchip.bmp (white without it).
 pub struct Assets {
     pub list: Texture,
     pub band: Texture,
@@ -75,9 +74,15 @@ pub struct Assets {
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let chip = crate::render::load_image(grf, &format!("{UI}colorchip.bmp")).ok().and_then(|image| image.get_pixel_checked(14, 10).map(|pixel| pixel.0));
-        let [red, green, blue, _] = chip.unwrap_or([255; 4]);
-        Self { list: gpu.solid([red, green, blue, 255]), band: gpu.solid(BAND_FILL) }
+        let [list, band] = fills(chip);
+        Self { list: gpu.solid(list), band: gpu.solid(band) }
     }
+}
+
+/// The list's and the band's colours, given colorchip.bmp's pixel when there is one.
+fn fills(chip: Option<[u8; 4]>) -> [[u8; 4]; 2] {
+    let [red, green, blue, _] = chip.unwrap_or([255; 4]);
+    [LIST_FILL, [red, green, blue, 255]]
 }
 
 /// The items, the selected one, the first row shown, and the last press on a row (when, where in the window, which).
@@ -189,6 +194,12 @@ fn item_lines(items: &[String], font: &Font, width: f32) -> crate::iteminfo::Col
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_list_is_grey_and_the_band_is_the_chips_colour() {
+        assert_eq!(fills(Some([0x10, 0x20, 0xC0, 0x00])), [LIST_FILL, [0x10, 0x20, 0xC0, 0xFF]]);
+        assert_eq!(fills(None), [LIST_FILL, [255; 4]]);
+    }
 
     #[test]
     fn grows_a_row_an_item_from_the_fifth_to_the_fifteenth() {
