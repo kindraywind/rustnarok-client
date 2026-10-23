@@ -5072,6 +5072,8 @@ impl ApplicationHandler<NetEvent> for App {
                 self.compose(String::new());
                 self.commit(&text);
             }
+            // Shown again after being covered or minimised: draw now, not when the slow covered pace comes round.
+            WindowEvent::Occluded(false) => gpu.window.request_redraw(),
             WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
         }
