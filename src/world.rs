@@ -1362,13 +1362,16 @@ struct RunningZone {
     phase: f32,
 }
 
-/// A GND tile the water may cover: its four top corner file heights, and whether it has a top.
+/// A GND tile with a top that its zone's water can reach: its place, its zone and its four top corner file heights.
 struct WaterTile {
+    i: usize,
+    j: usize,
+    zone: usize,
     heights: [f32; 4],
-    top: bool,
 }
 
 /// One texture's water triangles for this frame.
+#[derive(Clone)]
 struct WaterBatch {
     texture: Texture,
     /// Opaque lava writes depth when the RSW flag asks for it.
@@ -1377,14 +1380,16 @@ struct WaterBatch {
     count: u32,
 }
 
+/// The tick, eye height and blindness water batches were built for.
+type BuiltFor = (u64, u32, bool);
+
 /// Waving water: one quad per tile that dips under its zone, animated from the water textures.
 struct MapWater {
     zones: RefCell<Vec<RunningZone>>,
     /// The last elapsed tick (`time / 0.016`) the clocks were stepped to.
     tick: Cell<u64>,
-    split: [usize; 2],
-    size: [usize; 2],
     zoom: f32,
+    /// Only the tiles the water can ever reach, in map order. The rest of the map is never under water.
     tiles: Vec<WaterTile>,
     /// Up to 32 frames per water type, indexed by the frame number in the file name.
     frames: HashMap<i32, Vec<Option<Texture>>>,
@@ -1393,6 +1398,8 @@ struct MapWater {
     ambient: [f32; 3],
     /// RSW 2.2 flag: opaque water writes depth.
     depth_pass: bool,
+    /// The last batches and what they were built for.
+    last: RefCell<Option<(BuiltFor, Vec<WaterBatch>)>>,
 }
 
 impl MapWater {
@@ -1426,19 +1433,28 @@ impl MapWater {
                 frames.insert(kind, loaded);
             }
         }
-        let tiles = gnd.cubes.iter().map(|cube| WaterTile { heights: cube.heights, top: cube.top >= 0 }).collect();
+        let size = [gnd.width, gnd.height];
+        let tiles = (0..gnd.height)
+            .flat_map(|j| (0..gnd.width).map(move |i| (i, j)))
+            .filter_map(|(i, j)| {
+                let cube = gnd.cubes.get(j * gnd.width + i).filter(|cube| cube.top >= 0)?;
+                let zone = zone_index(i, j, size, split);
+                // File heights grow downward and the wave never lifts the surface above this, so a tile with no corner below it stays dry.
+                let lowest = zones.get(zone).map(|zone| zone.level - zone.wave_height.abs())?;
+                cube.heights.iter().any(|&height| height > lowest).then_some(WaterTile { i, j, zone, heights: cube.heights })
+            })
+            .collect();
         let zones = zones.into_iter().map(|zone| RunningZone { zone, counter: 0, phase: 0.0 }).collect();
         Some(Self {
             zones: RefCell::new(zones),
             tick: Cell::new(0),
-            split,
-            size: [gnd.width, gnd.height],
             zoom: gnd.zoom,
             tiles,
             frames,
             lava: default.kind == 4,
             ambient: rsw.light.ambient,
             depth_pass: rsw.water_depth,
+            last: RefCell::new(None),
         })
     }
 
@@ -1465,48 +1481,48 @@ impl MapWater {
     /// The water triangles for this frame, grouped by type and texture frame.
     fn batches(&self, gpu: &Gpu, time: f32, eye_y: f32, blind: bool) -> Vec<WaterBatch> {
         self.advance(time);
+        // The water only moves once a tick: a faster display draws the same batches again until the next one.
+        let key = (self.tick.get(), eye_y.to_bits(), blind);
+        if let Some((built, batches)) = &*self.last.borrow()
+            && *built == key
+        {
+            return batches.clone();
+        }
         let zones = self.zones.borrow();
         // ponytail: a blind player sees lava as ordinary water. The client drops the lava colour while blind.
         let lava = self.lava && !blind;
         let color = if lava { [self.ambient[0], self.ambient[1], self.ambient[2], 1.0] } else { [1.0, 1.0, 1.0, 144.0 / 255.0] };
         // ponytail: lava is the map's default type, so every tile is opaque or none of them are. One pass, not two.
         let depth_write = self.depth_pass && color[3] >= 240.0 / 255.0;
-        let [width, height] = self.size;
         let mut grouped: HashMap<(i32, u32), Vec<GroundVertex>> = HashMap::new();
-        for j in 0..height {
-            for i in 0..width {
-                let Some(tile) = self.tiles.get(j * width + i) else { continue };
-                if !tile.top {
-                    continue;
-                }
-                let Some(running) = zones.get(zone_index(i, j, self.size, self.split)) else { continue };
-                let surface = corner_wave(&running.zone, running.phase, i as i32 + 1, j as i32);
-                if !tile_under_water(tile.heights, surface) {
-                    continue;
-                }
-                // The eye under this corner's water is looking up through the surface.
-                if eye_y < -surface {
-                    continue;
-                }
-                let zone = &running.zone;
-                let frame = (running.counter / zone.animation_speed.max(1) as u32) % 32;
-                let (uv0, uv1) = water_uv(i, j);
-                let uvs = [[uv0[0], uv0[1]], [uv1[0], uv0[1]], [uv0[0], uv1[1]], [uv1[0], uv1[1]]];
-                // ponytail: a corner shared by two zones takes this tile's zone, so a seam can step where they disagree.
-                let quad = [0, 1, 2, 3].map(|corner| {
-                    let (gx, gz) = (i as i32 + corner as i32 % 2, j as i32 + corner as i32 / 2);
-                    GroundVertex {
-                        position: [gx as f32 * self.zoom, -corner_wave(zone, running.phase, gx, gz), gz as f32 * self.zoom],
-                        normal: [0.0, 1.0, 0.0],
-                        uv: uvs[corner],
-                        lightmap_uv: [0.0; 2],
-                        color,
-                    }
-                });
-                grouped.entry((zone.kind, frame)).or_default().extend([quad[0], quad[1], quad[3], quad[0], quad[3], quad[2]]);
+        for &WaterTile { i, j, zone, heights } in &self.tiles {
+            let Some(running) = zones.get(zone) else { continue };
+            let surface = corner_wave(&running.zone, running.phase, i as i32 + 1, j as i32);
+            if !tile_under_water(heights, surface) {
+                continue;
             }
+            // The eye under this corner's water is looking up through the surface.
+            if eye_y < -surface {
+                continue;
+            }
+            let zone = &running.zone;
+            let frame = (running.counter / zone.animation_speed.max(1) as u32) % 32;
+            let (uv0, uv1) = water_uv(i, j);
+            let uvs = [[uv0[0], uv0[1]], [uv1[0], uv0[1]], [uv0[0], uv1[1]], [uv1[0], uv1[1]]];
+            // ponytail: a corner shared by two zones takes this tile's zone, so a seam can step where they disagree.
+            let quad = [0, 1, 2, 3].map(|corner| {
+                let (gx, gz) = (i as i32 + corner as i32 % 2, j as i32 + corner as i32 / 2);
+                GroundVertex {
+                    position: [gx as f32 * self.zoom, -corner_wave(zone, running.phase, gx, gz), gz as f32 * self.zoom],
+                    normal: [0.0, 1.0, 0.0],
+                    uv: uvs[corner],
+                    lightmap_uv: [0.0; 2],
+                    color,
+                }
+            });
+            grouped.entry((zone.kind, frame)).or_default().extend([quad[0], quad[1], quad[3], quad[0], quad[3], quad[2]]);
         }
-        grouped
+        let batches = grouped
             .into_iter()
             .filter_map(|((kind, frame), vertices)| {
                 let texture = self.frames.get(&kind)?.get(frame as usize)?.as_ref()?;
@@ -1518,7 +1534,9 @@ impl MapWater {
                 });
                 Some(WaterBatch { texture: texture.clone(), depth_write, buffer, count })
             })
-            .collect()
+            .collect::<Vec<_>>();
+        *self.last.borrow_mut() = Some((key, batches.clone()));
+        batches
     }
 }
 
