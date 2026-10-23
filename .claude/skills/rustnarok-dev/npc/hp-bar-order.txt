@@ -1,0 +1,8 @@
+// HP bar order (issue #1115): a training dummy (it neither moves nor fights back) at half HP on prt_fild06 182,180,
+// so its bar shows. Loaded and unloaded by scenarios/hp-bar-order.json.
+prt_fild06,1,1,0	script	HpBarOrder	-1,{
+OnInit:
+	monster "prt_fild06", 182, 180, "--ja--", 2408, 1;
+	setunitdata $@mobid[0], UMOB_HP, 50000000;
+	end;
+}

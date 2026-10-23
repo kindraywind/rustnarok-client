@@ -126,6 +126,16 @@ pub fn party_fill_width(value: i64, max: i64, width: f32) -> Option<f32> {
     (width > 0.0).then_some(width)
 }
 
+/// Whose bar it is, in drawing order: a later bar covers an earlier one, so monsters' go under other characters', and
+/// the player's summons and its own bar go on top. Ids keep overlapping bars from swapping between frames.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BarOwner {
+    Monster(u32),
+    Character(u32),
+    Summon,
+    Player,
+}
+
 /// How a bar's rows fill: `bar_fill` or `party_fill`.
 pub type Fill = fn(i64, i64) -> Option<f32>;
 
@@ -317,6 +327,14 @@ mod tests {
         let small = [0, 1, 3, 4, 50, 99, 100].map(|percent| party_fill_width(percent, 100, 66.0));
         assert_eq!(small, [None, None, None, None, Some(31.0), Some(63.0), Some(64.0)]);
         assert_eq!(fills(&fourth), [('g', 1.0, 52.0), ('b', 5.0, 58.0), ('a', 9.0, 58.0)]);
+    }
+
+    #[test]
+    fn draws_monsters_bars_first_and_the_players_last() {
+        use BarOwner::*;
+        let mut bars = [Player, Character(7), Monster(9), Summon, Monster(3), Character(2)];
+        bars.sort();
+        assert_eq!(bars, [Monster(3), Monster(9), Character(2), Character(7), Summon, Player]);
     }
 
     #[test]
