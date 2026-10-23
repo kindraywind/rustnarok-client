@@ -4184,7 +4184,7 @@ impl Game {
     fn battle_name(&self, id: u32, messages: &[String]) -> String {
         let name = if id == self.account_id { self.me.name.as_str() } else { self.units.get(&id).map_or("", |actor| actor.name.as_str()) };
         // Names come as "name#party": only the name shows.
-        let name = name.split('#').next().unwrap_or_default();
+        let name = crate::actor::shown_name(name);
         if name.is_empty() { messages.get(BATTLE_SOMEONE).map_or("Someone", String::as_str).trim_end_matches('#').to_owned() } else { name.to_owned() }
     }
 

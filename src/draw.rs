@@ -1436,7 +1436,7 @@ impl App {
         let sprite_point = |feet: [f32; 3], y: f32| view.sprite_rect(feet, [0.0, y], [0.0, y]).map(|[x, y, ..]| [x * screen()[0], y * screen()[1]]);
         let mut base = Layer::default();
         for (name, feet, color) in &labels {
-            let name = name.split('#').next().unwrap_or_default();
+            let name = crate::actor::shown_name(name);
             if let Some(point) = sprite_point(*feet, overhead::NAME_BELOW) {
                 let [x, y] = overhead::label_corner(point, font.width(name), font.line_height(), screen());
                 base.outlined_in(name, [x, y + overhead::NAME_TEXT_TOP], *color);
