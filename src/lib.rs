@@ -11,5 +11,6 @@ pub mod map;
 pub mod messages;
 pub mod model;
 pub mod net;
+pub mod play;
 pub mod sprite;
 pub mod text;
