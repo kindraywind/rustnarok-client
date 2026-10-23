@@ -1076,6 +1076,15 @@ impl Game {
         }
     }
 
+    /// Our shop closes (CZ_REQ_CLOSESTORE): its sign goes, and what it sold shows in the Item Sell History.
+    pub(crate) fn close_my_shop(&mut self) {
+        let _ = self.session.close_shop();
+        self.signs.remove(&self.account_id);
+        if let Some(shop) = self.my_shop.take() {
+            self.sell_history = shop.history();
+        }
+    }
+
     /// The vending setup's OK went through: CZ_REQ_OPENSTORE2 with its name and goods.
     pub(crate) fn open_vending(&mut self) {
         if let Some(setup) = &self.vend_setup {
@@ -1197,6 +1206,7 @@ impl Game {
             || (top == Some(Panel::Skills) && self.skill_window.grip_box().is_some_and(|[x, y, w, h]| contains([x, y], [w, h], cursor)))
             || matches!(self.shop.as_ref().and_then(|shop| shop.hit(cursor)), Some(shop::Hit::Resize(_)))
             || self.my_shop.as_ref().is_some_and(|shop| shop.on_grip(cursor))
+            || self.vend_setup.as_ref().is_some_and(|setup| setup.on_grip(cursor))
     }
 
     /// Whether the aim cursor shows "valid" here: over a unit a press would take; never for a ground skill.
@@ -2592,6 +2602,7 @@ impl Game {
             || self.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some())
             || self.vend_setup.as_ref().is_some_and(|setup| setup.covers(cursor))
             || self.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
+            || self.sell_history.as_ref().is_some_and(|history| history.hit(cursor).is_some())
             || self.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.inventory.items).is_some())
             || self.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some())
             || self.mail.hit(cursor).is_some()
@@ -3111,6 +3122,7 @@ impl Game {
         push(Macros, self.macro_window.is_some());
         push(VendSetup, self.vend_setup.is_some());
         push(MyShop, self.my_shop.is_some());
+        push(SellHistory, self.sell_history.is_some());
         push(BuyingStoreSetup, self.buying_setup.is_some());
         push(MyBuyingStore, self.my_buying_store.is_some());
         push(Mailbox, self.mail.list.frame.open);
@@ -3490,11 +3502,8 @@ impl Game {
                 let _ = self.session.open_shop("", false, &[]);
                 self.vend_setup = None;
             }
-            MyShop => {
-                let _ = self.session.close_shop();
-                self.my_shop = None;
-                self.signs.remove(&self.account_id);
-            }
+            MyShop => self.close_my_shop(),
+            SellHistory => self.sell_history = None,
             BuyingStoreSetup => {
                 let _ = self.session.open_buying_store("", 0, false, &[]);
                 self.buying_setup = None;

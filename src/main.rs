@@ -474,6 +474,8 @@ const EQUIPMENT_HIDDEN: usize = 1358;
 /// Vending: "%s %d sold.", "Items are sold out.", and "There are items priced 0..." (a shop refused for it).
 const VEND_SOLD: usize = 231;
 const VEND_SOLD_OUT: usize = 311;
+/// "Merchant Shop", before " - <owner>" in a player's shop's title.
+const VENDOR_TITLE: usize = 227;
 /// "%s %d sold." in light cyan.
 const VEND_SOLD_COLOR: [u8; 3] = [100, 255, 255];
 const VEND_FAILED: usize = 2720;
@@ -1419,6 +1421,8 @@ struct Game {
     /// The vending windows' size, kept for the next ones.
     vend_size: vend::GridSize,
     my_shop: Option<vend::MyShop>,
+    /// What our shop sold, shown where it was once it closes.
+    sell_history: Option<vend::SellHistory>,
     /// Setting up our buying store, and our open buying store.
     buying_setup: Option<buying::Setup>,
     my_buying_store: Option<buying::MyStore>,

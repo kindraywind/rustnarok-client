@@ -599,6 +599,7 @@ impl App {
                     vend_setup: None,
                     vend_size: vend::GridSize::default(),
                     my_shop: None,
+                    sell_history: None,
                     buying_setup: None,
                     my_buying_store: None,
                     mail: mail::Mail::default(),
@@ -1982,7 +1983,7 @@ impl App {
             }
             // Vending: setting up, our shop, others' signs and goods.
             MapEvent::VendSetup(most) => {
-                let mut setup = vend::Setup::new(most);
+                let mut setup = vend::Setup::new(most, game.vend_size);
                 // Dev switch RUSTNAROK_CLIENT_VEND=<name>:<price>: everything in the cart at that price, and open.
                 if let Some((name, price)) = std::env::var("RUSTNAROK_CLIENT_VEND")
                     .ok()
@@ -2007,14 +2008,20 @@ impl App {
                 game.signs.insert(game.account_id, chatroom::Sign::shop(game.account_id, name.clone()));
                 game.my_shop = Some(vend::MyShop::new(name, goods, game.vend_size));
             }
-            MapEvent::VendSold { index, amount, .. } => {
+            MapEvent::VendSold { index, amount, zeny } => {
                 let Some(shop) = &mut game.my_shop else { return };
+                // "Notify when item sells out" ticked: a sound on each sale.
+                if shop.notify
+                    && let Some(audio) = &mut self.audio
+                {
+                    audio.play(&self.grf, vend::SOLD_SOUND, 1.0);
+                }
                 let name = shop
                     .goods
                     .iter()
                     .find(|good| good.index == index)
                     .map(|good| inventory::item_name(&self.items, good.item.id, good.item.identified, good.item.refine));
-                let sold_out = shop.sold(index, amount);
+                let sold_out = shop.sold(index, amount, zeny);
                 if let Some(name) = name {
                     game.chat_line(
                         rustnarok_client::messages::fill(self.messages.get(VEND_SOLD).map_or("", String::as_str), &[&name, &amount]),
@@ -2055,9 +2062,10 @@ impl App {
                         ..Default::default()
                     })
                     .collect();
-                let mut store = shop::Shop::new(false, offers);
-                store.vendor = Some((vendor, shop_id, name));
-                game.open_shop(store);
+                // "Merchant Shop - <owner>"; one found by the catalog out of sight, by its shop's name.
+                let owner = game.units.get(&vendor).map_or(name, |actor| actor.name.clone());
+                let title = format!("{} - {owner}", self.messages.get(VENDOR_TITLE).map_or("", String::as_str));
+                game.open_shop(shop::Shop::from_vendor(vendor, shop_id, title, offers));
                 game.auto_deal();
             }
             MapEvent::VendBought { result, .. } => {

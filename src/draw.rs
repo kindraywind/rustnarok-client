@@ -1772,6 +1772,9 @@ impl App {
         if let Some(shop) = &game.my_shop {
             trade_icons.extend(vend::icons(items, shop.goods.iter().map(|good| (good.item.id, good.item.identified))));
         }
+        if let Some(history) = &game.sell_history {
+            trade_icons.extend(vend::icons(items, history.sales.iter().map(|sale| (sale.item.id, sale.item.identified))));
+        }
         if game.buying_setup.is_some() {
             trade_icons.extend(vend::icons(items, game.inventory.items.iter().map(|item| (item.id, item.identified))));
         }
@@ -2319,6 +2322,9 @@ impl App {
         }
         if let Some(shop) = &game.my_shop {
             shop.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
+        }
+        if let Some(history) = &game.sell_history {
+            history.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
         }
         if let Some(setup) = &game.buying_setup {
             setup.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, &game.inventory.items, font, messages, pointer, caret);

@@ -350,12 +350,19 @@ impl App {
                     None => {}
                 }
             }
-            // Our open shop: closing it closes the shop.
+            // Our open shop: the tick box, and closing it closes the shop.
             Scene::Game(game) if game.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some()) => {
-                if game.my_shop.as_ref().unwrap().hit(cursor) == Some(true) {
-                    let _ = game.session.close_shop();
-                    game.my_shop = None;
-                    game.signs.remove(&game.account_id);
+                let shop = game.my_shop.as_mut().unwrap();
+                match shop.hit(cursor) {
+                    Some(vend::ShopHit::Notify) => shop.notify = !shop.notify,
+                    Some(vend::ShopHit::Close | vend::ShopHit::Title(TitleHit::Close)) => game.close_my_shop(),
+                    Some(vend::ShopHit::Title(title)) => shop.frame.click_title(title),
+                    _ => {}
+                }
+            }
+            Scene::Game(game) if game.sell_history.as_ref().is_some_and(|history| history.hit(cursor).is_some()) => {
+                if game.sell_history.as_ref().unwrap().hit(cursor) == Some(true) {
+                    game.sell_history = None;
                 }
             }
             // Setting up a buying store: its name, zeny limit, wanted items, OK or cancel.
@@ -481,11 +488,7 @@ impl App {
                 }
                 // As Ctrl+T.
                 Some(Choice::MercenaryStandBy) => game.steering.following = !game.steering.following,
-                Some(Choice::CloseStall) => {
-                    let _ = game.session.close_shop();
-                    game.my_shop = None;
-                    game.signs.remove(&game.account_id);
-                }
+                Some(Choice::CloseStall) => game.close_my_shop(),
                 Some(Choice::Invite(id)) => {
                     if let Some(actor) = game.units.get(&id) {
                         let _ = game.session.invite_to_party(&actor.name.clone());
@@ -1884,6 +1887,11 @@ impl App {
             {
                 game.vend_size = shop.size;
             }
+            if let Some(setup) = &mut game.vend_setup
+                && setup.resize_to(self.cursor)
+            {
+                game.vend_size = setup.size;
+            }
             game.equipment.frame.drag_to(self.cursor, equipment_height);
             let skills_height = game.skill_window.height();
             game.skill_window.frame.drag_to(self.cursor, skills_height);
@@ -2462,6 +2470,9 @@ impl App {
                 _ if on_cashshop => game.cashshop.as_mut().unwrap().scroll_at(self.cursor, rows),
                 _ if on_reform => game.reform.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
                 _ if on_setup => game.vend_setup.as_mut().unwrap().scroll_by(self.cursor, rows, &game.cart.items),
+                _ if game.sell_history.as_ref().is_some_and(|history| history.hit(self.cursor).is_some()) => {
+                    game.sell_history.as_mut().unwrap().scroll_by(rows)
+                }
                 _ if on_buying_setup => {
                     let inv = &game.inventory.items;
                     game.buying_setup.as_mut().unwrap().scroll_by(rows, inv);
@@ -2801,6 +2812,7 @@ impl App {
                     | game.party_window.stop_resize()
                     | game.skill_window.stop_resize()
                     | game.my_shop.as_mut().is_some_and(vend::MyShop::stop_resize)
+                    | game.vend_setup.as_mut().is_some_and(vend::Setup::stop_resize)
                     | game.shop.as_mut().is_some_and(shop::Shop::stop_resize)
                     | game.equipment.frame.drop_drag()
                     | game.basic_info.frame.drop_drag()
@@ -3150,6 +3162,12 @@ impl App {
         }
         // The vending windows' corner grips.
         if let Scene::Game(game) = &mut self.scene {
+            if let Some(setup) = &mut game.vend_setup
+                && setup.on_grip(cursor)
+            {
+                setup.start_resize(cursor);
+                return;
+            }
             // A press on the setup's mirror or on a row on sale starts a drag.
             if let Some(setup) = &game.vend_setup
                 && setup.covers(cursor)
