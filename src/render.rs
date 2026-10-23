@@ -110,6 +110,11 @@ impl Gpu {
 
         let size = window.inner_size();
         let mut config = surface.get_default_config(&adapter, size.width, size.height).expect("surface unsupported");
+        // Metal keeps latency + 1 drawables, so 1 saves a window-sized one; a frame takes ~1.5 ms, well inside 8.3 ms.
+        // ponytail: macOS only, where frame pacing was measured; Vulkan and DX12 count frame latency differently.
+        if cfg!(target_os = "macos") {
+            config.desired_maximum_frame_latency = 1;
+        }
         // Original assets are sRGB; keep them unchanged on screen.
         config.format = config.format.add_srgb_suffix();
         surface.configure(&device, &config);
