@@ -2277,6 +2277,12 @@ impl Game {
                 self.chat_line(format!("emblem: {}", if self.show_emblems { "On" } else { "Off" }), CHAT_ITEM);
                 Ok(())
             }
+            // ponytail: no line of the client's own for /shopping is in this data; a plain one, as /noshift prints.
+            chat::Command::Shopping => {
+                self.shopping = !self.shopping;
+                self.chat_line(format!("shopping: {}", if self.shopping { "On" } else { "Off" }), CHAT_ITEM);
+                Ok(())
+            }
             // ponytail: the client's own line for /noshift isn't in this data; a plain one.
             chat::Command::NoShift => {
                 self.no_shift = !self.no_shift;

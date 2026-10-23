@@ -392,6 +392,8 @@ impl App {
                     shop: None,
                     deal_confirm: None,
                     shop_asked: None,
+                    shopping: true,
+                    sign_clicked: None,
                     storage: storage::Storage::default(),
                     cutin: None,
                     marks: Vec::new(),
@@ -2085,14 +2087,11 @@ impl App {
                 game.buying_setup = Some(buying::Setup::new(slots));
             }
             MapEvent::BuyingStoreOpenFailed { result, .. } => {
-                let id = match result {
-                    1 => Some(1741),
-                    2 => Some(1742),
-                    8 => Some(1797),
-                    _ => None,
-                };
-                if let Some(id) = id {
+                if let Some((id, closes)) = buying::open_failed(result) {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                    if closes {
+                        game.buying_setup = None;
+                    }
                 }
             }
             MapEvent::MyBuyingStore { limit, items, .. } => {
@@ -2110,16 +2109,10 @@ impl App {
                 let line = rustnarok_client::messages::fill(self.messages.get(1736).map_or("", String::as_str), &[&name, &paid, &amount]);
                 game.chat_line(line, CHAT_ITEM);
             }
+            // The buying stopped; the store stays open, its owner closes it.
             MapEvent::BuyingStoreBuyerFailed { result } => {
-                game.my_buying_store = None;
-                game.signs.remove(&game.account_id);
-                let id = match result {
-                    3 => Some(1743),
-                    4 => Some(1744),
-                    _ => None,
-                };
-                if let Some(id) = id {
-                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM);
+                if let Some(id) = buying::buyer_failed(result) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
             MapEvent::BuyingStoreSign { owner, title } => {

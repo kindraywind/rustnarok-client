@@ -1304,6 +1304,9 @@ struct Game {
     deal_confirm: Option<shop::Confirm>,
     /// When a shop sign was last clicked through.
     shop_asked: Option<Instant>,
+    /// /shopping: a shop's sign opens on one click (on, not kept), else on a double click; the last click on a sign.
+    shopping: bool,
+    sign_clicked: Option<(u32, Instant)>,
     storage: storage::Storage,
     /// An NPC's illustration and where it goes.
     cutin: Option<cutin::Cutin>,

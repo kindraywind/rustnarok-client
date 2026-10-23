@@ -74,6 +74,32 @@ pub enum Action {
     Price(u16, u32),
     Open,
     Cancel,
+    /// Refused, with this message in the message box (a second stack of a wanted item: 1729).
+    Refused(usize),
+}
+
+/// A store's name left blank: "Please Name your Shop." (225).
+pub const NO_NAME: usize = 225;
+
+/// Opening our buying store failed (0x0812): the line to say, and whether the setup closes.
+// ponytail: rathena sends 1, 2 and 8; 9 and 10 are the official client's.
+pub fn open_failed(result: u16) -> Option<(usize, bool)> {
+    match result {
+        1 => Some((1741, false)),
+        2 => Some((1742, false)),
+        8 | 9 => Some((1797, result == 9)),
+        10 => Some((3229, true)),
+        _ => None,
+    }
+}
+
+/// Our store's buying stopped (0x081a): the line, in red; the store stays open.
+pub fn buyer_failed(result: u16) -> Option<usize> {
+    match result {
+        3 => Some(1743),
+        4 => Some(1744),
+        _ => None,
+    }
 }
 
 /// Setting up a buying store: its name, its zeny limit, and the carried items picked with their prices and amounts.
@@ -231,6 +257,8 @@ impl Setup {
                 if let Some(pos) = self.wanted.iter().position(|wanted| wanted.index == item.index) {
                     self.wanted.remove(pos);
                     None
+                } else if self.wanted.iter().any(|wanted| wanted.item_id == item.id) {
+                    Some(Action::Refused(DUPLICATE_ITEM))
                 } else if self.wanted.len() < self.most {
                     Some(Action::Price(item.index, item.id))
                 } else {
@@ -476,6 +504,22 @@ mod tests {
         // Clicking the picked row unpicks it.
         assert_eq!(setup.click(Hit::Row(0), &inv), None);
         assert!(setup.wanted.is_empty());
+        // A second stack of a wanted item is refused when picked (1729).
+        let inv = [item(2, 909, 5), item(3, 909, 1)];
+        let mut setup = Setup::new(5);
+        setup.set_price(2, 909, 10);
+        assert_eq!(setup.click(Hit::Row(1), &inv), Some(Action::Refused(DUPLICATE_ITEM)));
+        assert_eq!(setup.wanted.len(), 1);
+    }
+
+    #[test]
+    fn failures_say_their_line_and_close_the_setup_or_keep_the_store() {
+        assert_eq!(open_failed(1), Some((1741, false)));
+        assert_eq!(open_failed(8), Some((1797, false)));
+        assert_eq!(open_failed(9), Some((1797, true)));
+        assert_eq!(open_failed(10), Some((3229, true)));
+        assert_eq!(open_failed(5), None);
+        assert_eq!((buyer_failed(3), buyer_failed(4), buyer_failed(1)), (Some(1743), Some(1744), None));
     }
 
     #[test]
