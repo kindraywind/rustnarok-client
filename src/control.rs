@@ -1783,6 +1783,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "block_names": game.block_list.as_ref().map(|list| list.names().to_vec()).unwrap_or_default(),
         "whisper_open": json!({"friends": game.whisper_open.friends, "strangers": game.whisper_open.strangers}),
         "chat_line_open": game.chat_mode.chat_line_open(),
+        // Which chat box has the caret, "name" (whisper) or "message"; null while the line is closed in battle mode.
+        "chat_focus": game.chat_mode.chat_line_open().then(|| game.chat.focus()),
         // Battle mode's icon: null out of battle mode, else whether the line is open.
         "chat_mode_icon": game.chat_mode.icon(),
         // The basic info window: where it is, and whether it's minimised.
@@ -2113,6 +2115,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("catalog", Fair),
         ("chat", Fair),
         ("chat_corner", Fair),
+        ("chat_focus", Fair),
         ("chat_height", Fair),
         ("chat_input", Fair),
         ("chat_line_open", Fair),
