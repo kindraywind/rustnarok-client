@@ -301,9 +301,9 @@ impl Gpu {
     }
 
     /// Asks for the next frame. Presenting waits for the display, which paces frames; a covered window presents
-    /// nothing, so its frames are kept a frame time apart instead of running flat out.
+    /// nothing, so its frames are kept `COVERED_FRAME_TIME` apart instead of running flat out.
     pub fn request_frame(&self) {
-        if frame_due(self.occluded, self.drawn_at.elapsed()) {
+        if frame_due(self.occluded, crate::control::driven(), self.drawn_at.elapsed()) {
             self.window.request_redraw();
         }
     }
@@ -480,10 +480,15 @@ pub fn key_out(mut image: RgbaImage) -> RgbaImage {
     }
     image
 }
-/// Whether the next frame may be drawn now: always while frames are presented (the display paces them), else once a
-/// frame time has gone by since the last.
-fn frame_due(occluded: bool, since_drawn: std::time::Duration) -> bool {
-    !occluded || since_drawn >= crate::FRAME_TIME
+/// How often a covered or minimised window draws while nothing happens. Packets, input and control commands each ask
+/// for a frame of their own, so they aren't held back; this only slows the idle animation no one can see.
+const COVERED_FRAME_TIME: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Whether the next frame may be drawn now: always while frames are presented (the display paces them), else once
+/// `COVERED_FRAME_TIME` has gone by since the last. A client driven over the control socket, often launched behind
+/// other windows, keeps a frame time: its scenarios' shots follow the camera's easing frame by frame.
+fn frame_due(occluded: bool, driven: bool, since_drawn: std::time::Duration) -> bool {
+    !occluded || since_drawn >= if driven { crate::FRAME_TIME } else { COVERED_FRAME_TIME }
 }
 
 #[cfg(test)]
@@ -491,10 +496,13 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn a_covered_window_keeps_frames_a_frame_time_apart() {
-        // Presenting: always (the display waits). Covered: only once a frame time has gone by.
-        assert!(super::frame_due(false, Duration::ZERO));
-        assert!(!super::frame_due(true, Duration::from_millis(2)));
-        assert!(super::frame_due(true, crate::FRAME_TIME));
+    fn a_covered_window_keeps_frames_apart() {
+        // Presenting: always (the display waits). Covered: only once `COVERED_FRAME_TIME` has gone by.
+        assert!(super::frame_due(false, false, Duration::ZERO));
+        assert!(!super::frame_due(true, false, crate::FRAME_TIME));
+        assert!(super::frame_due(true, false, super::COVERED_FRAME_TIME));
+        // Driven over the control socket: a frame time, as before.
+        assert!(!super::frame_due(true, true, Duration::from_millis(2)));
+        assert!(super::frame_due(true, true, crate::FRAME_TIME));
     }
 }
