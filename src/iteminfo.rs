@@ -1,11 +1,11 @@
 //! The item description window (right-click an item): the item's picture, its name, what the client says about it,
-//! and for equipment its cards and enchants in a strip along the bottom.
+//! and for equipment its random options in boxed rows and its cards and enchants in a strip along the bottom.
 
 use std::collections::HashMap;
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::ItemInfo;
-use rustnarok_client::net::{self, InventoryItem};
+use rustnarok_client::net::{self, InventoryItem, ItemOption};
 use rustnarok_client::text::Font;
 
 use crate::inventory::{self, CardNames};
@@ -46,6 +46,10 @@ const CELL_X: f32 = 4.0;
 const CELL_UP: f32 = 27.0;
 const CELL_NAME_UP: f32 = 50.0;
 const CELLS: usize = 4;
+/// A random option's row, between the text and the strip: a box the window's width, its text 6 in and 4 down.
+// ponytail: row height and text place by eye from a 2x shot; a measured shot would replace them.
+const ROW: f32 = 20.0;
+const ROW_TEXT: [f32; 2] = [6.0, 4.0];
 /// Where it first opens.
 pub const DEFAULT_PLACE: [f32; 2] = [280.0, 126.0];
 /// A card's window opens here the first time.
@@ -120,6 +124,8 @@ pub struct Shown {
     /// Where it goes (0: nothing to compare with), and whether it's worn itself (then it isn't compared).
     pub location: u32,
     pub worn: bool,
+    /// Its random options.
+    pub options: Vec<ItemOption>,
 }
 
 impl Shown {
@@ -136,6 +142,7 @@ impl Shown {
             card: item.kind == net::ITEM_CARD,
             location: item.location,
             worn: item.worn != 0,
+            options: item.options.clone(),
         }
     }
 
@@ -154,6 +161,7 @@ impl Shown {
             card: !enchant,
             location: 0,
             worn: false,
+            options: Vec::new(),
         }
     }
 
@@ -162,12 +170,20 @@ impl Shown {
     pub fn of_link(id: u32, refine: u8, cards: [u32; 4], card: bool, items: &HashMap<u32, ItemInfo>) -> Self {
         let kind = if items.get(&id).is_some_and(|info| info.slots > 0) { net::ITEM_ARMOR } else { 0 };
         // ponytail: nor where it's worn, so a link's item isn't compared.
-        Self { item: id, identified: true, refine, cards, kind, grade: 0, broken: false, expires: 0, card, location: 0, worn: false }
+        Self { item: id, identified: true, refine, cards, kind, grade: 0, broken: false, expires: 0, card, location: 0, worn: false, options: Vec::new() }
     }
 
-    /// The same item to describe: ID, refine and cards (not which stack, how many, or where it was clicked).
+    /// The same item to describe: ID, refine, cards and options (not which stack, how many, or where it was clicked).
     pub fn same_item(&self, other: &Shown) -> bool {
-        (self.item, self.refine, self.cards) == (other.item, other.refine, other.cards)
+        (self.item, self.refine, self.cards, &self.options) == (other.item, other.refine, other.cards, &other.options)
+    }
+
+    /// Its random options' rows: an identified item's options that have a text.
+    pub fn option_lines(&self, texts: &HashMap<u16, String>) -> Vec<String> {
+        if !self.identified {
+            return Vec::new();
+        }
+        self.options.iter().filter_map(|option| option_text(texts, option)).collect()
     }
 
     /// As an inventory item, for the name and its colours.
@@ -194,6 +210,25 @@ impl Shown {
     fn forged(&self) -> bool {
         inventory::maker(&self.cards).is_some()
     }
+}
+
+/// A random option's text: its template (`NameTable_VAR`) with the value for `%d`; None for an id with no text.
+pub fn option_text(texts: &HashMap<u16, String>, option: &ItemOption) -> Option<String> {
+    texts.get(&option.id).map(|template| rustnarok_client::messages::fill(template, &[&option.value]))
+}
+
+/// The description and the compare window beside it: both take the longer option list and the taller height, so
+/// their rows sit level. Only two with card strips: an unidentified item's description has neither rows nor a strip.
+pub fn pair(description: &mut ItemWindow, compare: &mut ItemWindow) {
+    if !(description.shown.has_strip() && compare.shown.has_strip()) {
+        return;
+    }
+    let rows = description.rows.max(compare.rows);
+    description.rows = rows;
+    compare.rows = rows;
+    let floor = description.total().max(compare.total());
+    description.floor = floor;
+    compare.floor = floor;
 }
 
 /// The worn piece a description compares with: the first worn where the item goes (ammo by the ammo slot), unless
@@ -333,7 +368,11 @@ pub struct ItemWindow {
     drag: Option<[f32; 2]>,
     /// Held by the height grip: where the press was, and the height then.
     resizing: Option<(f32, f32)>,
+    /// The text's and strip's height; the option rows come on top.
     height: f32,
+    /// Option rows, and the least height, which the window beside it sets (`pair`).
+    rows: usize,
+    floor: f32,
     /// The height has been set from the text (each time an item is shown).
     fitted: bool,
     /// The compare window: its own look, and its close button does nothing.
@@ -347,13 +386,20 @@ pub fn picture_path(info: &ItemInfo, identified: bool) -> String {
 
 impl ItemWindow {
     pub fn new(shown: Shown) -> Self {
-        Self { shown, position: DEFAULT_PLACE, scroll: 0, drag: None, resizing: None, height: BASE_HEIGHT, fitted: false, compare: false }
+        Self { shown, position: DEFAULT_PLACE, scroll: 0, drag: None, resizing: None, height: BASE_HEIGHT, rows: 0, floor: 0.0, fitted: false, compare: false }
     }
 
     /// The card or enchant in the strip cell under the pointer, and whether it's an enchant (past the slots).
     pub fn card_under(&self, cursor: [f32; 2], items: &HashMap<u32, ItemInfo>) -> Option<(u32, bool)> {
         let cell = self.cell_at(offset(cursor, self.position.map(|value| -value)))?;
         self.card_in(cell, items).map(|card| (card, cell >= self.slots(items)))
+    }
+
+    /// The same item again, changed (appraised): its height is fitted to the new text.
+    pub fn reshow(&mut self, shown: Shown) {
+        self.shown = shown;
+        self.scroll = 0;
+        self.fitted = false;
     }
 
     /// Sets the height from the text, once for the item shown.
@@ -364,9 +410,25 @@ impl ItemWindow {
         }
     }
 
+    /// The option rows it shows, each frame; alone, nothing beside it sets its height.
+    pub fn set_rows(&mut self, rows: usize) {
+        self.rows = rows;
+        self.floor = 0.0;
+    }
+
+    /// The whole height: text, option rows and strip.
+    fn total(&self) -> f32 {
+        (self.height + self.rows as f32 * ROW).max(self.floor)
+    }
+
+    /// The top of an option row, window-local.
+    fn row_at(&self, row: usize) -> f32 {
+        self.upper() + row as f32 * ROW
+    }
+
     /// Where it is and how big, for the test driver.
     pub fn area(&self) -> [f32; 4] {
-        [self.position[0], self.position[1], WIDTH, self.height]
+        [self.position[0], self.position[1], WIDTH, self.total()]
     }
 
     /// How many slots the item has.
@@ -374,14 +436,14 @@ impl ItemWindow {
         items.get(&self.shown.item).filter(|_| self.shown.identified).map_or(0, |info| usize::from(info.slots.min(4)))
     }
 
-    /// How tall the window is above its strip.
+    /// How tall the window is above its option rows and strip.
     fn upper(&self) -> f32 {
-        self.height - if self.shown.has_strip() { STRIP } else { 0.0 }
+        self.total() - self.rows as f32 * ROW - if self.shown.has_strip() { STRIP } else { 0.0 }
     }
 
     /// How many text lines show.
     fn shown_lines(&self) -> usize {
-        ((self.height - TEXT_LESS - if self.shown.has_strip() { STRIP } else { 0.0 }) / LINE).max(1.0) as usize
+        ((self.upper() - TEXT_LESS) / LINE).max(1.0) as usize
     }
 
     fn grip_at(&self) -> [f32; 2] {
@@ -394,7 +456,7 @@ impl ItemWindow {
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = offset(cursor, self.position.map(|value| -value));
-        if !contains([0.0; 2], [WIDTH, self.height], local) {
+        if !contains([0.0; 2], [WIDTH, self.total()], local) {
             return None;
         }
         Some(if contains(CLOSE, [11.0, 11.0], local) {
@@ -412,7 +474,7 @@ impl ItemWindow {
 
     /// The strip's cell under `local`: below the strip's top + 3, every 25 px from x 3.
     fn cell_at(&self, local: [f32; 2]) -> Option<usize> {
-        if !self.shown.has_strip() || local[1] <= self.height - (CELL_UP - 1.0) {
+        if !self.shown.has_strip() || local[1] <= self.total() - (CELL_UP - 1.0) {
             return None;
         }
         let cell = ((local[0] - 3.0) / CELL_STEP).floor();
@@ -450,7 +512,7 @@ impl ItemWindow {
         if self.shown.has_strip() {
             for cell in 0..CELLS {
                 if let Some(card) = self.card_in(cell, items) {
-                    let corner = offset(self.position, [CELL_X + cell as f32 * CELL_STEP, self.height - CELL_UP]);
+                    let corner = offset(self.position, [CELL_X + cell as f32 * CELL_STEP, self.total() - CELL_UP]);
                     boxes.push((format!("card:{card}"), [corner[0], corner[1], CELL, CELL]));
                 }
             }
@@ -524,6 +586,7 @@ impl ItemWindow {
         (cards, messages, makers): (&CardNames, &[String], &HashMap<u32, Option<String>>),
         font: &Font,
         lines: &[Vec<([u8; 3], String)>],
+        options: &[String],
         pointer: [f32; 2],
     ) {
         let at = |local: [f32; 2]| offset(self.position, local);
@@ -566,17 +629,26 @@ impl ItemWindow {
         let grip = if self.compare { &assets.compare_resize } else { &assets.resize };
         layer.sprites.push((grip, at(self.grip_at()), grip.size));
 
+        // A boxed row per random option, then empty ones to keep level with the window beside it.
+        for row in 0..self.rows {
+            pickup::draw_sysbox(layer, chrome, &assets.compare_box, [x, y + self.row_at(row), WIDTH, ROW]);
+            if let Some(text) = options.get(row) {
+                layer.texts.push((text.clone(), at(offset([0.0, self.row_at(row)], ROW_TEXT)), [0, 0, 0]));
+            }
+        }
+
         // The card strip: four cells, a card or enchant's icon, else an open slot or one past the slots; a forged or
         // brewed piece shows nothing in it. The name of the one under the pointer above it.
         if !self.shown.has_strip() {
             return;
         }
-        pickup::draw_sysbox(layer, chrome, sysbox, [x, y + self.upper(), WIDTH, STRIP]);
+        let height = self.total();
+        pickup::draw_sysbox(layer, chrome, sysbox, [x, y + height - STRIP, WIDTH, STRIP]);
         let (empty, disabled) =
             if self.compare { (&assets.compare_empty_slot, &assets.compare_disabled_slot) } else { (&assets.empty_slot, &assets.disabled_slot) };
         let hovered = self.cell_at(offset(pointer, self.position.map(|value| -value)));
         for cell in 0..CELLS {
-            let corner = at([CELL_X + cell as f32 * CELL_STEP, self.height - CELL_UP]);
+            let corner = at([CELL_X + cell as f32 * CELL_STEP, height - CELL_UP]);
             match self.cell(cell, items) {
                 Some(Cell::Card(card, color)) => {
                     if let Some(Some(icon)) = items.get(&card).and_then(|info| images.get(&inventory::icon_path(info, true))) {
@@ -584,7 +656,7 @@ impl ItemWindow {
                     }
                     if hovered == Some(cell) {
                         let name = items.get(&card).map_or("", |info| info.name.as_str());
-                        let place = at([CELL_X + cell as f32 * CELL_STEP, self.height - CELL_NAME_UP]);
+                        let place = at([CELL_X + cell as f32 * CELL_STEP, height - CELL_NAME_UP]);
                         crate::window::tooltip(tooltip, chrome, font, name, place, color);
                     }
                 }
@@ -736,7 +808,20 @@ mod tests {
     use super::*;
 
     fn shown(item: u32, kind: u8, cards: [u32; 4]) -> Shown {
-        Shown { item, identified: true, refine: 0, cards, kind, grade: 0, broken: false, expires: 0, card: false, location: 0, worn: false }
+        Shown {
+            item,
+            identified: true,
+            refine: 0,
+            cards,
+            kind,
+            grade: 0,
+            broken: false,
+            expires: 0,
+            card: false,
+            location: 0,
+            worn: false,
+            options: Vec::new(),
+        }
     }
 
     fn items() -> HashMap<u32, ItemInfo> {
@@ -791,6 +876,57 @@ mod tests {
         assert_eq!(compared(&of(0, false), &items), None);
         // Flush left of the description.
         assert_eq!(compare_place([500.0, 126.0]), [220.0, 126.0]);
+    }
+
+    #[test]
+    fn fills_in_an_options_text() {
+        let texts = HashMap::from([(3, "STR +%d".to_owned()), (10, "MaxSP +%d%%".to_owned())]);
+        let option = |id, value| ItemOption { id, value, param: 0 };
+        assert_eq!(option_text(&texts, &option(3, 1)).as_deref(), Some("STR +1"));
+        assert_eq!(option_text(&texts, &option(10, 3)).as_deref(), Some("MaxSP +3%"));
+        assert_eq!(option_text(&texts, &option(99, 3)), None);
+        // The rows: an identified item's options that have a text.
+        let mut shown = shown(2101, net::ITEM_ARMOR, [0; 4]);
+        shown.options = vec![option(3, 1), option(99, 2), option(10, 3)];
+        assert_eq!(shown.option_lines(&texts), ["STR +1", "MaxSP +3%"]);
+        assert!(Shown { identified: false, ..shown }.option_lines(&texts).is_empty());
+    }
+
+    #[test]
+    fn grows_both_windows_to_the_longer_option_list() {
+        let window = |rows| {
+            let mut window = ItemWindow::new(shown(2101, net::ITEM_ARMOR, [0; 4]));
+            window.fit(4);
+            window.set_rows(rows);
+            window
+        };
+        // No rows: as before.
+        let (mut description, mut worn) = (window(0), window(0));
+        pair(&mut description, &mut worn);
+        assert_eq!((description.area()[3], worn.area()[3]), (175.0, 175.0));
+        // Three beside five: both take five rows, so each row sits at the same height on both sides.
+        let (mut description, mut worn) = (window(3), window(5));
+        pair(&mut description, &mut worn);
+        assert_eq!((description.rows, worn.rows), (5, 5));
+        assert_eq!((description.area()[3], worn.area()[3]), (175.0 + 5.0 * ROW, 175.0 + 5.0 * ROW));
+        assert_eq!(description.row_at(0), worn.row_at(0));
+        // The text keeps its lines; the strip stays at the bottom.
+        assert_eq!(description.shown_lines(), window(0).shown_lines());
+        assert_eq!(description.upper() + 5.0 * ROW + STRIP, description.area()[3]);
+        // A taller text on one side: the other grows to it, rows still level.
+        let mut long = window(3);
+        long.height = 300.0;
+        let mut short = window(3);
+        pair(&mut long, &mut short);
+        assert_eq!(short.area()[3], long.area()[3]);
+        assert_eq!(short.row_at(2), long.row_at(2));
+        // An unidentified one beside it: no rows, no strip, its own height.
+        let mut unknown = ItemWindow::new(Shown { identified: false, ..shown(2101, net::ITEM_ARMOR, [0; 4]) });
+        unknown.fit(2);
+        unknown.set_rows(0);
+        let mut worn = window(3);
+        pair(&mut unknown, &mut worn);
+        assert_eq!((unknown.rows, unknown.area()[3]), (0, 120.0));
     }
 
     #[test]

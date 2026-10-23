@@ -709,10 +709,11 @@ pub enum MapEvent {
     UpgradeOpen(u32),
     /// Upgrade result: 0 done, 1 refused. `Upgraded` is already Upgrade Weapon.
     LaphineUpgraded(u16),
-    /// The item an upgrade just rewrote: its cards, refine and grade. Random options aren't tracked.
+    /// The item an upgrade just rewrote: its cards, random options, refine and grade.
     ItemPreview {
         index: u16,
         cards: [u32; 4],
+        options: Vec<ItemOption>,
         refine: u8,
         grade: u8,
         broken: bool,

@@ -1,0 +1,21 @@
+// Random options (issue #1083): Guards (2101) with random options. Load with @loadnpc, unload with @unloadnpcfile.
+// Whisper npc:RustnarokOptions anything for three, in this order: one to wear (STR +1, MaxSP +3%, Medium monster
+// resistance +3%), one to carry (DEX +2, MaxHP +100, ATK +2%) and an unidentified one (HIT +5, FLEE +4) for a Magnifier.
+-	script	RustnarokOptions	-1,{
+	end;
+OnWhisperGlobal:
+	setarray .@id[0], 3, 10, 161;
+	setarray .@value[0], 1, 3, 3;
+	setarray .@param[0], 0, 0, 0;
+	getitem3 2101, 1, 1, 0, 0, 0, 0, 0, 0, .@id, .@value, .@param;
+	setarray .@id[0], 7, 1, 13;
+	setarray .@value[0], 2, 100, 2;
+	getitem3 2101, 1, 1, 0, 0, 0, 0, 0, 0, .@id, .@value, .@param;
+	deletearray .@id[2];
+	deletearray .@value[2];
+	deletearray .@param[2];
+	setarray .@id[0], 18, 22;
+	setarray .@value[0], 5, 4;
+	getitem3 2101, 1, 0, 0, 0, 0, 0, 0, 0, .@id, .@value, .@param;
+	end;
+}

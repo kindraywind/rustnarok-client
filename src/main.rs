@@ -384,6 +384,9 @@ const HELP_TITLE: usize = 22;
 const HELP_LINES: std::ops::RangeInclusive<usize> = 33..=46;
 /// /who: how many are online (%d).
 const USER_COUNT: usize = 178;
+/// "Item Appraisal has completed successfully.", and "... has failed.".
+const APPRAISED: usize = 491;
+const APPRAISAL_FAILED: usize = 492;
 /// /ex alone: no one blocked. After a name, how blocking it went (193 + the result) or allowing it (196 + the result).
 const BLOCKED_NONE: usize = 192;
 const BLOCK_RESULTS: usize = 193;
@@ -4370,6 +4373,8 @@ struct App {
     synthesis_boxes: HashMap<u32, lua::SynthesisBox>,
     upgrade_boxes: HashMap<u32, lua::UpgradeBox>,
     title_names: HashMap<u32, String>,
+    /// Random options' texts by option ID (empty without the table: then items show no option rows).
+    random_options: HashMap<u16, String>,
     /// Item names and resources by item ID, and the client's numbered messages.
     items: HashMap<u32, ItemInfo>,
     /// The battlegrounds the queue window lists.
@@ -5397,6 +5402,10 @@ fn main() {
         HashMap::new()
     });
     let title_names = lua::titles(&grf).unwrap_or_default();
+    let random_options = lua::random_options(&grf).unwrap_or_else(|error| {
+        eprintln!("random option texts: {error}");
+        HashMap::new()
+    });
     let job_names = lua::job_names(&grf).unwrap_or_else(|error| {
         eprintln!("no NPC/monster sprite names: {error}");
         HashMap::new()
@@ -5499,6 +5508,7 @@ fn main() {
         synthesis_boxes,
         upgrade_boxes,
         title_names,
+        random_options,
         items,
         battlegrounds,
         card_names,

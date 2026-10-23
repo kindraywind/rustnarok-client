@@ -2257,6 +2257,25 @@ pub struct InventoryItem {
     pub switch: u32,
     /// In the favourites (rathena's flag; listed on the favourites tab).
     pub favorite: bool,
+    /// Its random options, the empty ones left out.
+    pub options: Vec<ItemOption>,
+}
+
+/// A random option on an item (rathena's `struct ItemOptions`): which (`EnumVAR`), its value and a parameter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ItemOption {
+    pub id: u16,
+    pub value: i16,
+    pub param: u8,
+}
+
+/// The five 5-byte random options from `offset`, the empty ones (id 0) left out.
+pub(crate) fn options_at(bytes: &[u8], offset: usize) -> Vec<ItemOption> {
+    bytes[offset..offset + 25]
+        .chunks_exact(5)
+        .map(|option| ItemOption { id: u16_at(option, 0), value: u16_at(option, 2) as i16, param: option[4] })
+        .filter(|option| option.id != 0)
+        .collect()
 }
 
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
@@ -2329,6 +2348,7 @@ fn decode_equip_item(entry: &[u8]) -> InventoryItem {
         bind: u16_at(entry, 35),
         expires: u32_at(entry, 31),
         switch: 0,
+        options: options_at(entry, 40),
     }
 }
 
