@@ -62,6 +62,25 @@ points from `state`'s `targets` boxes, not from the image. A driven client ignor
 `@set BaseLevel <n>` (absolute, unlike `@blvl`): the ones that spend SP (skill-hits, skill-motions, status-loops) and
 aura-high leave the first character at base 99.
 
+### Playing it as a player: play modes
+
+An agent playthrough uses only what a player has. Every MCP tool and `state` field has a grade (`src/play.rs`):
+
+- **fair**: what a player has: the same input, and what the screen shows.
+- **assist**: nothing a player couldn't see or do, in an easier form, or making up for a mouse driven over a socket.
+  Examples: `click_unit`, `cell_point` for on-screen cells, the cells of units on screen, aggro cues, a monster's HP
+  bar as a fraction.
+- **test**: beyond a player, for tests and debugging. `trace`, `clock`, `wait` on `packet`/`sent`/`pause`, `@` GM
+  commands, units and items off screen, invisible script NPCs, `moving_to`, a monster's HP in numbers, animation
+  internals.
+
+`RUSTNAROK_CLIENT_PLAY=fair|assist|all` (or MCP `launch {"play": ...}`) is the highest grade a session may use. The
+client refuses commands above it ("test only (play mode: ...)") and leaves those fields out of `state`, which then says
+`"play"`. The MCP lists only the tools the mode allows. Unset means `all`, so tests and scenarios are unchanged.
+
+A playthrough states its mode, and logs any switch to `all` and why. `@` lines typed into the chat box still reach the
+server, as they do for a player, so play on an account that isn't a GM.
+
 ## Visual verification: before and after
 
 This is a game: what the player sees is the product. Unit tests and packet checks don't show a window drawn in the

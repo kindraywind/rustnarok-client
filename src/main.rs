@@ -32,6 +32,8 @@
 //! `RUSTNAROK_CLIENT_WHISPER=<name>|<text>[;...]` (whisper those a second in, through the chat's name box),
 //! `RUSTNAROK_CLIENT_CONTROL=<socket>` (take commands from a test driver on that Unix socket; see control.rs),
 //! `RUSTNAROK_CLIENT_CONTROL_SHARED=1` (with it: the player plays too, and the chat has an MCP tab),
+//! `RUSTNAROK_CLIENT_PLAY=fair|assist|all` (what the control socket allows: only what a player has, also assists, or everything; see
+//! play.rs),
 //! `RUSTNAROK_CLIENT_CLICKS=[r]x,y[>x,y][;...]` (click, or drag, one a second from `RUSTNAROK_CLIENT_CLICKS_AT` seconds in, 4 by
 //! default; `r` for the right button),
 //! `RUSTNAROK_CLIENT_MAKE=<slot>[:<name>]` (open character creation on that slot; with a name, make it),

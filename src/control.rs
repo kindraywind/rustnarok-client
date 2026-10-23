@@ -71,6 +71,7 @@ use image::RgbaImage;
 use image::imageops::FilterType;
 use rustnarok_client::lua::SkillInfo;
 use rustnarok_client::net;
+use rustnarok_client::play::{self, Grade};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use winit::event::{ElementState, KeyEvent};
@@ -353,6 +354,9 @@ fn serve(stream: Stream, proxy: &EventLoopProxy<NetEvent>, token: Option<&str>) 
             continue;
         }
         let reply = match serde_json::from_str::<Command>(&line) {
+            Ok(command) if test_only(&command) && play::mode() < Grade::Test => {
+                json!({"ok": false, "error": format!("test only (play mode: {})", play::mode().mode())})
+            }
             Ok(Command::Wait { ms, packet, event, sent, fresh, pause, first }) => wait(proxy, ms, (packet, event, sent), fresh, pause, first),
             Ok(Command::Trace { last, events }) => trace(last.unwrap_or(20), events),
             Ok(Command::Inbox { ms }) => mcp::inbox(Duration::from_millis(ms.unwrap_or(0))),
@@ -365,6 +369,17 @@ fn serve(stream: Stream, proxy: &EventLoopProxy<NetEvent>, token: Option<&str>) 
         if writeln!(writer, "{reply}").is_err() {
             break;
         }
+    }
+}
+
+/// A command, or one of its arguments, beyond what a player has: raw packets, the paused clock, waiting on packets, GM
+/// commands (#1095).
+fn test_only(command: &Command) -> bool {
+    match command {
+        Command::Trace { .. } | Command::Clock { .. } => true,
+        Command::Wait { packet, sent, pause, first, .. } => packet.is_some() || sent.is_some() || *pause || first.as_deref().is_some_and(test_only),
+        Command::Say { text } => text.starts_with('@'),
+        _ => false,
     }
 }
 
@@ -548,7 +563,12 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             let Scene::Game(game) = &app.scene else { return Err("not in the game".into()) };
             let view = game.camera.view(crate::screen()[0] / crate::screen()[1]);
             let point = view.project(game.world.cell_position([x as f32, y as f32])).ok_or("the cell is behind the camera")?;
-            Ok(json!({"ok": true, "point": [point[0] * crate::screen()[0], point[1] * crate::screen()[1]]}))
+            let point = [point[0] * crate::screen()[0], point[1] * crate::screen()[1]];
+            // Off screen it's a cell a player can't point at.
+            if play::mode() < Grade::Test && !((0.0..crate::screen()[0]).contains(&point[0]) && (0.0..crate::screen()[1]).contains(&point[1])) {
+                return Err("the cell is off screen".into());
+            }
+            Ok(json!({"ok": true, "point": point}))
         }
         Command::Move { x, y } => {
             point(app, [x, y]);
@@ -921,6 +941,9 @@ fn state(app: &mut App) -> Value {
         "cursor": app.cursor,
         "paused": FROZEN.lock().unwrap().is_some(),
     });
+    if play::mode() < Grade::Test {
+        state["play"] = play::mode().mode().into();
+    }
     if let Scene::Message(text, _) | Scene::Confirm(text, ..) | Scene::Prompt { text, .. } = &app.scene {
         state["text"] = text.as_str().into();
     }
@@ -2005,7 +2028,58 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The status icon tooltip's lines while one shows.
     state["status_tip"] = json!(game.status_tip);
     orbs(&mut state["player"], None);
+    grade(&mut state, play::mode(), game.quest_window.frame.open);
     state
+}
+
+/// The animation internals of a unit in `state`, for tests (#1018).
+const INTERNALS: [&str; 8] = ["action", "frame", "rot", "alpha", "tint", "combo_ms", "held", "ghosts"];
+
+/// Leaves out of the game's `state` what the play mode doesn't allow (#1095). Test: units and ground items off screen,
+/// the invisible script NPCs, where a walk ends, the animation internals, a monster's HP as numbers (it shows as a bar).
+/// Assist, under fair: cells, a monster's HP bar, the aggro cues, and the quests while the quest window is closed.
+fn grade(state: &mut Value, mode: Grade, quests_open: bool) {
+    if mode == Grade::Test {
+        return;
+    }
+    let drawn = |thing: &Value| !thing["screen"].is_null();
+    if let Some(units) = state["units"].as_array_mut() {
+        units.retain(|unit| drawn(unit) && !unit["job"].as_u64().is_some_and(|job| crate::HIDDEN_JOBS.iter().any(|&hidden| u64::from(hidden) == job)));
+        for unit in units {
+            let Some(fields) = unit.as_object_mut() else { continue };
+            fields.remove("moving_to");
+            for key in INTERNALS {
+                fields.remove(key);
+            }
+            if fields["kind"] == "monster"
+                && let Some([hp, max]) = fields.get("hp").and_then(|hp| serde_json::from_value::<[f64; 2]>(hp.clone()).ok())
+            {
+                fields.insert("hp".into(), ((hp / max.max(1.0) * 100.0).round() / 100.0).into());
+            }
+            if mode == Grade::Fair {
+                for key in ["cell", "position", "facing_me", "attacking_me_ms"] {
+                    fields.remove(key);
+                }
+                if fields["kind"] == "monster" {
+                    fields.remove("hp");
+                }
+            }
+        }
+    }
+    if let Some(items) = state["ground_items"].as_array_mut() {
+        items.retain(drawn);
+        if mode == Grade::Fair {
+            items.iter_mut().filter_map(Value::as_object_mut).for_each(|item| _ = item.remove("cell"));
+        }
+    }
+    if mode == Grade::Fair {
+        if let Some(player) = state["player"].as_object_mut() {
+            player.remove("hits_taken");
+        }
+        if !quests_open {
+            state["quests"] = json!([]);
+        }
+    }
 }
 
 /// The player's look as the game state reports it. Zeros until the server has sent one.
@@ -2103,6 +2177,56 @@ pub(crate) fn quests_state(quests: &[net::Quest], texts: &HashMap<u32, crate::qu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_play_mode_leaves_out_what_is_above_it() {
+        let scene = || {
+            json!({
+                "units": [
+                    {"id": 1, "kind": "monster", "job": 1002, "cell": [10, 10], "position": [10.0, 10.0], "screen": [1, 2, 3, 4], "hp": [30, 120], "moving_to": [12, 10], "rot": 90, "facing_me": true},
+                    {"id": 2, "kind": "monster", "job": 1002, "cell": [30, 30], "position": [30.0, 30.0]},
+                    {"id": 3, "kind": "npc", "job": 139, "name": "#warp_2_pass_2_2", "cell": [47, 38], "screen": [5, 6, 7, 8]},
+                ],
+                "ground_items": [{"id": 4, "cell": [11, 10], "screen": [1, 1, 2, 2]}, {"id": 5, "cell": [40, 40], "screen": null}],
+                "player": {"cell": [10, 11], "hits_taken": [{"amount": 5}]},
+                "quests": [{"id": 1}],
+            })
+        };
+        let mut all = scene();
+        grade(&mut all, Grade::Test, false);
+        assert_eq!(all, scene());
+
+        let mut assist = scene();
+        grade(&mut assist, Grade::Assist, false);
+        let units = assist["units"].as_array().unwrap();
+        assert_eq!(units.len(), 1, "the off-screen monster and the hidden warp are left out");
+        assert_eq!(units[0]["hp"], json!(0.25));
+        assert!(units[0].get("moving_to").is_none() && units[0].get("rot").is_none());
+        assert_eq!((&units[0]["cell"], &units[0]["facing_me"]), (&json!([10, 10]), &json!(true)));
+        assert_eq!(assist["ground_items"].as_array().unwrap().len(), 1);
+        assert_eq!(assist["quests"], json!([{"id": 1}]));
+
+        let mut fair = scene();
+        grade(&mut fair, Grade::Fair, false);
+        let unit = &fair["units"][0];
+        assert!(["cell", "position", "hp", "facing_me"].iter().all(|key| unit.get(key).is_none()));
+        assert_eq!(unit["id"], 1);
+        assert!(fair["ground_items"][0].get("cell").is_none() && fair["player"].get("hits_taken").is_none());
+        assert_eq!(fair["player"]["cell"], json!([10, 11]));
+        assert_eq!(fair["quests"], json!([]));
+        let mut open = scene();
+        grade(&mut open, Grade::Fair, true);
+        assert_eq!(open["quests"], json!([{"id": 1}]));
+    }
+
+    #[test]
+    fn test_only_commands() {
+        let test = |line: &str| test_only(&serde_json::from_str(line).unwrap());
+        assert!(test(r#"{"cmd":"trace"}"#) && test(r#"{"cmd":"clock","action":"pause"}"#) && test(r#"{"cmd":"say","text":"@warp prontera"}"#));
+        assert!(test(r#"{"cmd":"wait","packet":"0x08c8"}"#) && test(r#"{"cmd":"wait","ms":100,"pause":true}"#));
+        assert!(test(r#"{"cmd":"wait","ms":100,"do":{"cmd":"say","text":"@heal"}}"#));
+        assert!(!test(r#"{"cmd":"say","text":"hello @all"}"#) && !test(r#"{"cmd":"wait","event":"Chat","ms":100}"#) && !test(r#"{"cmd":"state"}"#));
+    }
 
     #[test]
     fn draws_a_fresh_frame_for_state_only_when_due() {
