@@ -13,6 +13,8 @@ const PET_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\petinfo.lub";
 const DRESS_LIST: &str = "data\\luafiles514\\lua files\\dressroom\\jobdresslist.lub";
 const DRESS_F: &str = "data\\luafiles514\\lua files\\dressroom\\dress_f.lub";
 const TITLE_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\titletable.lub";
+const ENUM_VAR: &str = "data\\luafiles514\\lua files\\datainfo\\enumvar.lub";
+const RANDOM_OPTION_NAMES: &str = "data\\luafiles514\\lua files\\datainfo\\addrandomoptionnametable.lub";
 /// Not in data.grf: the translation's System folder has it.
 const ACHIEVEMENTS: &str = "system\\achievements.lub";
 /// The styling shop's functions, then its lists. They fill `StylingShop`.
@@ -733,6 +735,19 @@ fn style_rows(shop: &mlua::Table, name: &str) -> io::Result<BTreeMap<u16, StyleR
 /// The titles achievements give (`title_tbl`), e.g. 1000 → "Junction of life".
 pub fn titles(grf: &Grf) -> io::Result<HashMap<u32, String>> {
     names(&run(grf, &[TITLE_TABLE])?.globals().get::<mlua::Table>("title_tbl").map_err(lua_error)?)
+}
+
+/// The text of each random option (`NameTable_VAR`, keyed by `EnumVAR`), e.g. 3 → "STR +%d". A translation's table
+/// can name options its data's `EnumVAR` doesn't have; those are left out.
+pub fn random_options(grf: &Grf) -> io::Result<HashMap<u16, String>> {
+    random_option_names(&run(grf, &[ENUM_VAR])?, grf.read(RANDOM_OPTION_NAMES)?)
+}
+
+/// `NameTable_VAR` from its file's bytes, run after `EnumVAR`; a name `EnumVAR` lacks becomes -1, which no option has.
+fn random_option_names(lua: &Lua, table: Vec<u8>) -> io::Result<HashMap<u16, String>> {
+    lua.load("setmetatable(EnumVAR, { __index = function() return { -1 } end })").exec().map_err(lua_error)?;
+    exec_bytes(lua, RANDOM_OPTION_NAMES, table)?;
+    names(&lua.globals().get::<mlua::Table>("NameTable_VAR").map_err(lua_error)?)
 }
 
 /// Job names the client shows players (`PCJobNameTable`), e.g. 0 → "Novice".
@@ -2527,6 +2542,16 @@ mod tests {
         let prontera = midgard.fields.iter().find(|field| field.map == "prontera").unwrap();
         assert_eq!(prontera.rect, [812.0, 587.0, 870.0, 643.0]);
         assert_eq!(colors, [[85, 85, 255, 102], [149, 15, 15, 70]]);
+    }
+
+    #[test]
+    fn leaves_out_random_options_the_data_doesnt_know() {
+        let lua = super::new_lua().unwrap();
+        lua.load("EnumVAR = { VAR_STRAMOUNT = { 3 }, VAR_MAXSPPERCENT = { 10 } }").exec().unwrap();
+        let table =
+            b"NameTable_VAR = { [EnumVAR.VAR_STRAMOUNT[1]] = 'STR +%d', [EnumVAR.VAR_MAXSPPERCENT[1]] = 'MaxSP +%d%%', [EnumVAR.VAR_NEWER[1]] = 'New +%d' }";
+        let names = super::random_option_names(&lua, table.to_vec()).unwrap();
+        assert_eq!(names, std::collections::HashMap::from([(3, "STR +%d".to_owned()), (10, "MaxSP +%d%%".to_owned())]));
     }
 
     #[test]

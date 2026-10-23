@@ -1194,9 +1194,10 @@ impl App {
                 };
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
-            MapEvent::ItemPreview { index, cards, refine, broken, grade } => {
+            MapEvent::ItemPreview { index, cards, options, refine, broken, grade } => {
                 let shown = game.inventory.items.iter_mut().find(|item| item.index == index).map(|item| {
                     item.cards = cards;
+                    item.options = options;
                     item.refine = refine;
                     item.grade = grade;
                     item.broken = broken;
@@ -3244,7 +3245,14 @@ impl App {
             MapEvent::Identified { index, ok } => {
                 if ok && let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index) {
                     item.identified = true;
+                    // Its open description shows it appraised, its options too.
+                    let shown = iteminfo::Shown::of(item);
+                    if let Some(window) = game.item_window.as_mut().filter(|window| window.shown.same_item(&shown)) {
+                        window.reshow(shown);
+                    }
                 }
+                let (id, color) = if ok { (APPRAISED, CHAT_ITEM) } else { (APPRAISAL_FAILED, CHAT_ERROR) };
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
             // Replies to the client's own chat commands.
             MapEvent::UserCount(count) => {

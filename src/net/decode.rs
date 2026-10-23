@@ -195,6 +195,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 bind: u16_at(38),
                 expires: u32_at(34),
                 switch: 0,
+                options: options_at(packet, 40),
             },
         },
         ZC_INVENTORY_START => MapEvent::InventoryStart { kind: packet[4], name: c_string(packet.get(5..).unwrap_or_default()) },
@@ -230,6 +231,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             kind: packet[12],
             identified: packet[13] != 0,
             cards: cards_at(packet, 15),
+            options: options_at(packet, 31),
             refine: packet[56],
             ..Default::default()
         }),
@@ -274,6 +276,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                         id: self::u32_at(entry, 9),
                         identified: entry[13] != 0,
                         cards: cards_at(entry, 15),
+                        options: options_at(entry, 31),
                         refine: entry[56],
                         ..Default::default()
                     },
@@ -300,6 +303,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                         id: self::u32_at(entry, 9),
                         identified: entry[13] != 0,
                         cards: cards_at(entry, 15),
+                        options: options_at(entry, 31),
                         location: self::u32_at(entry, 56),
                         refine: entry[62],
                         ..Default::default()
@@ -563,11 +567,12 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ACK_RANDOM_COMBINE_ITEM => MapEvent::Synthesized(u16_at(2)),
         ZC_RANDOM_UPGRADE_ITEM_UI_OPEN => MapEvent::UpgradeOpen(u32_at(2)),
         ZC_ACK_RANDOM_UPGRADE_ITEM => MapEvent::LaphineUpgraded(u16_at(2)),
-        // Index, broken, four cards, five random options (unused), refine, grade.
+        // Index, broken, four cards, five random options, refine, grade.
         ZC_CHANGE_ITEM_OPTION => MapEvent::ItemPreview {
             index: u16_at(2),
             broken: packet[4] != 0,
             cards: [u32_at(5), u32_at(9), u32_at(13), u32_at(17)],
+            options: options_at(packet, 21),
             refine: packet[46],
             grade: packet[47],
         },
@@ -853,6 +858,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 kind: packet[11],
                 identified: packet[12] != 0,
                 cards: cards_at(packet, 14),
+                options: options_at(packet, 30),
                 location: u32_at(58),
                 refine: packet[62],
                 ..Default::default()
@@ -871,6 +877,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             kind: packet[12],
             identified: packet[13] != 0,
             cards: cards_at(packet, 15),
+            options: options_at(packet, 31),
             refine: packet[56],
             ..Default::default()
         }),
@@ -1105,6 +1112,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             amount: u32_at(7).min(u32::from(u16::MAX)) as u16,
             identified: packet[11] != 0,
             cards: cards_at(packet, 13),
+            options: options_at(packet, 29),
             location: u32_at(54),
             refine: packet[60],
             ..Default::default()

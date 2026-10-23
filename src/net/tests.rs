@@ -1149,7 +1149,7 @@ fn decodes_laphine_boxes() {
     preview[46] = 7;
     preview[47] = 1;
     match decode_map_packet(&preview) {
-        Some(MapEvent::ItemPreview { index: 7, cards, refine: 7, grade: 1, broken: true }) => assert_eq!(cards, [4001, 0, 0, 0]),
+        Some(MapEvent::ItemPreview { index: 7, cards, refine: 7, grade: 1, broken: true, .. }) => assert_eq!(cards, [4001, 0, 0, 0]),
         other => panic!("{other:?}"),
     }
     let ids = [
@@ -2813,4 +2813,50 @@ fn decodes_old_act() {
     let Some(MapEvent::Act(act)) = decode_map_packet(&packet) else { panic!("old act not decoded") };
     assert_eq!((act.source, act.target, act.source_speed, act.target_speed), (150_005, 110_000_123, 432, 288));
     assert_eq!((act.damage, act.sp, act.hits, act.kind, act.left_damage), (320, false, 1, 2, 0));
+}
+
+#[test]
+fn keeps_random_options() {
+    // Each option is its id (u16), value (i16) and parameter (u8); an empty one has id 0.
+    let options = |packet: &mut [u8], at: usize| {
+        for (n, (id, value, param)) in [(3u16, 1i16, 0u8), (10, 3, 0), (0, 0, 0), (25, -2, 4)].into_iter().enumerate() {
+            packet[at + n * 5..at + n * 5 + 2].copy_from_slice(&id.to_le_bytes());
+            packet[at + n * 5 + 2..at + n * 5 + 4].copy_from_slice(&value.to_le_bytes());
+            packet[at + n * 5 + 4] = param;
+        }
+    };
+    let expected = vec![ItemOption { id: 3, value: 1, param: 0 }, ItemOption { id: 10, value: 3, param: 0 }, ItemOption { id: 25, value: -2, param: 4 }];
+    // EQUIPITEM_INFO: the count at 39, the five options from 40.
+    let mut entry = vec![0u8; EQUIP_ITEM_SIZE];
+    entry[39] = 3;
+    options(&mut entry, 40);
+    assert_eq!(decode_equip_item(&entry).options, expected);
+    // A pickup, from 40 as well.
+    let mut pickup = vec![0u8; 70];
+    pickup[..2].copy_from_slice(&ZC_ITEM_PICKUP_ACK.to_le_bytes());
+    options(&mut pickup, 40);
+    let Some(MapEvent::PickedUp { item, .. }) = decode_map_packet(&pickup) else { panic!() };
+    assert_eq!(item.options, expected);
+    // Storage and cart from 31, a trade from 29.
+    for (id, at) in [(ZC_ADD_ITEM_TO_STORE, 31), (ZC_ADD_ITEM_TO_CART, 31)] {
+        let mut packet = vec![0u8; packet_length(id).unwrap() as usize];
+        packet[..2].copy_from_slice(&id.to_le_bytes());
+        options(&mut packet, at);
+        match decode_map_packet(&packet) {
+            Some(MapEvent::StorageAdded(item) | MapEvent::CartAdded(item)) => assert_eq!(item.options, expected),
+            other => panic!("{other:?}"),
+        }
+    }
+    let mut trade = vec![0u8; packet_length(ZC_ADD_EXCHANGE_ITEM).unwrap() as usize];
+    trade[..2].copy_from_slice(&ZC_ADD_EXCHANGE_ITEM.to_le_bytes());
+    trade[2] = 1;
+    options(&mut trade, 29);
+    let Some(MapEvent::TradeItem(item)) = decode_map_packet(&trade) else { panic!() };
+    assert_eq!(item.options, expected);
+    // An item's new options (ZC_CHANGE_ITEM_OPTION) from 21.
+    let mut preview = vec![0u8; 48];
+    preview[..2].copy_from_slice(&ZC_CHANGE_ITEM_OPTION.to_le_bytes());
+    options(&mut preview, 21);
+    let Some(MapEvent::ItemPreview { options, .. }) = decode_map_packet(&preview) else { panic!() };
+    assert_eq!(options, expected);
 }
