@@ -651,7 +651,18 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
         }
         Command::Say { text } => {
             let Scene::Game(game) = &mut app.scene else { return Err("not in the game".into()) };
-            game.session.chat(&game.me.name, &text).map_err(|error| error.to_string())?;
+            // As if typed and sent with Enter, so / commands, emotions and % lines work; an @ line reaches the server as
+            // chat. The MCP tab's lines are for the agent, so the line goes out from the first tab; what the player was
+            // typing stays.
+            let (typing, tab) = (std::mem::replace(&mut game.chat.input, text), game.chat.tab);
+            if game.chat.on_mcp_tab() {
+                game.chat.tab = 0;
+            }
+            app.send_chat_input(false, false);
+            if let Scene::Game(game) = &mut app.scene {
+                game.chat.input = typing;
+                game.chat.tab = tab;
+            }
             Ok(Value::Null)
         }
         Command::Reply { text } => mcp::reply(&mut app.scene, text),
@@ -2451,6 +2462,8 @@ mod tests {
         assert!(test(r#"{"cmd":"trace"}"#) && test(r#"{"cmd":"clock","action":"pause"}"#) && test(r#"{"cmd":"say","text":"@warp prontera"}"#));
         assert!(test(r#"{"cmd":"wait","packet":"0x08c8"}"#) && test(r#"{"cmd":"wait","ms":100,"pause":true}"#));
         assert!(test(r#"{"cmd":"wait","ms":100,"do":{"cmd":"say","text":"@heal"}}"#));
+        // A / command is the game's own, as typed in the chat box (#1121).
+        assert!(!test(r#"{"cmd":"say","text":"/sit"}"#) && !test(r#"{"cmd":"say","text":"/!"}"#));
         assert!(!test(r#"{"cmd":"say","text":"hello @all"}"#) && !test(r#"{"cmd":"wait","event":"Chat","ms":100}"#) && !test(r#"{"cmd":"state"}"#));
     }
 

@@ -107,7 +107,7 @@ fn tools() -> Value {
         tool(
             Grade::Fair,
             "say",
-            "Say a chat line, or run a GM command like \"@monster poring\" or \"@heal\" (GM commands are test only).",
+            "Say a chat line as if typed in the chat box and sent: the game's / commands (\"/sit\", emotions like \"/!\", \"/where\"), % party lines and plain chat all work; a GM command like \"@monster poring\" or \"@heal\" goes to the server as chat (GM commands are test only).",
             json!({"text": {"type": "string"}}),
             &["text"]
         ),

@@ -1,0 +1,24 @@
+{
+  "about": "The control socket's say goes through the chat line (issue #1121). say \"/sit\" sits the player (player.action 2) and nothing is sent as chat, for the player and for the second client nearby; say \"/sit\" again stands. say \"hello\" is chat both see. say \"@\" lines still reach the server.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0},
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"as": "second", "say": "@warp prontera 158 180"}, {"as": "second", "settle": 2000},
+    {"wait": 5000},
+    {"say": "/sit"}, {"wait": 800},
+    {"expect": {"state": {"player.action": 2}, "no_chat": "/sit"}},
+    {"as": "second", "expect": {"no_chat": "/sit"}},
+    {"shot": "say-sit", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"say": "/sit"}, {"wait": 800},
+    {"expect": {"state": {"player.action": 0}}},
+    {"say": "hello"}, {"wait": 500},
+    {"expect": {"chat": "hello"}},
+    {"as": "second", "wait_for": {"event": "Chat", "ms": 3000}},
+    {"as": "second", "expect": {"chat": "hello"}},
+    {"shot": "say-hello", "crop": [312, 184, 400, 400], "threshold": 5},
+    {"say": "@heal"}, {"wait": 500},
+    {"expect": {"chat": "recovered"}}
+  ]
+}
