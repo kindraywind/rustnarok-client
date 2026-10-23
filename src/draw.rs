@@ -1799,8 +1799,8 @@ impl App {
         }
         let mut tooltip = Layer::default();
         // A sign's cut words show whole while the pointer is on its text: a darker speech balloon over the text, the
-        // words starting where they were (the topmost sign, as a press takes it).
-        if game.window_at(pointer.0).is_none()
+        // words starting where they were (the topmost sign, as a press takes it); not through a window over it.
+        if !game.on_window(pointer.0, assets.message.size)
             && let Some((rect, id, _)) =
                 game.sign_rects.iter().rev().find(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], pointer.0))
             && let strip = chatroom::text_strip(*rect)

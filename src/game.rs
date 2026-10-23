@@ -2526,16 +2526,22 @@ impl Game {
         self.cancel_forge();
     }
 
-    /// Whether the pointer is over the interface (a window, the chat, a dialog) rather than the world.
-    /// Whether the pointer is on a window, or something holds the clicks (a dialog, a menu, a question in the message
-    /// box of this size).
     /// The game settings or shortcut settings window under the pointer.
     pub(crate) fn settings_at(&self, cursor: [f32; 2]) -> bool {
         self.settings_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
     }
 
+    /// Whether the pointer is over the interface (a window, the chat, a dialog, a chat room or shop sign) rather than
+    /// the world.
     pub(crate) fn on_ui(&self, cursor: [f32; 2], message: [f32; 2]) -> bool {
+        self.on_window(cursor, message)
+            || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
+    }
+
+    /// Whether the pointer is on a window, or something holds the clicks (a dialog, a menu, a question in the message
+    /// box of this size): what covers the world and its signs.
+    pub(crate) fn on_window(&self, cursor: [f32; 2], message: [f32; 2]) -> bool {
         let asking = self.guild_invite.is_some()
             || self.guild_asked.is_some()
             || self.bind_asked.is_some()
@@ -2594,7 +2600,6 @@ impl Game {
             || self.chat.on_list(cursor)
             || self.party_member_at(cursor).is_some()
             || self.guild_companion.hit(cursor).is_some()
-            || (self.room.is_none() && self.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)))
             || self.settings_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
             || self.cashshop_buy_asked
