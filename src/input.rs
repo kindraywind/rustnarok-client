@@ -619,9 +619,10 @@ impl App {
                     _ => {}
                 }
             }
-            // A chat room's sign: open rooms let us in, locked ones ask for the password.
+            // A chat room's sign: open rooms let us in, locked ones ask for the password. Not through a window over it.
             Scene::Game(game)
                 if game.room.is_none()
+                    && !game.on_window(cursor, assets.message.size)
                     && game.sign_rects.iter().any(|(rect, ..)| contains([rect[0], rect[1]], [rect[2] - rect[0], rect[3] - rect[1]], cursor)) =>
             {
                 let &(_, id, kind) =
