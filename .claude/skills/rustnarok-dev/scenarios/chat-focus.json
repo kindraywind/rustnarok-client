@@ -1,0 +1,21 @@
+{
+  "about": "State names the chat box with the caret (issue #1124). Tab moves it to the whisper-name box, where Enter keeps it (#397) and typing lands; Tab again goes back to the message box.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"move": [600, 300]},
+    {"expect": {"state": {"chat_focus": "message"}}},
+    {"key": "Tab"}, {"wait": 200},
+    {"expect": {"state": {"chat_focus": "name"}}},
+    {"key": "Enter"}, {"wait": 200},
+    {"expect": {"state": {"chat_focus": "name"}}},
+    {"type": "/navi"}, {"wait": 200},
+    {"expect": {"state": {"chat_focus": "name", "chat_whisper": "/navi", "chat_input": ""}}},
+    {"key": "Tab"}, {"wait": 200},
+    {"expect": {"state": {"chat_focus": "message"}}},
+    {"type": "hi"}, {"wait": 200},
+    {"expect": {"state": {"chat_focus": "message", "chat_input": "hi"}}},
+    {"key": "Ctrl+A"}, {"key": "Backspace"}, {"key": "Tab"}, {"key": "Ctrl+A"}, {"key": "Backspace"}, {"key": "Tab"}
+  ]
+}

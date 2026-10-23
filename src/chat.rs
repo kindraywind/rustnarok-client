@@ -1110,6 +1110,11 @@ impl Chat {
         None
     }
 
+    /// The control socket's `chat_focus`: which box has the caret, "name" or "message".
+    pub fn focus(&self) -> &'static str {
+        if self.naming { "name" } else { "message" }
+    }
+
     /// The box with the caret, its caret, and the most it takes.
     fn focused(&mut self) -> (&mut String, &mut Caret, usize) {
         if self.naming { (&mut self.whisper, &mut self.carets[1], NAME_MOST) } else { (&mut self.input, &mut self.carets[0], MESSAGE_MOST) }
@@ -1750,8 +1755,10 @@ mod tests {
         let mut chat = fresh();
         chat.click([50.0, screen()[1] - 12.0]);
         assert!(chat.naming);
+        assert_eq!(chat.focus(), "name");
         chat.click([300.0, screen()[1] - 12.0]);
         assert!(!chat.naming);
+        assert_eq!(chat.focus(), "message");
         assert_eq!(chat.tooltip([576.0, screen()[1] - 12.0]), Some(3188));
         chat.click([576.0, screen()[1] - 12.0]);
         assert_eq!(chat.send_to, SendTo::Party);
