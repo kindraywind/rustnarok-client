@@ -1,0 +1,16 @@
+{
+  "about": "A click on the pixel column under the middle of the screen walks (a ray parallel to x at turn 0). The game's own pick keeps only the middle 70 % of each quadtree box for such a ray and finds no cell there, so the click did nothing and the pointer showed the red can't-walk cursor; here it picks the cell. The cell 5 south of the player is straight down the middle column.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild06 180 180"}, {"settle": 1500},
+    {"expect": {"state": {"player.cell": [180, 180]}}},
+    {"click_on": {"cell": [180, 175]}},
+    {"wait_for": {"sent": "0x035f", "ms": 3000}},
+    {"wait": 2500},
+    {"expect": {"state": {"player.cell": [180, 175]}}},
+    {"click_on": {"cell": [180, 181]}},
+    {"wait": 2500},
+    {"expect": {"state": {"player.cell": [180, 181]}}}
+  ]
+}

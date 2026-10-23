@@ -83,7 +83,7 @@ pub struct Camera {
 /// No hit yet, and the reach of every box: the game's "far".
 const PICK_FAR: f32 = 999_999.0;
 
-/// The cell a ray from `eye` meets, as the game picks it: in map-centred GAT space (X = x − W·5, Z = z − H·5 with W, H
+/// The cell a ray from `eye` meets, as the game picks it (but for a ray parallel to an axis, see `ray_meets_box`): in map-centred GAT space (X = x − W·5, Z = z − H·5 with W, H
 /// half the GAT's size, Y = −y so heights are the GAT's own), two flat triangles per GAT cell and no step faces, the
 /// cells listed by a five-level quadtree (`pick_leaves`), the lowest t winning (the first tested on a tie). Only
 /// in-map cells; None when nothing is hit.
@@ -153,7 +153,11 @@ fn ray_meets_box(lo: Vector, hi: Vector, origin: Vector, direction: Vector) -> b
             if near > far || far < 0.0 {
                 return false;
             }
-        } else if relative.abs() > 0.7 * half {
+        } else if relative.abs() > half {
+            // A ray parallel to this axis stays in the box only while it is inside its slab.
+            // Deliberately not the official client's: the game keeps only the middle 70 % of the slab (`0.7 * half`), so at turn 0
+            // the pixel column right under the middle of the screen (a ray parallel to x) picks no cell for most boxes and a click
+            // there does nothing (the red "can't walk" cursor, seen in the game too). Here that column picks the cell it shows.
             return false;
         }
     }
@@ -3014,11 +3018,12 @@ mod tests {
         // East is to the right, north is up the screen.
         assert!(view.project([110.0, 0.0, 100.0]).unwrap()[0] > 0.5);
         assert!(view.project([100.0, 0.0, 110.0]).unwrap()[1] < 0.5);
-        // A pixel right of the middle picks the target's cell on flat ground. The middle column itself is a ray parallel
-        // to x at turn 0, and like the game's it picks nothing there for this cell.
+        // A pixel right of the middle picks the target's cell on flat ground. The middle column itself is a ray parallel to x at turn 0
+        // and runs along the edge between that cell and the one west of it: it picks the western one (the game's own picks nothing
+        // there for this cell: see `ray_meets_box`).
         let flat = Gat { width: 40, height: 40, cells: vec![([0.0; 4], 0); 1600] };
         assert_eq!(view.pick_ground([0.5 + 1.0 / 1024.0, 0.5], &flat), Some([20, 20]));
-        assert_eq!(view.pick_ground([0.5, 0.5], &flat), None);
+        assert_eq!(view.pick_ground([0.5, 0.5], &flat), Some([19, 20]));
     }
 
     #[test]
@@ -3038,9 +3043,9 @@ mod tests {
             wall.cells[x].0 = [-40.0; 4];
         }
         assert_eq!(ground_hit(&wall, [52.5, 60.0, -30.0], slant), Some([11, 6]));
-        // A ray parallel to x: only the middle 70 % of each quadtree box passes.
-        let picked: Vec<i32> = (0..20).filter(|&x| ground_hit(&flat(20, 20), [x as f32 * 5.0 + 2.5, 30.0, 22.0], [0.0, -1.0, 1.0]) == Some([x, 10])).collect();
-        assert_eq!(picked, [1, 3, 6, 11, 16]);
+        // A ray parallel to x picks every cell of the row. (The game's own keeps only the middle 70 % of each quadtree box and picks
+        // just columns 1, 3, 6, 11 and 16 of this row; see `ray_meets_box`.)
+        assert!((0..20).all(|x| ground_hit(&flat(20, 20), [x as f32 * 5.0 + 2.5, 30.0, 22.0], [0.0, -1.0, 1.0]) == Some([x, 10])));
         assert!((0..20).all(|x| ground_hit(&flat(20, 20), [x as f32 * 5.0 + 2.5, 30.0, 22.0], [0.01, -1.0, 1.0]) == Some([x, 10])));
         // An odd half width lists one cell west of the box.
         assert_eq!(ground_hit(&flat(42, 40), [1.25, 30.0, 22.0], [0.3, -1.0, 1.0]), None);
