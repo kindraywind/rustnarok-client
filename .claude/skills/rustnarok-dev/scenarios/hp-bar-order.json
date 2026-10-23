@@ -1,0 +1,19 @@
+{
+  "about": "HP bar order (issue #1115): a training dummy at half HP (npc/hp-bar-order.txt, loaded from another map so the dummy comes into view hurt) stands on the player's cell; the player's bar is drawn after (over) the monster's, so it shows whole. Main drew the player's bar first and every other unit's after it, so the monster's covered the player's HP row.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_fild06 182 180"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@heal"}, {"wait": 300},
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/hp-bar-order.txt"}, {"wait": 1500},
+    {"say": "@warp prt_fild06 182 180"}, {"settle": 1500},
+    {"expect": {"state": {"player.cell": [182, 180]}, "unit": {"name": "Dummy 10", "cell": [182, 180]}}},
+    {"move": [1000, 750]}, {"wait": 500},
+    {"expect": {"state": {"bar_order.1": "player"}}},
+    {"shot": "hp-bar-order", "crop": [432, 344, 160, 120], "threshold": 5},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/hp-bar-order.txt"}, {"wait": 300},
+    {"say": "@killmonster2"}, {"wait": 500}
+  ]
+}

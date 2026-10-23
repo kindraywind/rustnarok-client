@@ -1510,7 +1510,7 @@ impl App {
             if basic_info::fourth_job(game.me.job) {
                 rows.push((status(net::STATUS_AP), status(net::STATUS_MAX_AP), third, third));
             }
-            bars.push(("player".to_string(), player_feet, rows, [border, background], overhead::bar_fill as overhead::Fill));
+            bars.push((overhead::BarOwner::Player, "player".to_string(), player_feet, rows, [border, background], overhead::bar_fill as overhead::Fill));
         }
         // The player's own summons while in sight: HP, SP, and a homunculus's or pet's hunger.
         // ponytail: hunger fills over a maximum of 100.
@@ -1536,7 +1536,7 @@ impl App {
         }
         for (kind, id, rows) in summons {
             if let Some(&feet) = feet_of.get(&id) {
-                bars.push((kind.to_string(), feet, rows, [border, background], overhead::bar_fill));
+                bars.push((overhead::BarOwner::Summon, kind.to_string(), feet, rows, [border, background], overhead::bar_fill));
             }
         }
         // Monsters' bars in their own colors; a dying unit's bar shows empty until it's gone. Party members and
@@ -1547,10 +1547,13 @@ impl App {
             let monster = actor.kind == MONSTER;
             let [border, background, fill, low] = if monster { assets.monster_bars.each_ref() } else { [border, background, green, red] };
             let filled: overhead::Fill = if monster { overhead::bar_fill } else { overhead::party_fill };
-            Some((id.to_string(), *feet_of.get(id)?, vec![(i64::from(hp), i64::from(max), fill, low)], [border, background], filled))
+            let owner = if monster { overhead::BarOwner::Monster(*id) } else { overhead::BarOwner::Character(*id) };
+            Some((owner, id.to_string(), *feet_of.get(id)?, vec![(i64::from(hp), i64::from(max), fill, low)], [border, background], filled))
         }));
+        // Monsters' bars under characters', the player's own on top (issue #1115).
+        bars.sort_by_key(|bar| bar.0);
         game.bars_drawn.clear();
-        for (whose, feet, rows, [border, background], filled) in bars {
+        for (_, whose, feet, rows, [border, background], filled) in bars {
             let Some(point) = sprite_point(feet, overhead::BAR_BELOW) else { continue };
             let [x, y] = [point[0].trunc() - overhead::BAR_WIDTH / 2.0, point[1].trunc()];
             let rects = overhead::gage(&rows, border, background, filled);
