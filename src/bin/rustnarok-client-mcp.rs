@@ -58,7 +58,7 @@ fn tools() -> Value {
         tool(
             Grade::Fair,
             "click",
-            "Click there, through the client's own mouse handling.",
+            "Click there, through the client's own mouse handling. Answers what the click landed on, as the cursor shows it: {\"hit\": {\"kind\": \"ui\", \"window\": name or null} | {\"kind\": \"unit\"|\"item\"|\"skill_unit\", \"id\": id} | {\"kind\": \"ground\", \"cell\": [x, y]} | null}; the play mode fair leaves the ground's cell out.",
             json!({"x": {"type": "number"}, "y": {"type": "number"}, "button": button, "mods": mods, "count": {"type": "integer", "description": "2 for a double click"}}),
             &["x", "y"],
         ),
@@ -75,6 +75,13 @@ fn tools() -> Value {
             "Where map cell (x, y)'s middle is on the screen, as {\"point\": [x, y]} in the same 1024x768 pixels as click. Use it to click the ground at a cell. Errors outside the game and for a cell behind the camera.",
             json!({"x": {"type": "integer"}, "y": {"type": "integer"}}),
             &["x", "y"],
+        ),
+        tool(
+            Grade::Fair,
+            "wheel",
+            "Turn the mouse wheel over a point: `rows` notches, positive toward the player. Over the world it zooms the camera (positive zooms out); over a list it scrolls.",
+            json!({"x": {"type": "number"}, "y": {"type": "number"}, "rows": {"type": "integer"}}),
+            &["x", "y", "rows"],
         ),
         tool(
             Grade::Fair,
