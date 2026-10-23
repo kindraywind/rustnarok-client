@@ -18,9 +18,11 @@ const ROW: f32 = 32.0;
 /// Rows each window shows at first: the goods (280×312) and the deal (280×152).
 pub const ROWS: [usize; 2] = [8, 3];
 /// The corner grips: the goods both ways, 248, 280 or 312 wide (232 to 320 asked, stepping toward 280); either window
-/// 120 to 312 high, a row per 32 px (2 to 8 rows here). A player's shop and a buying store have none.
+/// 120 to 312 high, a row per 32 px (2 to 8 rows here). A buying store has none; a player's shop keeps its deal at 4
+/// rows or more, and its sizes aren't kept.
 const LEAST_ROWS: usize = 2;
 const MOST_ROWS: usize = 8;
+const VENDOR_DEAL_ROWS: usize = 4;
 
 /// The goods' width for an asked one: 248, 280 or 312.
 pub fn snap_width(asked: f32) -> f32 {
@@ -111,6 +113,8 @@ const GREY: [u8; 3] = [0x70, 0x70, 0x70];
 pub const SAME_EQUIPMENT: usize = 119;
 pub const OVER_30000: usize = 1704;
 pub const NOT_ENOUGH_ZENY: usize = 55;
+/// Buying from a player, past their stock: "Can purchase upto %d pieces of the same item at a time."
+pub const OVER_STOCK: usize = 1706;
 
 pub struct Assets {
     strip: Texture,
@@ -243,6 +247,19 @@ impl Shop {
         }
     }
 
+    /// A player's shop: its goods titled "Merchant Shop - <owner>" (`title`), and a deal of 4 rows or more.
+    pub fn from_vendor(vendor: u32, shop_id: u32, title: String, offers: Vec<Offer>) -> Self {
+        let mut shop = Self::new(false, offers);
+        shop.vendor = Some((vendor, shop_id, title));
+        shop.rows[1] = VENDOR_DEAL_ROWS;
+        shop
+    }
+
+    /// A window's fewest rows.
+    fn least_rows(&self, window: usize) -> usize {
+        if window == 1 && self.vendor.is_some() { VENDOR_DEAL_ROWS } else { LEAST_ROWS }
+    }
+
     /// A plain NPC shop (not a player's shop or store, a market or a barter).
     pub fn plain(&self) -> bool {
         self.vendor.is_none() && self.buying_store.is_none() && self.market.is_none()
@@ -253,7 +270,8 @@ impl Shop {
     pub fn drag_to(&mut self, cursor: [f32; 2]) {
         for window in 0..2 {
             if let Some([width, asked]) = self.grips[window].asked(cursor) {
-                let rows = LEAST_ROWS + window::steps(asked, height(LEAST_ROWS), ROW, MOST_ROWS - LEAST_ROWS);
+                let least = self.least_rows(window);
+                let rows = least + window::steps(asked, height(least), ROW, MOST_ROWS - least);
                 self.set_size(window, (window == 0).then_some(width), rows);
             }
             let height = self.height(window);
@@ -261,8 +279,13 @@ impl Shop {
         }
     }
 
-    /// Whether the windows have corner grips: an NPC's shop or a market, not a player's shop or buying store.
+    /// Whether the windows have corner grips: all but a buying store's.
     fn resizable(&self) -> bool {
+        self.buying_store.is_none()
+    }
+
+    /// Whether their sizes are kept for next time: an NPC's shop or a market's.
+    fn kept(&self) -> bool {
         self.vendor.is_none() && self.buying_store.is_none()
     }
 
@@ -272,19 +295,19 @@ impl Shop {
             self.width = snap_width(width);
             self.frames[0].set_width(self.width);
         }
-        self.rows[window] = rows.clamp(LEAST_ROWS, MOST_ROWS);
+        self.rows[window] = rows.clamp(self.least_rows(window), MOST_ROWS);
         let most = self.rows(window).len().saturating_sub(self.rows[window]);
         self.scroll[window] = self.scroll[window].min(most);
     }
 
     /// The goods' width and both windows' rows, for keeping them (None for a player's shop or store).
     pub fn sizes(&self) -> Option<(f32, [usize; 2])> {
-        self.resizable().then_some((self.width, self.rows))
+        self.kept().then_some((self.width, self.rows))
     }
 
     /// Puts back kept sizes.
     pub fn apply_sizes(&mut self, (width, rows): (f32, [usize; 2])) {
-        if !self.resizable() {
+        if !self.kept() {
             return;
         }
         self.set_size(0, Some(width), rows[0]);
@@ -547,7 +570,27 @@ impl Shop {
             }
             return (amount < wanted).then_some((OVER_30000, Some(30_000)));
         }
-        // Selling, or buying from a player: no more than there are.
+        // Buying from a player: no more than their stock (1706), 30,000 of a thing (1704), the zeny carried (55).
+        // ponytail: refused whole, where the game may put in what fits.
+        if self.vendor.is_some() {
+            let offer_row = &self.offers[offer];
+            let already = self.deal.iter().find(|(row, _)| *row == offer).map_or(0, |&(_, had)| had);
+            if already + amount > 30_000 {
+                return Some((OVER_30000, Some(30_000)));
+            }
+            if already + amount > u32::from(offer_row.have) {
+                return Some((OVER_STOCK, Some(u32::from(offer_row.have))));
+            }
+            if self.total() + u64::from(amount) * u64::from(offer_row.price) > self.zeny {
+                return Some((NOT_ENOUGH_ZENY, None));
+            }
+            match self.deal.iter_mut().find(|(row, _)| *row == offer) {
+                Some((_, had)) => *had += amount,
+                None => self.deal.push((offer, amount)),
+            }
+            return None;
+        }
+        // Selling: no more than there are.
         let limit = if self.selling || self.vendor.is_some() {
             u32::from(self.offers[offer].have)
         } else if single {
@@ -954,12 +997,33 @@ mod tests {
         shop.drag_to([corner[0] + 100.0, corner[1] + 20.0 * ROW]);
         assert_eq!(shop.sizes(), Some((248.0, [2, MOST_ROWS])));
         shop.stop_resize();
-        // A player's shop has no grips and keeps nothing.
-        let mut vendor = Shop::new(false, vec![offer(501, 50, 0, 0)]);
-        vendor.vendor = Some((1, 2, "Shop".into()));
+        // A player's shop has grips but keeps nothing; its deal shows 4 rows or more.
+        let mut vendor = Shop::from_vendor(1, 2, "Merchant Shop - Rndev".into(), vec![offer(501, 50, 0, 0)]);
         vendor.apply_sizes((312.0, [8, 8]));
-        assert_eq!((vendor.sizes(), vendor.rows), (None, ROWS));
-        assert!(!vendor.button_boxes().iter().any(|(name, _)| name.starts_with("shop_resize")));
+        assert_eq!((vendor.sizes(), vendor.rows), (None, [8, 4]));
+        assert!(vendor.button_boxes().iter().any(|(name, _)| *name == "shop_resize_1"));
+        let corner = grip(&vendor, 1);
+        assert!(vendor.start_resize(corner));
+        vendor.drag_to([corner[0], corner[1] - 6.0 * ROW]);
+        assert_eq!(vendor.rows, [8, 4]);
+        vendor.drag_to([corner[0], corner[1] + 2.0 * ROW]);
+        assert_eq!(vendor.rows, [8, 6]);
+    }
+
+    #[test]
+    fn buying_from_a_player_stops_at_the_stock_30000_and_the_zeny() {
+        let mut shop = Shop::from_vendor(1, 2, String::new(), vec![offer(909, 100, 5, 3), offer(1201, 1000, 1, ITEM_WEAPON)]);
+        shop.zeny = 1_200;
+        assert_eq!(shop.add_checked(0, 6), Some((OVER_STOCK, Some(5))));
+        assert_eq!(shop.add_checked(0, 2), None);
+        assert_eq!(shop.add_checked(0, 4), Some((OVER_STOCK, Some(5))), "what's in the deal counts");
+        // Equipment goes straight in, once.
+        assert_eq!(shop.drop_offer(1), None);
+        assert_eq!(shop.deal, [(0, 2), (1, 1)]);
+        assert_eq!(shop.add_checked(1, 1), Some((OVER_STOCK, Some(1))));
+        assert_eq!(shop.add_checked(0, 1), Some((NOT_ENOUGH_ZENY, None)), "1,200 carried, 1,200 in the deal");
+        let mut big = Shop::from_vendor(1, 2, String::new(), vec![offer(909, 1, 40_000, 3)]);
+        assert_eq!(big.add_checked(0, 30_001), Some((OVER_30000, Some(30_000))));
     }
 
     fn offer(item: u32, price: u32, have: u16, kind: u8) -> Offer {

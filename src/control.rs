@@ -1281,6 +1281,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .flat_map(|setup| setup.mirror_boxes(&game.cart.items))
                 .map(|(id, area)| json!({"kind": "inventory_item", "id": id, "box": area})),
         )
+        .chain(game.my_shop.iter().flat_map(crate::vend::MyShop::cell_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.storage.grip_box().map(|area| json!({"kind": "button", "name": "storage_resize", "box": area})))
         .chain(game.party_window.grip_box().map(|area| json!({"kind": "button", "name": "party_resize", "box": area})))
         .chain(
@@ -1298,7 +1299,13 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.skill_window.grip_box().map(|area| json!({"kind": "button", "name": "skills_resize", "box": area})))
-        .chain(game.my_shop.iter().map(|shop| shop.grip_box()).map(|area| json!({"kind": "button", "name": "vend_resize", "box": area})))
+        .chain(
+            game.vend_setup
+                .iter()
+                .map(|setup| setup.grip_box())
+                .chain(game.my_shop.iter().map(|shop| shop.grip_box()))
+                .map(|area| json!({"kind": "button", "name": "vend_resize", "box": area})),
+        )
         .chain(
             game.buying_setup
                 .iter()
@@ -1307,6 +1314,8 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .chain(game.shop.iter().flat_map(crate::shop::Shop::button_boxes))
                 .chain(game.deal_confirm.iter().flat_map(crate::shop::Confirm::button_boxes))
                 .chain(game.vend_setup.iter().flat_map(crate::vend::Setup::button_boxes))
+                .chain(game.my_shop.iter().flat_map(crate::vend::MyShop::button_boxes))
+                .chain(game.sell_history.iter().flat_map(crate::vend::SellHistory::button_boxes))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.sign_rects.iter().map(|&(rect, _, kind)| {
