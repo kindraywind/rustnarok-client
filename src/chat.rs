@@ -1591,6 +1591,8 @@ pub enum Command {
     Achievements,
     /// /noshift: a click on a player attacks without Shift, on or off.
     NoShift,
+    /// /shopping, /sh: a shop's sign opens on one click (on) or only on a double click (off).
+    Shopping,
     /// /loginout (/li): the guild notice and members' log-in lines on or off; /notalkmsg2 (/nm2): guild chat hidden.
     LoginOut,
     NoGuildTalk,
@@ -1653,6 +1655,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/achievement" => Command::Achievements,
         "/memo" => Command::Memo,
         "/noshift" => Command::NoShift,
+        "/shopping" | "/sh" => Command::Shopping,
         "/loginout" | "/li" => Command::LoginOut,
         "/notalkmsg2" | "/nm2" => Command::NoGuildTalk,
         "/emblem" => Command::Emblem,
@@ -2210,6 +2213,8 @@ mod tests {
         assert_eq!(command("/where"), Some(Command::Where));
         assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
+        assert_eq!(command("/shopping"), Some(Command::Shopping));
+        assert_eq!(command("/sh"), Some(Command::Shopping));
         assert_eq!((command("/loginout"), command("/li")), (Some(Command::LoginOut), Some(Command::LoginOut)));
         assert_eq!((command("/notalkmsg2"), command("/nm2")), (Some(Command::NoGuildTalk), Some(Command::NoGuildTalk)));
         assert_eq!(command("/emblem"), Some(Command::Emblem));

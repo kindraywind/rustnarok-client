@@ -47,6 +47,15 @@ pub fn may_ask(sign: u32, me: u32, dead: bool, open: Option<u32>, since: Option<
     sign != me && !dead && open != Some(sign) && since.is_none_or(|since| since >= Duration::from_secs(1))
 }
 
+/// /shopping off: a shop's sign opens only on a double click, two clicks on it this close together.
+const SIGN_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+
+/// Whether a click on a shop's sign opens it: always with /shopping on (the default); off, only the second click of a
+/// double click on the same sign (`last` the click before: its sign and how long ago).
+pub fn sign_opens(shopping: bool, sign: u32, last: Option<(u32, Duration)>) -> bool {
+    shopping || last.is_some_and(|(before, ago)| before == sign && ago < SIGN_DOUBLE_CLICK)
+}
+
 /// The size both vending grids take: width and rows. They open 280 × 120 (2 rows).
 // ponytail: one size kept for both grids.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -985,6 +994,15 @@ mod tests {
         let shop = MyShop::new("Apples".into(), Vec::new(), GridSize::default());
         assert_eq!(shop.hit([200.0 + 10.0, 120.0 + 17.0 + 64.0 + 8.0]), Some(ShopHit::Notify));
         assert_eq!(shop.hit([200.0 + 280.0 - 50.0, 120.0 + 120.0 - 10.0]), Some(ShopHit::Close));
+    }
+
+    #[test]
+    fn with_shopping_off_a_sign_wants_a_double_click() {
+        assert!(sign_opens(true, 5, None));
+        assert!(!sign_opens(false, 5, None));
+        assert!(sign_opens(false, 5, Some((5, Duration::from_millis(300)))));
+        assert!(!sign_opens(false, 5, Some((5, Duration::from_millis(500)))), "too slow");
+        assert!(!sign_opens(false, 5, Some((6, Duration::from_millis(300)))), "another sign");
     }
 
     #[test]

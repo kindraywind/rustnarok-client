@@ -375,6 +375,7 @@ impl App {
                     Some(buying::Action::Price(index, item_id)) => {
                         game.amount = Some(window::Amount::price(Asked::BuyingPrice(index, item_id)));
                     }
+                    // Refusals in the message box.
                     Some(buying::Action::Open) => {
                         let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                         match setup.validate(&game.inventory.items, zeny) {
@@ -385,14 +386,13 @@ impl App {
                             Err(Some((msg_id, Some(item_id)))) => {
                                 let item_name = inventory::item_name(&self.items, item_id, true, 0);
                                 let line = rustnarok_client::messages::fill(self.messages.get(msg_id).map_or("", String::as_str), &[&item_name]);
-                                game.chat_line(line, CHAT_ERROR);
+                                game.question_box = Some(BoxQuestion::Said(line));
                             }
-                            Err(Some((msg_id, None))) => {
-                                game.chat_line(self.messages.get(msg_id).cloned().unwrap_or_default(), CHAT_ERROR);
-                            }
-                            Err(None) => {}
+                            Err(Some((msg_id, None))) => game.question_box = Some(BoxQuestion::Notice(msg_id)),
+                            Err(None) => game.question_box = Some(BoxQuestion::Notice(buying::NO_NAME)),
                         }
                     }
+                    Some(buying::Action::Refused(msg_id)) => game.question_box = Some(BoxQuestion::Notice(msg_id)),
                     Some(buying::Action::Cancel) => {
                         let _ = game.session.open_buying_store("", 0, false, &[]);
                         game.buying_setup = None;
@@ -629,7 +629,10 @@ impl App {
                 let now = crate::control::now();
                 let open = game.shop.as_ref().and_then(|shop| shop.vendor.as_ref().map(|vendor| vendor.0).or(shop.buying_store.map(|store| store.0)));
                 let since = game.shop_asked.map(|at| now.saturating_duration_since(at));
+                let last = game.sign_clicked.replace((id, now)).map(|(sign, at)| (sign, now.saturating_duration_since(at)));
                 let _ = match kind {
+                    // /shopping off: one click on a shop's sign does nothing, a double click opens it.
+                    chatroom::SHOP if !vend::sign_opens(game.shopping, id, last) => Ok(()),
                     // A vendor's or buyer's sign opens their shop.
                     chatroom::SHOP | chatroom::BUYING_STORE if !vend::may_ask(id, game.account_id, game.player.dead, open, since) => Ok(()),
                     chatroom::SHOP => {
