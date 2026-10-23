@@ -336,11 +336,10 @@ impl App {
                 }
             }
             // Setting up a shop: its name, its goods and prices, OK or cancel.
-            Scene::Game(game) if game.vend_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &game.cart.items).is_some()) => {
+            Scene::Game(game) if game.vend_setup.as_ref().is_some_and(|setup| setup.covers(cursor)) => {
                 let setup = game.vend_setup.as_mut().unwrap();
-                let hit = setup.hit(cursor, &game.cart.items).unwrap();
-                match setup.click(hit, &game.cart.items) {
-                    Some(vend::Action::Price(index)) => game.amount = Some(window::Amount::vend_price(Asked::VendPrice(index))),
+                let Some(hit) = setup.hit(cursor) else { return };
+                match setup.click(hit) {
                     Some(vend::Action::Open) => game.open_vending(),
                     Some(vend::Action::AskFree) => game.question_box = Some(BoxQuestion::FreeGoods),
                     Some(vend::Action::Refused(message)) => game.question_box = Some(BoxQuestion::Notice(message)),
@@ -1880,11 +1879,6 @@ impl App {
                 category.frame.drag_to(self.cursor, height);
             }
             game.skill_window.resize_to(self.cursor);
-            if let Some(setup) = &mut game.vend_setup
-                && setup.resize_to(self.cursor)
-            {
-                game.vend_size = setup.size;
-            }
             if let Some(shop) = &mut game.my_shop
                 && shop.resize_to(self.cursor)
             {
@@ -2263,6 +2257,15 @@ impl App {
                 game.sync_esc();
                 return;
             }
+            // Alt + right press on a row on sale takes it off.
+            if state == ElementState::Pressed
+                && alt
+                && let Some(setup) = &mut game.vend_setup
+                && let Some(vend::Hit::Good(row) | vend::Hit::Price(row)) = setup.hit(self.cursor)
+            {
+                setup.take_out(row);
+                return;
+            }
             // Alt + right press takes a whole stack out of the open storage (or one of its lists): to the inventory while its
             // window is open, else the cart's; one at a time until the server answers.
             let names = (&self.messages[..], &self.card_names, &game.char_names);
@@ -2426,7 +2429,7 @@ impl App {
             let on_pick = game.pick.as_ref().is_some_and(|(list, _)| list.covers(self.cursor));
             let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_card = game.card_window.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
-            let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.cart.items).is_some());
+            let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.covers(self.cursor));
             let on_buying_setup = game.buying_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor, &game.inventory.items).is_some());
             let on_cashshop = game.cashshop.as_ref().is_some_and(|shop| shop.hit(self.cursor).is_some());
             let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
@@ -2458,10 +2461,7 @@ impl App {
                 }
                 _ if on_cashshop => game.cashshop.as_mut().unwrap().scroll_at(self.cursor, rows),
                 _ if on_reform => game.reform.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
-                _ if on_setup => {
-                    let count = game.cart.items.len();
-                    game.vend_setup.as_mut().unwrap().scroll_by(rows, count);
-                }
+                _ if on_setup => game.vend_setup.as_mut().unwrap().scroll_by(self.cursor, rows, &game.cart.items),
                 _ if on_buying_setup => {
                     let inv = &game.inventory.items;
                     game.buying_setup.as_mut().unwrap().scroll_by(rows, inv);
@@ -2547,7 +2547,14 @@ impl App {
                             id: u32::from(id),
                             count: game.skill_window.use_level(id, skill.level) as i16,
                         }),
-                        Dragged::Stored(_) | Dragged::Carted(_) | Dragged::Hotkey(_) | Dragged::Worn(_) | Dragged::ShopOffer(_) | Dragged::ShopDeal(_) => None,
+                        Dragged::Stored(_)
+                        | Dragged::Carted(_)
+                        | Dragged::Hotkey(_)
+                        | Dragged::Worn(_)
+                        | Dragged::ShopOffer(_)
+                        | Dragged::ShopDeal(_)
+                        | Dragged::VendMirror(_)
+                        | Dragged::VendGood(_) => None,
                     };
                     if let Some(key) = key {
                         for (slot, key) in hotkeys::drop_on(&game.hotkeys.keys, key, slot) {
@@ -2573,6 +2580,16 @@ impl App {
                         Some(_) => {}
                         None => game.chat_line(self.messages.get(HOTKEY_ITEM_STAYS).cloned().unwrap_or_default(), CHAT_ERROR),
                     }
+                }
+                // A cart item let go over the vending setup goes on sale; a row on sale let go over the mirror comes off.
+                match item {
+                    Some((Dragged::VendMirror(index), _, true)) if game.vend_setup.as_ref().is_some_and(|setup| setup.hit(self.cursor).is_some()) => {
+                        game.sale_dropped(index, &self.messages)
+                    }
+                    Some((Dragged::VendGood(row), _, true)) if game.vend_setup.as_ref().is_some_and(|setup| setup.mirror_hit(self.cursor, &[]).is_some()) => {
+                        game.vend_setup.as_mut().unwrap().take_out(row)
+                    }
+                    _ => {}
                 }
                 // A shop's offer let go over its deal goes in; a deal row let go over its goods comes out.
                 if let Some((Dragged::ShopOffer(row) | Dragged::ShopDeal(row), _, true)) = item
@@ -2783,7 +2800,6 @@ impl App {
                     | game.storage.stop_resize()
                     | game.party_window.stop_resize()
                     | game.skill_window.stop_resize()
-                    | game.vend_setup.as_mut().is_some_and(vend::Setup::stop_resize)
                     | game.my_shop.as_mut().is_some_and(vend::MyShop::stop_resize)
                     | game.shop.as_mut().is_some_and(shop::Shop::stop_resize)
                     | game.equipment.frame.drop_drag()
@@ -3134,11 +3150,15 @@ impl App {
         }
         // The vending windows' corner grips.
         if let Scene::Game(game) = &mut self.scene {
-            if let Some(setup) = &mut game.vend_setup
-                && setup.hit(cursor, &game.cart.items) == Some(vend::Hit::Resize)
+            // A press on the setup's mirror or on a row on sale starts a drag.
+            if let Some(setup) = &game.vend_setup
+                && setup.covers(cursor)
             {
-                setup.start_resize(cursor);
-                return;
+                match (setup.mirror_hit(cursor, &game.cart.items), setup.hit(cursor)) {
+                    (Some(Some(index)), _) => game.dragging = Some((Dragged::VendMirror(index), cursor, false)),
+                    (_, Some(vend::Hit::Good(row))) => game.dragging = Some((Dragged::VendGood(row), cursor, false)),
+                    _ => {}
+                }
             }
             if let Some(shop) = &mut game.my_shop
                 && shop.on_grip(cursor)
@@ -4064,13 +4084,16 @@ impl App {
                 }
                 _ => game.amount.as_mut().unwrap().type_text(event.text.as_deref().unwrap_or_default()),
             },
-            Scene::Game(game) if game.vend_setup.as_ref().is_some_and(|setup| setup.typing) && game.amount.is_none() => {
+            Scene::Game(game) if game.vend_setup.as_ref().is_some_and(vend::Setup::typing) && game.amount.is_none() => {
                 let setup = game.vend_setup.as_mut().unwrap();
                 match key {
-                    Key::Named(NamedKey::Enter | NamedKey::Escape) => setup.typing = false,
-                    Key::Named(NamedKey::Backspace) => {
-                        setup.name.pop();
+                    Key::Named(NamedKey::Enter | NamedKey::Escape) => {
+                        if setup.leave_price() {
+                            game.question_box = Some(BoxQuestion::Notice(vend::PRICE_HELD));
+                        }
+                        setup.focus = None;
                     }
+                    Key::Named(NamedKey::Backspace) => setup.backspace(),
                     _ => setup.type_text(event.text.as_deref().unwrap_or_default()),
                 }
             }

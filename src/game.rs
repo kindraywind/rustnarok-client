@@ -1053,10 +1053,33 @@ impl Game {
         }
     }
 
+    /// A cart item dragged onto the vending setup: one at once, more asking how many.
+    pub(crate) fn sale_dropped(&mut self, index: u16, messages: &[String]) {
+        match self.vend_setup.as_ref().and_then(|setup| setup.left_of(index, &self.cart.items)) {
+            Some(1) => self.put_on_sale(index, 1, messages),
+            Some(left) if left > 1 => self.amount = Some(window::Amount::new(Asked::Vend(index), Some(u32::from(left)))),
+            _ => {}
+        }
+    }
+
+    /// Puts `amount` of a cart item on sale (no more than is left): past 30,000 refused in red; a full stall takes no
+    /// more.
+    pub(crate) fn put_on_sale(&mut self, index: u16, amount: u32, messages: &[String]) {
+        let Some(setup) = &mut self.vend_setup else { return };
+        let left = setup.left_of(index, &self.cart.items).unwrap_or(0);
+        if amount == 0 {
+            return;
+        }
+        if let Err(Some(id)) = setup.put(index, amount.min(u32::from(left))) {
+            let line = rustnarok_client::messages::fill(messages.get(id).map_or("", String::as_str), &[&vend::MOST_AMOUNT]);
+            self.chat_line(line, CHAT_ERROR);
+        }
+    }
+
     /// The vending setup's OK went through: CZ_REQ_OPENSTORE2 with its name and goods.
     pub(crate) fn open_vending(&mut self) {
         if let Some(setup) = &self.vend_setup {
-            let _ = self.session.open_shop(&setup.name, true, &setup.goods(&self.cart.items));
+            let _ = self.session.open_shop(&setup.name, true, &setup.for_sale());
         }
     }
 
@@ -1173,7 +1196,6 @@ impl Game {
             || top.and_then(storage_list).is_some_and(|which| self.storage.list_window(which).on_grip(cursor))
             || (top == Some(Panel::Skills) && self.skill_window.grip_box().is_some_and(|[x, y, w, h]| contains([x, y], [w, h], cursor)))
             || matches!(self.shop.as_ref().and_then(|shop| shop.hit(cursor)), Some(shop::Hit::Resize(_)))
-            || self.vend_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.cart.items) == Some(vend::Hit::Resize))
             || self.my_shop.as_ref().is_some_and(|shop| shop.on_grip(cursor))
     }
 
@@ -2383,7 +2405,7 @@ impl Game {
     pub(crate) fn text_box_focused(&self) -> bool {
         self.dialog.as_ref().is_some_and(|dialog| dialog.input.is_some())
             || self.amount.is_some()
-            || self.vend_setup.as_ref().is_some_and(|setup| setup.typing)
+            || self.vend_setup.as_ref().is_some_and(vend::Setup::typing)
             || self.buying_setup.as_ref().is_some_and(|setup| setup.focus.is_some())
             || self.mail.typing()
             || self.macro_window.as_ref().is_some_and(|window| window.editing.is_some())
@@ -2568,7 +2590,7 @@ impl Game {
             || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
             || self.room.as_ref().is_some_and(|room| room.hit(cursor, &self.me.name).is_some())
             || self.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some())
-            || self.vend_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.cart.items).is_some())
+            || self.vend_setup.as_ref().is_some_and(|setup| setup.covers(cursor))
             || self.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
             || self.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.inventory.items).is_some())
             || self.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some())
@@ -2601,7 +2623,7 @@ impl Game {
             Asked::Shop(_)
             | Asked::ShopOut(_)
             | Asked::RoomPassword(_)
-            | Asked::VendPrice(_)
+            | Asked::Vend(_)
             | Asked::BuyingPrice(..)
             | Asked::BuyingAmount(_)
             | Asked::TalkieBox { .. } => None,
@@ -2639,6 +2661,10 @@ impl Game {
                 }
                 Ok(())
             }
+            Asked::Vend(index) => {
+                self.put_on_sale(index, amount.value(), messages);
+                Ok(())
+            }
             Asked::ShopOut(row) => {
                 if let Some(shop) = &mut self.shop
                     && amount.value() > 0
@@ -2662,11 +2688,6 @@ impl Game {
                     };
                     self.chat_line(line, CHAT_ERROR);
                 }
-                Ok(())
-            }
-            // A vending price may be 0.
-            what @ Asked::VendPrice(_) => {
-                self.give(what, amount.value());
                 Ok(())
             }
             // None or less into storage or the cart is one.
@@ -2711,13 +2732,8 @@ impl Game {
                 _ => self.session.drop_item(index, amount as u16),
             },
             Asked::RoomPassword(_) | Asked::BuyingPrice(..) | Asked::BuyingAmount(_) | Asked::TalkieBox { .. } => Ok(()),
-            // ponytail: past the most, a notice; the game asks yes or no, and either way holds it there.
-            Asked::VendPrice(index) => {
-                if self.vend_setup.as_mut().is_some_and(|setup| setup.set_price(index, amount)) {
-                    self.question_box = Some(BoxQuestion::Notice(vend::PRICE_HELD));
-                }
-                Ok(())
-            }
+            // Answered in `answer_amount`, which has the messages.
+            Asked::Vend(_) => Ok(()),
             Asked::ToCart(index) => {
                 let have = self.inventory.get(index).map_or(0, |item| u32::from(item.amount));
                 self.session.put_in_cart(index, amount.min(have))
@@ -3211,7 +3227,7 @@ impl Game {
         if self.dialog.as_ref().is_some_and(|dialog| dialog.input.is_some()) {
             return Some(NpcInput);
         }
-        if self.vend_setup.as_ref().is_some_and(|setup| setup.typing) {
+        if self.vend_setup.as_ref().is_some_and(vend::Setup::typing) {
             return Some(VendSetup);
         }
         if self.buying_setup.as_ref().is_some_and(|setup| setup.focus.is_some()) {
