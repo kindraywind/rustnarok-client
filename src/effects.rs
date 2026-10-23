@@ -4746,7 +4746,12 @@ impl Effects {
         // On a ground unit everything starts again, but what says it doesn't.
         let again = |parameters: &HashMap<String, String>| lasting && parameters.get("repeat").is_none_or(|value| value != "false");
         let attached = |parameters: &HashMap<String, String>| parameters.get("attachedEntity").is_some_and(|value| value == "true");
-        for parameters in table.floaters.get(&id).into_iter().flatten() {
+        // A looping copy at a spot (a map's torch, fired again on its timer) keeps running: the fire starts no second one on top.
+        let standing =
+            |anchor: Anchor, again: bool, effect: u32| again && effect == id && matches!((anchor, target), (Anchor::At(was), Target::Ground) if was == at);
+        let floating_stands = self.floating.iter().any(|floating| standing(floating.anchor, floating.again, floating.effect));
+        let ring_stands = self.rings.iter().any(|ring| standing(ring.anchor, ring.again, ring.effect));
+        for parameters in table.floaters.get(&id).into_iter().flatten().filter(|_| !floating_stands) {
             let copies = parameters.get("duplicate").and_then(|value| value.parse::<i32>().ok()).unwrap_or(1).clamp(1, 50) as u32;
             let gap = parameters.get("timeBetweenDupli").and_then(|value| value.parse::<f32>().ok()).unwrap_or(200.0).max(0.0);
             for copy in 0..copies {
@@ -4762,7 +4767,7 @@ impl Effects {
                 self.floating.push(floating);
             }
         }
-        for parameters in table.rings.get(&id).into_iter().flatten() {
+        for parameters in table.rings.get(&id).into_iter().flatten().filter(|_| !ring_stands) {
             let copies = parameters.get("duplicate").and_then(|value| value.parse::<i32>().ok()).unwrap_or(1).clamp(1, 50) as u32;
             let gap = parameters.get("timeBetweenDupli").and_then(|value| value.parse::<f32>().ok()).unwrap_or(200.0).max(0.0);
             for copy in 0..copies {
@@ -11300,5 +11305,14 @@ mod tests {
         assert!(world_fx::star::is_class(435) && world_fx::star::is_class(1225) && !world_fx::star::is_class(1223));
         assert!(WorldFx::default().registered(435) && WorldFx::default().registered(1242));
         assert!([1214, 1215, 1216, 1217, 1225].iter().all(|&id| force_drawn(id)));
+    }
+
+    #[test]
+    fn the_map_torch_stands_upright_and_loops() {
+        // EF_TORCH's flame is drawn unturned (angle 0), looping on its own: a timer's fire finds it standing and starts no second.
+        let table = Table::load();
+        let torch = &table.floaters[&47];
+        assert_eq!(torch.len(), 1);
+        assert_eq!((torch[0]["angle"].as_str(), torch[0]["repeat"].as_str()), ("0", "true"));
     }
 }
