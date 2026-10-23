@@ -1224,7 +1224,7 @@ part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;delayLate=500;duplicate=
 part	37	3D	alphaMax=0.75;attachedEntity=true;duration=1000;delayOffset=400;duplicate=3;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
 part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;duplicate=10;fadeOut=true;file=effect/ac_center2.tga;posxRand=1.5;posyRand=1;poszEndRand=1;poszEndRandMiddle=6;poszStartRand=1;poszStartRandMiddle=1;sizeRandY=15;sizeRandYMiddle=45;sizeX=2.5;zIndex=0
 part	37	3D	alphaMax=1;attachedEntity=true;duration=1000;fadeIn=true;fadeOut=true;file=effect/agi_up.bmp;poszEnd=3;poszStart=0.4;sizeEnd=100;sizeSmooth=true;sizeStart=100;sizeY=45;wav=effect/ef_incagility;overlay=true;zIndex=10
-part	47	3D	absoluteSpriteName=data/sprite/이팩트/torch_01;attachedEntity=true;playSprite=true;duration=600;posz=0.8;posx=0.1;size=100;angle=270;rotateToTarget=true;repeat=true
+part	47	3D	absoluteSpriteName=data/sprite/이팩트/torch_01;attachedEntity=true;playSprite=true;duration=600;posz=0.8;posx=0.1;size=100;angle=0;rotateToTarget=true;repeat=true
 part	50	2D	overlay=true;duration=500;file=effect/firering.tga;sizeStart=10;sizeEnd=300;angle=0;toAngle=-360;rotate=true;fadeOut=true;posz=1;attachedEntity=true
 part	61	3D	alphaMax=1;attachedEntity=true;blue=1;duration=1000;duplicate=3;fadeIn=true;fadeOut=true;file=effect/pok1.tga;green=1;posxStartRand=3;posxStartRandMiddle=0;posyStartRand=3;posyStartRandMiddle=0;poszEndRand=2;poszEndRandMiddle=2;poszStart=0;red=1;size=100;sizeRand=17;zIndex=1
 part	93	3D	file=effect/thunder_center.bmp;duration=200;size=35;toSrc=true;blendMode=2;overlay=true;alphaMax=0.66
