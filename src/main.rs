@@ -5053,7 +5053,16 @@ impl ApplicationHandler<NetEvent> for App {
                 gpu.window.request_redraw();
                 self.right_button(state);
             }
-            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers.state();
+                // On a Mac, Option+E, U, I, N and ` are dead keys on most layouts: the input method would take them (typing
+                // ´ into the chat box) and the shortcut never fires. No input method while Option is held.
+                // ponytail: not tried mid-Hangul-syllable; winit drops its marked text when turned off, so Option there may
+                // lose the syllable. Committing the preedit first would fix it.
+                if cfg!(target_os = "macos") {
+                    gpu.window.set_ime_allowed(!self.modifiers.alt_key());
+                }
+            }
             WindowEvent::CursorLeft { .. } => {
                 self.cursor = [-1.0; 2];
                 gpu.window.request_redraw();
