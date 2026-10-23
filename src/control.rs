@@ -2264,6 +2264,10 @@ fn grade(state: &mut Value, mode: Grade, quests_open: bool) {
         for unit in units {
             let Some(fields) = unit.as_object_mut() else { continue };
             fields.remove("moving_to");
+            // The name as drawn, without the script's "#part" (#1125).
+            if let Some(name) = fields.get("name").and_then(Value::as_str).map(|name| crate::actor::shown_name(name).to_owned()) {
+                fields.insert("name".into(), name.into());
+            }
             for key in INTERNALS {
                 fields.remove(key);
             }
@@ -2281,6 +2285,9 @@ fn grade(state: &mut Value, mode: Grade, quests_open: bool) {
                 }
             }
         }
+    }
+    if let Some(heads) = state["minimap"]["quest_heads"].as_array_mut() {
+        heads.iter_mut().for_each(|name| *name = name.as_str().map_or(Value::Null, |name| crate::actor::shown_name(name).into()));
     }
     if let Some(items) = state["ground_items"].as_array_mut() {
         items.retain(drawn);
@@ -2436,6 +2443,22 @@ mod tests {
         let mut open = scene();
         grade(&mut open, Grade::Fair, true);
         assert_eq!(open["quests"], json!([{"id": 1}]));
+    }
+
+    #[test]
+    fn a_play_mode_names_units_as_drawn() {
+        let scene = || json!({"units": [{"id": 1, "kind": "npc", "job": 53, "name": "Guide#01prontera", "screen": [1, 2, 3, 4]}], "minimap": {"quest_heads": ["Kriemhild#15"]}});
+        let mut all = scene();
+        grade(&mut all, Grade::Test, false);
+        assert_eq!((all["units"][0]["name"].as_str(), all["minimap"]["quest_heads"][0].as_str()), (Some("Guide#01prontera"), Some("Kriemhild#15")));
+        for mode in [Grade::Assist, Grade::Fair] {
+            let mut shown = scene();
+            grade(&mut shown, mode, false);
+            assert_eq!(shown["units"][0]["name"], "Guide");
+            assert_eq!(shown["minimap"]["quest_heads"][0], "Kriemhild");
+        }
+        assert_eq!(crate::actor::shown_name("Smile Assistance#prt"), "Smile Assistance");
+        assert_eq!(crate::actor::shown_name("Poring"), "Poring");
     }
 
     /// Every top-level field `game_state` writes, read from its source: the keys of its `json!` and the `state["…"]`

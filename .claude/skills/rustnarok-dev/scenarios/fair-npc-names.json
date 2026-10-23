@@ -1,0 +1,13 @@
+{
+  "about": "Unit names in state as drawn (issue #1125): the second client plays in fair mode, so an NPC the screen draws as 'Guide' is 'Guide' in its state, not the script's 'Guide#01prontera'; the first client (play mode all) keeps the full name, which other scenarios click on. The first warps both to Prontera.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0, "env": {"RUSTNAROK_CLIENT_PLAY": "fair"}},
+  "steps": [
+    {"say": "@warp prontera 156 190"}, {"settle": 1500},
+    {"say": "@recall {second}"},
+    {"as": "second", "settle": 2500},
+    {"expect": {"unit": {"name": "Guide#01prontera"}}},
+    {"as": "second", "expect": {"state": {"play": "fair"}, "unit": {"name": "Guide", "kind": "npc", "cell": null}}}
+  ]
+}

@@ -219,6 +219,11 @@ pub enum Seen {
     Nothing,
 }
 
+/// A name as the screen draws it: names come as "name#script part", and only the name shows.
+pub fn shown_name(name: &str) -> &str {
+    name.split('#').next().unwrap_or_default()
+}
+
 /// What shows of a unit with these option bits. Others in Hiding, Cloaking or Chase Walk are silhouettes while
 /// `clairvoyance` (status 184) is on; GM hide shows nothing. Our own character in Hiding is a shadow, and is never
 /// a silhouette.
