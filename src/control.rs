@@ -575,8 +575,11 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             Ok(Value::Null)
         }
         Command::Click { x, y, button, mods, count } => {
-            click(app, event_loop, [x, y], button, modifiers(&mods)?, count);
-            Ok(Value::Null)
+            let held = modifiers(&mods)?;
+            point(app, [x, y]);
+            let hit = clicked_on(app, [x, y], held.shift_key());
+            click(app, event_loop, [x, y], button, held, count);
+            Ok(json!({"ok": true, "hit": hit}))
         }
         Command::ClickUnit { id, button, mods, count } => {
             let held = modifiers(&mods)?;
@@ -732,6 +735,26 @@ fn unit_point(
         !on_ui(at) && crate::picking::pick(others, at, shift, [screen[0] / 2.0, screen[1] / 2.0]) == Some(Owner::Unit(id))
     };
     on_screen.into_iter().find(|&at| picks(at)).ok_or_else(|| format!("unit {id} is covered"))
+}
+
+/// What a click at `at` lands on, as the cursor shows it (#1093): a window, a unit, item or skill unit the click picks
+/// (only drawn ones are in `hit_boxes`), the ground cell under it (assist: fair leaves the cell out), or null.
+fn clicked_on(app: &App, at: [f32; 2], shift: bool) -> Value {
+    let (Scene::Game(game), Some(assets)) = (&app.scene, &app.assets) else { return Value::Null };
+    if game.on_ui(at, assets.message.size) {
+        return json!({"kind": "ui", "window": game.window_at(at).map(|panel| format!("{panel:?}"))});
+    }
+    let screen = crate::screen();
+    let others = game.hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player);
+    match crate::picking::pick(others, at, shift, [screen[0] / 2.0, screen[1] / 2.0]) {
+        Some(Owner::Unit(id)) => return json!({"kind": "unit", "id": id}),
+        Some(Owner::Item(id)) => return json!({"kind": "item", "id": id}),
+        Some(Owner::SkillUnit(id)) => return json!({"kind": "skill_unit", "id": id}),
+        Some(Owner::Player) | None => {}
+    }
+    let view = game.camera.view(screen[0] / screen[1]);
+    let Some(cell) = view.pick_ground([at[0].floor() / screen[0], at[1].floor() / screen[1]], &game.world.gat) else { return Value::Null };
+    if play::mode() == Grade::Fair { json!({"kind": "ground"}) } else { json!({"kind": "ground", "cell": cell}) }
 }
 
 fn point(app: &mut App, at: [f32; 2]) {
