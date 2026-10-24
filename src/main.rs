@@ -1160,6 +1160,9 @@ struct Game {
     /// The windows' places as last saved (see `save_places`).
     saved_places: String,
     session: MapSession,
+    /// Moving to another map server: the map to load once it lets us in, and whether the old connection's drop is still to come.
+    server_move: Option<String>,
+    leaving_server: bool,
     world: World,
     map: String,
     me: Character,

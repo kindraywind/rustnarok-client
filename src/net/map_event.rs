@@ -82,6 +82,12 @@ pub enum MapEvent {
         map: String,
         position: [u16; 2],
     },
+    /// The map is on another map server: enter there (ZC_NPCACK_SERVERMOVE).
+    ServerMove {
+        map: String,
+        position: [u16; 2],
+        address: ([u8; 4], u16),
+    },
     /// NPC dialog text (one line; the box keeps appending until cleared).
     NpcSay {
         npc: u32,
