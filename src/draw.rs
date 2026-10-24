@@ -680,13 +680,13 @@ impl App {
         }
 
         // Clickable areas: each unit's and item's sprite bounds on screen, in logical pixels, and how far along the
-        // camera's view it stands. The dead and the hidden can't be clicked.
+        // camera's view it stands. The dead and the hidden can't be clicked; the dead on screen keep their box apart.
         let to_screen = |[x, y]: [f32; 2]| [x * screen()[0], y * screen()[1]];
         let siege_map = game.map_property.is_some_and(|(_, flags)| versus::siege(flags));
         let our_guild = game.guild.as_ref().map_or(0, |guild| guild.id);
-        game.hit_boxes = frames
+        let boxes = frames
             .iter()
-            .filter(|(owner, ..)| !matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.remove_at.is_some() || actor.hidden)))
+            .filter(|(owner, ..)| !matches!(owner, Owner::Unit(id) if game.units.get(id).is_some_and(|actor| actor.hidden)))
             .filter(|(_, _, placements)| !placements.is_empty())
             .filter_map(|(owner, feet, placements)| {
                 let (mut low, mut high) = ([f32::MAX; 2], [f32::MIN; 2]);
@@ -718,6 +718,7 @@ impl App {
                 Some(picking::Target { owner: *owner, kind, sprite, area: picking::area(sprite, min), depth })
             })
             .collect();
+        (game.hit_boxes, game.fading_boxes) = fading_apart(boxes, |id| game.units.get(&id).is_some_and(|actor| actor.remove_at.is_some()), screen());
 
         // Ice Wall and the traps a hand can break: their cell, grown to an item's least box.
         // ponytail: drawn as effects, they have no sprite to pick by; the cell is the box, as for warps.

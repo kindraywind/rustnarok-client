@@ -1,0 +1,18 @@
+{
+  "about": "A dying monster stays in a play mode's state while its corpse is drawn (issue #1147): the second client plays in assist mode; the first kills a Poring beside them both with @killmonster, and right after, the second's state still lists it, with dying \"died\" (no click box). The first client (play mode all) sees the same.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0, "env": {"RUSTNAROK_CLIENT_PLAY": "assist"}},
+  "steps": [
+    {"say": "@warp moc_fild12 160 160"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 500},
+    {"say": "@recall {second}"},
+    {"as": "second", "settle": 2500},
+    {"say": "@monster 1002 1"}, {"wait": 1500},
+    {"as": "second", "expect": {"state": {"play": "assist"}, "unit": {"name": "Poring", "kind": "monster", "dying": null}}},
+    {"say": "@killmonster"}, {"wait_for": {"event": "Vanish", "ms": 5000}}, {"wait": 500},
+    {"as": "second", "expect": {"unit": {"name": "Poring", "dying": "died", "area": null}}},
+    {"expect": {"unit": {"name": "Poring", "dying": "died"}}},
+    {"as": "second", "shot": "corpse-in-assist"}
+  ]
+}

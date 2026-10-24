@@ -2091,6 +2091,8 @@ pub struct Actor {
     pub sitting: bool,
     /// When a dying unit is removed.
     pub remove_at: Option<Instant>,
+    /// Why it's going: the vanish packet's type (rathena's `clr_type`: 0 out of sight, 1 dead).
+    pub vanish: Option<u8>,
     /// Fading out: from when, over how many milliseconds (a corpse, a unit walking out of sight).
     pub fade: Option<(Instant, f32)>,
     /// Spawned in view: fading in since then (`spawn_alpha`).
@@ -2504,6 +2506,7 @@ impl Actor {
             ready: false,
             sitting: false,
             remove_at: None,
+            vanish: None,
             fade: None,
             fade_in: None,
             dead: false,

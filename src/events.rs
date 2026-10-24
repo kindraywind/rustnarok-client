@@ -339,6 +339,7 @@ impl App {
                     special_popup: None,
                     npc_menu: npc_menu::frame(),
                     hit_boxes: Vec::new(),
+                    fading_boxes: HashMap::new(),
                     skill_units: HashMap::new(),
                     ground: HashMap::new(),
                     item_sprites: HashMap::new(),
@@ -1359,9 +1360,13 @@ impl App {
                 }
                 let dying = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 match (reason, dying) {
-                    (1, Some(actor)) => fall(actor, lands),
+                    (1, Some(actor)) => {
+                        actor.vanish = Some(reason);
+                        fall(actor, lands);
+                    }
                     // Out of sight: it fades out, its shadow gone at once.
                     (0, Some(actor)) if id != game.account_id => {
+                        actor.vanish = Some(reason);
                         actor.fade_out(Instant::now(), OUT_OF_SIGHT_FADE_MS);
                         game.unit_hp.remove(&id);
                     }
