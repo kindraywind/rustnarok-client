@@ -1616,7 +1616,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "targets": targets,
         // What's carried: index, item, how many, identified, worn where (0: not worn).
         "inventory": game.inventory.items.iter().map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "identified": item.identified, "worn": item.worn, "refine": item.refine, "grade": item.grade, "cards": item.cards, "broken": item.broken, "bind": item.bind, "expires": item.expires, "switch": item.switch, "favorite": item.favorite, "options": item.options.iter().map(|option| [i32::from(option.id), i32::from(option.value), i32::from(option.param)]).collect::<Vec<_>>()})).collect::<Vec<_>>(),
-        // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level).
+        // The hotkey bar, slot by slot: null, or what it holds (a skill's count is its level; an item's is 0).
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         // The hotbar showing: 0 (hotbar 1) or 1.
         "hotkey_tab": game.hotkeys.tab(),

@@ -2562,7 +2562,7 @@ impl App {
                 {
                     let key = match dragged {
                         Dragged::Hotkey(from) if from != slot => game.hotkeys.keys[from],
-                        Dragged::Item(index) => game.inventory.get(index).map(|item| net::Hotkey { skill: false, id: item.id, count: item.amount as i16 }),
+                        Dragged::Item(index) => game.inventory.get(index).map(|item| hotkeys::item_key(item.id)),
                         // At the level picked in the skill window.
                         Dragged::Skill(id) => game.skills.iter().find(|skill| skill.id == id).map(|skill| net::Hotkey {
                             skill: true,

@@ -389,6 +389,12 @@ fn hover_corner([x, y]: [f32; 2]) -> [f32; 2] {
     [x, y + HOVER_DROP]
 }
 
+/// An item on a slot. Its count is 0: rathena keeps it as the hotkey's level, at most 255 in its `hotkey` table, and
+/// never reads it for an item (a stack's amount there failed the whole hotkey save). The bar shows the amount carried.
+pub fn item_key(id: u32) -> Hotkey {
+    Hotkey { skill: false, id, count: 0 }
+}
+
 /// What a key let go on slot `to` changes: the slot takes it, and every other slot in that row of 9 holding the same
 /// skill or item is emptied. So moving a key along its row moves it, and to another row copies it.
 pub fn drop_on(keys: &[Option<Hotkey>], key: Hotkey, to: usize) -> Vec<(usize, Option<Hotkey>)> {
@@ -423,6 +429,12 @@ mod tests {
         assert_eq!(drop_on(&keys, heal, 12), vec![(9, None), (12, Some(heal))]);
         // The same item id as a skill id is another key.
         assert_eq!(drop_on(&keys, Hotkey { skill: false, id: 28, count: 1 }, 2), vec![(2, Some(Hotkey { skill: false, id: 28, count: 1 }))]);
+    }
+
+    #[test]
+    fn an_item_key_has_no_count() {
+        // Not the stack's amount: over 255 it doesn't fit the server's hotkey level.
+        assert_eq!(item_key(569), Hotkey { skill: false, id: 569, count: 0 });
     }
 
     #[test]
