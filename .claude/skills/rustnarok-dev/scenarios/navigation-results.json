@@ -1,0 +1,33 @@
+{
+  "about": "Navigation window results in state (issue #1142): from gef_fild04, /navi opens the window and typing \"geffen\" finds more places than its eight rows show. Each navi_result_<n> button in targets carries the text its row shows and what it routes to (map, cell, monster, target_kind), and navi_results_more says the list was cut. Picking the first row routes to the map its button named.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp gef_fild04 169 241"},
+    {"settle": 1500},
+    {"say": "/navi"},
+    {"wait": 500},
+    {"click_on": {"button": "navi_field"}},
+    {"wait": 200},
+    {"type": "geffen"},
+    {"wait": 500},
+    {
+      "expect": {
+        "button": {"name": "navi_result_0", "text": "Geffen Dungeon B1 (gef_dun00)", "map": "gef_dun00", "cell": null, "target_kind": "map"},
+        "state": {"navi_results_more": true}
+      }
+    },
+    {"expect": {"button": {"name": "navi_result_4", "text": "Geffen Field (gef_fild00)", "map": "gef_fild00", "target_kind": "map"}}},
+    {"move": [1000, 740]},
+    {"shot": "geffen-results", "crop": [680, 180, 280, 200]},
+    {"click_on": {"button": "navi_result_0"}},
+    {"wait": 500},
+    {"expect": {"state": {"navigation.map": "gef_dun00"}}},
+    {"click_on": {"button": "navi_stop"}},
+    {"wait": 300},
+    {"expect": {"state": {"navigation": null}}},
+    {"say": "/navi"},
+    {"wait": 300},
+    {"expect": {"state": {"navi_results_more": null}}}
+  ]
+}
