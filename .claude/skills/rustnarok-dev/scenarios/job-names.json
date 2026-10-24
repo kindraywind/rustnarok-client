@@ -1,0 +1,14 @@
+{
+  "about": "Job names (issue #1136): the Basic Information window shows the character's job under the name ('Novice'), also on data that keeps the job names only in pcjobnamegender. The state carries the name the window draws; on main it is null and the line is blank. Ends a Novice.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"},
+    {"settle": 1500},
+    {"say": "@job 0"},
+    {"wait": 800},
+    {"move": [600, 500]},
+    {"expect": {"state": {"game.basic_info.job_name": "Novice"}}},
+    {"shot": "job-name-basic-info", "crop": [0, 0, 240, 150], "threshold": 5}
+  ]
+}

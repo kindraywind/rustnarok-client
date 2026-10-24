@@ -51,6 +51,9 @@ const LAYER_RULES: [&str; 14] = [
 /// Defines JOBID, which the job name and skill tables use.
 const JOB_INHERIT: &str = "data\\luafiles514\\lua files\\skillinfoz\\jobinheritlist.lub";
 const PC_JOB_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\pcjobname.lub";
+/// Where newer data keeps the job names instead: `PCJobNameTableMan`, with the job IDs (`pcJobTbl2`) in the women's file.
+const PC_JOB_NAME_GENDER: [&str; 2] =
+    ["data\\luafiles514\\lua files\\datainfo\\pcjobnamegender_f.lub", "data\\luafiles514\\lua files\\datainfo\\pcjobnamegender.lub"];
 const SKILL_ID: &str = "data\\luafiles514\\lua files\\skillinfoz\\skillid.lub";
 const SKILL_INFO: &str = "data\\luafiles514\\lua files\\skillinfoz\\skillinfolist.lub";
 /// Each skill's description, line by line (`SKILL_DESCRIPT`).
@@ -750,8 +753,17 @@ fn random_option_names(lua: &Lua, table: Vec<u8>) -> io::Result<HashMap<u16, Str
     names(&lua.globals().get::<mlua::Table>("NameTable_VAR").map_err(lua_error)?)
 }
 
-/// Job names the client shows players (`PCJobNameTable`), e.g. 0 → "Novice".
+/// Job names the client shows players (`PCJobNameTable`), e.g. 0 → "Novice". Data without `datainfo\pcjobname.lub`
+/// (its copy under `admin\` has capitals only) has them by gender; ponytail: the men's names, whoever the character is.
 pub fn pc_job_names(grf: &Grf) -> io::Result<HashMap<u16, String>> {
+    if !grf.contains(PC_JOB_NAME) && PC_JOB_NAME_GENDER.iter().all(|file| grf.contains(file)) {
+        let lua = new_lua()?;
+        exec(&lua, grf, &PC_JOB_NAME_GENDER[..1])?;
+        // Some names are of jobs the ID table lacks; they get -1, which `names` leaves out.
+        lua.load("setmetatable(pcJobTbl2, { __index = function() return -1 end })").exec().map_err(lua_error)?;
+        exec(&lua, grf, &PC_JOB_NAME_GENDER[1..])?;
+        return names(&lua.globals().get::<mlua::Table>("PCJobNameTableMan").map_err(lua_error)?);
+    }
     let lua = run(grf, &[JOB_INHERIT, PC_JOB_NAME])?;
     names(&lua.globals().get::<mlua::Table>("PCJobNameTable").map_err(lua_error)?)
 }
