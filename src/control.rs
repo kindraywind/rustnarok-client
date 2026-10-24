@@ -1594,6 +1594,15 @@ fn game_state(app: &App, game: &Game) -> Value {
             "base_level": status(net::STATUS_BASE_LEVEL),
             "job_level": status(net::STATUS_JOB_LEVEL),
             "zeny": status(net::STATUS_ZENY),
+            // Weight and its limit as the Basic Information window shows them (the server's are in tenths), and
+            // whether that line is red.
+            "weight": status(net::STATUS_WEIGHT).map(|weight| weight / 10),
+            "max_weight": status(net::STATUS_MAX_WEIGHT).map(|limit| limit / 10),
+            "overweight": overweight(&game.status, game.overweight),
+            "base_exp": status(net::STATUS_BASE_EXP),
+            "base_exp_next": status(net::STATUS_NEXT_BASE_EXP),
+            "job_exp": status(net::STATUS_JOB_EXP),
+            "job_exp_next": status(net::STATUS_NEXT_JOB_EXP),
             "status_points": status(net::STATUS_POINTS),
             "skill_points": game.skill_points(),
             "stats": stats_state(&game.status),
@@ -2320,6 +2329,12 @@ fn grade(state: &mut Value, mode: Grade, quests_open: bool) {
 
 /// The player's look as the game state reports it. Zeros until the server has sent one.
 /// A pushcart's spot (world X and Z), facing (degrees) and wheel frame, or null.
+/// Whether the Basic Information window's weight line is red: `basic_info::heavy` on the server's weight and limit.
+fn overweight(status: &HashMap<u16, i64>, percent: u32) -> bool {
+    let value = |id: u16| status.get(&id).copied().unwrap_or(0);
+    crate::basic_info::heavy(value(net::STATUS_WEIGHT), value(net::STATUS_MAX_WEIGHT), percent)
+}
+
 fn cart_state(cart: Option<&crate::actor::Cart>) -> Value {
     let Some(cart) = cart else { return Value::Null };
     let tenth = |value: f32| (f64::from(value) * 10.0).round() / 10.0;
@@ -2586,6 +2601,14 @@ mod tests {
         assert_eq!(pin_kind(PinStep::ChangeNewFirst { old: "1357".into() }), "change");
         assert_eq!(pin_kind(PinStep::ChangeNewConfirm { old: "1357".into(), first: "2468".into() }), "change");
         assert_eq!(None::<PinPad>.as_ref().map_or("none", |pad| pad.kind()), "none");
+    }
+
+    #[test]
+    fn reports_overweight_as_the_basic_info_window() {
+        // 1,745 / 2,470 is 70%: red at rathena's 70, not at 90; no limit yet, never.
+        let status = HashMap::from([(net::STATUS_WEIGHT, 17450), (net::STATUS_MAX_WEIGHT, 24700)]);
+        assert!(overweight(&status, 70) && !overweight(&status, 90));
+        assert!(!overweight(&HashMap::from([(net::STATUS_WEIGHT, 10)]), 50));
     }
 
     #[test]
