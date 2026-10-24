@@ -52,12 +52,15 @@ Two players: "second": {"account": "2", "slot": 0, "env": {...}} starts a second
 "{first}" and "{second}" in any string (dict keys too: {"state": {"guild.members.{second}": 1}}) are the two
 characters' names, so a scenario runs on anyone's server;
 "{repo}" (in steps and "env" values) is the repository's absolute path (`@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/merge.txt`), and
-"{scenarios}" the scenarios folder's (`@loadnpc {scenarios}/battleground-team.txt`).
+"{scenarios}" the scenarios folder's (`@loadnpc {scenarios}/battleground-team.txt`),
+"{stamp}" a token of this run, and "{fresh}" (in "env" values: {"RUSTNAROK_CLIENT_SETTINGS": "{fresh}"}) a new empty temporary
+folder each time, removed when the scenario ends. Any other `{word}` fails the scenario before it launches.
 Each scenario starts a fresh client; the clock is paused for every shot so frames repeat.
 Everything lands under docs/personal/visual/<date>/<HHMMSS>/ (gitignored): game images never go in the repository.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -167,10 +170,28 @@ def launch(binary, scenario):
 STAMP = format(int(time.time()) % 36**5, "x")
 
 
+KNOWN_PLACEHOLDERS = {"first", "second", "repo", "scenarios", "stamp", "fresh"}
+FRESH_DIRS = []
+
+
+def unknown_placeholders(value):
+    """The `{word}` placeholders in `value` (a scenario's strings, dict keys too) that `with_names` doesn't know."""
+    if isinstance(value, str):
+        return sorted(set(re.findall(r"\{([A-Za-z_]\w*)\}", value)) - KNOWN_PLACEHOLDERS)
+    if isinstance(value, list):
+        return sorted({word for item in value for word in unknown_placeholders(item)})
+    if isinstance(value, dict):
+        return sorted({word for key, item in value.items() for word in unknown_placeholders(key) + unknown_placeholders(item)})
+    return []
+
+
 def with_names(value, names):
     """`value` with "{first}" and "{second}" turned into the characters' names, "{repo}" into the repository's
-    path, and "{stamp}" into a token of this run."""
+    path, "{stamp}" into a token of this run, and "{fresh}" into a new empty temporary folder."""
     if isinstance(value, str):
+        while "{fresh}" in value:
+            FRESH_DIRS.append(tempfile.mkdtemp(prefix="rustnarok-fresh-"))
+            value = value.replace("{fresh}", FRESH_DIRS[-1], 1)
         for client, name in names.items():
             value = value.replace("{" + client + "}", name)
         return value.replace("{repo}", REPO).replace("{scenarios}", os.path.join(HERE, "scenarios")).replace("{stamp}", STAMP)
@@ -186,6 +207,8 @@ def quit_all(scenario):
         drive.use(client)
         drive.quit_quietly()
     drive.use("first")
+    while FRESH_DIRS:
+        shutil.rmtree(FRESH_DIRS.pop(), ignore_errors=True)
 
 
 def locate(target):
@@ -491,6 +514,11 @@ def run(scenarios, binary, out):
         scenario = json.load(open(path))
         name = os.path.splitext(os.path.basename(path))[0]
         print(f"{name}:")
+        unknown = unknown_placeholders({key: item for key, item in scenario.items() if key != "about"})
+        if unknown:
+            results[name] = [f"unknown placeholder {', '.join('{' + word + '}' for word in unknown)} (known: {', '.join('{' + word + '}' for word in sorted(KNOWN_PLACEHOLDERS))})"]
+            print(f"  {name}: FAIL ({results[name][0]})")
+            continue
         # A client that can't get in (no character in the slot, an account the accounts file doesn't have) fails its
         # scenario, not the run.
         try:
