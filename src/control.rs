@@ -1040,7 +1040,9 @@ fn state(app: &mut App) -> Value {
 
 fn game_state(app: &App, game: &Game) -> Value {
     let target = |owner: Owner| game.hit_boxes.iter().find(|target| target.owner == owner);
-    let screen = |owner: Owner| target(owner).map(|target| target.sprite.map(|side| side.round() as i32));
+    // A unit dying or fading out has no click box, but its sprite's box while it's drawn on screen.
+    let fading = |owner: Owner| if let Owner::Unit(id) = owner { game.fading_boxes.get(&id).copied() } else { None };
+    let screen = |owner: Owner| target(owner).map(|target| target.sprite).or_else(|| fading(owner)).map(|rect| rect.map(|side| side.round() as i32));
     let area = |owner: Owner| target(owner).map(|target| target.area.map(|side| side.round() as i32));
     let me = game.player.cell;
     let distance = |cell: [i32; 2]| (cell[0] - me[0]).abs().max((cell[1] - me[1]).abs());
@@ -1145,7 +1147,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 unit["hidden"] = true.into();
             }
             if actor.remove_at.is_some() {
-                unit["dying"] = true.into();
+                unit["dying"] = dying(actor.vanish).into();
             }
             if actor.dead {
                 unit["dead"] = true.into();
@@ -2270,6 +2272,11 @@ const FIELD_GRADES: &[(&str, Grade)] = {
     ]
 };
 
+/// Why a unit is going, by its vanish packet's type: a corpse (rathena's CLR_DEAD) or out of sight (CLR_OUTSIGHT).
+fn dying(vanish: Option<u8>) -> &'static str {
+    if vanish == Some(1) { "died" } else { "left_sight" }
+}
+
 /// Leaves out of the game's `state` what the play mode doesn't allow (#1095). Test: units and ground items off screen,
 /// the invisible script NPCs, where a walk ends, the animation internals, a monster's HP as numbers (it shows as a bar).
 /// Assist, under fair: cells, a monster's HP bar, the aggro cues, and the quests while the quest window is closed.
@@ -2468,6 +2475,20 @@ mod tests {
         let mut open = scene();
         grade(&mut open, Grade::Fair, true);
         assert_eq!(open["quests"], json!([{"id": 1}]));
+    }
+
+    #[test]
+    fn a_play_mode_keeps_dying_units_while_drawn() {
+        assert_eq!([dying(Some(1)), dying(Some(0))], ["died", "left_sight"]);
+        let scene = || json!({"units": [{"id": 1, "kind": "monster", "job": 1002, "screen": [1, 2, 3, 4], "area": null, "dying": "died"}, {"id": 2, "kind": "monster", "job": 1002, "dying": "left_sight"}]});
+        for mode in [Grade::Assist, Grade::Fair] {
+            let mut shown = scene();
+            grade(&mut shown, mode, false);
+            assert_eq!(
+                shown["units"].as_array().map(|units| units.iter().map(|unit| (unit["id"].clone(), unit["dying"].clone())).collect::<Vec<_>>()),
+                Some(vec![(json!(1), json!("died"))])
+            );
+        }
     }
 
     #[test]

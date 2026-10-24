@@ -1246,6 +1246,8 @@ struct Game {
     npc_menu: window::Frame,
     /// Last frame's clickable units and items.
     hit_boxes: Vec<picking::Target<Owner>>,
+    /// Last frame's units dying or fading out on screen, by ID: their sprite's box. They can't be clicked (#1147).
+    fading_boxes: HashMap<u32, picking::Rect>,
     /// Skills' units on the ground in view: their unit kind and cell.
     skill_units: HashMap<u32, (u32, [u16; 2])>,
     /// Items lying around, by ground ID.
@@ -4971,6 +4973,26 @@ fn screen_middle() -> [f32; 2] {
     [screen()[0] / 2.0, screen()[1] / 2.0]
 }
 
+/// Takes the units `going` (dying or fading out) out of the clickable boxes; those still on a `screen` this size keep
+/// their sprite's box apart, so the state shows them while they're drawn.
+fn fading_apart(
+    boxes: Vec<picking::Target<Owner>>,
+    going: impl Fn(u32) -> bool,
+    screen: [f32; 2],
+) -> (Vec<picking::Target<Owner>>, HashMap<u32, picking::Rect>) {
+    let (fading, clickable): (Vec<_>, Vec<_>) = boxes.into_iter().partition(|target| matches!(target.owner, Owner::Unit(id) if going(id)));
+    let on_screen = |[left, top, right, bottom]: picking::Rect| right > 0.0 && bottom > 0.0 && left < screen[0] && top < screen[1];
+    let fading = fading
+        .into_iter()
+        .filter(|target| on_screen(target.sprite))
+        .filter_map(|target| match target.owner {
+            Owner::Unit(id) => Some((id, target.sprite)),
+            _ => None,
+        })
+        .collect();
+    (clickable, fading)
+}
+
 /// The unit or item the pointer is on (see `picking::pick`), the player aside (only skills aim at oneself).
 fn hovered(hit_boxes: &[picking::Target<Owner>], cursor: [f32; 2], players_first: bool) -> Option<Owner> {
     picking::pick(hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player), cursor, players_first, screen_middle())
@@ -6030,6 +6052,15 @@ mod tests {
         leave_behind(&mut units, 110_000_002);
         assert!(!units.contains_key(&110_000_001) && units[&(110_000_001 | LEFT_BEHIND)].remove_at.is_some());
         assert!(units.contains_key(&110_000_002), "a unit not fading stays itself");
+    }
+
+    #[test]
+    fn dying_units_leave_the_click_boxes_but_keep_their_box_on_screen() {
+        let unit = |id, sprite| picking::Target { owner: Owner::Unit(id), kind: picking::Kind::Monster, sprite, area: sprite, depth: 1.0 };
+        let boxes = vec![unit(1, [10.0, 10.0, 50.0, 60.0]), unit(2, [100.0, 100.0, 140.0, 150.0]), unit(3, [1030.0, 100.0, 1070.0, 150.0])];
+        let (clickable, fading) = fading_apart(boxes, |id| id != 1, [1024.0, 768.0]);
+        assert!(clickable.len() == 1 && clickable[0].owner == Owner::Unit(1), "only the living can be clicked");
+        assert_eq!(fading, HashMap::from([(2, [100.0, 100.0, 140.0, 150.0])]), "the one off screen isn't drawn there");
     }
 
     #[test]
