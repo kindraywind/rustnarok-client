@@ -45,6 +45,12 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // The color is 0xBBGGRR, little-endian.
         ZC_NPC_CHAT => MapEvent::Chat { id: Some(u32_at(4)), message: c_string(&packet[12..]), color: Some([packet[8], packet[9], packet[10]]) },
         ZC_NPCACK_MAPMOVE => MapEvent::MapChange { map: c_string(&packet[2..18]), position: [u16_at(18), u16_at(20)] },
+        // The IP in network order, the port little-endian, as in HC_NOTIFY_ZONESVR; the domain after them isn't used.
+        ZC_NPCACK_SERVERMOVE => MapEvent::ServerMove {
+            map: c_string(&packet[2..18]),
+            position: [u16_at(18), u16_at(20)],
+            address: (packet[22..26].try_into().unwrap(), u16_at(26)),
+        },
         ZC_SAY_DIALOG => MapEvent::NpcSay { npc: u32_at(4), text: c_string(&packet[8..]) },
         // The type byte (offset 8) isn't used: rathena defines it and never sends this packet yet.
         ZC_SAY_DIALOG2 => MapEvent::NpcSay { npc: u32_at(4), text: c_string(&packet[9..]) },

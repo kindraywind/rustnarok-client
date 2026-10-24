@@ -1,0 +1,21 @@
+{
+  "about": "A warp to a map on another map server (issue #1134). It needs a second rathena map server that hosts moc_fild04 (which the first one doesn't load) and server-move.txt. A test NPC (server-move.txt) warps the player from prontera to moc_fild04 200 200: rathena answers with ZC_NPCACK_SERVERMOVE (0x0AC7), and the client enters the second map server and loads moc_fild04 at that cell. Whispering the second server's copy of the NPC warps back to prontera 156 180 on the first one, and the NPC is unloaded there.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {scenarios}/server-move.txt"}, {"wait": 500},
+    {"say": "@loadnpc {scenarios}/server-move.txt"}, {"wait": 800},
+    {"key": "Tab"}, {"type": "npc:RustnarokServerMove"}, {"key": "Tab"}, {"type": "go"}, {"key": "Enter"},
+    {"wait_for": {"packet": "0x0ac7", "ms": 5000}},
+    {"settle": 2000},
+    {"expect": {"map": "moc_fild04.gat", "state": {"player.cell": [200, 200]}}},
+    {"shot": "server-move-arrived"},
+    {"type": "back"}, {"key": "Enter"},
+    {"wait_for": {"packet": "0x0ac7", "ms": 5000}},
+    {"settle": 2000},
+    {"expect": {"map": "prontera.gat", "state": {"player.cell": [156, 180]}}},
+    {"shot": "server-move-back"},
+    {"say": "@unloadnpcfile {scenarios}/server-move.txt"}, {"wait": 500}
+  ]
+}

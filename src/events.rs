@@ -288,6 +288,8 @@ impl App {
                 self.scene = Scene::Game(Box::new(Game {
                     saved_places: String::new(),
                     session,
+                    server_move: None,
+                    leaving_server: false,
                     world,
                     map,
                     me,
@@ -792,6 +794,12 @@ impl App {
     pub(crate) fn map_event(&mut self, event: MapEvent) {
         if let MapEvent::Entered { position, direction, clock: (tick, at) } = event {
             self.server_clock.set(tick, at);
+            // In on the new map server: its map loads as on a warp.
+            if let Scene::Game(game) = &mut self.scene
+                && let Some(map) = game.server_move.take()
+            {
+                return self.map_event(MapEvent::MapChange { map, position });
+            }
             self.map_loaded = true;
             self.show_loading(LoadTarget::Enter { position, direction });
             return;
@@ -803,6 +811,24 @@ impl App {
                 self.server_clock.set(tick, at);
             } else {
                 self.server_clock.heard(tick, at);
+            }
+            return;
+        }
+
+        // The map is on another map server: leave this one and enter there, as after the char server's HC_NOTIFY_ZONESVR.
+        if let MapEvent::ServerMove { map, address, .. } = event {
+            let (client_tick, proxy) = (self.client_tick(), self.proxy.clone());
+            let (Scene::Game(game), Some(account)) = (&mut self.scene, &self.account) else { return };
+            let ticket = MapTicket { address, account_id: account.account_id, character_id: game.me.id, login_id1: account.login_id1, sex: account.sex };
+            match MapSession::connect(&ticket, client_tick, move |event| {
+                let _ = proxy.send_event(NetEvent::Map(event));
+            }) {
+                Ok(session) => {
+                    game.session = session;
+                    game.server_move = Some(map);
+                    game.leaving_server = true;
+                }
+                Err(_) => self.message("맵 서버에 접속할 수 없습니다.", Scene::Login),
             }
             return;
         }
@@ -4274,7 +4300,9 @@ impl App {
                     game.end_memorial();
                 }
             }
-            MapEvent::Entered { .. } | MapEvent::ServerTime(..) => unreachable!("handled above"),
+            MapEvent::Entered { .. } | MapEvent::ServerTime(..) | MapEvent::ServerMove { .. } => unreachable!("handled above"),
+            // The old map server's connection, closed by the move.
+            MapEvent::Disconnected(_) if std::mem::take(&mut game.leaving_server) => {}
             MapEvent::Disconnected(_) => self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login),
         }
     }

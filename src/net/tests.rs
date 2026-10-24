@@ -2119,6 +2119,24 @@ fn decodes_the_guild_storage_log() {
 }
 
 #[test]
+fn decodes_server_move() {
+    // As clif_changemapserver writes it: map name (16), x, y, the IP in network order, the port little-endian, then a
+    // 128-byte domain (empty).
+    let mut packet = ZC_NPCACK_SERVERMOVE.to_le_bytes().to_vec();
+    let mut map = b"moc_fild04.gat".to_vec();
+    map.resize(16, 0);
+    packet.extend_from_slice(&map);
+    packet.extend_from_slice(&190u16.to_le_bytes());
+    packet.extend_from_slice(&235u16.to_le_bytes());
+    packet.extend_from_slice(&[127, 0, 0, 1]);
+    packet.extend_from_slice(&5122u16.to_le_bytes());
+    packet.extend_from_slice(&[0; 128]);
+    assert_eq!(packet_length(ZC_NPCACK_SERVERMOVE), Some(packet.len() as i32));
+    let Some(MapEvent::ServerMove { map, position, address }) = decode_map_packet(&packet) else { panic!() };
+    assert_eq!((map.as_str(), position, address), ("moc_fild04.gat", [190, 235], ([127, 0, 0, 1], 5122)));
+}
+
+#[test]
 fn decodes_mail() {
     // The list as clif_Mail_refreshinbox writes it: length, a byte, then per mail its box, ID, read, flags,
     // sender, seconds left, title length and title.

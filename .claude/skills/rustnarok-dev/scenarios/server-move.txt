@@ -1,0 +1,13 @@
+// A test NPC for the server-move scenario (issue #1134): it needs a second map server that hosts moc_fild04 (the first
+// one doesn't), with this file among its NPCs. Load it on the first one with @loadnpc <absolute path>, take it out with
+// @unloadnpcfile <absolute path>. Whisper npc:RustnarokServerMove "go" to be warped to moc_fild04 200 200 (on the second
+// server: rathena sends ZC_NPCACK_SERVERMOVE), "back" to prontera 156 180 (on the first one again).
+-	script	RustnarokServerMove	-1,{
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "go")
+		warp "moc_fild04", 200, 200;
+	else if (@whispervar0$ == "back")
+		warp "prontera", 156, 180;
+	end;
+}
