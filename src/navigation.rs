@@ -26,6 +26,17 @@ pub struct Target {
     pub name: String,
 }
 
+impl Target {
+    /// What it routes to: a monster on its map, a cell, or the map itself.
+    pub fn kind(&self) -> &'static str {
+        match (self.monster, self.cell) {
+            (Some(_), _) => "monster",
+            (None, Some(_)) => "cell",
+            (None, None) => "map",
+        }
+    }
+}
+
 /// A map name as the tables have it: no ".gat" or ".rsw", lower case.
 pub fn map_key(map: &str) -> String {
     map.trim_end_matches(".gat").trim_end_matches(".rsw").to_ascii_lowercase()
@@ -209,12 +220,14 @@ pub enum Hit {
     Window,
 }
 
-/// The navigation window: what's typed, what it finds, and whether typing goes to it.
+/// The navigation window: what's typed, what it finds (and whether it found more than it shows), and whether typing
+/// goes to it.
 pub struct Window {
     pub frame: Frame,
     pub text: String,
     pub typing: bool,
     pub results: Vec<Target>,
+    pub more: bool,
 }
 
 impl Window {
@@ -222,12 +235,14 @@ impl Window {
         // ponytail: where it opens; right of the middle, clear of the player.
         let mut frame = Frame::new([680.0, 180.0], WIDTH);
         frame.open = true;
-        Self { frame, text: String::new(), typing: true, results: Vec::new() }
+        Self { frame, text: String::new(), typing: true, results: Vec::new(), more: false }
     }
 
-    /// Searches again for what's typed.
+    /// Searches again for what's typed: one more than the rows, to know whether the list was cut.
     pub fn search(&mut self, tables: &NaviTables) {
-        self.results = search(tables, &self.text, ROWS);
+        self.results = search(tables, &self.text, ROWS + 1);
+        self.more = self.results.len() > ROWS;
+        self.results.truncate(ROWS);
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
@@ -248,8 +263,8 @@ impl Window {
         })
     }
 
-    /// The results' rows and the stop row on screen (for the test driver).
-    pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
+    /// The field, the results' rows (with the target each picks) and the stop row on screen (for the test driver).
+    pub fn button_boxes(&self) -> Vec<(String, [f32; 4], Option<&Target>)> {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
         }
@@ -257,9 +272,11 @@ impl Window {
             let [x, y] = self.frame.at([LEFT, top]);
             [x, y, WIDTH - 2.0 * LEFT, ROW]
         };
-        let mut boxes: Vec<(String, [f32; 4])> = vec![("navi_field".to_owned(), area(FIELD_TOP))];
-        boxes.extend((0..self.results.len()).map(|index| (format!("navi_result_{index}"), area(RESULTS_TOP + index as f32 * ROW))));
-        boxes.push(("navi_stop".to_owned(), area(STOP_TOP)));
+        let mut boxes: Vec<(String, [f32; 4], Option<&Target>)> = vec![("navi_field".to_owned(), area(FIELD_TOP), None)];
+        boxes.extend(
+            self.results.iter().enumerate().map(|(index, target)| (format!("navi_result_{index}"), area(RESULTS_TOP + index as f32 * ROW), Some(target))),
+        );
+        boxes.push(("navi_stop".to_owned(), area(STOP_TOP), None));
         boxes
     }
 
@@ -295,8 +312,7 @@ impl Window {
         layer.texts.push((typed, [field[0] + 3.0, field[1] + 1.0], TEXT));
         for (index, target) in self.results.iter().enumerate() {
             let color = if active == Some(target) { PICKED } else { TEXT };
-            let name = crate::window::fit(font, &target.name, WIDTH - 2.0 * LEFT);
-            layer.texts.push((name, at([LEFT, RESULTS_TOP + index as f32 * ROW]), color));
+            layer.texts.push((label(font, target), at([LEFT, RESULTS_TOP + index as f32 * ROW]), color));
         }
         // The stop row while a navigation runs: what it goes to.
         let stop = match active {
@@ -305,6 +321,11 @@ impl Window {
         };
         layer.texts.push((stop, at([LEFT, STOP_TOP]), if active.is_some() { PICKED } else { GREY }));
     }
+}
+
+/// What a result's row shows: its target's name, fit to the row.
+pub fn label(font: &Font, target: &Target) -> String {
+    crate::window::fit(font, &target.name, WIDTH - 2.0 * LEFT)
 }
 
 #[cfg(test)]
@@ -420,6 +441,30 @@ mod tests {
         assert_eq!(window.hit([x + w / 2.0, y + h / 2.0]), Some(Hit::Result(1)));
         let [x, y, w, h] = boxes.last().unwrap().1;
         assert_eq!((boxes.last().unwrap().0.as_str(), window.hit([x + w / 2.0, y + h / 2.0])), ("navi_stop", Some(Hit::Stop)));
+    }
+
+    #[test]
+    fn says_what_each_result_picks_and_whether_the_list_was_cut() {
+        let mut tables = tables();
+        let mut window = Window::new();
+        window.text = "tool".into();
+        window.search(&tables);
+        let rows: Vec<_> = window.button_boxes().into_iter().filter_map(|(name, _, target)| Some((name, target?.clone()))).collect();
+        assert_eq!(
+            rows,
+            [("navi_result_0".to_owned(), Target { map: "prt_in".into(), cell: Some([30, 40]), monster: None, name: "Tool Dealer (prt_in)".into() })]
+        );
+        assert_eq!((rows[0].1.kind(), window.more), ("cell", false));
+        assert_eq!([search(&tables, "pront", 1)[0].kind(), search(&tables, "poring", 1)[0].kind()], ["map", "monster"]);
+        // One more match than the rows: the rows stay full and the window says there's more.
+        tables.maps.extend((0..ROWS).map(|index| (format!("prt_fild{index:02}"), format!("Prontera Field {index}"))));
+        window.text = "pront".into();
+        window.search(&tables);
+        assert_eq!((window.results.len(), window.more), (ROWS, true));
+        // Exactly as many as the rows: not cut.
+        tables.maps.retain(|map, _| !["prt_in", "prontera", "prt_fild08"].contains(&map.as_str()));
+        window.search(&tables);
+        assert_eq!((window.results.len(), window.more), (ROWS, false));
     }
 
     #[test]

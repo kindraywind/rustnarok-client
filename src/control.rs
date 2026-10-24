@@ -1346,7 +1346,14 @@ fn game_state(app: &App, game: &Game) -> Value {
             crate::links::Target::Tip => json!({"kind": "tip_link", "box": area}),
         }))
         .chain(
-            game.navi_window.iter().flat_map(crate::navigation::Window::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+            // A result's row: the text it shows and where it routes to.
+            game.navi_window.iter().flat_map(crate::navigation::Window::button_boxes).map(|(name, area, result)| match result {
+                Some(target) => json!({
+                    "kind": "button", "name": name, "box": area, "text": crate::navigation::label(&app.font, target),
+                    "map": target.map, "cell": target.cell, "monster": target.monster, "target_kind": target.kind(),
+                }),
+                None => json!({"kind": "button", "name": name, "box": area}),
+            }),
         )
         .chain(game.chat.settings.iter().flat_map(crate::chat::Settings::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.chat.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
@@ -1803,6 +1810,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "trail": active.trail.len(),
             "trail_cells": active.trail,
         })),
+        // Whether the navigation window found more than its rows show (null: it's closed).
+        "navi_results_more": game.navi_window.as_ref().map(|window| window.more),
         // Reputation points by reputation type.
         "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),
         // The item information window's item, if it's open.
@@ -2179,6 +2188,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("monster_info", Fair),
         ("mvp_sprites", Test),
         ("name_tags", Test),
+        ("navi_results_more", Assist),
         ("navigation", Assist),
         ("opened_page", Fair),
         ("partner", Fair),
