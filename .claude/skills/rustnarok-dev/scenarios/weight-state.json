@@ -1,0 +1,74 @@
+{
+  "about": "The player's weight in the control state (issue #1145): weight and max_weight as the Basic Information window shows them, and overweight when its weight line is red. Two Ribs of Jormungand (1,000 each) put a Novice over rathena's 70%. Ends with an empty inventory.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "player.weight": 0,
+          "player.overweight": false
+        },
+        "state_at_least": {
+          "player.max_weight": 2000
+        }
+      }
+    },
+    {
+      "say": "@item 6598 2"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "expect": {
+        "state": {
+          "player.weight": 2000,
+          "player.overweight": true
+        }
+      }
+    },
+    {
+      "shot": "weight-state-heavy",
+      "crop": [
+        0,
+        0,
+        230,
+        150
+      ],
+      "threshold": 5
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "player.weight": 0,
+          "player.overweight": false
+        }
+      }
+    }
+  ]
+}
