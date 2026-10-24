@@ -5473,7 +5473,10 @@ fn main() {
     } else {
         settings_path("camera").and_then(|path| std::fs::read_to_string(path).ok()).map_or_else(SavedView::default, |text| SavedView::parse(&text))
     };
-    let pc_job_names = lua::pc_job_names(&grf).unwrap_or_default();
+    let pc_job_names = lua::pc_job_names(&grf).unwrap_or_else(|error| {
+        eprintln!("no job names: {error}");
+        HashMap::new()
+    });
     let map_names = rustnarok_client::map::map_names(&grf).unwrap_or_default();
     let skill_descriptions = lua::skill_descriptions(&grf).unwrap_or_else(|error| {
         eprintln!("no skill descriptions: {error}");

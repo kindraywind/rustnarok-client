@@ -1787,8 +1787,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "chat_focus": game.chat_mode.chat_line_open().then(|| game.chat.focus()),
         // Battle mode's icon: null out of battle mode, else whether the line is open.
         "chat_mode_icon": game.chat_mode.icon(),
-        // The basic info window: where it is, and whether it's minimised.
-        "basic_info": json!({"position": game.basic_info.frame.position, "width": game.basic_info.width, "minimized": game.basic_info.frame.minimized}),
+        // The basic info window: where it is, whether it's minimised, and the job name it shows.
+        "basic_info": json!({"position": game.basic_info.frame.position, "width": game.basic_info.width, "minimized": game.basic_info.frame.minimized, "job_name": app.pc_job_names.get(&game.me.job)}),
         // The chat room the player is in: its title and who owns it.
         "room": game.room.as_ref().map(|room| json!({
             "title": room.sign.title,
