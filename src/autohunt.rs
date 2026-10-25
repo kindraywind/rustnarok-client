@@ -1,5 +1,6 @@
-//! Auto hunt's side in the client, for a client shared with an agent (mcp.rs). The hunt itself is a program of its own
-//! that plays over the control socket, so changing it needs no client build. Here is what it reads (`hunt_state`,
+//! The interface for an external plugin, such as an auto hunt, in a client shared with an agent (mcp.rs). The vanilla
+//! client has no auto hunt and shouldn't get one: hunt logic belongs in the plugin, a program of its own that plays over
+//! the control socket, so changing it needs no client build. Here is what a plugin reads (`hunt_state`,
 //! `hunt_gat`), what it does (`hunt_do`: the game's own actions, so no packets of its own), and the news a state can't
 //! show: a typed `/hunt`, a monster's hit on the player, a skill the server refused.
 
