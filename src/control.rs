@@ -754,7 +754,7 @@ fn unit_point(
 fn clicked_on(app: &App, at: [f32; 2], shift: bool) -> Value {
     let (Scene::Game(game), Some(assets)) = (&app.scene, &app.assets) else { return Value::Null };
     if game.on_ui(at, assets.message.size) {
-        return json!({"kind": "ui", "window": game.window_at(at).map(|panel| format!("{panel:?}"))});
+        return json!({"kind": "ui", "window": window_named(game.over_panels_at(at), game.window_at(at))});
     }
     let screen = crate::screen();
     let others = game.hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player);
@@ -767,6 +767,11 @@ fn clicked_on(app: &App, at: [f32; 2], shift: bool) -> Value {
     let view = game.camera.view(screen[0] / screen[1]);
     let Some(cell) = view.pick_ground([at[0].floor() / screen[0], at[1].floor() / screen[1]], &game.world.gat) else { return Value::Null };
     if play::mode() == Grade::Fair { json!({"kind": "ground"}) } else { json!({"kind": "ground", "cell": cell}) }
+}
+
+/// The window a click lands on, by name: one drawn over the panels takes it before the panel under it (#1151).
+fn window_named(over_panels: Option<&str>, panel: Option<Panel>) -> Option<String> {
+    over_panels.map(str::to_owned).or_else(|| panel.map(|panel| format!("{panel:?}")))
 }
 
 fn point(app: &mut App, at: [f32; 2]) {
@@ -1208,7 +1213,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         _ => Vec::new(),
     };
     // Whether a click in the middle of a box reaches that window, not another one over it.
-    let on_top = |panel: Panel, area: &[f32; 4]| game.window_at([area[0] + area[2] / 2.0, area[1] + area[3] / 2.0]) == Some(panel);
+    let on_top = |panel: Panel, area: &[f32; 4]| {
+        let middle = [area[0] + area[2] / 2.0, area[1] + area[3] / 2.0];
+        window_named(game.over_panels_at(middle), game.window_at(middle)) == Some(format!("{panel:?}"))
+    };
     let targets: Vec<Value> = game
         .inventory
         .item_boxes()
@@ -1229,7 +1237,13 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.hotkeys.slot_boxes().into_iter().map(|(slot, area)| json!({"kind": "hotkey", "slot": slot, "box": area})))
-        .chain(game.skill_window.skill_boxes(&sheet).into_iter().map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})))
+        .chain(
+            game.skill_window
+                .skill_boxes(&sheet)
+                .into_iter()
+                .filter(|(_, area)| on_top(Panel::Skills, area))
+                .map(|(id, area)| json!({"kind": "skill", "id": id, "box": area})),
+        )
         .chain(
             game.skill_window
                 .tab_boxes(&sheet)
@@ -2435,6 +2449,13 @@ pub(crate) fn quests_state(quests: &[net::Quest], texts: &HashMap<u32, crate::qu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_over_the_panels_takes_the_click() {
+        assert_eq!(window_named(Some("Reputation"), Some(Panel::Skills)).as_deref(), Some("Reputation"));
+        assert_eq!(window_named(None, Some(Panel::Skills)).as_deref(), Some("Skills"));
+        assert_eq!(window_named(None, None), None);
+    }
 
     #[test]
     fn a_play_mode_leaves_out_what_is_above_it() {

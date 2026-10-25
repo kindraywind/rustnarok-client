@@ -43,7 +43,8 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_
     ones given; achievements: each one "completed" or "rewarded"; title: the one worn; no_sound: that wav didn't play in
     the last 5 seconds; unit: {"name": ..., field: value, ...} the first unit of that name has those
     fields, null for one it doesn't have; unit_at_least: numbers there at least the ones given; button: {"name": ...,
-    field: value, ...} the window button of that name in `targets` has those fields, e.g. a navi_result_<n>'s "text")
+    field: value, ...} the window button of that name in `targets` has those fields, e.g. a navi_result_<n>'s "text";
+    no_target: a target like click_on's, e.g. {"skill": 20}, isn't listed: nothing there takes the click)
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
 and `suite` exit non-zero when the tree under test fails one. `mask` leaves rectangles (water, portals) out of the
 diff; `threshold` (percent, default 1) is how much change a shot takes before the report flags it.
@@ -285,6 +286,8 @@ def expect(wanted, state):
             for field, want in fields.items() if found else []:
                 if found.get(field) != want:
                     failures.append(f"button {name!r} {field} is {found.get(field)!r}, not {want!r}")
+        elif key == "no_target" and locate(value) is not None:
+            failures.append(f"target {value} is listed")
         elif key == "inventory_items" and game.get("inventory_items") != value:
             failures.append(f"inventory_items {game.get('inventory_items')} != {value}")
         elif key == "hp_at_least" and game.get("player", {}).get("hp", 0) < value:
@@ -365,7 +368,7 @@ def expect(wanted, state):
                     failures.append(f"achievement {achievement} is not {want}: {have}")
         elif key == "title" and game.get("title") != value:
             failures.append(f"title {game.get('title')} != {value}")
-        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "no_sound", "unit", "unit_at_least", "button", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
+        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "no_sound", "unit", "unit_at_least", "button", "no_target", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
             failures.append(f"unknown expectation {key}")
     return failures
 
