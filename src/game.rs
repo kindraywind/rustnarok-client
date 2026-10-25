@@ -647,6 +647,8 @@ impl Game {
             Some(escape::WindowId::Navigation.name())
         } else if self.reputation_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
             Some(escape::WindowId::Reputation.name())
+        } else if self.chat.settings.as_ref().is_some_and(|settings| settings.hit(cursor).is_some()) {
+            Some("ChatSettings")
         } else {
             None
         }
@@ -3244,6 +3246,9 @@ impl Game {
         if self.booking.is_some() {
             names.push("PartyBooking".into());
         }
+        if self.chat.settings.is_some() {
+            names.push("ChatSettings".into());
+        }
         if self.booking_asked.is_some() {
             names.push("BookingAsked".into());
         }
@@ -3671,7 +3676,8 @@ impl Game {
         if self.memorial.covers(cursor) {
             return Some(Memorial);
         }
-        // A window drawn over the panels takes the press first (#1151); the booking board isn't Esc's to close.
+        // A window drawn over the panels takes the press first (#1151); the booking board and the chat settings aren't
+        // Esc's to close.
         if let Some(name) = self.over_panels_at(cursor) {
             return [Navigation, Reputation].into_iter().find(|id| id.name() == name);
         }
