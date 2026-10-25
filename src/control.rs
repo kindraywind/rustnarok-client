@@ -385,7 +385,8 @@ fn serve(stream: Stream, proxy: &EventLoopProxy<NetEvent>, token: Option<&str>) 
 /// commands (#1095).
 fn test_only(command: &Command) -> bool {
     match command {
-        Command::Trace { .. } | Command::Clock { .. } => true,
+        // The hunt's view has hidden units and the whole map's cells: beyond a player.
+        Command::Trace { .. } | Command::Clock { .. } | Command::HuntState | Command::HuntGat | Command::HuntDo { .. } => true,
         Command::Wait { packet, sent, pause, first, .. } => packet.is_some() || sent.is_some() || *pause || first.as_deref().is_some_and(test_only),
         Command::Say { text } => text.starts_with('@'),
         _ => false,
@@ -2578,6 +2579,7 @@ mod tests {
         assert!(test(r#"{"cmd":"trace"}"#) && test(r#"{"cmd":"clock","action":"pause"}"#) && test(r#"{"cmd":"say","text":"@warp prontera"}"#));
         assert!(test(r#"{"cmd":"wait","packet":"0x08c8"}"#) && test(r#"{"cmd":"wait","ms":100,"pause":true}"#));
         assert!(test(r#"{"cmd":"wait","ms":100,"do":{"cmd":"say","text":"@heal"}}"#));
+        assert!(test(r#"{"cmd":"hunt_state"}"#) && test(r#"{"cmd":"hunt_do","actions":[{"do":"stop_attack"}]}"#));
         // A / command is the game's own, as typed in the chat box (#1121).
         assert!(!test(r#"{"cmd":"say","text":"/sit"}"#) && !test(r#"{"cmd":"say","text":"/!"}"#));
         assert!(!test(r#"{"cmd":"say","text":"hello @all"}"#) && !test(r#"{"cmd":"wait","event":"Chat","ms":100}"#) && !test(r#"{"cmd":"state"}"#));
