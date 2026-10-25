@@ -1327,6 +1327,19 @@ impl App {
                     Some(shop::Action::AskOut(..) | shop::Action::Say(..)) | None => {}
                 }
             }
+            // The chat tab settings: a kind of line on or off for the tab. It's drawn over the panels, so it takes the
+            // click before them (#1157).
+            Scene::Game(game) if game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).is_some() => {
+                match game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).unwrap() {
+                    chat::SettingsHit::Title(TitleHit::Close) => game.chat.settings = None,
+                    chat::SettingsHit::Title(title) => game.chat.settings.as_mut().unwrap().frame.click_title(title),
+                    chat::SettingsHit::Kind(kind) => game.chat.toggle_kind(kind),
+                    chat::SettingsHit::All => game.chat.set_all(),
+                    chat::SettingsHit::ScrollUp => game.chat.settings.as_mut().unwrap().scroll(-1),
+                    chat::SettingsHit::ScrollDown => game.chat.settings.as_mut().unwrap().scroll(1),
+                    chat::SettingsHit::Window => {}
+                }
+            }
             // A small party window: a click on it was a drag (handled on press).
             Scene::Game(game) if game.party_member_at(cursor).is_some() => {}
             Scene::Game(game) if game.window_at(cursor).is_some() => {
@@ -1767,18 +1780,6 @@ impl App {
                             None => {}
                         }
                     }
-                }
-            }
-            // The chat tab settings: a kind of line on or off for the tab.
-            Scene::Game(game) if game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).is_some() => {
-                match game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).unwrap() {
-                    chat::SettingsHit::Title(TitleHit::Close) => game.chat.settings = None,
-                    chat::SettingsHit::Title(title) => game.chat.settings.as_mut().unwrap().frame.click_title(title),
-                    chat::SettingsHit::Kind(kind) => game.chat.toggle_kind(kind),
-                    chat::SettingsHit::All => game.chat.set_all(),
-                    chat::SettingsHit::ScrollUp => game.chat.settings.as_mut().unwrap().scroll(-1),
-                    chat::SettingsHit::ScrollDown => game.chat.settings.as_mut().unwrap().scroll(1),
-                    chat::SettingsHit::Window => {}
                 }
             }
             // A click on the chat window: the battle-mode icon opens or closes the line (the focus stays); the rest
