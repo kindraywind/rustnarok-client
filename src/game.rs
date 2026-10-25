@@ -1932,6 +1932,9 @@ impl Game {
         self.chat.sent(&typed);
         // A line of only spaces is text, and goes as it is.
         let text = if typed.trim().is_empty() { typed.as_str() } else { typed.trim() };
+        if crate::autohunt::command(self, text) {
+            return None;
+        }
         // In the MCP tab a line is for the agent, except a / command, which is the game's as everywhere.
         if self.chat.on_mcp_tab() && crate::mcp::for_agent(text) {
             crate::mcp::typed(self, text);

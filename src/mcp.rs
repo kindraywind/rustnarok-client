@@ -64,7 +64,11 @@ fn describe(command: &Command) -> Option<String> {
         | Command::Clock { .. }
         | Command::Trace { .. }
         | Command::Inbox { .. }
-        | Command::Reply { .. } => return None,
+        | Command::Reply { .. }
+        // The hunt program says what it does itself.
+        | Command::HuntState
+        | Command::HuntGat
+        | Command::HuntDo { .. } => return None,
     })
 }
 

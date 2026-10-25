@@ -1583,6 +1583,7 @@ impl App {
                 });
             }
             MapEvent::Act(act) => {
+                crate::autohunt::hit(game, &act);
                 // A landed hit sparks on whatever it hit, each hit as it lands.
                 let attacker_job = if act.source == game.account_id { Some(game.player.job) } else { game.units.get(&act.source).map(|actor| actor.job) };
                 let sparks = attack_sparks(act.damage, act.kind, attacker_job.is_some_and(|job| TAEKWON_LINE.contains(&job)));
@@ -3432,6 +3433,8 @@ impl App {
                 }
             }
             MapEvent::SkillHit { skill, level, act } => {
+                // A monster's skill on the player counts as its hit for the auto hunt, like a normal attack.
+                crate::autohunt::hit(game, &act);
                 game.casts.remove(&(act.source != game.account_id).then_some(act.source));
                 let me = game.account_id;
                 // Damage from a skill's unit on the ground (Storm Gust, Thunderstorm, Lord of Vermilion, Meteor Storm,
@@ -3833,6 +3836,7 @@ impl App {
             }
             // Why the server refused a skill, in red. The cast bar and the cast square stay.
             MapEvent::SkillFailed { skill, detail, item, cause, .. } => {
+                crate::autohunt::refused(skill, cause);
                 let skill_name = self.skill_info.get(&skill).map_or_else(|| skill.to_string(), |info| info.name.clone());
                 let item_name = self.items.get(&item).map_or_else(|| item.to_string(), |info| info.name(true).to_owned());
                 for (id, fill) in skills::refusal_lines(skill, detail, cause, game.skill_fail) {

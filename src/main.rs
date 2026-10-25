@@ -53,6 +53,7 @@ mod ambient;
 mod announce;
 mod arrows;
 mod aura;
+mod autohunt;
 mod bank;
 mod basic_info;
 mod battle_mode;
