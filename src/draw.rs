@@ -753,6 +753,23 @@ impl App {
             }
         }
 
+        // Hidden NPCs (JT_HIDDEN_NPC) have no sprite either: their pick box stands on the feet, sized by the server.
+        for (&id, actor) in game.units.iter().filter(|(_, actor)| hidden_npc(actor) && actor.remove_at.is_none()) {
+            let Some(&feet) = feet_of.get(&id) else { continue };
+            let (top_left, bottom_right) = hidden_npc_pick(actor.pick_size);
+            if let Some([left, top, right, bottom]) = view.sprite_rect(feet, top_left, bottom_right) {
+                let sprite = [left * screen()[0], top * screen()[1], right * screen()[0], bottom * screen()[1]];
+                let depth = (0..3).map(|axis| (feet[axis] - view.eye[axis]) * view.forward[axis]).sum::<f32>();
+                game.hit_boxes.push(picking::Target {
+                    owner: Owner::Unit(id),
+                    kind: picking::Kind::Npc,
+                    sprite,
+                    area: picking::area(sprite, picking::UNIT_MIN),
+                    depth,
+                });
+            }
+        }
+
         // Units drawn as models have no sprite: their pick box is their model's box on screen.
         for &(id, job, feet, rot) in &prop_units {
             let Some(Some(prop)) = game.props.get(&job) else { continue };
@@ -1391,7 +1408,8 @@ impl App {
             Some(Owner::Unit(id)) => game
                 .units
                 .get(&id)
-                .filter(|actor| !actor.hidden && actor.kind != NPC && actor.sprites.is_some())
+                // A hidden NPC has no name under it: it shows on hover.
+                .filter(|actor| hidden_npc(actor) || (!actor.hidden && actor.kind != NPC && actor.sprites.is_some()))
                 .zip(feet_of.get(&id))
                 .map(|(actor, &feet)| (id, actor, feet)),
             Some(Owner::Player) => Some((game.account_id, &game.player, player_feet)),

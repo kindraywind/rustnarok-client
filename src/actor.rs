@@ -2105,6 +2105,8 @@ pub struct Actor {
     pub cloaked: bool,
     /// The option bits that hide it (`seen`).
     pub hide_option: u32,
+    /// The unit packet's xSize and ySize: a hidden NPC's pick box (`hidden_npc_pick`).
+    pub pick_size: [u8; 2],
     /// rathena's opt1 and opt2: the body and health state that colour the sprite.
     pub body_state: u16,
     pub health_state: u16,
@@ -2513,6 +2515,7 @@ impl Actor {
             casting: false,
             cloaked: false,
             hide_option: 0,
+            pick_size: [0, 0],
             body_state: 0,
             health_state: 0,
             cart: None,

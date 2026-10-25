@@ -879,6 +879,7 @@ impl App {
             actor.hidden = HIDDEN_JOBS.contains(&unit.job) || unit.job == WARP_JOB;
             actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
             actor.hide_option = unit.option;
+            actor.pick_size = unit.size;
             actor.set_head(unit.head_direction);
             actor.guild = unit.guild;
             actor
@@ -964,6 +965,7 @@ impl App {
                     actor.sprites = job_sprites(grf, job_names, unit.kind, unit.job);
                 }
                 actor.hide_option = unit.option;
+                actor.pick_size = unit.size;
                 actor.body_state = unit.body_state;
                 actor.health_state = unit.health_state;
                 actor.level = unit.level;

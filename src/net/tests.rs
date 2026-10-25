@@ -156,6 +156,25 @@ fn decodes_character_info() {
 }
 
 #[test]
+fn reads_the_pick_size() {
+    // xSize and ySize, right after the position: stand 0x09ff and new 0x09fe at 66, move 0x09fd at 73.
+    let entry = |id: u16, at: usize| {
+        let mut packet = vec![0u8; 120];
+        packet[..2].copy_from_slice(&id.to_le_bytes());
+        packet[at..at + 2].copy_from_slice(&[7, 3]);
+        packet
+    };
+    let size_of = |packet: &[u8]| match decode_map_packet(packet) {
+        Some(MapEvent::Unit(unit)) => unit.size,
+        Some(MapEvent::UnitWalk { unit, .. }) => unit.size,
+        other => panic!("{other:?}"),
+    };
+    for (id, at) in [(ZC_NOTIFY_STANDENTRY, 66), (ZC_NOTIFY_NEWENTRY, 66), (ZC_NOTIFY_MOVEENTRY, 73)] {
+        assert_eq!(size_of(&entry(id, at)), [7, 3], "{id:#06x}");
+    }
+}
+
+#[test]
 fn reads_the_second_outfit_body() {
     // The u16 just before the name: stand 0x09ff at 82, new 0x09fe at 81, move 0x09fd at 88.
     let entry = |id: u16, at: usize, body: u16| {

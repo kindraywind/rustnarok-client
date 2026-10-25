@@ -963,7 +963,9 @@ const HOMUNCULUS: u8 = 8;
 const ELEMENTAL: u8 = 10;
 const MERCENARY: u8 = 9;
 /// The effect launcher (104), JT_HIDDEN_NPC and JT_HIDDEN_WARP_NPC: invisible script NPCs.
-const HIDDEN_JOBS: [u16; 3] = [104, 111, 139];
+const HIDDEN_JOBS: [u16; 3] = [104, HIDDEN_NPC_JOB, 139];
+/// JT_HIDDEN_NPC: no sprite, but it can be clicked (`hidden_npc_pick`).
+const HIDDEN_NPC_JOB: u16 = 111;
 /// Names over the world: NPCs', monsters' (red well above our level, grey well under), our summons', ground items'.
 const NPC_NAME_COLOR: [u8; 3] = [0x95, 0xB8, 0xF7];
 const MONSTER_NAME_COLOR: [u8; 3] = [0xFF, 0xC3, 0xC3];
@@ -1045,6 +1047,20 @@ fn attackable_ground_unit(kind: u32) -> bool {
 
 fn warp_pick_rect(view: &world::View, feet: world::Vector) -> Option<[f32; 4]> {
     view.sprite_rect(feet, [-WARP_PICK[0], -WARP_PICK[1]], WARP_PICK)
+}
+
+/// An NPC with no sprite that can still be clicked, and named on hover.
+fn hidden_npc(actor: &Actor) -> bool {
+    actor.kind == NPC && actor.job == HIDDEN_NPC_JOB
+}
+
+/// A hidden NPC's pick box from its unit packet's xSize and ySize, as sprite-pixel corners from its feet: xSize to each
+/// side and ySize up, in the game's units for the warp's 50. With no size (rathena's NPCs) it is the feet's point, which
+/// the least unit box then grows, so the NPC can still be clicked there.
+fn hidden_npc_pick([x, y]: [u8; 2]) -> ([f32; 2], [f32; 2]) {
+    let unit = WARP_PICK[0] / 50.0;
+    let [x, y] = [f32::from(x) * unit, f32::from(y) * unit];
+    ([-x, -y], [x, 0.0])
 }
 
 /// /snap, /itemsnap and /skillsnap.
@@ -5905,6 +5921,23 @@ mod tests {
         // The right button held: no key and Ctrl turn (Ctrl isn't asked); Shift tilts; Alt doesn't.
         assert!(turning_cursor(true, false, false) && !turning_cursor(true, true, false) && !turning_cursor(true, false, true));
         assert!(!turning_cursor(false, false, false));
+    }
+
+    #[test]
+    fn a_hidden_npc_can_be_clicked_on_its_feet() {
+        // xSize to each side and ySize up, the warp's 59.7 sprite px per 50.
+        let ([left, top], [right, bottom]) = hidden_npc_pick([5, 10]);
+        assert!((right - 5.97).abs() < 1e-3 && (left + right).abs() < 1e-6 && (top + 11.94).abs() < 1e-3 && bottom == 0.0);
+        // rathena sends no size: a point on the feet, grown to a unit's least box around it.
+        assert_eq!(hidden_npc_pick([0, 0]), ([0.0, 0.0], [0.0, 0.0]));
+        let half = picking::UNIT_MIN / 2.0;
+        assert_eq!(picking::area([100.0, 200.0, 100.0, 200.0], picking::UNIT_MIN), [100.0 - half, 200.0 - half, 100.0 + half, 200.0 + half]);
+        let npc = |kind, job| {
+            let mut actor = Actor::new(String::new(), None, [0, 0], 0, 150);
+            (actor.kind, actor.job) = (kind, job);
+            actor
+        };
+        assert!(hidden_npc(&npc(NPC, 111)) && !hidden_npc(&npc(NPC, 139)) && !hidden_npc(&npc(MONSTER, 111)));
     }
 
     #[test]
