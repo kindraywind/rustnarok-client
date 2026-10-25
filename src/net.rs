@@ -1651,6 +1651,8 @@ pub struct Unit {
     pub emblem: u32,
     /// HP and max HP, when the server tells them (rathena does for a hurt monster).
     pub hp: Option<[i32; 2]>,
+    /// xSize and ySize: a hidden NPC's (job 111) pick box. rathena sends 5 for players, 0 for everything else.
+    pub size: [u8; 2],
 }
 
 /// What ZC_CHANGESTATE_PET says: the pet is ours, its intimacy (0–1000), hunger (0–100), accessory (item ID),
@@ -3133,16 +3135,28 @@ struct UnitLayout {
     palettes: [usize; 2],
     head_direction: usize,
     sex: usize,
+    /// xSize and ySize, right after the position.
+    size: usize,
     level: usize,
     name: usize,
 }
 
-const STAND_LAYOUT: UnitLayout =
-    UnitLayout { state: Some(68), hair: 25, accessories: [35, 37, 39], robe: 47, palettes: [41, 43], head_direction: 45, sex: 62, level: 69, name: 84 };
+const STAND_LAYOUT: UnitLayout = UnitLayout {
+    state: Some(68),
+    hair: 25,
+    accessories: [35, 37, 39],
+    robe: 47,
+    palettes: [41, 43],
+    head_direction: 45,
+    sex: 62,
+    size: 66,
+    level: 69,
+    name: 84,
+};
 const NEW_LAYOUT: UnitLayout =
-    UnitLayout { state: None, hair: 25, accessories: [35, 37, 39], robe: 47, palettes: [41, 43], head_direction: 45, sex: 62, level: 68, name: 83 };
+    UnitLayout { state: None, hair: 25, accessories: [35, 37, 39], robe: 47, palettes: [41, 43], head_direction: 45, sex: 62, size: 66, level: 68, name: 83 };
 const MOVE_LAYOUT: UnitLayout =
-    UnitLayout { state: None, hair: 25, accessories: [35, 41, 43], robe: 51, palettes: [45, 47], head_direction: 49, sex: 66, level: 75, name: 90 };
+    UnitLayout { state: None, hair: 25, accessories: [35, 41, 43], robe: 51, palettes: [45, 47], head_direction: 49, sex: 66, size: 73, level: 75, name: 90 };
 
 fn decode_unit(packet: &[u8], layout: &UnitLayout, position: ([u16; 2], u8)) -> Unit {
     let u16_at = |offset: usize| u16::from_le_bytes([packet[offset], packet[offset + 1]]);
@@ -3179,6 +3193,7 @@ fn decode_unit(packet: &[u8], layout: &UnitLayout, position: ([u16; 2], u8)) -> 
         emblem: u32::from(u16_at(layout.robe + 6)),
         // maxHP and HP follow the level and the font; -1 when not told.
         hp: Some([u32_at(packet, layout.level + 8) as i32, u32_at(packet, layout.level + 4) as i32]).filter(|[hp, max]| *hp >= 0 && *max > 0),
+        size: [packet[layout.size], packet[layout.size + 1]],
     }
 }
 
