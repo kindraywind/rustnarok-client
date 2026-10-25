@@ -1,0 +1,30 @@
+{
+  "about": "The Reputation window over a panel (issue #1151): it's drawn over every panel and takes the clicks in its frame, even over a panel opened after it. A Magician opens it from the menu, then the Skill Tree (Alt+S) in its tree view: Lightning Bolt's icon is under the Reputation window, so it's left out of the targets (main listed it, and a click there answered Skills), and a click there puts Reputation first in the Esc order. With Reputation closed again, the icon is a target. The job goes back to Novice at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"},
+    {"settle": 1500},
+    {"say": "@job 2"},
+    {"wait": 800},
+    {"click_on": {"button": "menu"}},
+    {"wait": 300},
+    {"click_on": {"menu_item": "repute"}},
+    {"wait": 400},
+    {"expect": {"windows_open": ["Reputation"]}},
+    {"key": "Alt+S"},
+    {"wait": 400},
+    {"expect": {"windows_open": ["Skills", "Reputation"], "state": {"player.skill_list": false}, "no_target": {"skill": 20}}},
+    {"move": [1000, 740]},
+    {"shot": "reputation-over-skills", "crop": [240, 80, 570, 200], "threshold": 10},
+    {"click": [534, 136]},
+    {"wait": 300},
+    {"expect": {"state": {"windows.0": "Reputation"}}},
+    {"click_on": {"menu_item": "repute"}},
+    {"wait": 400},
+    {"expect": {"windows_closed": ["Reputation"]}},
+    {"move": {"skill": 20}},
+    {"say": "@job 0"},
+    {"wait": 800}
+  ]
+}

@@ -638,6 +638,20 @@ impl Game {
         }
     }
 
+    /// The window drawn over the panels under the pointer, by its name in `windows`: `click` gives it the press before
+    /// any panel, whichever opened last (#1151).
+    pub(crate) fn over_panels_at(&self, cursor: [f32; 2]) -> Option<&'static str> {
+        if self.booking.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
+            Some("PartyBooking")
+        } else if self.navi_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
+            Some(escape::WindowId::Navigation.name())
+        } else if self.reputation_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
+            Some(escape::WindowId::Reputation.name())
+        } else {
+            None
+        }
+    }
+
     /// The topmost window under the pointer.
     pub(crate) fn window_at(&self, cursor: [f32; 2]) -> Option<Panel> {
         self.windows.iter().rev().copied().find(|&id| match id {
@@ -3653,6 +3667,10 @@ impl Game {
         }
         if self.memorial.covers(cursor) {
             return Some(Memorial);
+        }
+        // A window drawn over the panels takes the press first (#1151); the booking board isn't Esc's to close.
+        if let Some(name) = self.over_panels_at(cursor) {
+            return [Navigation, Reputation].into_iter().find(|id| id.name() == name);
         }
         self.window_at(cursor).and_then(esc_panel)
     }

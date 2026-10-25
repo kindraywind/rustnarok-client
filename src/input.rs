@@ -3338,7 +3338,9 @@ impl App {
             }
             return;
         }
+        // A window drawn over the panels takes the press: the panel under it isn't raised or dragged from (#1151).
         if let Scene::Game(game) = &mut self.scene
+            && game.over_panels_at(cursor).is_none()
             && let Some(id) = game.window_at(cursor)
         {
             game.raise(id);
