@@ -94,7 +94,7 @@ impl Assets {
             empty_slot: gpu.load_texture(grf, &format!("{UI}empty_card_slot.bmp"), false),
             disabled_slot: gpu.load_texture(grf, &format!("{UI}disable_card_slot.bmp"), false),
             compare_background: image("collection_comparison_bg"),
-            compare_box: pickup::Assets::named(gpu, grf, "basic_interface\\sysbox_comparison"),
+            compare_box: pickup::Assets::with_middle(gpu, grf, "basic_interface\\sysbox_comparison"),
             compare_resize: image("btn_comparison_resize"),
             compare_empty_slot: image("comparison_empty_card_slot"),
             compare_disabled_slot: image("comparison_disable_card_slot"),
@@ -645,9 +645,11 @@ impl ItemWindow {
         let grip = if self.compare { &assets.compare_resize } else { &assets.resize };
         layer.sprites.push((grip, at(self.grip_at()), grip.size));
 
+        // The option rows and the card strip take the plain box (the compare window's own), never a grade's.
+        let inner = if self.compare { &assets.compare_box } else { &assets.boxes[0] };
         // A boxed row per random option, then empty ones to keep level with the window beside it.
         for row in 0..self.rows {
-            pickup::draw_sysbox(layer, chrome, &assets.compare_box, [x, y + self.row_at(row), WIDTH, ROW]);
+            pickup::draw_sysbox(layer, chrome, inner, [x, y + self.row_at(row), WIDTH, ROW]);
             if let Some(text) = options.get(row) {
                 layer.texts.push((text.clone(), at(offset([0.0, self.row_at(row)], ROW_TEXT)), [0, 0, 0]));
             }
@@ -659,7 +661,7 @@ impl ItemWindow {
             return;
         }
         let height = self.total();
-        pickup::draw_sysbox(layer, chrome, sysbox, [x, y + height - STRIP, WIDTH, STRIP]);
+        pickup::draw_sysbox(layer, chrome, inner, [x, y + height - STRIP, WIDTH, STRIP]);
         let (empty, disabled) =
             if self.compare { (&assets.compare_empty_slot, &assets.compare_disabled_slot) } else { (&assets.empty_slot, &assets.disabled_slot) };
         let hovered = self.cell_at(offset(pointer, self.position.map(|value| -value)));

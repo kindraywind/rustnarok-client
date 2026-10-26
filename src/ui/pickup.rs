@@ -58,6 +58,8 @@ pub fn width_for(line_width: f32) -> f32 {
 pub struct Assets {
     /// The system box: corners, edges (lu, mu, ru, lm, rm, ld, md, rd).
     pieces: [Texture; 8],
+    /// Its own middle (`<prefix>_bg.bmp`), else white.
+    middle: Option<Texture>,
 }
 
 impl Assets {
@@ -68,15 +70,21 @@ impl Assets {
     /// A sys box whose pieces are `<prefix>_lu.bmp` and so on (the plain one's prefix is `sysbox`).
     pub fn named(gpu: &Gpu, grf: &Grf, prefix: &str) -> Self {
         let image = |name: &str| gpu.try_load_texture(grf, &format!("{UI}{prefix}_{name}.bmp"), false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
-        Self { pieces: ["lu", "mu", "ru", "lm", "rm", "ld", "md", "rd"].map(image) }
+        Self { pieces: ["lu", "mu", "ru", "lm", "rm", "ld", "md", "rd"].map(image), middle: None }
+    }
+
+    /// The same with its own middle, `<prefix>_bg.bmp` (one colour, so stretched rather than tiled).
+    pub fn with_middle(gpu: &Gpu, grf: &Grf, prefix: &str) -> Self {
+        let middle = gpu.try_load_texture(grf, &format!("{UI}{prefix}_bg.bmp"), false).ok();
+        Self { middle, ..Self::named(gpu, grf, prefix) }
     }
 }
 
-/// The system box: its 14-px corners, the edges stretched between them, white inside.
+/// The system box: its 14-px corners, the edges stretched between them, its middle (white by default) inside.
 pub fn draw_sysbox<'a>(layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, [x, y, w, h]: [f32; 4]) {
     let [lu, mu, ru, lm, rm, ld, md, rd] = &assets.pieces;
     let middle = [w - 2.0 * PIECE, h - 2.0 * PIECE];
-    layer.sprites.push((&chrome.white, [x + PIECE, y + PIECE], middle));
+    layer.sprites.push((assets.middle.as_ref().unwrap_or(&chrome.white), [x + PIECE, y + PIECE], middle));
     layer.sprites.push((lu, [x, y], [PIECE; 2]));
     layer.sprites.push((mu, [x + PIECE, y], [middle[0], PIECE]));
     layer.sprites.push((ru, [x + w - PIECE, y], [PIECE; 2]));
