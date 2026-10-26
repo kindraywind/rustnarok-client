@@ -1,8 +1,10 @@
 # Packet lengths for ids the main tables don't know, read only when they don't: what some servers still send.
 # The ids rathena's PACKETVER 20180620 and 20070108 tables have and 20220406's lacks (run.sh <rathena set to that
 # PACKETVER> <out>; for 20070108 its first two passes), plus 0x0086 (ZC_NOTIFY_MOVE: in rathena's packets.hpp,
-# commented out as unused).
+# commented out as unused) and 0x0078 (ZC_NOTIFY_STANDENTRY's first form, with the object type byte: some servers
+# still send it for the invisible NPC a script run by an item talks through).
 0x0073 11
+0x0078 55
 0x0086 16
 0x008A 29
 0x0092 28

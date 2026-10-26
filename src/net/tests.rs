@@ -2796,6 +2796,26 @@ fn decodes_effect_with_and_without_number() {
 }
 
 #[test]
+fn reads_the_first_stand_entry() {
+    // 0078: the invisible NPC an item's script talks through, as some servers send it. Its 55 bytes are taken off the
+    // stream and skipped; the dialog after it still reads.
+    assert_eq!(packet_length(0x0078), Some(55));
+    let mut stream = vec![0x78, 0x00, 0x01];
+    stream.extend_from_slice(&110_006_251u32.to_le_bytes());
+    stream.resize(55, 0);
+    let mut say = ZC_SAY_DIALOG.to_le_bytes().to_vec();
+    say.extend_from_slice(&13u16.to_le_bytes());
+    say.extend_from_slice(&110_006_251u32.to_le_bytes());
+    say.extend_from_slice(b"Hello");
+    stream.extend_from_slice(&say);
+    let mut reader = &stream[..];
+    let old = read_packet(&mut reader).unwrap();
+    assert_eq!(old.len(), 55);
+    assert!(decode_map_packet(&old).is_none());
+    assert!(matches!(decode_map_packet(&read_packet(&mut reader).unwrap()), Some(MapEvent::NpcSay { npc: 110_006_251, .. })));
+}
+
+#[test]
 fn decodes_notify_move() {
     // 0086: id.L, move data (start, destination, sub-cell nibbles), start tick.L. rathena never sends it, other servers do.
     assert_eq!(packet_length(0x0086), Some(16));
