@@ -908,18 +908,18 @@ impl App {
         }
         match event {
             MapEvent::Unit(unit) => {
-                // A warp portal shows its rings while it's there (EF_WARPZONE2).
+                // Back in sight while fading out, or a monster that respawned under its corpse's ID: a unit of its own
+                // again, the old copy fading where it was.
+                game.leave_behind(unit.id);
+                let known = game.units.contains_key(&unit.id);
+                // A warp portal shows its rings while it's there (EF_WARPZONE2); one back while fading out lost them.
                 if unit.job == WARP_JOB
-                    && !game.units.contains_key(&unit.id)
+                    && !known
                     && let Some(gpu) = gpu
                 {
                     let at = game.world.cell_position(unit.position.map(f32::from));
                     game.effects.play(gpu, grf, table, EF_WARPZONE2, effects::Target::Unit(Some(unit.id)), at, Instant::now());
                 }
-                // Back in sight while fading out, or a monster that respawned under its corpse's ID: a unit of its own
-                // again, the old copy fading where it was.
-                game.leave_behind(unit.id);
-                let known = game.units.contains_key(&unit.id);
                 // An NPC with a quest mark coming into view starts its mark's loop again.
                 if !known && game.quest_marks.iter().any(|&(npc, ..)| npc == unit.id) {
                     game.quest_started.insert(unit.id, Instant::now());
@@ -1508,8 +1508,7 @@ impl App {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
                     // the load is acknowledged (it drops everything else till then) and sends what's in view again.
                     game.put_after_warp(position);
-                    game.units.clear();
-                    game.skill_units.clear();
+                    forget_view(&mut game.units, &mut game.skill_units, &mut game.effects);
                     game.ground.clear();
                     let _ = game.session.loaded();
                     game.player.loaded_at = Some(Instant::now());
