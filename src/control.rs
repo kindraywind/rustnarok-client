@@ -28,7 +28,8 @@
 //! - `say` `{text}`: a chat line or a GM command.
 //! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
 //!   "new", "change" or "none"); in the game the map, the player, open windows, `escape` (the Esc or death
-//!   menu's buttons while it is open, null otherwise; not in `windows`, and it takes every click until closed), the NPC dialog, the aimed
+//!   menu's buttons while it is open, null otherwise; `windows` lists it as `GameMenu`, and it takes every click until closed, so a
+//!   click's `hit` then says `GameMenu`), the NPC dialog, the aimed
 //!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
 //!   status icons. Each unit's `tint` is `[r, g, b]` while a status colours it, or null. Everything comes from what
 //!   the client itself knows, whatever server it plays on.
