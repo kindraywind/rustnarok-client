@@ -1185,6 +1185,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             unit["rot"] = actor.rot.round().into();
             // Copies left behind it while a status blurs it (the quickens).
             unit["ghosts"] = actor.ghosts.len().into();
+            // A warp's portal rings: 8 for one portal.
+            if actor.job == crate::WARP_JOB {
+                unit["portal_rings"] = game.effects.rings_on(id, crate::EF_WARPZONE2).into();
+            }
             orbs(&mut unit, Some(id));
             if let Some(rect) = screen(Owner::Unit(id)) {
                 unit["screen"] = json!(rect);
@@ -2170,7 +2174,7 @@ fn game_state(app: &App, game: &Game) -> Value {
 }
 
 /// The animation internals of a unit in `state`, for tests (#1018).
-const INTERNALS: [&str; 8] = ["action", "frame", "rot", "alpha", "tint", "combo_ms", "held", "ghosts"];
+const INTERNALS: [&str; 9] = ["action", "frame", "rot", "alpha", "tint", "combo_ms", "held", "ghosts", "portal_rings"];
 
 /// The grade of each field of the game's `state`, by key (#1095). A play mode leaves out a field above it, and a field
 /// that isn't here. Fair: what the screen shows, the player's own windows and settings. Assist: boxes, cells and

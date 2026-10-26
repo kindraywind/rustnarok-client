@@ -1,0 +1,19 @@
+{
+  "about": "A warp seen again after a teleport on the same map keeps one portal: in the Labyrinth Forest, step onto mazewarp5111 (23, 125, to 151, 22 on prt_maze01) and @warp back beside it, twice. Before the fix each return started another portal on top (8 rings a portal: 24 after two).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_maze01 20 128"}, {"settle": 2500},
+    {"expect": {"unit": {"name": "mazewarp5111", "portal_rings": 8}}},
+    {"click_on": {"cell": [23, 125]}},
+    {"wait_for": {"packet": "0x0091", "ms": 8000}}, {"settle": 1500},
+    {"expect": {"state": {"player.cell": [151, 22]}}},
+    {"say": "@warp prt_maze01 20 128"}, {"settle": 2500},
+    {"click_on": {"cell": [23, 125]}},
+    {"wait_for": {"packet": "0x0091", "ms": 8000}}, {"settle": 1500},
+    {"say": "@warp prt_maze01 20 128"}, {"settle": 2500},
+    {"expect": {"map": "prt_maze01.gat", "unit": {"name": "mazewarp5111", "portal_rings": 8}}},
+    {"move": [1000, 300]},
+    {"shot": "warp-same-map", "crop": [540, 400, 260, 200], "threshold": 50}
+  ]
+}

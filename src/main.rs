@@ -564,6 +564,15 @@ fn leave_behind(units: &mut HashMap<u32, Actor>, id: u32) {
     }
 }
 
+/// A teleport on the same map: rathena sends no vanish for what was in view (`pc_setpos`), only what's in view again
+/// once the load is acknowledged. The units and skills' units go, and with them what plays on them, or each warp seen
+/// again would start another portal on top of its old one.
+fn forget_view(units: &mut HashMap<u32, Actor>, skill_units: &mut HashMap<u32, (u32, [u16; 2])>, effects: &mut effects::Effects) {
+    for id in units.drain().map(|(id, _)| id).chain(skill_units.drain().map(|(id, _)| id)) {
+        effects.forget(id);
+    }
+}
+
 /// A stand entry's state byte, for players only: 1 dead (lying as after a death in view, falling once), 2 sitting,
 /// anything else standing (a dead or sitting player stands up).
 fn take_posture(actor: &mut Actor, posture: Option<u8>, now: Instant) {

@@ -3545,6 +3545,11 @@ impl Effects {
         counts
     }
 
+    /// How many of `effect`'s rings play on `unit` (for the test driver).
+    pub fn rings_on(&self, unit: u32, effect: u32) -> usize {
+        self.rings.iter().filter(|ring| ring.effect == effect && ring.anchor.on(unit)).count()
+    }
+
     /// How many STR world copies of each id are running (for the test driver).
     pub fn world_str_counts(&self) -> std::collections::BTreeMap<String, usize> {
         let mut counts = std::collections::BTreeMap::new();
@@ -7111,6 +7116,29 @@ pub fn blind_offsets(piece: &BlindPiece) -> [[f32; 2]; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_warp_seen_again_after_a_same_map_teleport_has_one_portal() {
+        let table = Table::load();
+        let mut effects = Effects::default();
+        // What EF_WARPZONE2 starts on warp 7: its rings.
+        let portal = |effects: &mut Effects| {
+            for parameters in &table.rings[&321] {
+                effects.rings.extend(Ring::new(parameters, 321, Instant::now(), Anchor::Unit(Some(7))));
+            }
+        };
+        portal(&mut effects);
+        let one = effects.rings_on(7, 321);
+        assert!(one > 0);
+        let mut units = HashMap::from([(7, crate::actor::Actor::new(String::new(), None, [0, 0], 0, 150))]);
+        let mut skill_units = HashMap::from([(8, (0x83, [0, 0]))]);
+        crate::forget_view(&mut units, &mut skill_units, &mut effects);
+        assert!(units.is_empty() && skill_units.is_empty());
+        assert_eq!(effects.rings_on(7, 321), 0);
+        // The server sends the warp again: one portal, however many teleports there were.
+        portal(&mut effects);
+        assert_eq!(effects.rings_on(7, 321), one);
+    }
 
     #[test]
     fn cannon_spear_picks_its_blade_by_the_screen_direction() {
