@@ -1043,6 +1043,8 @@ const DISTANCE_RANGE_INDOOR: [f32; 2] = [230.0, 300.0];
 const ZOOM_OUT_DISTANCE: f32 = 480.0;
 const ZOOM_OUT_ON: usize = 3511;
 const ZOOM_OUT_OFF: usize = 3512;
+/// With the Extras' far zoom on, the camera goes out to this indoors and out (not on maps with their own table).
+const FAR_ZOOM_DISTANCE: f32 = 800.0;
 const WHEEL_STEP: f32 = 24.3;
 const WHEEL_GAP: Duration = Duration::from_millis(15);
 /// Shift + wheel tilts this many degrees a step.
@@ -1659,6 +1661,8 @@ struct CameraGoal {
     limits: Option<rustnarok_client::map::Viewpoint>,
     /// /zoom: outdoors the camera goes out to ZOOM_OUT_DISTANCE.
     zoom_out: bool,
+    /// The Extras' far zoom: it goes out to FAR_ZOOM_DISTANCE.
+    far: bool,
     /// A camera shake is running (when it stops, the look-at point, distance and pitch snap straight back).
     shaking: bool,
 }
@@ -1666,12 +1670,12 @@ struct CameraGoal {
 impl CameraGoal {
     #[cfg(test)]
     fn new(indoor: bool) -> Self {
-        Self::arrive(indoor, None, [PITCH, ZOOM * UNITS_PER_ZOOM], false)
+        Self::arrive(indoor, None, [PITCH, ZOOM * UNITS_PER_ZOOM], false, false)
     }
 
     /// The goal on arriving on a map: the map's own table's start, or the tilt and distance the player left on this
     /// kind of map (within its limits); turned 0 outdoors, YAW_INDOOR indoors.
-    fn arrive(indoor: bool, limits: Option<rustnarok_client::map::Viewpoint>, saved: [f32; 2], zoom_out: bool) -> Self {
+    fn arrive(indoor: bool, limits: Option<rustnarok_client::map::Viewpoint>, saved: [f32; 2], zoom_out: bool, far: bool) -> Self {
         let mut goal = Self {
             yaw: if indoor { YAW_INDOOR } else { 0.0 },
             pitch: PITCH,
@@ -1683,6 +1687,7 @@ impl CameraGoal {
             last_wheel: None,
             limits,
             zoom_out,
+            far,
             shaking: false,
         };
         match limits {
@@ -1719,15 +1724,23 @@ impl CameraGoal {
     }
 
     /// Moves the camera to `distance` world units, within the map's range: its own table's, or the kind of map's
-    /// (further out outdoors with /zoom).
+    /// (further out outdoors with /zoom, and everywhere with the far zoom).
     fn set_distance(&mut self, distance: f32) {
         let [near, far] = match self.limits {
             Some(table) => table.distance,
+            None if self.far => [DISTANCE_RANGE[0], FAR_ZOOM_DISTANCE],
             None if self.indoor => DISTANCE_RANGE_INDOOR,
             None if self.zoom_out => [DISTANCE_RANGE[0], ZOOM_OUT_DISTANCE],
             None => DISTANCE_RANGE,
         };
         self.zoom = distance.clamp(near, far) / UNITS_PER_ZOOM;
+    }
+
+    /// The far zoom switched: a camera out past the range left comes back in.
+    fn set_far(&mut self, far: bool) {
+        if std::mem::replace(&mut self.far, far) != far {
+            self.set_distance(self.distance());
+        }
     }
 
     /// How far the camera tilts now: the map's table, or `pitch_range`.
@@ -6263,12 +6276,12 @@ mod tests {
         assert!((follow_step(Duration::from_secs_f32(1.0 / 60.0)) - 0.1).abs() < 1e-4);
         assert!((follow_step(Duration::from_secs_f32(2.0 / 60.0)) - 0.19).abs() < 1e-4);
         // The view left on each kind of map, within that kind's limits.
-        let outdoors = CameraGoal::arrive(false, None, [80.0, 500.0], false);
+        let outdoors = CameraGoal::arrive(false, None, [80.0, 500.0], false, false);
         assert_eq!((outdoors.pitch, outdoors.distance(), outdoors.yaw), (65.0, 400.0, 0.0));
-        let indoors = CameraGoal::arrive(true, None, [20.0, 400.0], false);
+        let indoors = CameraGoal::arrive(true, None, [20.0, 400.0], false, false);
         assert_eq!((indoors.pitch, indoors.distance(), indoors.yaw), (35.0, 300.0, YAW_INDOOR));
         // /zoom: outdoors out to 480, indoors no further.
-        let mut far = CameraGoal::arrive(false, None, [45.0, 450.0], true);
+        let mut far = CameraGoal::arrive(false, None, [45.0, 450.0], true, false);
         assert!((far.distance() - 450.0).abs() < 0.01);
         far.set_distance(1000.0);
         assert_eq!(far.distance(), ZOOM_OUT_DISTANCE);
@@ -6276,8 +6289,16 @@ mod tests {
         far.zoom_out = false;
         far.set_distance(far.distance());
         assert_eq!(far.distance(), 400.0);
-        assert_eq!(CameraGoal::arrive(true, None, [45.0, 450.0], true).distance(), 300.0);
-        assert_eq!(CameraGoal::arrive(true, None, [45.0, 1000.0], true).distance(), 300.0);
+        assert_eq!(CameraGoal::arrive(true, None, [45.0, 450.0], true, false).distance(), 300.0);
+        assert_eq!(CameraGoal::arrive(true, None, [45.0, 1000.0], true, false).distance(), 300.0);
+        // The far zoom: out to 800 indoors and out, back within the range when it's switched off.
+        let mut farther = CameraGoal::arrive(true, None, [45.0, 1000.0], false, true);
+        assert_eq!(farther.distance(), FAR_ZOOM_DISTANCE);
+        farther.set_far(false);
+        assert_eq!(farther.distance(), 300.0);
+        farther.set_far(true);
+        farther.set_distance(1000.0);
+        assert_eq!(farther.distance(), 800.0);
         // A map's own table starts it, and holds it.
         let table = rustnarok_client::map::Viewpoint {
             distance: [210.0, 260.0],
@@ -6287,7 +6308,7 @@ mod tests {
             pitch: [35.0, 45.0],
             pitch_in: 40.0,
         };
-        let mut own = CameraGoal::arrive(false, Some(table), [80.0, 500.0], true);
+        let mut own = CameraGoal::arrive(false, Some(table), [80.0, 500.0], true, false);
         assert_eq!((own.pitch, own.distance(), own.yaw), (40.0, 250.0, 50.0));
         own.steer(100.0, 0.0, false, false, false);
         assert_eq!(own.yaw, 65.0);
@@ -6300,10 +6321,10 @@ mod tests {
         assert_eq!(SavedView::default().views, [[45.0, 400.0], [45.0, 300.0]]);
         assert_eq!(SavedView::harness().views, [[45.0, 300.0]; 2]);
         // Arriving, a saved tilt is kept within 25 to 65 outdoors and 35 to 55 indoors.
-        assert_eq!(CameraGoal::arrive(true, None, [60.0, 300.0], false).pitch, 55.0);
-        assert_eq!(CameraGoal::arrive(false, None, [60.0, 400.0], false).pitch, 60.0);
-        assert_eq!(CameraGoal::arrive(true, None, [20.0, 300.0], false).pitch, 35.0);
-        assert_eq!(CameraGoal::arrive(false, None, [45.0, 400.0], false).distance(), 400.0);
+        assert_eq!(CameraGoal::arrive(true, None, [60.0, 300.0], false, false).pitch, 55.0);
+        assert_eq!(CameraGoal::arrive(false, None, [60.0, 400.0], false, false).pitch, 60.0);
+        assert_eq!(CameraGoal::arrive(true, None, [20.0, 300.0], false, false).pitch, 35.0);
+        assert_eq!(CameraGoal::arrive(false, None, [45.0, 400.0], false, false).distance(), 400.0);
         let now = Instant::now();
         saved.follow(&outdoors, now, false);
         assert_eq!((saved.of(false), saved.of(true)), ([65.0, 400.0], [45.0, 280.0]));

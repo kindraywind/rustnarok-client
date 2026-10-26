@@ -460,6 +460,8 @@ impl App {
         let ground_gat = -game.world.ground_under(player_feet)[1];
         game.weather.step(now, player_feet, ground_gat);
         let bangs = game.weather.take_bangs(now);
+        // Game Settings' Extras (or their Reset) can switch the far zoom any time.
+        game.camera_goal.set_far(self.graphics.far_zoom);
         game.camera_goal.drag_frame();
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame), player_feet, game.camera_snap);
         // An earthquake shakes the view sideways, in and out and in tilt, the other way each frame, and snaps back when it ends.
@@ -1435,6 +1437,10 @@ impl App {
                     };
                     name_block = Some((lines, feet, color, emblem.filter(|_| game.show_emblems), siege));
                 }
+                // The Extras' monster level after its name.
+                None if actor.kind == MONSTER && actor.level > 0 && self.graphics.monster_level => {
+                    labels.push((format!("{} (Lv {})", crate::actor::shown_name(shown_name), actor.level), feet, color));
+                }
                 None => labels.push((shown_name.to_owned(), feet, color)),
             }
             if actor.kind == PLAYER && game.pointed != pointed_id {
@@ -1579,6 +1585,15 @@ impl App {
             game.bars_drawn.push((whose, [x, y, rects[0].1[2], rects[0].1[3]], rows.iter().map(|&(value, max, ..)| filled(value, max)).collect()));
             for (texture, [left, top, width, height]) in rects {
                 base.sprites.push((texture, [x + left, y + top], [width, height]));
+            }
+        }
+        // The Extras' monster HP: a hurt monster's (the server tells no other's) in numbers right of its bar.
+        if self.graphics.monster_hp {
+            for (id, &(hp, max)) in &game.unit_hp {
+                let monster = game.units.get(id).is_some_and(|actor| actor.kind == MONSTER && actor.remove_at.is_none());
+                let Some(point) = feet_of.get(id).filter(|_| monster).and_then(|&feet| sprite_point(feet, overhead::BAR_BELOW)) else { continue };
+                let corner = [point[0].trunc() + overhead::BAR_WIDTH / 2.0 + 3.0, point[1].trunc() + 3.0 - (font.line_height() / 2.0).round()];
+                base.outlined(&format!("{hp}/{max}"), corner);
             }
         }
 

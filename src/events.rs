@@ -266,7 +266,13 @@ impl App {
                 (player.kind, player.job, player.look) = (PLAYER, me.job, Some(look));
                 player.sync_companions(me.option, &self.grf);
                 let indoor = self.indoor.contains(&map_key(&map));
-                let camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor), zoom_out_saved());
+                let camera_goal = CameraGoal::arrive(
+                    indoor,
+                    self.viewpoints.get(&map_key(&map)).copied(),
+                    self.saved_view.of(indoor),
+                    zoom_out_saved(),
+                    self.graphics.far_zoom,
+                );
                 let camera = camera_goal.camera(world.cell_position(position.map(f32::from)));
                 let now = Instant::now();
                 let minimap = minimap::load_map(&self.grf, &map);
@@ -739,7 +745,13 @@ impl App {
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
                 let indoor = self.indoor.contains(&map_key(&map));
-                game.camera_goal = CameraGoal::arrive(indoor, self.viewpoints.get(&map_key(&map)).copied(), self.saved_view.of(indoor), zoom_out_saved());
+                game.camera_goal = CameraGoal::arrive(
+                    indoor,
+                    self.viewpoints.get(&map_key(&map)).copied(),
+                    self.saved_view.of(indoor),
+                    zoom_out_saved(),
+                    self.graphics.far_zoom,
+                );
                 game.camera = game.camera_goal.camera(world.cell_position(position.map(f32::from)));
                 game.minimap = minimap::load_map(&self.grf, &map);
                 game.minimap_crop = None;

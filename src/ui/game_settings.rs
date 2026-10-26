@@ -1,6 +1,7 @@
-//! Game Settings (2374): one 400×350 window, centred and made fresh each time it opens, with five tabs. Basic has the
-//! music and effect sound rows, Effect the effect switches this client has, Graphics the screen mode; Control and
-//! Other stay empty here.
+//! Game Settings (2374): one 400×350 window, centred and made fresh each time it opens, with the game's five tabs and
+//! this client's Extras. Basic has the music and effect sound rows, Effect the effect switches this client has,
+//! Graphics the screen mode; Control and Other stay empty here. Extras has switches the game doesn't have, all off at
+//! first.
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::text::Font;
@@ -13,15 +14,23 @@ use crate::{Layer, UI, contains};
 
 const SIZE: [f32; 2] = [400.0, 350.0];
 const TITLE: usize = 2374;
-/// The tabs, 72×18 at y 17 and overlapping by a pixel: Basic, Effect, Control, Graphics, Other.
+/// The tabs (x, width), 18 high at y 17 and overlapping by a pixel: the game's Basic, Effect, Control, Graphics and
+/// Other, 72 wide, then this client's Extras in the 45 px left.
 // The English message table lacks the newer lines; these words stand in for an empty one.
-const TABS: [(f32, usize, &str); 5] =
-    [(0.0, 4142, "Basic"), (71.0, 4143, "Effect"), (142.0, 4144, "Control"), (213.0, 4145, "Graphics"), (284.0, 4222, "Other")];
-const TAB: [f32; 2] = [72.0, 18.0];
+const TABS: [(f32, f32, usize, &str); 6] = [
+    (0.0, 72.0, 4142, "Basic"),
+    (71.0, 72.0, 4143, "Effect"),
+    (142.0, 72.0, 4144, "Control"),
+    (213.0, 72.0, 4145, "Graphics"),
+    (284.0, 72.0, 4222, "Other"),
+    (355.0, 45.0, usize::MAX, "Extras"),
+];
+const TAB_HEIGHT: f32 = 18.0;
 const TAB_TOP: f32 = 17.0;
 pub const BASIC: usize = 0;
 pub const EFFECT: usize = 1;
 pub const GRAPHICS: usize = 3;
+pub const EXTRAS: usize = 5;
 /// The pages: 400×288 at (0, 34), outlined in #CECECE (`options::OUTLINE`).
 const PAGE_TOP: f32 = 34.0;
 const PAGE_HEIGHT: f32 = 288.0;
@@ -58,6 +67,12 @@ const ROW_TEXT_WIDTH: f32 = 252.0;
 /// Effects (/effect), the aura shown (/aura2), the mini aura (/aura), the screen shaking (/quake).
 const SWITCHES: [((usize, &str), usize); 4] =
     [((3172, "Effects"), 37), ((4160, "Show aura"), 3162), ((4163, "Mini aura"), 710), ((2805, "Screen shake"), 3161)];
+/// The Extras page's rows, laid out as the Effect page's: title and description (`extras`, `extra`).
+const EXTRA_ROWS: [(&str, &str); 3] = [
+    ("Monster HP", "A hurt monster's HP in numbers by its bar"),
+    ("Monster level", "A monster's level after its name"),
+    ("Far zoom", "The camera goes out much further"),
+];
 /// The screen mode group, Graphics page y 160: "Screen mode", the Full screen and Window radios at (150, 12) and
 /// (270, 12), their labels 17 px right.
 const SCREEN_TOP: f32 = 160.0;
@@ -148,7 +163,7 @@ impl GameSettings {
         }
         if (TAB_TOP..PAGE_TOP).contains(&local[1]) {
             // The later tab is on top where they overlap.
-            return Some(TABS.iter().rposition(|&(x, ..)| (x..x + TAB[0]).contains(&local[0])).map_or(Hit::Window, Hit::Tab));
+            return Some(TABS.iter().rposition(|&(x, width, ..)| (x..x + width).contains(&local[0])).map_or(Hit::Window, Hit::Tab));
         }
         for (button, hit) in BUTTONS.into_iter().zip([Hit::Reset, Hit::Apply, Hit::CloseButton]) {
             if contains([button, BUTTON_TOP], BUTTON, local) {
@@ -168,9 +183,10 @@ impl GameSettings {
                     _ => None,
                 })
                 .unwrap_or(Hit::Window),
-            EFFECT => {
+            EFFECT | EXTRAS => {
+                let rows = if self.tab == EFFECT { SWITCHES.len() } else { EXTRA_ROWS.len() };
                 let row = ((y - 1.0) / ROW).floor();
-                if (0.0..SWITCHES.len() as f32).contains(&row) && x < ROW_TITLE { Hit::Switch(row as usize) } else { Hit::Window }
+                if (0.0..rows as f32).contains(&row) && x < ROW_TITLE { Hit::Switch(row as usize) } else { Hit::Window }
             }
             GRAPHICS if (SCREEN_TOP..SCREEN_TOP + 32.0).contains(&y) => {
                 SCREEN_RADIOS.iter().position(|&(radio, _)| (radio..radio + 90.0).contains(&x)).map_or(Hit::Window, |radio| Hit::Screen(radio == 0))
@@ -219,6 +235,11 @@ impl GameSettings {
                 sound.on[row] = !sound.on[row];
                 Some(Action::Sound)
             }
+            Hit::Switch(row) if self.tab == EXTRAS => {
+                let on = extra(graphics, row);
+                *on = !*on;
+                Some(Action::Graphics)
+            }
             Hit::Switch(row) => {
                 let on = !switch_on(graphics, row);
                 set_switch(graphics, row, on);
@@ -252,8 +273,11 @@ impl GameSettings {
             let [x, y] = self.frame.at([x, y]);
             [x, y, width, height]
         };
-        let mut boxes: Vec<_> =
-            TABS.iter().enumerate().map(|(tab, &(x, ..))| (format!("settings_tab:{tab}"), place([x + 1.0, TAB_TOP], [TAB[0] - 2.0, TAB[1]]))).collect();
+        let mut boxes: Vec<_> = TABS
+            .iter()
+            .enumerate()
+            .map(|(tab, &(x, width, ..))| (format!("settings_tab:{tab}"), place([x + 1.0, TAB_TOP], [width - 2.0, TAB_HEIGHT])))
+            .collect();
         boxes.extend(
             ["settings_reset", "settings_apply", "settings_close"].into_iter().zip(BUTTONS).map(|(name, x)| (name.to_owned(), place([x, BUTTON_TOP], BUTTON))),
         );
@@ -261,8 +285,9 @@ impl GameSettings {
             BASIC => boxes.extend(
                 SOUND_ROWS.iter().enumerate().map(|(row, &y)| (format!("sound_off:{row}"), place([OFF_BOX, PAGE_TOP + SOUND_TOP + y + 1.0], [10.0, 10.0]))),
             ),
-            EFFECT => boxes.extend(
-                (0..SWITCHES.len()).map(|row| (format!("switch:{row}"), place([SWITCH[0], PAGE_TOP + 1.0 + row as f32 * ROW + SWITCH[1]], [20.0, 15.0]))),
+            EFFECT | EXTRAS => boxes.extend(
+                (0..if self.tab == EFFECT { SWITCHES.len() } else { EXTRA_ROWS.len() })
+                    .map(|row| (format!("switch:{row}"), place([SWITCH[0], PAGE_TOP + 1.0 + row as f32 * ROW + SWITCH[1]], [20.0, 15.0]))),
             ),
             GRAPHICS => boxes.extend(
                 SCREEN_RADIOS.iter().enumerate().map(|(radio, &(x, _))| (format!("screen:{radio}"), place([x, PAGE_TOP + SCREEN_TOP + 12.0], [12.0, 12.0]))),
@@ -294,21 +319,21 @@ impl GameSettings {
         layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT]));
         // The tabs: white with a #CECECE edge, the open one joined to its page.
         let outline = &options.outline;
-        for (tab, &(x, label, words)) in TABS.iter().enumerate() {
+        for (tab, &(x, width, label, words)) in TABS.iter().enumerate() {
             let open = tab == self.tab;
-            layer.sprites.push((outline, at([x, TAB_TOP]), [TAB[0], 1.0]));
-            layer.sprites.push((outline, at([x, TAB_TOP]), [1.0, TAB[1]]));
-            layer.sprites.push((outline, at([x + TAB[0] - 1.0, TAB_TOP]), [1.0, TAB[1]]));
-            layer.sprites.push((&chrome.white, at([x + 1.0, TAB_TOP + 1.0]), [TAB[0] - 2.0, TAB[1] - 1.0 + f32::from(u8::from(open))]));
-            let text = window::fit(font, &worded((label, words)), TAB[0] - 6.0);
+            layer.sprites.push((outline, at([x, TAB_TOP]), [width, 1.0]));
+            layer.sprites.push((outline, at([x, TAB_TOP]), [1.0, TAB_HEIGHT]));
+            layer.sprites.push((outline, at([x + width - 1.0, TAB_TOP]), [1.0, TAB_HEIGHT]));
+            layer.sprites.push((&chrome.white, at([x + 1.0, TAB_TOP + 1.0]), [width - 2.0, TAB_HEIGHT - 1.0 + f32::from(u8::from(open))]));
+            let text = window::fit(font, &worded((label, words)), width - 6.0);
             let color = if open { black } else { [0x70, 0x70, 0x70] };
-            layer.texts.push((text.clone(), at([x + ((TAB[0] - font.width(&text)) / 2.0).floor(), TAB_TOP + 3.0]), color));
+            layer.texts.push((text.clone(), at([x + ((width - font.width(&text)) / 2.0).floor(), TAB_TOP + 3.0]), color));
         }
         // The page's outline, under the open tab left open.
         let page = |local: [f32; 2]| at([local[0], PAGE_TOP + local[1]]);
-        let open_x = TABS[self.tab].0;
+        let (open_x, open_width, ..) = TABS[self.tab];
         layer.sprites.push((outline, page([0.0, 0.0]), [open_x, 1.0]));
-        layer.sprites.push((outline, page([open_x + TAB[0] - 1.0, 0.0]), [width - open_x - TAB[0] + 1.0, 1.0]));
+        layer.sprites.push((outline, page([open_x + open_width - 1.0, 0.0]), [width - open_x - open_width + 1.0, 1.0]));
         layer.sprites.push((outline, page([0.0, 0.0]), [1.0, PAGE_HEIGHT]));
         layer.sprites.push((outline, page([width - 1.0, 0.0]), [1.0, PAGE_HEIGHT]));
         layer.sprites.push((outline, page([0.0, PAGE_HEIGHT - 1.0]), [width, 1.0]));
@@ -336,14 +361,19 @@ impl GameSettings {
                     layer.texts.push((worded(OFF), group([OFF_X, y]), black));
                 }
             }
-            EFFECT => {
-                for (row, &(title, text)) in SWITCHES.iter().enumerate() {
+            EFFECT | EXTRAS => {
+                let rows: Vec<(String, &str, bool)> = if self.tab == EFFECT {
+                    let title = |title| worded(title).trim_end_matches(" ON").to_owned();
+                    SWITCHES.iter().enumerate().map(|(row, &(title_id, text))| (title(title_id), message(text), switch_on(graphics, row))).collect()
+                } else {
+                    EXTRA_ROWS.iter().zip(extras(graphics)).map(|(&(title, text), on)| (title.to_owned(), text, on)).collect()
+                };
+                for (row, (title, text, on)) in rows.into_iter().enumerate() {
                     let top = 1.0 + row as f32 * ROW;
-                    let check = &options.check[usize::from(switch_on(graphics, row))];
+                    let check = &options.check[usize::from(on)];
                     layer.sprites.push((check, page([SWITCH[0], top + SWITCH[1] + 2.0]), check.size));
-                    let title = worded(title).trim_end_matches(" ON").to_owned();
                     layer.texts.push((window::fit(font, &title, ROW_TEXT - ROW_TITLE - 4.0), page([ROW_TITLE, top + 6.0]), black));
-                    layer.texts.push((window::fit(font, message(text), ROW_TEXT_WIDTH), page([ROW_TEXT, top + 6.0]), black));
+                    layer.texts.push((window::fit(font, text, ROW_TEXT_WIDTH), page([ROW_TEXT, top + 6.0]), black));
                 }
             }
             GRAPHICS => {
@@ -380,6 +410,19 @@ pub fn switch_on(graphics: &GraphicsSettings, row: usize) -> bool {
     }
 }
 
+/// The Extras page's switches, in its rows' order: monster HP, monster level, far zoom.
+fn extras(graphics: &GraphicsSettings) -> [bool; 3] {
+    [graphics.monster_hp, graphics.monster_level, graphics.far_zoom]
+}
+
+fn extra(graphics: &mut GraphicsSettings, row: usize) -> &mut bool {
+    match row {
+        0 => &mut graphics.monster_hp,
+        1 => &mut graphics.monster_level,
+        _ => &mut graphics.far_zoom,
+    }
+}
+
 fn set_switch(graphics: &mut GraphicsSettings, row: usize, on: bool) {
     match row {
         0 => graphics.effects_on = on,
@@ -394,7 +437,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn opens_centred_with_five_tabs_and_three_buttons() {
+    fn opens_centred_with_six_tabs_and_three_buttons() {
         let window = GameSettings::new([1024.0, 768.0], false);
         assert_eq!(window.frame.position, [312.0, 209.0]);
         let corner = window.frame.position;
@@ -402,6 +445,8 @@ mod tests {
         assert_eq!(window.hit(at([386.0 + 5.0, 8.0])), Some(Hit::Close));
         assert_eq!(window.hit(at([71.5, 20.0])), Some(Hit::Tab(1)), "the later tab on top");
         assert_eq!(window.hit(at([300.0, 25.0])), Some(Hit::Tab(4)));
+        assert_eq!(window.hit(at([355.5, 25.0])), Some(Hit::Tab(EXTRAS)), "Extras on top of Other");
+        assert_eq!(window.hit(at([399.0, 25.0])), Some(Hit::Tab(EXTRAS)));
         assert_eq!(window.hit(at([10.0, 330.0])), Some(Hit::Reset));
         assert_eq!(window.hit(at([305.0, 330.0])), Some(Hit::Apply));
         assert_eq!(window.hit(at([350.0, 330.0])), Some(Hit::CloseButton));
@@ -458,5 +503,27 @@ mod tests {
         assert_eq!(window.click(Hit::Reset, &mut sound, &mut graphics), Some(Action::AskReset));
         assert_eq!(window.click(Hit::CloseButton, &mut sound, &mut graphics), Some(Action::Close));
         assert!(!window.frame.open);
+    }
+
+    #[test]
+    fn extras_start_off_and_switch_on_their_own_page() {
+        let mut window = GameSettings::new([1024.0, 768.0], false);
+        let (mut sound, mut graphics) = (Settings::default(), GraphicsSettings::default());
+        assert_eq!(extras(&graphics), [false; 3]);
+        window.click(Hit::Tab(EXTRAS), &mut sound, &mut graphics);
+        let corner = window.frame.position;
+        let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 2.0 * ROW + 8.0])), Some(Hit::Switch(2)));
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 3.0 * ROW + 8.0])), Some(Hit::Window), "three rows only");
+        assert_eq!(window.click(Hit::Switch(2), &mut sound, &mut graphics), Some(Action::Graphics));
+        assert!(graphics.far_zoom);
+        window.click(Hit::Switch(0), &mut sound, &mut graphics);
+        window.click(Hit::Switch(1), &mut sound, &mut graphics);
+        assert_eq!(extras(&graphics), [true; 3]);
+        // The Effect page's switches didn't move.
+        assert_eq!(graphics, GraphicsSettings { monster_hp: true, monster_level: true, far_zoom: true, ..GraphicsSettings::default() });
+        assert!(window.button_boxes().iter().any(|(name, _)| name == "switch:2"));
+        reset(&mut sound, &mut graphics);
+        assert_eq!(extras(&graphics), [false; 3]);
     }
 }

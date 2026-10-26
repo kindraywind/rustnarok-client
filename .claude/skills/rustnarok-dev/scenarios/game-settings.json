@@ -1,5 +1,5 @@
 {
-  "about": "Game Settings (issue #326): the Esc menu's settings button opens one 400×350 window, centred, with five tabs. Basic has the BGM and SFX rows (a slider 0–127 whose arrows step by one, and an Off box); Effect the effect switches (effects, aura, mini aura, screen shaking); Graphics the screen mode, set by Apply. Here the music is turned off and back on, its volume stepped up one, effects switched off and on again, and Close shuts it; shots of the three pages.",
+  "about": "Game Settings (issue #326): the Esc menu's settings button opens one 400×350 window, centred, with the game's five tabs (and this client's Extras, extras.json). Basic has the BGM and SFX rows (a slider 0–127 whose arrows step by one, and an Off box); Effect the effect switches (effects, aura, mini aura, screen shaking); Graphics the screen mode, set by Apply. Here the music is turned off and back on, its volume stepped up one, effects switched off and on again, and Close shuts it; shots of the three pages.",
   "account": "",
   "slot": 0,
   "steps": [
