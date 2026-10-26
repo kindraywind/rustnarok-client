@@ -1497,6 +1497,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.guild.iter().flat_map(|guild| game.guild_window.button_boxes(guild)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.guild_companion.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.mail.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.trade.iter().flat_map(|trade| trade.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.card_view.iter().map(|view| json!({"kind": "button", "name": "card_picture_close", "box": view.close_box()})))
         .chain(question_buttons)

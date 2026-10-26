@@ -449,6 +449,37 @@ pub struct Mail {
 }
 
 impl Mail {
+    /// The mailbox's and the compose window's buttons on screen (for the test driver): `mail_refresh`, `mail_write`,
+    /// `mail_search`, `mail_tab:<n>`, `mail_prev`, `mail_next`, `mail_close`; `compose_to`, `compose_title`,
+    /// `compose_validate`, `compose_send`, `compose_close`. None while minimized.
+    pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
+        let place = |frame: &Frame, corner: [f32; 2], size: [f32; 2]| {
+            let [x, y] = frame.at(corner);
+            [x, y, size[0], size[1]]
+        };
+        let mut boxes = Vec::new();
+        let list = &self.list.frame;
+        if list.open && !list.minimized {
+            boxes.push(("mail_refresh".to_owned(), place(list, REFRESH, ICON_BUTTON)));
+            boxes.push(("mail_write".to_owned(), place(list, WRITE, ICON_BUTTON)));
+            boxes.push(("mail_search".to_owned(), place(list, SEARCH_BUTTON, SEARCH_BUTTON_SIZE)));
+            boxes.extend((0..TABS.len()).map(|tab| (format!("mail_tab:{tab}"), place(list, [TABS_AT[0] + tab as f32 * TAB[0], TABS_AT[1]], TAB))));
+            boxes.push(("mail_prev".to_owned(), place(list, PREV, PAGE_BUTTON)));
+            boxes.push(("mail_next".to_owned(), place(list, NEXT, PAGE_BUTTON)));
+            boxes.push(("mail_close".to_owned(), place(list, list.close_button(), window::BUTTON_SIZE)));
+        }
+        if let Some(compose) = self.compose.as_ref().filter(|compose| !compose.frame.minimized) {
+            let frame = &compose.frame;
+            let field = |[x, y, w, h]: [f32; 4]| place(frame, [x, y], [w, h]);
+            boxes.push(("compose_to".to_owned(), field(TO_FIELD)));
+            boxes.push(("compose_title".to_owned(), field(TITLE_FIELD)));
+            boxes.push(("compose_validate".to_owned(), place(frame, VALIDATE, BUTTON)));
+            boxes.push(("compose_send".to_owned(), place(frame, SEND_BUTTON, BUTTON)));
+            boxes.push(("compose_close".to_owned(), place(frame, frame.close_button(), window::BUTTON_SIZE)));
+        }
+        boxes
+    }
+
     /// What's under the pointer; the window written in is on top, then the one read, then the mailbox.
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         if let Some(hit) = self.compose.as_ref().and_then(|compose| compose.hit(cursor)) {
@@ -1011,5 +1042,41 @@ mod tests {
         assert_eq!(mail.click(Hit::Compose(ComposeHit::Send)), Some(Action::Send));
         assert_eq!(mail.event(MapEvent::MailSent(0)), Some((2587, false)));
         assert!(mail.compose.is_none());
+    }
+
+    #[test]
+    fn each_target_is_its_button() {
+        let centre = |[x, y, w, h]: [f32; 4]| [x + w / 2.0, y + h / 2.0];
+        let mut mail = Mail::default();
+        mail.list.frame.open = true;
+        let close = Hit::List(ListHit::Title(TitleHit::Close));
+        let mut want = vec![
+            ("mail_refresh".to_owned(), Hit::List(ListHit::Refresh)),
+            ("mail_write".to_owned(), Hit::List(ListHit::Write)),
+            ("mail_search".to_owned(), Hit::List(ListHit::Search)),
+            ("mail_prev".to_owned(), Hit::List(ListHit::Prev)),
+            ("mail_next".to_owned(), Hit::List(ListHit::Next)),
+            ("mail_close".to_owned(), close),
+        ];
+        want.extend((0..TABS.len()).map(|tab| (format!("mail_tab:{tab}"), Hit::List(ListHit::Tab(tab)))));
+        let boxes = mail.button_boxes();
+        assert_eq!(boxes.len(), want.len());
+        for (name, hit) in want {
+            let area = boxes.iter().find(|(button, _)| *button == name).unwrap().1;
+            assert_eq!(mail.hit(centre(area)), Some(hit), "{name}");
+        }
+        // The compose window, alone.
+        mail.list.frame.open = false;
+        mail.event(MapEvent::MailWrite { to: String::new(), ok: true });
+        for (name, hit) in [
+            ("compose_to", ComposeHit::Field(Field::To)),
+            ("compose_title", ComposeHit::Field(Field::Title)),
+            ("compose_validate", ComposeHit::Validate),
+            ("compose_send", ComposeHit::Send),
+            ("compose_close", ComposeHit::Title(TitleHit::Close)),
+        ] {
+            let area = mail.button_boxes().into_iter().find(|(button, _)| button == name).unwrap().1;
+            assert_eq!(mail.hit(centre(area)), Some(Hit::Compose(hit)), "{name}");
+        }
     }
 }
