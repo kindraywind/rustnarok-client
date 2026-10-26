@@ -75,6 +75,7 @@ mod shortcuts;
 mod skill_motions;
 mod sound;
 mod talk;
+mod tick;
 mod versus;
 mod world;
 
@@ -1403,6 +1404,8 @@ struct Game {
     /// player's tag is asked for each time the pointer comes onto them, as what the server sends unasked can be stale.
     name_tags: HashMap<u32, net::NameTag>,
     pointed: Option<u32>,
+    /// `pointed` as the last tick saw it, so the tag is asked once each time.
+    last_pointed: Option<u32>,
     /// The friend list, and someone asking to be friends (account, character, name).
     friends: Vec<net::Friend>,
     friend_asked: Option<(u32, u32, String)>,

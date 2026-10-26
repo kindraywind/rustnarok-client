@@ -18,6 +18,8 @@ screenshots in git; `cargo fmt` and `clippy -D warnings` stay clean; dev switche
     `perform_shortcut`.
   - `events.rs`: `map_event` (one arm per `net::MapEvent`), `net_event`, and `enter_map`, which builds `Game`.
   - `draw.rs`: `redraw_game` draws the world, units, effects and every window, in order.
+  - `tick.rs`: `tick` runs right before each frame: the game's work that needs no GPU (sounds, companions, saved
+    window places, units that leave, hits that land, the player's walk, the pointed player's name request).
   - `game.rs`: `impl Game`: the Esc order, what's under the pointer (`on_ui`, `window_at`), questions, actions.
   - `ui/`: one module per window (`ui/inventory.rs`, `ui/party.rs`, `ui/memorial.rs`, …) holds its state, layout,
     drawing and presses. `ui/window.rs` has what windows share, and `ui/escape.rs` has the Esc order's `WindowId`.
