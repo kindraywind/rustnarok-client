@@ -1305,13 +1305,14 @@ impl App {
                     let [east, north] = damage.drift.map(|sign| sign * motion.drift);
                     [feet[0] + east, feet[1] + motion.height, feet[2] + north]
                 };
+                let extended_damage = self.graphics.extended_damage;
                 // Digits stand a step in front of a critical's burst behind them.
                 let digits_layer = DepthLayer { nudge: 1.0, ..DepthLayer::default() };
                 let number = |motion: actor::NumberMotion, color: [f32; 3]| {
                     let tint = [color[0], color[1], color[2], motion.alpha];
                     let anchor = at(&motion);
                     digits
-                        .place(damage.amount, motion.scale)
+                        .place(damage.amount, motion.scale, extended_damage)
                         .into_iter()
                         .map(move |(texture, position, size)| (texture, anchor, position, size, tint, 0.0, digits_layer))
                 };
@@ -2043,7 +2044,8 @@ impl App {
         }
         let mut layers = vec![base, announce_layer, chat_layer];
         let mut preview = Some(preview);
-        let cooling = skills::Cooling { cooldowns: &game.cooldowns, fan: &assets.fan, now: control::now() };
+        let numbers = self.graphics.cooldown_numbers.then_some(font);
+        let cooling = skills::Cooling { cooldowns: &game.cooldowns, fan: &assets.fan, now: control::now(), numbers };
         // An inventory item being dragged: where it could be worn, for the equipment window's ovals.
         let dropping = match game.dragging {
             Some((Dragged::Item(index), _, true)) => game.inventory.get(index).map(|item| item.location),

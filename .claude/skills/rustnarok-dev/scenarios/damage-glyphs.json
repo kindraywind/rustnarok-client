@@ -1,0 +1,305 @@
+{
+  "about": "Extended damage numbers, the game's option (Game Settings' Effect page, on at first, as in the game): a hit of a million and up shows in thousands with the K glyph (about 5,000,000 → 4900K or so), a hundred million and up in millions with M (about 150,000,000 → 151M or so); switched off, numbers stop at 999999. Main showed every digit. The player keeps hitting a training dummy with @bigatk's base ATK and damage bonus (npc/big-numbers.txt).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp gef_fild07 61 229"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/big-numbers.txt"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/big-numbers.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "say": "@warp gef_fild07 61 229"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            61,
+            229
+          ]
+        },
+        "unit": {
+          "name": "Dummy 10",
+          "cell": [
+            64,
+            229
+          ]
+        }
+      }
+    },
+    {
+      "say": "@bigatk 15000"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_unit_id": {
+        "kind": "monster",
+        "name": "Dummy 10"
+      },
+      "attack": true
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "cmd": {
+        "cmd": "wait",
+        "packet": "0x08c8",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 560
+      }
+    },
+    {
+      "shot": "damage-thousands",
+      "crop": [
+        450,
+        150,
+        400,
+        300
+      ],
+      "threshold": 5
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings_tab:1"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "switch:4"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.extended_damage": false
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "settings_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "cmd": {
+        "cmd": "wait",
+        "packet": "0x08c8",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 560
+      }
+    },
+    {
+      "shot": "damage-basic",
+      "crop": [
+        450,
+        150,
+        400,
+        300
+      ],
+      "threshold": 5
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings_tab:1"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "switch:4"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.extended_damage": true
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "settings_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@bigatk 460000"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.extended_damage": true
+        }
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "wait",
+        "packet": "0x08c8",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 560
+      }
+    },
+    {
+      "shot": "damage-millions",
+      "crop": [
+        450,
+        150,
+        400,
+        300
+      ],
+      "threshold": 5
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "say": "@bigatk 0"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/big-numbers.txt"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

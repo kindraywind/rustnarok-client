@@ -1405,7 +1405,8 @@ enum Pace {
     Hold(f32),
 }
 
-/// The client's damage numbers (data\sprite\이팩트\숫자.spr), one image per digit, and its MISS label (msg.spr).
+/// The client's damage numbers (data\sprite\이팩트\숫자.spr), one image per digit then K and M, and its MISS label
+/// (msg.spr).
 pub struct Digits {
     digits: Vec<Texture>,
     pub miss: Texture,
@@ -1414,16 +1415,20 @@ pub struct Digits {
 impl Digits {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Option<Self> {
         let spr = Spr::parse(&grf.read("data\\sprite\\이팩트\\숫자.spr").ok()?).ok()?;
-        let digits = (0..10).map(|digit| Some(gpu.texture(&spr.image(0, digit, None)?, false))).collect::<Option<_>>()?;
+        // 0 to 9 must be there; K and M (10, 11) may not.
+        let digits: Vec<Texture> = (0..12).map_while(|glyph| spr.image(0, glyph, None).map(|image| gpu.texture(&image, false))).collect();
+        if digits.len() < 10 {
+            return None;
+        }
         let messages = Spr::parse(&grf.read("data\\sprite\\이팩트\\msg.spr").ok()?).ok()?;
         let frame = |index: usize| messages.image(0, index, None).or_else(|| messages.image(1, index, None)).map(|image| gpu.texture(&image, false));
         Some(Self { digits, miss: frame(0)? })
     }
 
-    /// The digits of `number` centered on the anchor: texture, top-left offset and size in sprite pixels. Each digit is
-    /// centred on its own slot, `DIGIT_STEP` apart, whatever its width.
-    pub fn place(&self, number: i32, scale: f32) -> Vec<(&Texture, [f32; 2], [f32; 2])> {
-        let digits: Vec<&Texture> = number.unsigned_abs().to_string().bytes().map(|digit| &self.digits[usize::from(digit - b'0')]).collect();
+    /// The glyphs of `number` (`number_glyphs`) centered on the anchor: texture, top-left offset and size in sprite
+    /// pixels. Each is centred on its own slot, `DIGIT_STEP` apart, whatever its width.
+    pub fn place(&self, number: i32, scale: f32, extended: bool) -> Vec<(&Texture, [f32; 2], [f32; 2])> {
+        let digits: Vec<&Texture> = number_glyphs(number.unsigned_abs(), extended).into_iter().filter_map(|glyph| self.digits.get(glyph)).collect();
         let count = digits.len();
         digits
             .into_iter()
@@ -1435,6 +1440,19 @@ impl Digits {
             })
             .collect()
     }
+}
+
+/// The glyphs a number shows as: its digits (0 to 9); with the game's extended numbers a million and up in thousands
+/// then K (10), a hundred million and up in millions then M (11); without, at most 999,999.
+// ponytail: heals go the same way as damage.
+pub fn number_glyphs(number: u32, extended: bool) -> Vec<usize> {
+    let (value, unit) = match number {
+        number if extended && number >= 100_000_000 => (number / 1_000_000, Some(11)),
+        number if extended && number >= 1_000_000 => (number / 1000, Some(10)),
+        number if extended => (number, None),
+        number => (number.min(999_999), None),
+    };
+    value.to_string().bytes().map(|digit| usize::from(digit - b'0')).chain(unit).collect()
 }
 
 /// The middle of digit `index` (the first, leftmost, is 0) of a `count`-digit number, in sprite pixels from the
@@ -5158,5 +5176,18 @@ mod tests {
         second.hallucination(true);
         second.step_blur(tick(1), || false);
         assert!(second.hallu_due && second.hallu_age == 1);
+    }
+
+    #[test]
+    fn damage_numbers_shorten_as_the_games_extended_ones() {
+        let glyphs = |number, extended| number_glyphs(number, extended);
+        assert_eq!(glyphs(999_999, true), [9, 9, 9, 9, 9, 9]);
+        // A million and up: thousands then K (glyph 10); a hundred million and up: millions then M (11).
+        assert_eq!(glyphs(1_234_567, true), [1, 2, 3, 4, 10]);
+        assert_eq!(glyphs(99_999_999, true), [9, 9, 9, 9, 9, 10]);
+        assert_eq!(glyphs(123_456_789, true), [1, 2, 3, 11]);
+        // Without them, numbers stop at 999,999.
+        assert_eq!(glyphs(1_234_567, false), [9, 9, 9, 9, 9, 9]);
+        assert_eq!(glyphs(42, false), [4, 2]);
     }
 }

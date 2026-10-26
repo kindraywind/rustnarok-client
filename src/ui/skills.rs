@@ -351,11 +351,13 @@ impl Cooldowns {
     }
 }
 
-/// What the hotkey bar and the skill window need to show cooldowns: the blocks, the fan's pictures by step, the time.
+/// What the hotkey bar and the skill window need to show cooldowns: the blocks, the fan's pictures by step, the time,
+/// and the font when the Extras' cooldown numbers are on.
 pub struct Cooling<'a> {
     pub cooldowns: &'a Cooldowns,
     pub fan: &'a [Texture],
     pub now: Instant,
+    pub numbers: Option<&'a Font>,
 }
 
 impl<'a> Cooling<'a> {
@@ -363,7 +365,19 @@ impl<'a> Cooling<'a> {
     pub fn draw(&self, layer: &mut Layer<'a>, skill: u16, corner: [f32; 2], size: [f32; 2]) {
         let (Some(passed), Some(last)) = (self.cooldowns.share(skill, self.now), self.fan.len().checked_sub(1)) else { return };
         layer.sprites.push((&self.fan[((passed * last as f32) as usize).min(last)], corner, size));
+        // The Extras' cooldown numbers: the time left in the middle.
+        if let (Some(font), Some(left)) = (self.numbers, self.cooldowns.left(skill, self.now)) {
+            let text = cooldown_text(left);
+            let middle = [((size[0] - font.width(&text)) / 2.0).round(), ((size[1] - font.line_height()) / 2.0).round()];
+            layer.outlined(&text, offset(corner, middle));
+        }
     }
+}
+
+/// A cooldown's time left as it shows on its icon: whole seconds rounded up, or whole minutes rounded up from a minute.
+pub fn cooldown_text(left: Duration) -> String {
+    let seconds = left.as_millis().div_ceil(1000);
+    if seconds > 60 { format!("{}m", seconds.div_ceil(60)) } else { seconds.to_string() }
 }
 
 pub fn icon_path(info: &SkillInfo) -> String {
@@ -1455,5 +1469,12 @@ mod tests {
         assert_eq!(refusal_lines(19, 5, 71, true), [(1536, Fill::ItemCount(5))]);
         assert_eq!(refusal_lines(19, 3, 90, true), [(2997, Fill::Number(3))]);
         assert_eq!((ids(19, 731, 86, true), ids(19, 0, 38, true), ids(19, 0, 200, true)), (vec![731], vec![], vec![]));
+    }
+
+    #[test]
+    fn cooldown_numbers_round_up() {
+        let text = |ms| cooldown_text(Duration::from_millis(ms));
+        assert_eq!((text(15_000), text(14_001), text(300), text(60_000)), ("15".into(), "15".into(), "1".into(), "60".into()));
+        assert_eq!((text(60_001), text(300_000)), ("2m".into(), "5m".into()));
     }
 }

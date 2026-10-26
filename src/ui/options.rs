@@ -25,13 +25,17 @@ pub struct GraphicsSettings {
     pub fog: bool,
     /// /mable: Spirit Marble's spirits drawn.
     pub mable: bool,
+    /// The game's extended damage numbers (`bExtendDamage`, on at first): a million and up in thousands with K, a
+    /// hundred million and up in millions with M; off, numbers stop at 999,999.
+    pub extended_damage: bool,
     /// This client's extras, none of them in the game and all off at first (the Extras tab): a monster's HP on its
-    /// bar, its level after its name, the camera going out much further, and an item's random options in its
-    /// inventory name box.
+    /// bar, its level after its name, the camera going out much further, an item's random options in its inventory
+    /// name box, and the seconds left on a cooling skill's hotkey.
     pub monster_hp: bool,
     pub monster_level: bool,
     pub far_zoom: bool,
     pub item_options: bool,
+    pub cooldown_numbers: bool,
 }
 
 impl Default for GraphicsSettings {
@@ -45,10 +49,12 @@ impl Default for GraphicsSettings {
             fullscreen: false,
             fog: true,
             mable: true,
+            extended_damage: true,
             monster_hp: false,
             monster_level: false,
             far_zoom: false,
             item_options: false,
+            cooldown_numbers: false,
         }
     }
 }
@@ -87,6 +93,8 @@ impl GraphicsSettings {
             monster_level: next(false),
             far_zoom: next(false),
             item_options: next(false),
+            cooldown_numbers: next(false),
+            extended_damage: next(true),
         }
     }
 
@@ -104,6 +112,8 @@ impl GraphicsSettings {
             self.monster_level,
             self.far_zoom,
             self.item_options,
+            self.cooldown_numbers,
+            self.extended_damage,
         ]
         .map(|on| if on { "1" } else { "0" })
         .join(" ");
@@ -159,6 +169,8 @@ mod tests {
             monster_level: true,
             far_zoom: true,
             item_options: true,
+            cooldown_numbers: true,
+            extended_damage: false,
         };
         settings.save_to(&path);
         assert_eq!(GraphicsSettings::load_from(&path), settings);

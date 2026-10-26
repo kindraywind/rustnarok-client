@@ -1,0 +1,17 @@
+// Big damage numbers: a training dummy (it neither moves nor fights back) with 2,000,000,000 HP on gef_fild07 64,229,
+// and @bigatk <n>, which gives the player the most base ATK (65535, rathena's cap) and n % more damage for ten
+// minutes (bonus_script, gone at logout), so one hit shows a number in the millions; @bigatk 0 takes it away. Loaded
+// and unloaded by scenarios/damage-glyphs.json.
+gef_fild07,1,1,0	script	BigNumbers	-1,{
+OnInit:
+	monster "gef_fild07", 64, 229, "--ja--", 2408, 1;
+	setunitdata $@mobid[0], UMOB_MAXHP, 2000000000;
+	setunitdata $@mobid[0], UMOB_HP, 2000000000;
+	bindatcmd "bigatk", strnpcinfo(3)+"::OnAtk";
+	end;
+OnAtk:
+	bonus_script_clear;
+	if (atoi(.@atcmd_parameters$[0]) > 0)
+		bonus_script "{ bonus bBaseAtk,65535; bonus2 bAddRace,RC_All," + .@atcmd_parameters$[0] + "; }", 600, 8;
+	end;
+}
