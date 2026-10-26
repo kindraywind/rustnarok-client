@@ -2585,6 +2585,12 @@ impl Game {
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
     }
 
+    /// The game menu is up and a click here is its, whatever is under it: all but the settings windows it opened and
+    /// the menu button "option", which shuts it.
+    pub(crate) fn menu_takes(&self, cursor: [f32; 2]) -> bool {
+        self.escape.is_some() && !self.settings_at(cursor) && self.basic_info.hit(cursor) != Some(basic_info::Hit::Menu("option"))
+    }
+
     /// Whether the pointer is over the interface (a window, the chat, a dialog, a chat room or shop sign) rather than
     /// the world.
     pub(crate) fn on_ui(&self, cursor: [f32; 2], message: [f32; 2]) -> bool {
