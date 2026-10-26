@@ -1,7 +1,7 @@
 #!/bin/bash
 # Generates the packet length table rathena uses for one PACKETVER (login, char and map packets).
 # Usage: run.sh <rathena dir> <output file> [packetver]
-# packetver defaults to 20220406. 20250402 writes the newer table (src/packet_lengths_20250402.txt).
+# packetver defaults to 20220406. 20250402 writes the newer table (src/net/packet_lengths_20250402.txt).
 # Writes scratch files next to this script.
 set -euo pipefail
 G="$(cd "$(dirname "$0")" && pwd)"

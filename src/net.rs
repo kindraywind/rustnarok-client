@@ -730,15 +730,15 @@ fn load_lengths(table: &str) -> HashMap<u16, i32> {
 /// Packet lengths for one PACKETVER, generated from rathena (see tools/packet-lengths); -1 is variable.
 /// 20250402 and newer use the second table.
 fn lengths_for(version: u32) -> &'static HashMap<u16, i32> {
-    static OLD: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("packet_lengths.txt")));
-    static NEW: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("packet_lengths_20250402.txt")));
+    static OLD: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("net/packet_lengths.txt")));
+    static NEW: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("net/packet_lengths_20250402.txt")));
     if version >= PACKETVER_20250402 { &NEW } else { &OLD }
 }
 
 /// Then the lengths of older packets some servers still send (packet_lengths_extra.txt), so they don't drop the
 /// connection.
 fn packet_length(id: u16) -> Option<i32> {
-    static EXTRA: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("packet_lengths_extra.txt")));
+    static EXTRA: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("net/packet_lengths_extra.txt")));
     lengths_for(packetver()).get(&id).or_else(|| EXTRA.get(&id)).copied()
 }
 
