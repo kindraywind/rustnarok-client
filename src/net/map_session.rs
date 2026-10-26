@@ -4,7 +4,8 @@ use super::*;
 
 impl MapSession {
     pub fn connect(ticket: &MapTicket, client_tick: u32, mut on_event: impl FnMut(MapEvent) + Send + 'static) -> io::Result<Self> {
-        let mut stream = TcpStream::connect((Ipv4Addr::from(ticket.address.0), ticket.address.1))?;
+        let mut stream = TcpStream::connect_timeout(&(Ipv4Addr::from(ticket.address.0), ticket.address.1).into(), CONNECT_TIMEOUT)?;
+        stream.set_nodelay(true)?;
         let mut enter = Vec::with_capacity(23);
         enter.extend_from_slice(&CZ_ENTER.to_le_bytes());
         for value in [ticket.account_id, ticket.character_id, ticket.login_id1, client_tick, 0] {

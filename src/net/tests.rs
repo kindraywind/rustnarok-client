@@ -112,6 +112,22 @@ fn fails_a_login_reply_too_short_to_read() {
 }
 
 #[test]
+fn connects_to_the_char_and_map_servers_with_nodelay() {
+    // A connect that really times out needs a peer that drops SYNs, which a unit test can't make reliably: this checks
+    // the limit and that both connects set nodelay.
+    assert_eq!(CONNECT_TIMEOUT, Duration::from_secs(10));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = CharServer { ip: [127, 0, 0, 1], port, name: String::new(), users: 0, kind: 0, new: 0 };
+    let login = LoginAccepted { login_id1: 1, account_id: 2, login_id2: 3, sex: 0, web_token: String::new(), char_servers: Vec::new() };
+    let char_session = CharSession::connect(&server, &login, |_| {}).unwrap();
+    assert!(char_session.stream.nodelay().unwrap());
+    let ticket = MapTicket { address: ([127, 0, 0, 1], port), account_id: 2, character_id: 4, login_id1: 1, sex: 0 };
+    let map_session = MapSession::connect(&ticket, 0, |_| {}).unwrap();
+    assert!(map_session.stream.0.nodelay().unwrap());
+}
+
+#[test]
 fn skips_a_packet_too_short_to_read() {
     let [low, high] = ZC_NOTIFY_CHAT.to_le_bytes();
     assert!(decode_or_skip(&[low, high, 4, 0], decode_map_packet).is_none());

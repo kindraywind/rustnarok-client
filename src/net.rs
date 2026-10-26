@@ -394,6 +394,9 @@ const HC_REFUSE_ENTER: u16 = 0x006C;
 const PING: u16 = 0x0187;
 /// How often the char connection is kept alive: rathena drops one silent for `stall_time` (60 s).
 pub const CHAR_PING: Duration = Duration::from_millis(12_000);
+/// How long a char or map connect waits for the server before giving up, so a server that drops packets can't hold
+/// the window for the OS's own timeout (about 75 s on macOS).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HC_NOTIFY_ZONESVR: u16 = 0x0AC5;
 const CH_MAKE_CHAR: u16 = 0x0A39;
 const HC_ACCEPT_MAKECHAR: u16 = 0x0B6F;
@@ -526,7 +529,8 @@ pub struct CharSession {
 
 impl CharSession {
     pub fn connect(server: &CharServer, login: &LoginAccepted, mut on_event: impl FnMut(CharEvent) + Send + 'static) -> io::Result<Self> {
-        let mut stream = TcpStream::connect((Ipv4Addr::from(server.ip), server.port))?;
+        let mut stream = TcpStream::connect_timeout(&(Ipv4Addr::from(server.ip), server.port).into(), CONNECT_TIMEOUT)?;
+        stream.set_nodelay(true)?;
         let mut enter = Vec::with_capacity(17);
         enter.extend_from_slice(&CH_ENTER.to_le_bytes());
         for value in [login.account_id, login.login_id1, login.login_id2] {
