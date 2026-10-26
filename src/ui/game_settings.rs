@@ -64,15 +64,24 @@ const ROW_TEXT: f32 = 138.0;
 const ROW_TEXT_WIDTH: f32 = 252.0;
 // ponytail: the game's rows come from GameSettings.lub, which this data lacks; these are the switches this client
 // has, titled and described by their messages, with checkboxes for the game's toggle images.
-/// Effects (/effect), the aura shown (/aura2), the mini aura (/aura), the screen shaking (/quake).
-const SWITCHES: [((usize, &str), usize); 4] =
-    [((3172, "Effects"), 37), ((4160, "Show aura"), 3162), ((4163, "Mini aura"), 710), ((2805, "Screen shake"), 3161)];
+/// A message id and the words that stand in when the table's line is empty.
+type Worded = (usize, &'static str);
+/// Effects (/effect), the aura shown (/aura2), the mini aura (/aura), the screen shaking (/quake), the extended damage
+/// numbers (the game's option 0x10b; the English table lacks its lines, 4164–4166).
+const SWITCHES: [(Worded, Worded); 5] = [
+    ((3172, "Effects"), (37, "")),
+    ((4160, "Show aura"), (3162, "")),
+    ((4163, "Mini aura"), (710, "")),
+    ((2805, "Screen shake"), (3161, "")),
+    ((4164, "Extended damage"), (usize::MAX, "Big damage in thousands (K) or millions (M)")),
+];
 /// The Extras page's rows, laid out as the Effect page's: title and description (`extras`, `extra`).
-const EXTRA_ROWS: [(&str, &str); 4] = [
+const EXTRA_ROWS: [(&str, &str); 5] = [
     ("Monster HP", "A hurt monster's HP in numbers under its bar"),
     ("Monster level", "A monster's level after its name"),
     ("Far zoom", "The camera goes out much further"),
     ("Item options", "An item's random options in its name box"),
+    ("Cooldown numbers", "Seconds left on a cooling skill's hotkey"),
 ];
 /// The screen mode group, Graphics page y 160: "Screen mode", the Full screen and Window radios at (150, 12) and
 /// (270, 12), their labels 17 px right.
@@ -363,18 +372,18 @@ impl GameSettings {
                 }
             }
             EFFECT | EXTRAS => {
-                let rows: Vec<(String, &str, bool)> = if self.tab == EFFECT {
+                let rows: Vec<(String, String, bool)> = if self.tab == EFFECT {
                     let title = |title| worded(title).trim_end_matches(" ON").to_owned();
-                    SWITCHES.iter().enumerate().map(|(row, &(title_id, text))| (title(title_id), message(text), switch_on(graphics, row))).collect()
+                    SWITCHES.iter().enumerate().map(|(row, &(title_id, text))| (title(title_id), worded(text), switch_on(graphics, row))).collect()
                 } else {
-                    EXTRA_ROWS.iter().zip(extras(graphics)).map(|(&(title, text), on)| (title.to_owned(), text, on)).collect()
+                    EXTRA_ROWS.iter().zip(extras(graphics)).map(|(&(title, text), on)| (title.to_owned(), text.to_owned(), on)).collect()
                 };
                 for (row, (title, text, on)) in rows.into_iter().enumerate() {
                     let top = 1.0 + row as f32 * ROW;
                     let check = &options.check[usize::from(on)];
                     layer.sprites.push((check, page([SWITCH[0], top + SWITCH[1] + 2.0]), check.size));
                     layer.texts.push((window::fit(font, &title, ROW_TEXT - ROW_TITLE - 4.0), page([ROW_TITLE, top + 6.0]), black));
-                    layer.texts.push((window::fit(font, text, ROW_TEXT_WIDTH), page([ROW_TEXT, top + 6.0]), black));
+                    layer.texts.push((window::fit(font, &text, ROW_TEXT_WIDTH), page([ROW_TEXT, top + 6.0]), black));
                 }
             }
             GRAPHICS => {
@@ -401,19 +410,21 @@ pub fn reset(sound: &mut Settings, graphics: &mut GraphicsSettings) {
     *graphics = GraphicsSettings { fullscreen: graphics.fullscreen, ..GraphicsSettings::default() };
 }
 
-/// Whether an Effect page switch is on: effects shown, the aura shown, the mini aura, the screen shaking.
+/// Whether an Effect page switch is on: effects shown, the aura shown, the mini aura, the screen shaking, the extended
+/// damage numbers.
 pub fn switch_on(graphics: &GraphicsSettings, row: usize) -> bool {
     match row {
         0 => graphics.effects_on,
         1 => !graphics.aura_off,
         2 => !graphics.aura,
-        _ => graphics.quake,
+        3 => graphics.quake,
+        _ => graphics.extended_damage,
     }
 }
 
-/// The Extras page's switches, in its rows' order: monster HP, monster level, far zoom, item options.
-fn extras(graphics: &GraphicsSettings) -> [bool; 4] {
-    [graphics.monster_hp, graphics.monster_level, graphics.far_zoom, graphics.item_options]
+/// The Extras page's switches, in its rows' order: monster HP, monster level, far zoom, item options, cooldown numbers.
+fn extras(graphics: &GraphicsSettings) -> [bool; 5] {
+    [graphics.monster_hp, graphics.monster_level, graphics.far_zoom, graphics.item_options, graphics.cooldown_numbers]
 }
 
 fn extra(graphics: &mut GraphicsSettings, row: usize) -> &mut bool {
@@ -421,7 +432,8 @@ fn extra(graphics: &mut GraphicsSettings, row: usize) -> &mut bool {
         0 => &mut graphics.monster_hp,
         1 => &mut graphics.monster_level,
         2 => &mut graphics.far_zoom,
-        _ => &mut graphics.item_options,
+        3 => &mut graphics.item_options,
+        _ => &mut graphics.cooldown_numbers,
     }
 }
 
@@ -430,7 +442,8 @@ fn set_switch(graphics: &mut GraphicsSettings, row: usize, on: bool) {
         0 => graphics.effects_on = on,
         1 => graphics.aura_off = !on,
         2 => graphics.aura = !on,
-        _ => graphics.quake = on,
+        3 => graphics.quake = on,
+        _ => graphics.extended_damage = on,
     }
 }
 
@@ -494,6 +507,10 @@ mod tests {
         assert!(graphics.aura_off);
         window.click(Hit::Switch(2), &mut sound, &mut graphics);
         assert!(!graphics.aura && switch_on(&graphics, 2));
+        // The extended damage numbers start on, like the game's.
+        assert!(switch_on(&graphics, 4));
+        window.click(Hit::Switch(4), &mut sound, &mut graphics);
+        assert!(!graphics.extended_damage);
         // Apply does nothing but on the Graphics page, where it sets the screen mode picked.
         assert_eq!(window.click(Hit::Apply, &mut sound, &mut graphics), None);
         window.click(Hit::Tab(GRAPHICS), &mut sound, &mut graphics);
@@ -511,23 +528,31 @@ mod tests {
     fn extras_start_off_and_switch_on_their_own_page() {
         let mut window = GameSettings::new([1024.0, 768.0], false);
         let (mut sound, mut graphics) = (Settings::default(), GraphicsSettings::default());
-        assert_eq!(extras(&graphics), [false; 4]);
+        assert_eq!(extras(&graphics), [false; 5]);
         window.click(Hit::Tab(EXTRAS), &mut sound, &mut graphics);
         let corner = window.frame.position;
         let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
         assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 2.0 * ROW + 8.0])), Some(Hit::Switch(2)));
-        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 4.0 * ROW + 8.0])), Some(Hit::Window), "four rows only");
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 5.0 * ROW + 8.0])), Some(Hit::Window), "five rows only");
         assert_eq!(window.click(Hit::Switch(2), &mut sound, &mut graphics), Some(Action::Graphics));
         assert!(graphics.far_zoom);
         window.click(Hit::Switch(0), &mut sound, &mut graphics);
         window.click(Hit::Switch(1), &mut sound, &mut graphics);
         window.click(Hit::Switch(3), &mut sound, &mut graphics);
-        assert_eq!(extras(&graphics), [true; 4]);
+        window.click(Hit::Switch(4), &mut sound, &mut graphics);
+        assert_eq!(extras(&graphics), [true; 5]);
         // The Effect page's switches didn't move.
-        let all = GraphicsSettings { monster_hp: true, monster_level: true, far_zoom: true, item_options: true, ..GraphicsSettings::default() };
+        let all = GraphicsSettings {
+            monster_hp: true,
+            monster_level: true,
+            far_zoom: true,
+            item_options: true,
+            cooldown_numbers: true,
+            ..GraphicsSettings::default()
+        };
         assert_eq!(graphics, all);
         assert!(window.button_boxes().iter().any(|(name, _)| name == "switch:2"));
         reset(&mut sound, &mut graphics);
-        assert_eq!(extras(&graphics), [false; 4]);
+        assert_eq!(extras(&graphics), [false; 5]);
     }
 }
