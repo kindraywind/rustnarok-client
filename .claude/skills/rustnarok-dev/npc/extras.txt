@@ -1,0 +1,8 @@
+// Game Settings' Extras: a training dummy (it neither moves nor fights back) at half HP on gef_fild07 64,229, so its
+// bar and HP show. Loaded and unloaded by scenarios/extras.json.
+gef_fild07,1,1,0	script	ExtrasDummy	-1,{
+OnInit:
+	monster "gef_fild07", 64, 229, "--ja--", 2408, 1;
+	setunitdata $@mobid[0], UMOB_HP, 50000000;
+	end;
+}

@@ -460,6 +460,8 @@ impl App {
         let ground_gat = -game.world.ground_under(player_feet)[1];
         game.weather.step(now, player_feet, ground_gat);
         let bangs = game.weather.take_bangs(now);
+        // Game Settings' Extras (or their Reset) can switch the far zoom any time.
+        game.camera_goal.set_far(self.graphics.far_zoom);
         game.camera_goal.drag_frame();
         game.camera_goal.ease(&mut game.camera, now.duration_since(game.last_frame), player_feet, game.camera_snap);
         // An earthquake shakes the view sideways, in and out and in tilt, the other way each frame, and snaps back when it ends.
@@ -1435,6 +1437,10 @@ impl App {
                     };
                     name_block = Some((lines, feet, color, emblem.filter(|_| game.show_emblems), siege));
                 }
+                // The Extras' monster level after its name.
+                None if actor.kind == MONSTER && actor.level > 0 && self.graphics.monster_level => {
+                    labels.push((format!("{} (Lv {})", crate::actor::shown_name(shown_name), actor.level), feet, color));
+                }
                 None => labels.push((shown_name.to_owned(), feet, color)),
             }
             if actor.kind == PLAYER && game.pointed != pointed_id {
@@ -1579,6 +1585,21 @@ impl App {
             game.bars_drawn.push((whose, [x, y, rects[0].1[2], rects[0].1[3]], rows.iter().map(|&(value, max, ..)| filled(value, max)).collect()));
             for (texture, [left, top, width, height]) in rects {
                 base.sprites.push((texture, [x + left, y + top], [width, height]));
+            }
+        }
+        // The Extras' monster HP: a hurt monster's (the server tells no other's) in numbers on a line under its bar, or
+        // under its name while that shows (hovered).
+        if self.graphics.monster_hp {
+            for (id, &(hp, max)) in &game.unit_hp {
+                let monster = game.units.get(id).is_some_and(|actor| actor.kind == MONSTER && actor.remove_at.is_none());
+                let Some(&feet) = feet_of.get(id).filter(|_| monster) else { continue };
+                let Some(bar) = sprite_point(feet, overhead::BAR_BELOW) else { continue };
+                let under_name = sprite_point(feet, overhead::NAME_BELOW)
+                    .filter(|_| pointed_id == Some(*id))
+                    .map(|point| overhead::label_corner(point, 0.0, font.line_height(), screen())[1] + overhead::NAME_TEXT_TOP + font.line_height());
+                let text = format!("{hp}/{max}");
+                let top = under_name.unwrap_or(bar[1].trunc() + overhead::HP_LINE_TOP);
+                base.outlined(&text, [bar[0].trunc() - (font.width(&text) / 2.0).round(), top]);
             }
         }
 
@@ -3070,6 +3091,7 @@ impl App {
             blind: game.blind.showing(),
             tint: game.scene.tint(),
             fog: self.graphics.fog,
+            fog_push: if self.graphics.far_zoom { (game.camera.distance - DISTANCE_RANGE[1]).max(0.0) } else { 0.0 },
         };
         if let Some(path) = self.print_screen.take() {
             let _ = path.parent().map(std::fs::create_dir_all);

@@ -101,6 +101,8 @@ pub fn cast_fill(done: f32) -> f32 {
 pub const BAR_BELOW: f32 = 19.0 / SCREEN_PER_SPRITE;
 pub const NAME_BELOW: f32 = 32.0 / SCREEN_PER_SPRITE;
 pub const NAME_TEXT_TOP: f32 = 4.0;
+/// The Extras' monster HP line, in screen px under the top of the monster's 5 px bar.
+pub const HP_LINE_TOP: f32 = 6.0;
 /// Bars under units are 60 px wide: a 3 px row a value, with 1 px of border around and between the rows.
 pub const BAR_WIDTH: f32 = 60.0;
 

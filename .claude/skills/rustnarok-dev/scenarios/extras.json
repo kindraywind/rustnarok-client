@@ -1,0 +1,521 @@
+{
+  "about": "Game Settings' Extras tab: switches the game doesn't have, all off at first, in a sixth tab in the 45 px right of Other. Here all three go on: a hurt monster's HP in numbers right of its bar (a half-HP training dummy, npc/extras.txt), its level after its name on hover, and the camera out to 800 (wheeled out 30 steps; /zoom's 480 is the game's furthest). Main has no Extras tab.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp gef_fild07 61 229"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/extras.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "say": "@warp gef_fild07 61 229"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            61,
+            229
+          ]
+        },
+        "unit": {
+          "name": "Dummy 10",
+          "cell": [
+            64,
+            229
+          ]
+        }
+      }
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings_tab:5"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.tab": 5,
+          "settings.monster_hp": false,
+          "settings.monster_level": false,
+          "settings.far_zoom": false
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "extras-off",
+      "crop": [
+        302,
+        199,
+        420,
+        370
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "switch:0"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "switch:1"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "switch:2"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.monster_hp": true,
+          "settings.monster_level": true,
+          "settings.far_zoom": true
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "extras-on",
+      "crop": [
+        302,
+        199,
+        420,
+        370
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "settings_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": {
+        "unit": "Dummy 10"
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "shot": "extras-dummy",
+      "crop": [
+        430,
+        330,
+        340,
+        150
+      ],
+      "threshold": 5
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "wheel": [
+        512,
+        400,
+        -1
+      ]
+    },
+    {
+      "wait": 40
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "wait": 2500
+    },
+    {
+      "expect": {
+        "state": {
+          "camera.distance": 800.0
+        }
+      }
+    },
+    {
+      "shot": "extras-far",
+      "threshold": 5
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/extras.txt"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
