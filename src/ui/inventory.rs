@@ -213,8 +213,9 @@ impl Assets {
     }
 }
 
-/// The inventory's two boxes, kept with the settings (`lock_drop` then `compare`, each 0 or 1).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// The inventory's two boxes, kept with the settings (`lock_drop` then `compare`, each 0 or 1). Compare starts on when
+/// it was never saved, as in the game (`ItemComparison`, on when unset).
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Boxes {
     pub lock_drop: bool,
     pub compare: bool,
@@ -224,7 +225,7 @@ impl Boxes {
     pub fn parse(text: &str) -> Self {
         let mut words = text.split_whitespace();
         let on = |word: Option<&str>| word == Some("1");
-        Self { lock_drop: on(words.next()), compare: on(words.next()) }
+        Self { lock_drop: on(words.next()), compare: words.next().is_none_or(|word| word == "1") }
     }
 
     pub fn text(self) -> String {
@@ -236,7 +237,7 @@ impl Boxes {
     }
 
     pub fn load() -> Self {
-        Self::path().and_then(|path| std::fs::read_to_string(path).ok()).map(|text| Self::parse(&text)).unwrap_or_default()
+        Self::path().and_then(|path| std::fs::read_to_string(path).ok()).map_or(Self::parse(""), |text| Self::parse(&text))
     }
 
     pub fn save(self) {
@@ -1312,7 +1313,8 @@ mod tests {
         assert!(may_ground_drop(false));
         assert!(!may_ground_drop(true));
         assert_eq!(Boxes::parse("1 0"), Boxes { lock_drop: true, compare: false });
+        assert_eq!(Boxes::parse(""), Boxes { lock_drop: false, compare: true });
         assert_eq!(Boxes::parse("0 1").text(), "0 1");
-        assert_eq!(Boxes::parse("").text(), "0 0");
+        assert_eq!(Boxes::parse("").text(), "0 1");
     }
 }

@@ -28,8 +28,6 @@
     {"click_on": {"inventory_item": 2101}, "count": 2},
     {"wait": 800},
     {"expect": {"inventory_has": [{"id": 2101, "worn": 32, "options": [[3, 1, 0], [10, 3, 0], [161, 3, 0]]}]}},
-    {"click_on": {"button": "compare"}},
-    {"wait": 200},
     {"click_on": {"inventory_item": 2101}, "button": "right"},
     {"wait": 300},
     {"expect": {"state": {"item_window": 2101, "item_window_box.3": 317.0}}},

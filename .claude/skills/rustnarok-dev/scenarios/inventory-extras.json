@@ -41,8 +41,6 @@
     {"click_on": {"inventory_item": 1101}, "count": 2},
     {"wait": 800},
     {"expect": {"inventory_has": [{"id": 1101, "worn": 2}, {"id": 1101, "worn": 0}]}},
-    {"click_on": {"button": "compare"}},
-    {"wait": 200},
     {"click_on": {"inventory_item": 1101}, "button": "right"},
     {"wait": 200},
     {"expect": {"state": {"item_window": 1101}}}, {"move": [1000, 750]}, {"shot": "compare-sword", "crop": [0, 110, 580, 330]},
