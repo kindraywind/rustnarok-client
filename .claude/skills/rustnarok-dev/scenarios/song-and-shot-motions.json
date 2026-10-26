@@ -1,0 +1,478 @@
+{
+  "about": "Skill motions as the game's tables give them. A Bard's Whistle plays the song's own motion, the skill pose's action, not the Bard's ready stance (main swapped the stance in). A Sniper's Sharp Shooting draws the bow through its cast (the third swing's action) instead of the cast pose. Each is shot partway through; npc/big-numbers.txt gives the dummy to shoot at.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp gef_fild07 61 229"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/big-numbers.txt"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/big-numbers.txt"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "say": "@warp gef_fild07 61 229"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "player.cell": [
+            61,
+            229
+          ]
+        },
+        "unit": {
+          "name": "Dummy 10",
+          "cell": [
+            64,
+            229
+          ]
+        }
+      }
+    },
+    {
+      "drag_on": [
+        {
+          "hotkey": 0
+        },
+        {
+          "point": [
+            700,
+            500
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "hotkey": 1
+        },
+        {
+          "point": [
+            700,
+            500
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "hotkey": 2
+        },
+        {
+          "point": [
+            700,
+            500
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@job 19"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@item 1901"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "button": "tab:equip"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "inventory_item": 1901
+      },
+      "count": 2
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "drag_on": [
+        {
+          "skill": 319
+        },
+        {
+          "hotkey": 1
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "hotkeys": {
+          "1": 319
+        }
+      }
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "wait_for": {
+        "packet": "0x09cb",
+        "pause": true,
+        "ms": 8000,
+        "do": {
+          "cmd": "key",
+          "key": "F2"
+        }
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 200
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "player.action": 12
+        }
+      }
+    },
+    {
+      "shot": "bard-song",
+      "crop": [
+        412,
+        264,
+        200,
+        180
+      ],
+      "threshold": 5
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "say": "@job 4012"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@item 1701"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 1750 50"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "button": "tab:equip"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "inventory_item": 1701
+      },
+      "count": 2
+    },
+    {
+      "wait": 800
+    },
+    {
+      "click_on": {
+        "button": "tab:etc"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "inventory_item": 1750
+      },
+      "count": 2
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "drag_on": [
+        {
+          "skill": 382
+        },
+        {
+          "hotkey": 2
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "hotkeys": {
+          "2": 382
+        }
+      }
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F3"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_unit": {
+        "kind": "monster",
+        "name": "Dummy 10"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b1a",
+        "pause": true,
+        "ms": 5000
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 400
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "player.action": 11
+        }
+      }
+    },
+    {
+      "shot": "sharpshooting-cast",
+      "crop": [
+        412,
+        264,
+        200,
+        180
+      ],
+      "threshold": 5
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 2000
+    },
+    {
+      "drag_on": [
+        {
+          "hotkey": 0
+        },
+        {
+          "point": [
+            700,
+            500
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "hotkey": 1
+        },
+        {
+          "point": [
+            700,
+            500
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "hotkey": 2
+        },
+        {
+          "point": [
+            700,
+            500
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/big-numbers.txt"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

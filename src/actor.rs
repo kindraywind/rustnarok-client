@@ -2909,6 +2909,13 @@ impl Actor {
         matches!(self.animation(now), (playing, Timing::Once(..) | Timing::Span(_)) if playing == action)
     }
 
+    /// `action` on its last frame from `now` until the next motion (Meteor Storm's caster).
+    pub fn hold_last(&mut self, action: usize, now: Instant) {
+        let length = self.sprites.as_ref().and_then(|sprites| sprites.index_ms(action * 8 + usize::from(self.direction % 8))).unwrap_or(0.0);
+        // ponytail: "until the next motion" is an hour here; walking or any other motion ends it sooner.
+        self.hold_for(action, now.checked_sub(Duration::from_secs_f32(length / 1000.0)).unwrap_or(now), length + 3_600_000.0);
+    }
+
     /// Back to standing from a held `action` (a cast cut short).
     pub fn stop_holding(&mut self, action: usize) {
         if self.shot.as_ref().is_some_and(|shot| shot.action == action) {

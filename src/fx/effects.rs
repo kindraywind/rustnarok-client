@@ -2415,7 +2415,7 @@ impl Floating {
 
 /// Skills whose splash's other targets still get the whole hit (hit effects, the caster's pose): Napalm Beat, Arrow
 /// Shower, Asura Strike's combo finish, a Taekwon kick, and one newer one.
-// ponytail: the game's list (0xcca5b0) has a few more of the newer jobs'.
+// ponytail: the game's list has a few more of the newer jobs'.
 pub const SPLASH_FULL: [u16; 5] = [11, 47, 273, 413, 732];
 
 /// The hit effect on each hit of damage from a skill's ground unit: Fire Wall's FIREHIT, Magnus Exorcismus's,
