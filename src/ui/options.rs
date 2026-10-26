@@ -25,7 +25,7 @@ pub struct GraphicsSettings {
     pub fog: bool,
     /// /mable: Spirit Marble's spirits drawn.
     pub mable: bool,
-    /// The game's extended damage numbers (`bExtendDamage`, on at first): a million and up in thousands with K, a
+    /// The game's extended damage numbers (on at first): a million and up in thousands with K, a
     /// hundred million and up in millions with M; off, numbers stop at 999,999.
     pub extended_damage: bool,
     /// This client's extras, none of them in the game and all off at first (the Extras tab): a monster's HP on its

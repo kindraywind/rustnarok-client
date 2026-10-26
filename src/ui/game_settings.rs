@@ -67,7 +67,7 @@ const ROW_TEXT_WIDTH: f32 = 252.0;
 /// A message id and the words that stand in when the table's line is empty.
 type Worded = (usize, &'static str);
 /// Effects (/effect), the aura shown (/aura2), the mini aura (/aura), the screen shaking (/quake), the extended damage
-/// numbers (the game's option 0x10b; the English table lacks its lines, 4164–4166).
+/// numbers (the English table lacks their lines, 4164–4166).
 const SWITCHES: [(Worded, Worded); 5] = [
     ((3172, "Effects"), (37, "")),
     ((4160, "Show aura"), (3162, "")),

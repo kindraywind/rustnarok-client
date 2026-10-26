@@ -3028,34 +3028,39 @@ impl Game {
         }
         let (job, kind) = (actor.job, actor.kind);
         let mut hit_ms = None;
-        // A cast without cast time, and Meteor Storm's meteors, leave the caster as it is.
-        let still = match packet {
-            overhead::Shout::Cast => !skill_motions::cast_moves(pace as u32),
-            overhead::Shout::Ground => skill == skill_motions::METEOR_STORM,
-            _ => false,
-        };
+        // A cast without cast time (but Asura Strike's) leaves the caster as it is. Meteor Storm's meteors (and the like)
+        // show it on the third swing's last frame, with no motion.
+        let cast = matches!(packet, overhead::Shout::Cast);
+        let meteor = matches!(packet, overhead::Shout::Ground) && skill_motions::meteor_like(skill);
+        let still = meteor || (cast && !skill_motions::cast_moves(pace as u32, skill));
+        if actor.kind == PLAYER && meteor {
+            actor.hold_last(11, Instant::now());
+        }
         if actor.kind == PLAYER && !still {
             let now = Instant::now();
-            let action = match (packet, skill_motions::motion(skill)) {
-                (overhead::Shout::Cast, _) if skill_motions::cast_standing(skill) => None,
-                (overhead::Shout::Cast, _) => {
+            // A cast plays its motion at its ACT's pace (`pace` is the cast's length then); the others at `pace` times it.
+            let (motion, speed) = if cast { (skill_motions::cast_motion(skill), 1.0) } else { (Some(skill_motions::motion(skill)), pace) };
+            let action = match motion {
+                // The cast pose, held for the cast.
+                None => {
                     actor.hold_for(SKILL_ACTION, now, pace);
                     None
                 }
-                (_, skill_motions::Motion::Keep) => None,
-                (_, skill_motions::Motion::Attack) => Some(actor.attack_motion(tables)),
-                (_, skill_motions::Motion::Throw) => Some(5),
-                (_, skill_motions::Motion::ThirdAttack) => Some(11),
-                (_, skill_motions::Motion::PickUp) => Some(actor::PICKUP),
-                (_, skill_motions::Motion::Skill) if skill_motions::ready_instead(actor.job) => Some(actor::READY),
-                (_, skill_motions::Motion::Skill) => Some(SKILL_ACTION),
+                Some(skill_motions::Motion::Keep) => None,
+                Some(skill_motions::Motion::Attack) => Some(actor.attack_motion(tables)),
+                Some(skill_motions::Motion::Throw) => Some(5),
+                Some(skill_motions::Motion::ThirdAttack) => Some(11),
+                Some(skill_motions::Motion::PickUp) => Some(actor::PICKUP),
+                Some(skill_motions::Motion::Action(action)) => Some(action),
+                Some(skill_motions::Motion::Skill) if skill_motions::ready_instead(actor.job) => Some(actor::READY),
+                Some(skill_motions::Motion::Skill) => Some(SKILL_ACTION),
             };
             if let Some(action) = action {
-                actor.play_at_pace(action, now, pace, false);
+                actor.play_at_pace(action, now, speed, false);
                 let index = action * 8 + usize::from(actor.direction % 8);
                 hit_ms = actor.sprites.as_ref().and_then(|sprites| match action {
-                    SKILL_ACTION => sprites.frame_ms(index, 6, pace),
-                    _ => sprites.hit_ms(index, pace),
+                    SKILL_ACTION => sprites.frame_ms(index, 6, speed),
+                    _ => sprites.hit_ms(index, speed),
                 });
             }
             actor.stand_ready();

@@ -3428,7 +3428,7 @@ impl App {
                 }
                 let goal = if target == me { Some(game.player.cell) } else { game.units.get(&target).map(|actor| actor.cell) };
                 let caster = if source == me { Some(&mut game.player) } else { game.units.get_mut(&source) };
-                if let Some(caster) = caster.filter(|_| skill_motions::cast_moves(cast_ms)) {
+                if let Some(caster) = caster.filter(|_| skill_motions::cast_moves(cast_ms, skill)) {
                     caster.face(goal.unwrap_or([i32::from(cell[0]), i32::from(cell[1])]));
                 }
                 if cast_ms > 0 {
@@ -3443,7 +3443,7 @@ impl App {
                     };
                 }
                 game.skill_motion(source, skill, 0, overhead::Shout::Cast, cast_ms as f32, &self.skill_info, look_tables, &self.messages);
-                if skill_motions::cast_moves(cast_ms) {
+                if skill_motions::cast_moves(cast_ms, skill) {
                     skill_effects(game, skill, "beginCastEffectId", source);
                 }
             }
@@ -3768,9 +3768,9 @@ impl App {
                     }
                     _ => {}
                 }
-                // The caster turns to the cell, but for Meteor Storm's meteors.
+                // The caster turns to the cell, but for Meteor Storm's meteors and the like.
                 let caster = if source == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&source) };
-                if let Some(caster) = caster.filter(|_| skill != skill_motions::METEOR_STORM) {
+                if let Some(caster) = caster.filter(|_| !skill_motions::meteor_like(skill)) {
                     caster.face([i32::from(cell[0]), i32::from(cell[1])]);
                 }
                 game.skill_motion(source, skill, i32::from(level as i16), overhead::Shout::Ground, 1.0, &self.skill_info, look_tables, &self.messages);
