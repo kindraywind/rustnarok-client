@@ -568,7 +568,7 @@ impl App {
             }
         }
         // Skill units on the ground stand on their cell: the numbers of hits on an Ice Wall or a trap, effects on them.
-        for (&id, &(_, cell)) in &game.skill_units {
+        for (&id, &(_, cell, _)) in &game.skill_units {
             feet_of.entry(id).or_insert_with(|| game.world.cell_position(cell.map(f32::from)));
         }
         if let Some(audio) = audio {
@@ -632,7 +632,7 @@ impl App {
 
         // Ice Wall and the traps a hand can break: their cell, grown to an item's least box.
         // ponytail: drawn as effects, they have no sprite to pick by; the cell is the box, as for warps.
-        for (&id, &(_, cell)) in game.skill_units.iter().filter(|(_, (kind, _))| attackable_ground_unit(*kind)) {
+        for (&id, &(_, cell, _)) in game.skill_units.iter().filter(|(_, (kind, ..))| attackable_ground_unit(*kind)) {
             let feet = game.world.cell_position(cell.map(f32::from));
             if let Some([left, top, right, bottom]) = warp_pick_rect(&view, feet) {
                 let sprite = picking::bounds(&[to_screen([left, top]), to_screen([right, bottom])]);

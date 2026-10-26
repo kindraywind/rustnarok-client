@@ -7157,7 +7157,7 @@ mod tests {
         let one = effects.rings_on(7, 321);
         assert!(one > 0);
         let mut units = HashMap::from([(7, crate::actor::Actor::new(String::new(), None, [0, 0], 0, 150))]);
-        let mut skill_units = HashMap::from([(8, (0x83, [0, 0]))]);
+        let mut skill_units = HashMap::from([(8, (0x83, [0, 0], 0))]);
         crate::forget_view(&mut units, &mut skill_units, &mut effects);
         assert!(units.is_empty() && skill_units.is_empty());
         assert_eq!(effects.rings_on(7, 321), 0);

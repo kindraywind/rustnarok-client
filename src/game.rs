@@ -13,9 +13,9 @@ pub(crate) fn unit_blocks(job: u16, walking: bool, hide_option: u32) -> bool {
 
 /// The cells units block for a click: each blocking unit's drawn cell, and an Ice Wall's. Every other ground skill unit
 /// (Safety Wall, Pneuma, Sanctuary, traps, portals, the unseen damage-only ones) can be stood on.
-pub(crate) fn blocked_cells(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u16; 2])>, now: Instant) -> std::collections::HashSet<[i32; 2]> {
+pub(crate) fn blocked_cells(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u16; 2], u8)>, now: Instant) -> std::collections::HashSet<[i32; 2]> {
     let standing = units.values().filter(|actor| unit_blocks(actor.job, actor.moving(), actor.hide_option)).map(|actor| actor::drawn_cell(actor.position(now)));
-    standing.chain(skill_units.values().filter(|(kind, _)| *kind == ICE_WALL_UNIT).map(|(_, cell)| cell.map(i32::from))).collect()
+    standing.chain(skill_units.values().filter(|(kind, ..)| *kind == ICE_WALL_UNIT).map(|(_, cell, _)| cell.map(i32::from))).collect()
 }
 
 /// rathena's UNT_ICEWALL: the one ground skill unit whose cell the server makes unwalkable.
@@ -4463,7 +4463,7 @@ mod tests {
         // An Ice Wall blocks its cell; a dummy unit (0x86), Safety Wall (0x7e), Pneuma (0x85) and a trap (0x8a) don't.
         let mut skill_units = HashMap::new();
         for (id, (kind, cell)) in [(0x8d, [3, 3]), (0x86, [4, 4]), (0x7e, [5, 5]), (0x85, [6, 6]), (0x8a, [7, 7])].into_iter().enumerate() {
-            skill_units.insert(id as u32, (kind, cell));
+            skill_units.insert(id as u32, (kind, cell, 0));
         }
         let taken = blocked_cells(&HashMap::new(), &skill_units, now);
         assert_eq!(taken, std::collections::HashSet::from([[3, 3]]));

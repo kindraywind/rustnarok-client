@@ -1983,7 +1983,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The skill units on the ground standing as models (their UNT_ numbers).
     state["standing_models"] = game.effects.standing_kinds().into();
     // The kinds of skills' units on the ground in sight.
-    let mut kinds: Vec<u32> = game.skill_units.values().map(|&(kind, _)| kind).collect();
+    let mut kinds: Vec<u32> = game.skill_units.values().map(|&(kind, ..)| kind).collect();
     kinds.sort_unstable();
     kinds.dedup();
     state["ground_unit_kinds"] = kinds.into();

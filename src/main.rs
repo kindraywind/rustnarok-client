@@ -567,7 +567,7 @@ fn leave_behind(units: &mut HashMap<u32, Actor>, id: u32) {
 /// A teleport on the same map: rathena sends no vanish for what was in view (`pc_setpos`), only what's in view again
 /// once the load is acknowledged. The units and skills' units go, and with them what plays on them, or each warp seen
 /// again would start another portal on top of its old one.
-fn forget_view(units: &mut HashMap<u32, Actor>, skill_units: &mut HashMap<u32, (u32, [u16; 2])>, effects: &mut effects::Effects) {
+fn forget_view(units: &mut HashMap<u32, Actor>, skill_units: &mut HashMap<u32, (u32, [u16; 2], u8)>, effects: &mut effects::Effects) {
     for id in units.drain().map(|(id, _)| id).chain(skill_units.drain().map(|(id, _)| id)) {
         effects.forget(id);
     }
@@ -967,12 +967,12 @@ const WARP_PICK: [f32; 2] = [59.7, 59.7];
 
 /// A warp portal's pick box on screen (`0..1`, y down: left, top, right, bottom).
 /// Where an attack's target is: a unit still there, or a skill's unit on the ground; none ends the attack.
-fn attack_goal(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u16; 2])>, target: u32) -> Option<[i32; 2]> {
+fn attack_goal(units: &HashMap<u32, Actor>, skill_units: &HashMap<u32, (u32, [u16; 2], u8)>, target: u32) -> Option<[i32; 2]> {
     units
         .get(&target)
         .filter(|actor| actor.remove_at.is_none())
         .map(|actor| actor.cell)
-        .or_else(|| skill_units.get(&target).map(|(_, cell)| cell.map(i32::from)))
+        .or_else(|| skill_units.get(&target).map(|(_, cell, _)| cell.map(i32::from)))
 }
 
 /// Skill units on the ground a plain attack breaks (rathena's `battle_check_target` takes them): Ice Wall, Blast Mine,
@@ -1204,7 +1204,7 @@ struct Game {
     /// Last frame's units dying or fading out on screen, by ID: their sprite's box. They can't be clicked (#1147).
     fading_boxes: HashMap<u32, picking::Rect>,
     /// Skills' units on the ground in view: their unit kind and cell.
-    skill_units: HashMap<u32, (u32, [u16; 2])>,
+    skill_units: HashMap<u32, (u32, [u16; 2], u8)>,
     /// Items lying around, by ground ID.
     ground: HashMap<u32, FloorItem>,
     /// Ground item sprites by resource name.
@@ -7001,7 +7001,7 @@ mod tests {
         assert!(![0x7e, 0x86, 0x8c, 0x90, 0x5173, 0x5178].into_iter().any(attackable_ground_unit));
         // The attack goes for the wall's cell, and ends once the wall is gone.
         let units = HashMap::new();
-        let mut walls = HashMap::from([(3354, (0x8d, [156, 190]))]);
+        let mut walls = HashMap::from([(3354, (0x8d, [156, 190], 0))]);
         assert_eq!(attack_goal(&units, &walls, 3354), Some([156, 190]));
         walls.remove(&3354);
         assert_eq!(attack_goal(&units, &walls, 3354), None);

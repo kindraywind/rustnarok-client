@@ -3782,7 +3782,7 @@ impl App {
                 }
             }
             MapEvent::SkillUnit { id, kind, cell, range, level } => {
-                game.skill_units.insert(id, (kind, cell));
+                game.skill_units.insert(id, (kind, cell, range));
                 if let Some(gpu) = gpu {
                     let at = game.world.cell_position(cell.map(f32::from));
                     game.effects.play_unit(gpu, grf, table, kind, id, at, (range, level), Instant::now());
