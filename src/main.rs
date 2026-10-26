@@ -3704,6 +3704,12 @@ fn aim_use(ground: bool, unit: Option<u32>, cell: Option<[i32; 2]>) -> Option<Sk
     if ground { cell.map(SkillTarget::Cell) } else { unit.map(SkillTarget::Unit) }
 }
 
+/// A wheel event's notch: 1 toward the player (its delta below 0), -1 away, 0 for a zero delta. A trackpad's or
+/// Magic Mouse's gesture starts and ends with a zero delta, and `0.0.signum()` is 1: counted, it scrolled back a notch.
+fn wheel_rows(delta: f64) -> i32 {
+    if delta == 0.0 { 0 } else { -delta.signum() as i32 }
+}
+
 /// The level a wheel turn picks while aiming (rows > 0 is down, lowering it): 1 to the learned level, and only for
 /// skills whose level can be picked.
 fn aim_level(level: u16, learned: u16, rows: i32, separate: bool) -> u16 {
@@ -5057,11 +5063,10 @@ impl ApplicationHandler<NetEvent> for App {
                 self.left_button(event_loop, state);
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let rows = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => -y.signum() as i32,
-                    MouseScrollDelta::PixelDelta(position) => -position.y.signum() as i32,
-                };
-                self.wheel(rows);
+                self.wheel(wheel_rows(match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y.into(),
+                    MouseScrollDelta::PixelDelta(position) => position.y,
+                }));
                 if let Some(gpu) = &self.gpu {
                     gpu.window.request_redraw();
                 }
@@ -6582,6 +6587,12 @@ mod tests {
         // The wheel: up raises, down lowers, 1 to the learned level; not for a skill without a level to pick.
         assert_eq!([aim_level(10, 10, 2, true), aim_level(8, 10, -1, true), aim_level(10, 10, -1, true), aim_level(1, 10, 3, true)], [8, 9, 10, 1]);
         assert_eq!(aim_level(5, 10, 2, false), 5);
+    }
+
+    #[test]
+    fn a_zero_wheel_delta_does_not_scroll() {
+        // A gesture's start and end (0.0, also -0.0) are no notch; any other delta one, its sign flipped.
+        assert_eq!([0.0, -0.0, -0.1, -40.0, 0.1, 3.0].map(wheel_rows), [0, 0, 1, 1, -1, -1]);
     }
 
     #[test]

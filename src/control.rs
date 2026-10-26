@@ -140,11 +140,16 @@ pub enum Command {
         #[serde(default)]
         hold: Option<u64>,
     },
-    /// The wheel at a point: `rows` notches, positive toward the player (scrolls down).
+    /// The wheel at a point: `rows` notches, positive toward the player (scrolls down). Or `pixels`, a trackpad's
+    /// delta as the window gets it (positive scrolls up; 0 is a gesture's start or end), through the window's own
+    /// conversion.
     Wheel {
         x: f32,
         y: f32,
+        #[serde(default)]
         rows: i32,
+        #[serde(default)]
+        pixels: Option<f64>,
     },
     Type {
         text: String,
@@ -621,9 +626,9 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             press(app, event_loop, button, ElementState::Released);
             Ok(Value::Null)
         }
-        Command::Wheel { x, y, rows } => {
+        Command::Wheel { x, y, rows, pixels } => {
             point(app, [x, y]);
-            app.wheel(rows);
+            app.wheel(pixels.map_or(rows, crate::wheel_rows));
             Ok(Value::Null)
         }
         Command::Key { key, repeat, hold: held_ms } => {
@@ -2037,6 +2042,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
     state["storage_rows"] = game.storage.rows().into();
+    state["storage_scroll"] = game.storage.scroll().into();
     // The party window's size, and the rows it shows.
     state["party_window_size"] = json!({"size": game.party_window.size(), "rows": game.party_window.shown_rows()});
     // The guild storage log: null when shut, else its place, tab, page and how many it lists.
@@ -2312,6 +2318,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("storage_log", Fair),
         ("storage_mask", Fair),
         ("storage_rows", Fair),
+        ("storage_scroll", Fair),
         ("storage_title", Fair),
         ("talkie", Test),
         ("targets", Assist),
@@ -2683,7 +2690,8 @@ mod tests {
     #[test]
     fn parses_commands() {
         let parse = |line: &str| serde_json::from_str::<Command>(line);
-        assert_eq!(parse(r#"{"cmd":"wheel","x":390,"y":360,"rows":-2}"#).unwrap(), Command::Wheel { x: 390.0, y: 360.0, rows: -2 });
+        assert_eq!(parse(r#"{"cmd":"wheel","x":390,"y":360,"rows":-2}"#).unwrap(), Command::Wheel { x: 390.0, y: 360.0, rows: -2, pixels: None });
+        assert_eq!(parse(r#"{"cmd":"wheel","x":1,"y":2,"pixels":0}"#).unwrap(), Command::Wheel { x: 1.0, y: 2.0, rows: 0, pixels: Some(0.0) });
         assert_eq!(
             parse(r#"{"cmd":"click","x":512,"y":300.5,"button":"right"}"#).unwrap(),
             Command::Click { x: 512.0, y: 300.5, button: Button::Right, mods: String::new(), count: None }

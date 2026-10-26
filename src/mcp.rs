@@ -49,7 +49,7 @@ fn describe(command: &Command) -> Option<String> {
             format!("click unit {id}{side}{times}{mods}")
         }
         Command::Drag { from, to, .. } => format!("drag {} -> {}", at(&from[0], &from[1]), at(&to[0], &to[1])),
-        Command::Wheel { x, y, rows } => format!("wheel {} {rows}", at(x, y)),
+        Command::Wheel { x, y, rows, .. } => format!("wheel {} {rows}", at(x, y)),
         Command::Key { key, .. } => format!("key {key}"),
         Command::Type { text } => format!("type {text}"),
         Command::Say { text } => format!("say {text}"),
