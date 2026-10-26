@@ -5330,21 +5330,33 @@ fn set_dock_icon() {
     }
 }
 
+/// Appends `text` to the crash log at `path`. A log already over `cap` bytes first moves to `crash.log.old` (replacing
+/// an older one), so the two stay under about twice the cap and the newest crash is kept whole.
+fn append_crash(path: &std::path::Path, text: &str, cap: u64) {
+    use std::io::Write as _;
+    if path.parent().map_or(Ok(()), std::fs::create_dir_all).is_err() {
+        return;
+    }
+    if std::fs::metadata(path).is_ok_and(|metadata| metadata.len() > cap) {
+        let _ = std::fs::rename(path, path.with_extension("log.old"));
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(text.as_bytes());
+    }
+}
+
 fn main() {
     std::sync::LazyLock::force(&START);
     // Every panic, also a caught one (a packet skipped), goes to crash.log in the settings folder with its backtrace:
-    // a bundled app's stderr goes nowhere.
-    // ponytail: the file only grows; cap it if a server ever sends a stream of unreadable packets.
+    // a bundled app's stderr goes nowhere. Over 1 MB it moves to crash.log.old, so a stream of unreadable packets
+    // can't fill the disk.
     let report = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        use std::io::Write as _;
-        if let Some(path) = settings_path("crash.log")
-            && path.parent().map_or(Ok(()), std::fs::create_dir_all).is_ok()
-            && let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path)
-        {
+        if let Some(path) = settings_path("crash.log") {
             let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
             let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
-            let _ = writeln!(file, "unix time {seconds}, thread {thread}: {info}\n{}", std::backtrace::Backtrace::force_capture());
+            let text = format!("unix time {seconds}, thread {thread}: {info}\n{}\n", std::backtrace::Backtrace::force_capture());
+            append_crash(&path, &text, 1 << 20);
         }
         report(info);
     }));
@@ -5703,6 +5715,27 @@ fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caps_the_crash_log() {
+        let dir = std::env::temp_dir().join(format!("rustnarok-crash-{}", std::process::id()));
+        let path = dir.join("crash.log");
+        let _ = std::fs::remove_dir_all(&dir);
+        // Under the cap: entries add up in crash.log.
+        append_crash(&path, "first\n", 10);
+        append_crash(&path, "second\n", 10);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first\nsecond\n");
+        // Past it: the old log moves to crash.log.old and a new one holds only the latest entry.
+        append_crash(&path, "third\n", 10);
+        assert_eq!(std::fs::read_to_string(dir.join("crash.log.old")).unwrap(), "first\nsecond\n");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "third\n");
+        // Again: the older crash.log.old is replaced.
+        append_crash(&path, "fourth fourth\n", 10);
+        append_crash(&path, "fifth\n", 10);
+        assert_eq!(std::fs::read_to_string(dir.join("crash.log.old")).unwrap(), "third\nfourth fourth\n");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "fifth\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn lists_the_numbers_shown_on_the_player() {
