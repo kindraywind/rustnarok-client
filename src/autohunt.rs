@@ -59,9 +59,10 @@ pub fn command(game: &mut Game, text: &str) -> bool {
 }
 
 /// A hit in the game (`events.rs`): one a monster makes on the player, by a normal attack or a skill (`skill`), and its
-/// damage, so a plugin can learn how hard each skill hits.
+/// damage, so a plugin can learn how hard each skill hits. A skill's ground (Storm Gust, Gravitation Field) hits from its
+/// unit, not its caster: told too.
 pub fn hit(game: &Game, act: &net::Act, skill: Option<u16>) {
-    let by_monster = game.units.get(&act.source).is_some_and(|unit| unit.kind == MONSTER);
+    let by_monster = game.units.get(&act.source).is_some_and(|unit| unit.kind == MONSTER) || game.skill_units.contains_key(&act.source);
     if act.target == game.account_id && act.source != act.target && by_monster {
         tell(json!({"kind": "hit", "source": act.source, "damage": act.damage, "skill": skill}));
     }
