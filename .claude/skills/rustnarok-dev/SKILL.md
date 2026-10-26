@@ -50,6 +50,8 @@ D=.claude/skills/rustnarok-dev/drive.py
 python3 -I $D launch "" 0                 # first account, slot 0: logs in and enters the map
 python3 -I $D state                       # scene, map, player, windows, units with their screen boxes: a big JSON
 python3 -I $D state game.ground_items     # one part of it, by dotted path (also game.targets, game.windows, game.chat)
+python3 -I $D send '{"cmd":"state","only":["player","units"]}'        # only those fields of game: a small answer
+python3 -I $D send '{"cmd":"cell_point","cells":[[150,180],[152,184]]}' # many cells in one call; null where one is refused
 python3 -I $D send '{"cmd":"say","text":"@item 501 5"}'
 python3 -I $D send '{"cmd":"click","x":512,"y":384,"count":2}'
 python3 -I $D shot inventory-open         # -> docs/personal/shots/inventory-open.png
