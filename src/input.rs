@@ -2379,14 +2379,7 @@ impl App {
             let names = (&self.messages[..], &self.card_names, &game.char_names);
             let described = viewed.or_else(|| match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || self.modifiers.alt_key() || card.is_some() => None,
-                _ if shop_row.is_some() => shop_row.map(|offer| net::InventoryItem {
-                    id: offer.item,
-                    kind: offer.kind,
-                    amount: 1,
-                    identified: offer.identified,
-                    refine: offer.refine,
-                    ..Default::default()
-                }),
+                _ if shop_row.is_some() => shop_row.map(shop::Offer::described),
                 Some(Panel::Inventory) => match game.inventory.hit(self.cursor) {
                     Some(inventory::Hit::Item(index)) => game.inventory.get(index).cloned(),
                     _ => None,
