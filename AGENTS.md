@@ -19,8 +19,11 @@ screenshots in git; `cargo fmt` and `clippy -D warnings` stay clean; dev switche
   - `events.rs`: `map_event` (one arm per `net::MapEvent`), `net_event`, and `enter_map`, which builds `Game`.
   - `draw.rs`: `redraw_game` draws the world, units, effects and every window, in order.
   - `game.rs`: `impl Game`: the Esc order, what's under the pointer (`on_ui`, `window_at`), questions, actions.
-  - One module per window (`inventory.rs`, `party.rs`, `memorial.rs`, …) holds its state, layout, drawing and presses.
-    `window.rs` has what windows share, and `escape.rs` has the Esc order's `WindowId`.
+  - `ui/`: one module per window (`ui/inventory.rs`, `ui/party.rs`, `ui/memorial.rs`, …) holds its state, layout,
+    drawing and presses. `ui/window.rs` has what windows share, and `ui/escape.rs` has the Esc order's `WindowId`.
+  - `fx/`: what plays on the map: `effects.rs` (and `effects.txt`), the hand-made effects in `prims/`, `world_fx/`,
+    `world_str.rs`, the sky and the weather.
+  - `main.rs` glob-imports `ui` and `fx`, so their modules keep short paths: `crate::inventory`, `crate::effects`.
   - `control.rs`: the test driver's socket. `game_state` builds the JSON that `state` returns: windows, units, and the
     named click targets that scenarios use.
   - `mcp.rs`: a client shared with an agent (`RUSTNAROK_CLIENT_CONTROL_SHARED`): the player plays it too, and the chat's
@@ -31,13 +34,14 @@ screenshots in git; `cargo fmt` and `clippy -D warnings` stay clean; dev switche
 A request is an `encode_*` function and a packet ID in `net.rs`, plus a `MapSession` method in `net/map_session.rs`. A
 reply is a `MapEvent` variant in `net/map_event.rs` plus an arm in `decode_map_packet` (`net/decode.rs`). Give each a
 `#[test]` in `net/tests.rs` in the style of `decodes_mail`, without data.grf. The connection drops on an ID that
-`src/packet_lengths.txt` doesn't know; regenerate it with `tools/packet-lengths/run.sh`. Handle the event in `events.rs`
+`src/net/packet_lengths.txt` doesn't know; regenerate it with `tools/packet-lengths/run.sh`. Handle the event in `events.rs`
 `map_event`.
 
 ## A new window
 
-Start from a recent one, e.g. `memorial.rs`. Besides its own module, it's wired in at:
-- `main.rs`: `mod`, a `Game` field, its images in `Assets`/`load`; a draggable panel also needs a `Panel` and `esc_panel`.
+Start from a recent one, e.g. `ui/memorial.rs`. Besides its own module, it's wired in at:
+- `ui.rs`: `pub(crate) mod`.
+- `main.rs`: a `Game` field, its images in `Assets`/`load`; a draggable panel also needs a `Panel` and `esc_panel`.
 - `events.rs`: the field's first value in `enter_map`; open and fill it in `map_event`.
 - `draw.rs`: `redraw_game`.
 - `input.rs`: `click`, `press`, `left_button`, `pointer_moved`; also `wheel`, `key` and `perform_shortcut` if it uses
@@ -45,7 +49,7 @@ Start from a recent one, e.g. `memorial.rs`. Besides its own module, it's wired 
 - `game.rs`: `on_ui`, `close_windows`, `esc_open`, `esc_names`, `close_esc`, `esc_at`, plus `window_at`, `titled_frame`,
   `panel_open` and `panel_frames` for a panel. If it has text boxes or questions, also `text_box_focused`,
   `focused_text`, `question_open` and `answer_no`.
-- `escape.rs`: a `WindowId` and its `name`.
+- `ui/escape.rs`: a `WindowId` and its `name`.
 - `control.rs` `game_state`: its state and click targets, so a scenario can see and press it.
 
 ## Quick checks
@@ -53,8 +57,8 @@ Start from a recent one, e.g. `memorial.rs`. Besides its own module, it's wired 
 - In a new worktree, clone a built checkout's `target/` before the first build, e.g. `cp -c -R ../roclient/target target`
   on macOS (`lane.sh new` does it for you). It's instant, takes no extra disk, and then only this crate compiles.
 - `cargo test --release --bin rustnarok-client <name>` (or `--lib`) runs the matching tests; `verify.sh` runs everything.
-- If a rebase stops on a conflict in a file whose code moved to other files, run
-  `python3 -I tools/port-moved.py <that file>`.
+- If a rebase stops on a conflict in a file whose code moved to other files (or that moved whole, like `src/chat.rs`
+  to `src/ui/chat.rs`), run `python3 -I tools/port-moved.py <that file>`.
 
 ## If this helped your user
 

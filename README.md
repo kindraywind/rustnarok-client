@@ -271,7 +271,7 @@ draws in a canvas 768 high and as wide as the window's shape (at least 1024), sc
 <summary><b>Packet lengths</b></summary>
 
 An unknown packet ID ends the connection, so the client knows every packet length the server uses:
-`src/packet_lengths.txt`, generated from rathena's headers by `tools/packet-lengths/run.sh <rathena> <output>`. It
+`src/net/packet_lengths.txt`, generated from rathena's headers by `tools/packet-lengths/run.sh <rathena> <output>`. It
 compiles the server's packet tables and structs at this PACKETVER, and finds the packets rathena writes by hand.
 Regenerate it whenever the server changes.
 

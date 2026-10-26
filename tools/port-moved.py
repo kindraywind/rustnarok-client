@@ -53,10 +53,17 @@ if not hunks:
 # Where the code may be now: the file itself, then the files the other side added or changed since this branch's base.
 suffix = path[path.rfind(".") :]
 conflicted = set(git("diff", "--name-only", "--diff-filter=U").stdout.split())
-changed = git("diff", "--name-only", "--diff-filter=AM", base, theirs).stdout.split()
+# --no-renames: a moved file (src/chat.rs → src/ui/chat.rs) counts as added there.
+changed = git("diff", "--name-only", "--no-renames", "--diff-filter=AM", base, theirs).stdout.split()
 places = [path] + [f for f in changed if f.endswith(suffix) and f != path and f not in conflicted]
 
-git("checkout", theirs, "--", path)
+# The other side moved the whole file away: drop it here, and the hunks go where its code is now.
+gone = git("cat-file", "-e", f"{theirs}:{path}", check=False).returncode != 0
+if gone:
+    git("rm", "-q", "-f", "--", path)
+    places.remove(path)
+else:
+    git("checkout", theirs, "--", path)
 
 
 def made_public(hunk):
@@ -113,5 +120,5 @@ if touched:
     print("Changed:", " ".join(sorted(touched)))
 for hunk in left:
     print("\nNot placed (apply it by hand):\n" + "".join(hunk), end="")
-print(f"\nThen: git add {' '.join(sorted(touched | {path}))}")
+print(f"\nThen: git add {' '.join(sorted(touched | (set() if gone else {path})))}")
 sys.exit(1 if left else 0)
