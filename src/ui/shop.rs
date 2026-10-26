@@ -167,6 +167,22 @@ pub struct Offer {
     /// Barters: the shop's own index for it, and the inventory index of the item it costs.
     pub shop_index: u32,
     pub cost_index: u16,
+    /// The item itself when there is one (a vendor's goods, a carried item to sell): its cards and options.
+    pub whole: Option<InventoryItem>,
+}
+
+impl Offer {
+    /// The item its description shows: the whole one, else what the offer says of it.
+    pub fn described(&self) -> InventoryItem {
+        self.whole.clone().unwrap_or_else(|| InventoryItem {
+            id: self.item,
+            kind: self.kind,
+            amount: 1,
+            identified: self.identified,
+            refine: self.refine,
+            ..Default::default()
+        })
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -1056,6 +1072,16 @@ mod tests {
         assert_eq!(shop.add_checked(0, 1), Some((NOT_ENOUGH_ZENY, None)), "1,200 carried, 1,200 in the deal");
         let mut big = Shop::from_vendor(1, 2, String::new(), vec![offer(909, 1, 40_000, 3)]);
         assert_eq!(big.add_checked(0, 30_001), Some((OVER_30000, Some(30_000))));
+    }
+
+    #[test]
+    fn describes_an_offer_with_its_cards_and_options() {
+        let plain = offer(1201, 50, 0, ITEM_WEAPON);
+        assert_eq!((plain.described().id, plain.described().options.len()), (1201, 0));
+        let option = rustnarok_client::net::ItemOption { id: 3, value: 2, param: 0 };
+        let whole = InventoryItem { id: 1201, cards: [4001, 0, 0, 0], options: vec![option], identified: true, ..Default::default() };
+        let vended = Offer { whole: Some(whole.clone()), ..plain };
+        assert_eq!(vended.described(), whole);
     }
 
     fn offer(item: u32, price: u32, have: u16, kind: u8) -> Offer {

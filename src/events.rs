@@ -2097,6 +2097,7 @@ impl App {
                         kind: good.item.kind,
                         identified: good.item.identified,
                         refine: good.item.refine,
+                        whole: Some(good.item),
                         ..Default::default()
                     })
                     .collect();
@@ -4163,6 +4164,7 @@ impl App {
                             kind: item.kind,
                             identified: item.identified,
                             refine: item.refine,
+                            whole: Some(item.clone()),
                             ..Default::default()
                         })
                     })
