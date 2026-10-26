@@ -465,6 +465,15 @@ impl BasicInfo {
         })
     }
 
+    /// Alt+V: the small window and the full one in turn (a closed window opens as it was).
+    pub fn mini_full(&mut self) {
+        if self.frame.open {
+            self.frame.minimized = !self.frame.minimized;
+        } else {
+            self.frame.open = true;
+        }
+    }
+
     /// Reacts to a click; returns the menu button pressed.
     pub fn click(&mut self, hit: Hit) -> Option<&'static str> {
         match hit {
@@ -646,6 +655,18 @@ impl BasicInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alt_v_switches_small_and_full() {
+        let mut window = BasicInfo::default();
+        window.mini_full();
+        assert!(window.frame.open && window.frame.minimized);
+        window.mini_full();
+        assert!(window.frame.open && !window.frame.minimized);
+        window.frame.open = false;
+        window.mini_full();
+        assert!(window.frame.open && !window.frame.minimized);
+    }
 
     #[test]
     fn lays_out_by_job() {

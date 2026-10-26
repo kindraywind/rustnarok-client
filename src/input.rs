@@ -3634,7 +3634,7 @@ impl App {
         let Scene::Game(game) = &mut self.scene else { return true };
         match fired {
             shortcuts::Action::BasicInfo => {
-                game.basic_info.frame.toggle();
+                game.basic_info.mini_full();
                 game.raise(Panel::BasicInfo);
             }
             shortcuts::Action::Equipment => {

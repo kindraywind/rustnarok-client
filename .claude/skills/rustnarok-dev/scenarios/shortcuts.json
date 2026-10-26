@@ -1,5 +1,5 @@
 {
-  "about": "Shortcuts: F1 uses a hotkey, a repeat of that held key uses it again, and F11 closes the open windows.",
+  "about": "Shortcuts: Alt+V switches the basic info window to its small look and back (it stays open), F1 uses a hotkey, a repeat of that held key uses it again, and F11 closes the open windows.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -27,10 +27,28 @@
     },
     {
       "expect": {
-        "windows_closed": [
+        "windows_open": [
           "BasicInfo"
-        ]
+        ],
+        "state": {
+          "basic_info.minimized": true
+        }
       }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "alt-v-small",
+      "crop": [
+        0,
+        0,
+        320,
+        160
+      ]
     },
     {
       "key": "Alt+V"
@@ -42,7 +60,10 @@
       "expect": {
         "windows_open": [
           "BasicInfo"
-        ]
+        ],
+        "state": {
+          "basic_info.minimized": false
+        }
       }
     },
     {
