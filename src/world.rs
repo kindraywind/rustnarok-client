@@ -1571,6 +1571,9 @@ pub struct WorldFrame<'a> {
     pub tint: [f32; 3],
     /// The map's depth fog shows (/fog).
     pub fog: bool,
+    /// World units the fog starts further away (the far zoom's camera past its usual range), so the ground round the
+    /// player stays as clear as at the usual distance.
+    pub fog_push: f32,
 }
 
 impl WorldPass for WorldFrame<'_> {
@@ -1587,7 +1590,7 @@ impl WorldPass for WorldFrame<'_> {
             pixel: [2.0 / (SCREEN_HEIGHT * self.view.aspect), 2.0 / SCREEN_HEIGHT, DEPTH_SCALE, NEAR],
             fog_color: [world.fog_color[0], world.fog_color[1], world.fog_color[2], 0.0],
             // An end at or before the start is no fog.
-            fog_range: if self.fog { [world.fog_range[0], world.fog_range[1], 0.0, 0.0] } else { [1.0, 0.0, 0.0, 0.0] },
+            fog_range: if self.fog { [world.fog_range[0] + self.fog_push, world.fog_range[1] + self.fog_push, 0.0, 0.0] } else { [1.0, 0.0, 0.0, 0.0] },
             tint: [self.tint[0], self.tint[1], self.tint[2], f32::from(u8::from(self.blind))],
         };
         gpu.queue.write_buffer(&world.globals, 0, bytemuck::bytes_of(&globals));

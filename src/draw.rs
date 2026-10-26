@@ -1587,13 +1587,19 @@ impl App {
                 base.sprites.push((texture, [x + left, y + top], [width, height]));
             }
         }
-        // The Extras' monster HP: a hurt monster's (the server tells no other's) in numbers right of its bar.
+        // The Extras' monster HP: a hurt monster's (the server tells no other's) in numbers on a line under its bar, or
+        // under its name while that shows (hovered).
         if self.graphics.monster_hp {
             for (id, &(hp, max)) in &game.unit_hp {
                 let monster = game.units.get(id).is_some_and(|actor| actor.kind == MONSTER && actor.remove_at.is_none());
-                let Some(point) = feet_of.get(id).filter(|_| monster).and_then(|&feet| sprite_point(feet, overhead::BAR_BELOW)) else { continue };
-                let corner = [point[0].trunc() + overhead::BAR_WIDTH / 2.0 + 3.0, point[1].trunc() + 3.0 - (font.line_height() / 2.0).round()];
-                base.outlined(&format!("{hp}/{max}"), corner);
+                let Some(&feet) = feet_of.get(id).filter(|_| monster) else { continue };
+                let Some(bar) = sprite_point(feet, overhead::BAR_BELOW) else { continue };
+                let under_name = sprite_point(feet, overhead::NAME_BELOW)
+                    .filter(|_| pointed_id == Some(*id))
+                    .map(|point| overhead::label_corner(point, 0.0, font.line_height(), screen())[1] + overhead::NAME_TEXT_TOP + font.line_height());
+                let text = format!("{hp}/{max}");
+                let top = under_name.unwrap_or(bar[1].trunc() + overhead::HP_LINE_TOP);
+                base.outlined(&text, [bar[0].trunc() - (font.width(&text) / 2.0).round(), top]);
             }
         }
 
@@ -3085,6 +3091,7 @@ impl App {
             blind: game.blind.showing(),
             tint: game.scene.tint(),
             fog: self.graphics.fog,
+            fog_push: if self.graphics.far_zoom { (game.camera.distance - DISTANCE_RANGE[1]).max(0.0) } else { 0.0 },
         };
         if let Some(path) = self.print_screen.take() {
             let _ = path.parent().map(std::fs::create_dir_all);

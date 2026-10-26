@@ -69,7 +69,7 @@ const SWITCHES: [((usize, &str), usize); 4] =
     [((3172, "Effects"), 37), ((4160, "Show aura"), 3162), ((4163, "Mini aura"), 710), ((2805, "Screen shake"), 3161)];
 /// The Extras page's rows, laid out as the Effect page's: title and description (`extras`, `extra`).
 const EXTRA_ROWS: [(&str, &str); 3] = [
-    ("Monster HP", "A hurt monster's HP in numbers by its bar"),
+    ("Monster HP", "A hurt monster's HP in numbers under its bar"),
     ("Monster level", "A monster's level after its name"),
     ("Far zoom", "The camera goes out much further"),
 ];
