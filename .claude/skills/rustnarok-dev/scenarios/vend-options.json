@@ -1,5 +1,5 @@
 {
-  "about": "A vendor's goods keep their cards and random options: right-clicking a Guard with options in another player's shop opens its description with the option rows (STR +1, MaxSP +3%, Medium monster resistance +3%), as in the inventory. At prt_fild08 the second player turns Merchant, gets three Guards with options from the test NPC random-options.txt (a whisper to npc:RustnarokOptions), puts one in the cart and vends it (dev switch); the first opens the shop by its sign and right-clicks the row. The second goes back to a Novice without cart or items at base level 1; the NPC is unloaded at both ends.",
+  "about": "A vendor's goods keep their cards and random options: right-clicking a Guard with options in another player's shop opens its description with the option rows (STR +1, MaxSP +3%, Medium monster resistance +3%), as in the inventory. At prt_fild08 the second player turns Merchant, gets three Guards with options from the test NPC random-options.txt (a whisper to npc:RustnarokOptions), puts one in the cart and vends it (dev switch); the first opens the shop by its sign and right-clicks the row, and the vendor right-clicks the same Guard in their own shop window. The second goes back to a Novice without cart or items at base level 1; the NPC is unloaded at both ends.",
   "account": "",
   "slot": 0,
   "second": {
@@ -221,6 +221,43 @@
     },
     {
       "wait": 400
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "pick_item": 2101
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "item_window": 2101,
+          "item_window_box.3": 317.0
+        }
+      }
+    },
+    {
+      "as": "second",
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "as": "second",
+      "shot": "my-shop-guard-options"
+    },
+    {
+      "as": "second",
+      "key": "Escape"
+    },
+    {
+      "wait": 300
     },
     {
       "as": "second",

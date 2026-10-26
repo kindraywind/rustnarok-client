@@ -2376,10 +2376,13 @@ impl App {
                 Some(equipment::Hit::Slot(index) | equipment::Hit::Name(index)) => viewed.items.iter().find(|item| item.index == index).cloned(),
                 _ => None,
             });
+            // A trade's, a letter's, a vending window's or a catalog result's item.
+            let listed = game.listed_item_at(self.cursor);
             let names = (&self.messages[..], &self.card_names, &game.char_names);
             let described = viewed.or_else(|| match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || self.modifiers.alt_key() || card.is_some() => None,
                 _ if shop_row.is_some() => shop_row.map(shop::Offer::described),
+                _ if listed.is_some() => listed,
                 Some(Panel::Inventory) => match game.inventory.hit(self.cursor) {
                     Some(inventory::Hit::Item(index)) => game.inventory.get(index).cloned(),
                     _ => None,

@@ -390,6 +390,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                         price: at(93),
                         amount: u16::from_le_bytes([row[97], row[98]]),
                         cards: std::array::from_fn(|card| at(99 + 4 * card)),
+                        options: options_at(row, 115),
                         refine: row[140],
                     }
                 })
@@ -840,10 +841,13 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                     amount: self::u16_at(entry, 0),
                     id: self::u32_at(entry, 2),
                     identified: entry[6] != 0,
+                    broken: entry[7] != 0,
                     cards: cards_at(entry, 8),
                     location: self::u32_at(entry, 24),
                     kind: entry[28],
+                    options: options_at(entry, 33),
                     refine: entry[58],
+                    grade: entry[59],
                     ..Default::default()
                 })
                 .collect();
