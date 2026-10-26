@@ -1,5 +1,5 @@
 {
-  "about": "Scrolling to the bottom stays there. A trackpad's or Magic Mouse's gesture starts and ends with a zero wheel delta, which counted as a notch back up. With 20 usable stacks the storage's wheel stops on row 8 (the last 12 of 20 shown); a swipe past it and the gesture's zero delta leave it there, as a zero delta mid-list does. The chat log (@chatfill): 9 rows back with the wheel, 3 down with the scrollbar's arrow, to the bottom with the wheel, and a zero delta keeps it at the bottom. The storage is emptied at the end.",
+  "about": "Scrolling to the bottom stays there. A trackpad's or Magic Mouse's gesture starts and ends with a zero wheel delta, which counted as a notch back up. A trackpad's small pixel deltas add up: 96 canvas pixels make a notch, so 90 down move nothing, 10 more one notch (3 rows), and 100 back up (what was left dropped on the turn) one notch up; each delta was a notch before. With 20 usable stacks the storage's wheel stops on row 8 (the last 12 of 20 shown); a swipe past it and the gesture's zero delta leave it there, as a zero delta mid-list does. The chat log (@chatfill): 9 rows back with the wheel, 3 down with the scrollbar's arrow, to the bottom with the wheel, and a zero delta keeps it at the bottom. The storage is emptied at the end.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -29,6 +29,12 @@
     {"say": "@storeall"}, {"wait": 1500},
     {"say": "@storage"}, {"wait_for": {"packet": "0x0b08", "ms": 8000}}, {"wait": 500},
     {"expect": {"windows_open": ["Storage"], "state": {"storage_rows": 12, "storage_scroll": 0}}},
+    {"cmd": {"cmd": "wheel", "x": 500, "y": 400, "pixels": -30}}, {"cmd": {"cmd": "wheel", "x": 500, "y": 400, "pixels": -30}}, {"cmd": {"cmd": "wheel", "x": 500, "y": 400, "pixels": -30}}, {"cmd": {"cmd": "wheel", "x": 500, "y": 400, "pixels": 0}}, {"wait": 200},
+    {"expect": {"state": {"storage_scroll": 0}}},
+    {"cmd": {"cmd": "wheel", "x": 500, "y": 400, "pixels": -10}}, {"wait": 200},
+    {"expect": {"state": {"storage_scroll": 3}}},
+    {"cmd": {"cmd": "wheel", "x": 500, "y": 400, "pixels": 50}}, {"cmd": {"cmd": "wheel", "x": 500, "y": 400, "pixels": 50}}, {"wait": 200},
+    {"expect": {"state": {"storage_scroll": 0}}},
     {"wheel": [500, 400, 1]}, {"wait": 200},
     {"cmd": {"cmd": "wheel", "x": 500, "y": 400, "pixels": 0}}, {"wait": 200},
     {"expect": {"state": {"storage_scroll": 3}}},

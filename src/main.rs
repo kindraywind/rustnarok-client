@@ -3727,6 +3727,23 @@ fn wheel_rows(delta: f64) -> i32 {
     if delta == 0.0 { 0 } else { -delta.signum() as i32 }
 }
 
+/// Canvas pixels of a trackpad's or Magic Mouse's scroll that make one wheel notch: 3 rows of 32-pixel item cells, so
+/// an item list keeps up with the fingers.
+// ponytail: one figure for every list and the camera, set from swipes on a MacBook trackpad; tune it here.
+const NOTCH_PIXELS: f64 = 96.0;
+
+/// The whole notches (signs as `wheel_rows`) in a scroll's pixel delta added to what earlier ones left in `carry`.
+/// macOS sends one swipe as 60 to 250 small deltas, its momentum included; a turn the other way drops what was left.
+fn pixel_rows(carry: &mut f64, delta: f64) -> i32 {
+    if delta * *carry < 0.0 {
+        *carry = 0.0;
+    }
+    *carry += delta;
+    let notches = (*carry / NOTCH_PIXELS).trunc();
+    *carry -= notches * NOTCH_PIXELS;
+    -notches as i32
+}
+
 /// The level a wheel turn picks while aiming (rows > 0 is down, lowering it): 1 to the learned level, and only for
 /// skills whose level can be picked.
 fn aim_level(level: u16, learned: u16, rows: i32, separate: bool) -> u16 {
@@ -4470,6 +4487,8 @@ struct App {
     account_list: bool,
     focus: usize,
     cursor: [f32; 2],
+    /// Trackpad scroll pixels short of a whole notch (`pixel_rows`).
+    wheel_carry: f64,
     mouse_down: bool,
     /// Clicks on the char-server list, so a second one on the same row enters it.
     server_clicks: window::Clicks,
@@ -5080,10 +5099,11 @@ impl ApplicationHandler<NetEvent> for App {
                 self.left_button(event_loop, state);
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                self.wheel(wheel_rows(match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y.into(),
-                    MouseScrollDelta::PixelDelta(position) => position.y,
-                }));
+                let rows = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => wheel_rows(y.into()),
+                    MouseScrollDelta::PixelDelta(position) => pixel_rows(&mut self.wheel_carry, position.y / f64::from(screen_scale())),
+                };
+                self.wheel(rows);
                 if let Some(gpu) = &self.gpu {
                     gpu.window.request_redraw();
                 }
@@ -5613,6 +5633,7 @@ fn main() {
                 Some([x.parse().ok()?, y.parse().ok()?])
             })
             .unwrap_or([-1.0; 2]),
+        wheel_carry: 0.0,
         mouse_down: false,
         server_clicks: window::Clicks::default(),
         right_down: false,
@@ -6618,6 +6639,22 @@ mod tests {
     fn a_zero_wheel_delta_does_not_scroll() {
         // A gesture's start and end (0.0, also -0.0) are no notch; any other delta one, its sign flipped.
         assert_eq!([0.0, -0.0, -0.1, -40.0, 0.1, 3.0].map(wheel_rows), [0, 0, 1, 1, -1, -1]);
+    }
+
+    #[test]
+    fn trackpad_pixels_add_up_to_notches() {
+        let mut carry = 0.0;
+        let mut rows = |deltas: &[f64]| deltas.iter().map(|&delta| pixel_rows(&mut carry, delta)).sum::<i32>();
+        // One notch per 96 pixels, the rest kept for the next delta; a zero delta (a gesture's start or end) is none.
+        assert_eq!(rows(&[-10.0; 9]), 0);
+        assert_eq!(rows(&[-10.0, 0.0, -0.0]), 1);
+        assert_eq!(rows(&[-92.0]), 1);
+        assert_eq!(rows(&[-300.0]), 3);
+        // Turning the other way drops what was left: 12 pixels down don't take away from the way up.
+        assert_eq!(rows(&[90.0]), 0);
+        assert_eq!(rows(&[6.0]), -1);
+        // A swipe as macOS sends it, many deltas of a few pixels: 120 of 4 pixels are 5 notches, not 120.
+        assert_eq!(rows(&[-4.0; 120]), 5);
     }
 
     #[test]
