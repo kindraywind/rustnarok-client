@@ -1,0 +1,19 @@
+// The elementals' strikes (issue #816): a training dummy 4 cells east of moc_fild12 160,160, which can't cast. Whisper
+// npc:RustnarokStrikes "fire", "water" or "typhoon" and the player casts EL_FIRE_WAVE, EL_WATER_SCREW or EL_TYPOON_MIS on
+// the dummy, since those skills only cast from an elemental. Loaded and unloaded by scenarios/elemental-strikes.json.
+moc_fild12,1,1,0	script	RustnarokStrikes	-1,{
+	end;
+OnInit:
+	monster "moc_fild12", 164, 160, "--ja--", 2408, 1;
+	.gid = $@mobid[0];
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ == "fire") {
+		unitskilluseid getcharid(3), "EL_FIRE_WAVE", 1, .gid;
+	} else if (@whispervar0$ == "water") {
+		unitskilluseid getcharid(3), "EL_WATER_SCREW", 1, .gid;
+	} else if (@whispervar0$ == "typhoon") {
+		unitskilluseid getcharid(3), "EL_TYPOON_MIS", 1, .gid;
+	}
+	end;
+}

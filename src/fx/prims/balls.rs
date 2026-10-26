@@ -23,6 +23,8 @@ const FIRE_BALL_LOOKS: [[f32; 4]; 4] = [[255.0, 255.0, 255.0, 254.0], [246.0, 19
 pub const FIST_SPRITE: &str = "data\\sprite\\이팩트\\남_로켓트펀치";
 const FIST_TICKS: [u32; 4] = [0, 2, 4, 6];
 const FIST_GHOSTS: [Option<f32>; 4] = [None, Some(60.0), Some(40.0), Some(20.0)];
+/// Typhoon Missile's: green after-fists of alpha 120, 40 and 0 (the last is invisible), added on.
+const TYPHOON_GHOSTS: [Option<f32>; 4] = [None, Some(120.0), Some(40.0), Some(0.0)];
 
 /// The fist sprite's action for d, the camera's turn plus the direction back to the caster, in whole degrees.
 pub fn fist_action(d: i32) -> usize {
@@ -170,6 +172,8 @@ struct Fist {
     flight: Flight,
     action: usize,
     ghost: Option<f32>,
+    /// Typhoon Missile's: green and added on.
+    green: bool,
     gone: bool,
 }
 
@@ -180,12 +184,15 @@ pub struct FistDraw {
     pub action: usize,
     pub frame: usize,
     pub ghost: Option<f32>,
+    /// Typhoon Missile's: the ghosts green (#69FF69), everything added on.
+    pub green: bool,
 }
 
 /// A Boost Knuckle letting its fists out toward `to`, the sprite's action chosen from `action`.
 struct FistThrow {
     launch: FireBall,
     action: usize,
+    green: bool,
 }
 
 /// Fire Balls, their balls in flight, and Jupitel Thunder's balls (the game's prim kind 15, a core and a ball
@@ -217,17 +224,26 @@ impl Balls {
 
     /// Boost Knuckle from `from` at `to` from `now`, the camera turned `longitude` whole degrees: four fists.
     pub fn boost_knuckle(&mut self, from: Vector, to: Vector, longitude: i32, now: Instant) {
+        self.punch(from, to, longitude, now, false);
+    }
+
+    /// Typhoon Missile: Boost Knuckle's fists, added on, the after-fists pale green.
+    pub fn typhoon_missile(&mut self, from: Vector, to: Vector, longitude: i32, now: Instant) {
+        self.punch(from, to, longitude, now, true);
+    }
+
+    fn punch(&mut self, from: Vector, to: Vector, longitude: i32, now: Instant, green: bool) {
         let toward = (from[2] - to[2]).atan2(from[0] - to[0]).to_degrees().trunc() as i32;
         let launch = FireBall { start: now, ticks: 0, from, to };
-        self.throws.push(FistThrow { launch, action: fist_action(longitude + toward) });
+        self.throws.push(FistThrow { launch, action: fist_action(longitude + toward), green });
     }
 
     /// The fists showing now.
     pub fn fist_draws(&self) -> Vec<FistDraw> {
         self.fists
             .iter()
-            .filter(|fist| fist.flight.ticks > 0)
-            .map(|fist| FistDraw { at: fist.flight.at(), action: fist.action, frame: fist.flight.ticks as usize % 4, ghost: fist.ghost })
+            .filter(|fist| fist.flight.ticks > 0 && fist.ghost != Some(0.0))
+            .map(|fist| FistDraw { at: fist.flight.at(), action: fist.action, frame: fist.flight.ticks as usize % 4, ghost: fist.ghost, green: fist.green })
             .collect()
     }
 
@@ -276,7 +292,8 @@ impl Balls {
             for age in launch.ticks..due {
                 let Some(index) = FIST_TICKS.iter().position(|&tick| tick == age) else { continue };
                 let flight = Flight::skewed(launch.start + TICK * age, launch.from, FIRE_BALL_RISE, launch.to, FIRE_BALL_LIFE);
-                self.fists.push(Fist { flight, action: throw.action, ghost: FIST_GHOSTS[index], gone: false });
+                let ghost = if throw.green { TYPHOON_GHOSTS[index] } else { FIST_GHOSTS[index] };
+                self.fists.push(Fist { flight, action: throw.action, ghost, green: throw.green, gone: false });
             }
             launch.ticks = launch.ticks.max(due);
         }
@@ -542,6 +559,35 @@ mod tests {
         assert!(far.orbs.iter().all(|orb| orb.tint[0] != 155.0 / 255.0 || orb.tint[2] != 1.0 || orb.tint[1] != 155.0 / 255.0));
         let green = far.orbs.iter().find(|orb| orb.tint == [155.0 / 255.0, 1.0, 155.0 / 255.0]).unwrap();
         assert!(!green.gone && green.flight.ticks == FIRE_BALL_LIFE);
+    }
+
+    #[test]
+    fn typhoon_missile_flies_a_fist_with_two_green_after_fists() {
+        let start = Instant::now();
+        let mut balls = Balls::default();
+        balls.typhoon_missile([0.0, 0.0, 0.0], [0.0, 0.0, 100.0], 0, start);
+        let mut plain = Balls::default();
+        plain.boost_knuckle([0.0, 0.0, 0.0], [0.0, 0.0, 100.0], 0, start);
+        for tick in 0..=8 {
+            balls.advance(start + TICK * tick);
+            plain.advance(start + TICK * tick);
+        }
+        // Four fists at e = 0, 2, 4, 6: the first as it is, then green after-fists of alpha 120, 40 and 0.
+        assert_eq!(balls.fists.len(), 4);
+        assert_eq!(balls.fists.iter().map(|fist| fist.ghost).collect::<Vec<_>>(), [None, Some(120.0), Some(40.0), Some(0.0)]);
+        assert!(balls.fists.iter().all(|fist| fist.green) && plain.fists.iter().all(|fist| !fist.green));
+        // The one with alpha 0 is not drawn; the others are, added on; Boost Knuckle's own fists are unchanged.
+        let draws = balls.fist_draws();
+        assert_eq!(draws.len(), 3);
+        assert!(draws.iter().all(|draw| draw.green) && draws.iter().map(|draw| draw.ghost).collect::<Vec<_>>() == [None, Some(120.0), Some(40.0)]);
+        assert_eq!(plain.fists.iter().map(|fist| fist.ghost).collect::<Vec<_>>(), [None, Some(60.0), Some(40.0), Some(20.0)]);
+        assert_eq!(plain.fist_draws().len(), 4);
+        // The same flight and action pick as Boost Knuckle's.
+        assert_eq!(balls.fists[0].action, plain.fists[0].action);
+        assert_eq!(balls.fists[0].flight.at(), plain.fists[0].flight.at());
+        // Nothing follows anyone and all are gone by the end of their 20 ticks.
+        balls.advance(start + TICK * 60);
+        assert!(balls.fists.is_empty() && balls.throws.is_empty());
     }
 
     #[test]

@@ -1436,7 +1436,7 @@ spr	453	cconfine	1	delayFrame=192;firstFrame=1;hold=true;alpha=100;onTop=true
 spr	509	05vallentine	1	-
 spr	519	fast	1	-
 spr	570	캐슬링	1	delayFrame=32;firstFrame=1;onTop=true
-spr	571	블러드러스트	1	-
+spr	571	블러드러스트	1	delayFrame=32;firstFrame=1;onTop=true
 spr	576	item_thunder	1	-
 spr	577	item_cloud	1	-
 spr	578	item_curse	1	-
@@ -1908,6 +1908,8 @@ wav	567	effect\h_moonlight_3	0
 wav	579	_snore	0
 wav	587	dragon_breath	0
 wav	590	effect\priest_resurrection	0
+wav	571	effect\h_blood_lust	0
+wav	935	effect\맹호경파산	0	listener
 wav	460	ice_titan_attack	80
 wav	564	effect\ef_beginspell	0
 wav	1224	effect\mon_침투경	80
@@ -4462,6 +4464,7 @@ struck	8424	target	950
 struck	8425	target	31
 struck	8426	caster	24
 struck	8428	target	901
+struck	2481	target	901
 struck	8428	target	17
 struck	8430	target	26
 struck	8431	target	941
@@ -5392,6 +5395,10 @@ length	465	1000
 length	564	60
 length	570	100
 length	544	99999999
+length	571	100
+length	901	500
+length	935	100
+length	941	500
 length	1003	99999999
 length	1004	99999999
 length	1224	50
@@ -5526,6 +5533,8 @@ skillwav	2269	effect\ef_decagility	0	listener
 skillwav	2050	effect\AB_renovatio	0	listener
 skillwav	2205	effect\t_에너지방출	0	listener
 hitwav	2012	_enemy_hit_wind2	0	listener
+hitwav	8428	effect\폭염룡	0	listener
+hitwav	2481	effect\폭염룡	0	listener
 hitquake	2012	0	650
 hitwav	2031	effect\EF_PoisonAttack	0	listener
 skillwav	2001	effect\닌자_던지기	0	listener

@@ -17,13 +17,32 @@ pub const BREEZE: &str = "data\\sprite\\몬스터\\breeze";
 pub const IFRIT: &str = "data\\sprite\\몬스터\\ifrit";
 pub const IMP: &str = "data\\sprite\\몬스터\\imp";
 pub const BLAST: &str = "data\\sprite\\이팩트\\m_ef03";
+/// Water Screw's spout (9 frames).
+pub const WATER_BLAST: &str = "data\\sprite\\이팩트\\m_ef05";
 /// A copy of the tree or the whirlwinds lasts 999 ticks.
 const STAND_PERIOD: u32 = 999;
 const IFRITS: u32 = 20;
-/// Poison Buster's sprite has 24 frames, 4 ticks each; a blast flies 0.3 a tick from 5 out and 5 up.
-const BLAST_FRAMES: u32 = 24;
-const BLAST_TICKS: u32 = 4 * (BLAST_FRAMES - 1);
+/// Poison Buster's and Fire Wave's sprite has 24 frames, Water Screw's 9, 4 ticks each; a blast flies 0.3 a tick from 5 out and 5 up.
 const BLAST_SPEED: f32 = 0.3;
+
+/// Which burst of blasts: Poison Buster's blue ones, Fire Wave's fireballs or Water Screw's spouts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlastKind {
+    Poison,
+    Fire,
+    Water,
+}
+
+impl BlastKind {
+    pub fn sprite(self) -> &'static str {
+        if self == BlastKind::Water { WATER_BLAST } else { BLAST }
+    }
+
+    /// Ticks the blast lasts: 4 a frame, the last frame not shown.
+    fn ticks(self) -> u32 {
+        4 * (if self == BlastKind::Water { 9 } else { 24 } - 1)
+    }
+}
 /// The Sight option's flame (22): the effect lasts 270 ticks, a counter starts it again then; a pair of sprites every 2nd tick.
 const SIGHT_LENGTH: u32 = 270;
 const SIGHT_LIFE: u32 = 20;
@@ -97,6 +116,7 @@ struct Ring {
 struct Blasts {
     unit: Option<u32>,
     start: Instant,
+    kind: BlastKind,
 }
 
 /// A flame circling a unit, started at `start`; it follows the unit.
@@ -137,11 +157,12 @@ pub struct StandDraw {
     pub tint: [f32; 3],
 }
 
-/// One of Poison Buster's blasts: where, and its frame (1 to 23).
+/// One of a burst's blasts: where, its frame (1 to 23, or 1 to 8) and which burst.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BlastDraw {
     pub at: Vector,
     pub frame: usize,
+    pub kind: BlastKind,
 }
 
 /// A blast layer's alpha in the body and in its halo, for the layer's own alpha: 0.85 and 0.5 of it, whole numbers.
@@ -260,9 +281,19 @@ impl Cells {
         self.sheets.push(Sheet { effect, at, start: now });
     }
 
-    /// Poison Buster's eight blasts round `unit`.
+    /// Poison Buster's eight blue blasts round `unit`.
     pub fn poison_buster(&mut self, unit: Option<u32>, now: Instant) {
-        self.blasts.push(Blasts { unit, start: now });
+        self.blasts.push(Blasts { unit, start: now, kind: BlastKind::Poison });
+    }
+
+    /// Fire Wave's eight fireball bursts round `unit`: Poison Buster's blasts in the sprite's own colours.
+    pub fn fire_wave(&mut self, unit: Option<u32>, now: Instant) {
+        self.blasts.push(Blasts { unit, start: now, kind: BlastKind::Fire });
+    }
+
+    /// Water Screw's eight water spouts round `unit`.
+    pub fn water_screw(&mut self, unit: Option<u32>, now: Instant) {
+        self.blasts.push(Blasts { unit, start: now, kind: BlastKind::Water });
     }
 
     pub fn forget(&mut self, id: u32) {
@@ -304,7 +335,7 @@ impl Cells {
                 ring.made += 1;
             }
         }
-        self.blasts.retain(|blasts| passes(blasts.start, now) <= BLAST_TICKS + 3);
+        self.blasts.retain(|blasts| passes(blasts.start, now) <= blasts.kind.ticks() + 3);
         self.circlings.retain(|circling| passes(circling.start, now) <= SIGHT_LENGTH);
         self.sheets.retain(|sheet| passes(sheet.start, now) <= SHEET_LENGTH);
     }
@@ -398,12 +429,13 @@ impl Cells {
         walls
     }
 
-    /// The frames Poison Buster's blasts show at `now` (1 to 23), for the caller to have ready.
-    pub fn blast_frames(&self, now: Instant) -> Vec<usize> {
+    /// The frames the blasts show at `now` (1 to 23, or 1 to 8) with their sprites, for the caller to have ready.
+    pub fn blast_frames(&self, now: Instant) -> Vec<(&'static str, usize)> {
         let mut frames = Vec::new();
         for blasts in &self.blasts {
             let Some(t) = passes(blasts.start, now).checked_sub(1) else { continue };
-            frames.extend((0..2).filter_map(|prim| t.checked_sub(prim).filter(|&a| a < BLAST_TICKS).map(|a| (a / 4 + 1) as usize)));
+            let ticks = blasts.kind.ticks();
+            frames.extend((0..2).filter_map(|prim| t.checked_sub(prim).filter(|&a| a < ticks).map(|a| (blasts.kind.sprite(), (a / 4 + 1) as usize))));
         }
         frames
     }
@@ -414,11 +446,15 @@ impl Cells {
         for blasts in &self.blasts {
             let (Some(feet), Some(t)) = (position_of(blasts.unit), passes(blasts.start, now).checked_sub(1)) else { continue };
             for prim in 0..2 {
-                let Some(a) = t.checked_sub(prim).filter(|&a| a < BLAST_TICKS) else { continue };
+                let Some(a) = t.checked_sub(prim).filter(|&a| a < blasts.kind.ticks()) else { continue };
                 let distance = 5.0 + BLAST_SPEED * (a + 1) as f32;
                 for band in 0..4 {
                     let (sin, cos) = (45.0 * (4 * prim + band) as f32).to_radians().sin_cos();
-                    draws.push(BlastDraw { at: [feet[0] + distance * cos, feet[1] + 5.0, feet[2] + distance * sin], frame: (a / 4 + 1) as usize });
+                    draws.push(BlastDraw {
+                        at: [feet[0] + distance * cos, feet[1] + 5.0, feet[2] + distance * sin],
+                        frame: (a / 4 + 1) as usize,
+                        kind: blasts.kind,
+                    });
                 }
             }
         }
@@ -570,7 +606,7 @@ mod tests {
         assert_eq!([0, 3, 4].map(|tick| draws(&cells, tick)[0].frame), [1, 1, 2]);
         // The first prim ends after a = 91 (92 draws), the second a tick later.
         assert_eq!((draws(&cells, 92).len(), draws(&cells, 93).len()), (4, 0));
-        assert_eq!(cells.blast_frames(start + TICK * 4), [2, 1]);
+        assert_eq!(cells.blast_frames(start + TICK * 4), [(BLAST, 2), (BLAST, 1)]);
         // It follows the target.
         assert!(cells.blasts(start, |_| None).is_empty());
         assert!(cells.blasts(start, |_| Some([100.0, 1.0, 100.0])).iter().all(|blast| blast.at[0] > 90.0));
@@ -578,6 +614,35 @@ mod tests {
         assert_eq!(blast_alphas(255.0), (216.0, 127.0));
         cells.advance(start + TICK * 100, |_, _| 0.0, |_| 0);
         assert!(cells.blasts.is_empty());
+    }
+
+    #[test]
+    fn fire_wave_and_water_screw_burst_eight_blasts_in_the_sprites_own_colours() {
+        let start = Instant::now();
+        let feet = [10.0, 1.0, 20.0];
+        let mut cells = Cells::default();
+        cells.fire_wave(Some(1), start);
+        let draws = |cells: &Cells, tick: u32| cells.blasts(start + TICK * tick, |_| Some(feet));
+        // The same two prims of four as Poison Buster's: 4 then 8, 5.3 out at a = 0, 32.6 at a = 91, frames 1 to 23, the end at 92.
+        assert_eq!((draws(&cells, 0).len(), draws(&cells, 1).len()), (4, 8));
+        assert!(draws(&cells, 0).iter().all(|blast| blast.kind == BlastKind::Fire && blast.frame == 1 && blast.at[1] == 6.0));
+        let last = draws(&cells, 91);
+        assert!(near((last[0].at[0] - feet[0]).hypot(last[0].at[2] - feet[2]), 32.6) && last[0].frame == 23);
+        assert_eq!((draws(&cells, 92).len(), draws(&cells, 93).len()), (4, 0));
+        assert_eq!(cells.blast_frames(start), [(BLAST, 1)]);
+        // Water Screw: the other sprite of 9 frames, frames 1 to 8 at a = 0 to 31, 14.6 out at a = 31, ending at 32.
+        let mut water = Cells::default();
+        water.water_screw(Some(1), start);
+        let wet = |cells: &Cells, tick: u32| cells.blasts(start + TICK * tick, |_| Some(feet));
+        assert_eq!((wet(&water, 0).len(), wet(&water, 1).len()), (4, 8));
+        let end = wet(&water, 31);
+        assert!(near((end[0].at[0] - feet[0]).hypot(end[0].at[2] - feet[2]), 14.6) && end[0].frame == 8);
+        assert_eq!([0, 3, 4, 28, 31].map(|tick| wet(&water, tick)[0].frame), [1, 1, 2, 8, 8]);
+        assert_eq!((wet(&water, 32).len(), wet(&water, 33).len()), (4, 0));
+        assert_eq!(water.blast_frames(start), [(WATER_BLAST, 1)]);
+        assert!(water.blasts.iter().all(|blasts| blasts.kind.sprite() == WATER_BLAST));
+        water.advance(start + TICK * 40, |_, _| 0.0, |_| 0);
+        assert!(water.blasts.is_empty());
     }
 
     #[test]
