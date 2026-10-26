@@ -219,7 +219,9 @@ impl App {
             // The option menu keeps the pointer until it's closed (`menu_takes`).
             // ponytail: a click off its buttons does nothing.
             Scene::Game(game) if game.menu_takes(cursor) => {
-                match game.escape.as_ref().unwrap().hit(cursor, game.can_resurrect()).flatten() {
+                let menu = game.escape.as_ref().unwrap();
+                let choice = if menu.on_close(cursor) { Some(escape::Choice::Return) } else { menu.hit(cursor, game.can_resurrect()).flatten() };
+                match choice {
                     Some(escape::Choice::SavePoint) => game.save_asked = true,
                     Some(escape::Choice::CharSelect) => {
                         game.escape = None;

@@ -6,7 +6,7 @@
 use rustnarok_client::grf::Grf;
 
 use crate::render::{Gpu, Texture};
-use crate::window::{Chrome, Frame};
+use crate::window::{BUTTON_SIZE, Chrome, Frame};
 use crate::{Layer, UI, contains, screen};
 
 const WIDTH: f32 = 280.0;
@@ -434,6 +434,8 @@ impl Menu {
 
     /// The buttons, for the control socket: name and box.
     pub fn button_boxes(&self, resurrect: bool) -> Vec<(&'static str, [f32; 4])> {
+        let frame = Frame::new(self.corner(), WIDTH);
+        let [x, y] = frame.at(frame.close_button());
         self.choices(resurrect)
             .into_iter()
             .enumerate()
@@ -441,7 +443,16 @@ impl Menu {
                 let corner = self.button_corner(row);
                 (choice.button(), [corner[0], corner[1], BUTTON[0], BUTTON[1]])
             })
+            .chain([("menu_close", [x, y, BUTTON_SIZE[0], BUTTON_SIZE[1]])])
             .collect()
+    }
+
+    /// The title's close button under the pointer: it does what Return does.
+    // ponytail: the title's minimize is drawn but does nothing.
+    pub fn on_close(&self, cursor: [f32; 2]) -> bool {
+        let corner = self.corner();
+        let frame = Frame::new(corner, WIDTH);
+        contains(frame.at(frame.close_button()), BUTTON_SIZE, cursor)
     }
 
     /// Over the menu: the button under the pointer, if any. `Some(None)` is the menu, off a button.
@@ -564,6 +575,16 @@ mod tests {
         let save = dead.button_corner(0);
         assert_eq!(dead.hit([save[0] + 5.0, save[1] + 5.0], false), Some(Some(Choice::SavePoint)));
         assert_eq!(dead.hit([save[0] + 5.0, save[1] + 5.0], true), Some(Some(Choice::Resurrect)));
+    }
+
+    #[test]
+    fn the_title_close_is_return() {
+        let menu = Menu { dead: false };
+        let [x, y] = menu_origin(screen());
+        assert!(menu.on_close([x + 266.0 + 5.0, y + 3.0 + 5.0]));
+        let first = menu.button_corner(0);
+        assert!(!menu.on_close([first[0] + 5.0, first[1] + 5.0]));
+        assert_eq!(menu.button_boxes(false).last(), Some(&("menu_close", [x + 266.0, y + 3.0, 11.0, 11.0])));
     }
 
     #[test]
