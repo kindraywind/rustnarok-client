@@ -693,6 +693,13 @@ impl MyShop {
             .collect()
     }
 
+    /// The good whose cell is under `cursor`.
+    pub fn good_at(&self, cursor: [f32; 2]) -> Option<&VendItem> {
+        self.hit(cursor)?;
+        let mut shown = self.goods.iter().take(self.size.columns() * self.size.rows).enumerate();
+        shown.find(|&(cell, _)| contains(self.frame.at(self.size.cell(cell)), [CELL, CELL], cursor)).map(|(_, good)| good)
+    }
+
     pub fn hit(&self, cursor: [f32; 2]) -> Option<ShopHit> {
         let local = self.frame.local(cursor, self.height())?;
         if let Some(hit) = self.frame.title_hit(local) {

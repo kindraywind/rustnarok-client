@@ -1740,6 +1740,7 @@ pub struct CatalogRow {
     pub price: u32,
     pub amount: u16,
     pub cards: [u32; 4],
+    pub options: Vec<ItemOption>,
     pub refine: u8,
 }
 

@@ -2914,6 +2914,33 @@ fn keeps_random_options() {
     let mut preview = vec![0u8; 48];
     preview[..2].copy_from_slice(&ZC_CHANGE_ITEM_OPTION.to_le_bytes());
     options(&mut preview, 21);
-    let Some(MapEvent::ItemPreview { options, .. }) = decode_map_packet(&preview) else { panic!() };
-    assert_eq!(options, expected);
+    let Some(MapEvent::ItemPreview { options: previewed, .. }) = decode_map_packet(&preview) else { panic!() };
+    assert_eq!(previewed, expected);
+    // A mail's item (60 bytes after the text) from 33.
+    let mut read = ZC_ACK_READ_RODEX.to_le_bytes().to_vec();
+    read.extend_from_slice(&[0, 0, 0]);
+    read.extend_from_slice(&7u64.to_le_bytes());
+    read.extend_from_slice(&1u16.to_le_bytes());
+    read.extend_from_slice(&0u64.to_le_bytes());
+    read.push(1);
+    read.push(0);
+    let mut item = [0u8; 60];
+    options(&mut item, 33);
+    item[58] = 4;
+    read.extend_from_slice(&item);
+    let length = read.len() as u16;
+    read[2..4].copy_from_slice(&length.to_le_bytes());
+    let Some(MapEvent::MailRead { items, .. }) = decode_map_packet(&read) else { panic!() };
+    assert_eq!((&items[0].options, items[0].refine), (&expected, 4));
+    // A store search's row (142 bytes) from 115.
+    let mut results = ZC_SEARCH_STORE_INFO_ACK.to_le_bytes().to_vec();
+    results.extend_from_slice(&[0, 0, 1, 0, 9]);
+    let mut row = vec![0u8; CATALOG_ROW_SIZE];
+    options(&mut row, 115);
+    row[140] = 7;
+    results.extend_from_slice(&row);
+    let length = results.len() as u16;
+    results[2..4].copy_from_slice(&length.to_le_bytes());
+    let Some(MapEvent::CatalogResults { rows, .. }) = decode_map_packet(&results) else { panic!() };
+    assert_eq!((&rows[0].options, rows[0].refine), (&expected, 7));
 }

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::ItemInfo;
-use rustnarok_client::net::CatalogRow;
+use rustnarok_client::net::{CatalogRow, InventoryItem};
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
@@ -379,9 +379,32 @@ impl Catalog {
     }
 }
 
+/// A result's item, for its description.
+pub fn item(row: &CatalogRow) -> InventoryItem {
+    InventoryItem {
+        id: row.item,
+        kind: row.kind,
+        amount: row.amount,
+        identified: true,
+        cards: row.cards,
+        options: row.options.clone(),
+        refine: row.refine,
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn describes_a_result_with_its_cards_and_options() {
+        let option = rustnarok_client::net::ItemOption { id: 3, value: 2, param: 0 };
+        let row = CatalogRow { item: 1201, kind: 5, cards: [4001, 0, 0, 0], options: vec![option], refine: 7, ..Default::default() };
+        let item = item(&row);
+        assert_eq!((item.id, item.kind, item.cards, item.refine, item.identified), (1201, 5, [4001, 0, 0, 0], 7, true));
+        assert_eq!(item.options, row.options);
+    }
 
     fn items() -> HashMap<u32, ItemInfo> {
         [(909, "Jellopy"), (910, "Garlet"), (7126, "Large Jellopy"), (501, "Red Potion")]

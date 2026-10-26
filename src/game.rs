@@ -655,6 +655,38 @@ impl Game {
     }
 
     /// The topmost window under the pointer.
+    /// The item under `cursor` in a trade, a letter or one being written, the vending setup (a row or its mirror),
+    /// the shop we run, or the catalog's results: what a right click there describes.
+    pub(crate) fn listed_item_at(&self, cursor: [f32; 2]) -> Option<net::InventoryItem> {
+        if let Some(trade) = &self.trade
+            && let Some(trade::Hit::Item(side, row)) = trade.hit(cursor)
+        {
+            return trade.items[side].get(row).cloned();
+        }
+        match self.mail.hit(cursor) {
+            Some(mail::Hit::Letter(mail::LetterHit::Item(slot))) => return self.mail.letter.as_ref()?.items.get(slot).cloned(),
+            Some(mail::Hit::Compose(mail::ComposeHit::Item(slot))) => return self.mail.compose.as_ref()?.items.get(slot).cloned(),
+            _ => {}
+        }
+        if let Some(setup) = &self.vend_setup {
+            let index = match setup.hit(cursor) {
+                Some(vend::Hit::Good(row) | vend::Hit::Price(row)) => setup.goods.get(row).map(|good| good.index),
+                _ => setup.mirror_hit(cursor, &self.cart.items).flatten(),
+            };
+            if let Some(index) = index {
+                return self.cart.get(index).cloned();
+            }
+        }
+        if let Some(good) = self.my_shop.as_ref().and_then(|shop| shop.good_at(cursor)) {
+            return Some(good.item.clone());
+        }
+        let catalog = self.catalog.as_ref()?;
+        match catalog.hit(cursor) {
+            Some(catalog::Hit::Row(index)) => catalog.rows.get(index).map(catalog::item),
+            _ => None,
+        }
+    }
+
     pub(crate) fn window_at(&self, cursor: [f32; 2]) -> Option<Panel> {
         self.windows.iter().rev().copied().find(|&id| match id {
             Panel::Hotkeys => self.hotkeys.hit(cursor).is_some(),
