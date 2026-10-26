@@ -885,7 +885,7 @@ impl App {
             };
             let mut actor = Actor::new(unit.name.clone(), sprites, unit.position.map(i32::from), unit.direction, unit.speed);
             actor.set_map(map_size);
-            actor.kind = unit.kind;
+            actor.kind = actor_kind(unit.kind);
             actor.job = unit.job;
             actor.level = unit.level;
             actor.look = drawn_as_player(unit.kind, unit.job).then(|| unit_look(unit));

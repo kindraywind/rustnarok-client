@@ -885,6 +885,14 @@ const OUT_OF_SIGHT_FADE_MS: f32 = 510.0;
 const PLAYER: u8 = 0;
 const MONSTER: u8 = 5;
 const NPC: u8 = 6;
+/// rathena's object type 0xC: an NPC drawn with a monster's sprite (`clif_bl_type`, PACKETVER 20170726 on). It is an NPC for
+/// everything the player does with it: talking on a click, the cursor, the name.
+const NPC_MOB_SPRITE: u8 = 0xC;
+
+/// The kind a unit is kept as: an NPC with a monster's sprite is an NPC.
+fn actor_kind(kind: u8) -> u8 {
+    if kind == NPC_MOB_SPRITE { NPC } else { kind }
+}
 const PET: u8 = 7;
 const HOMUNCULUS: u8 = 8;
 /// rathena's NPC_ELEMENTAL_TYPE.
@@ -5732,6 +5740,14 @@ fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_npc_with_a_monster_sprite_is_an_npc() {
+        // rathena sends 0xC for an NPC whose look is a monster's (the Lost Novice on prt_maze02): clicks must talk to it.
+        assert_eq!(actor_kind(NPC_MOB_SPRITE), NPC);
+        assert_eq!(actor_kind(MONSTER), MONSTER);
+        assert_eq!(actor_kind(NPC), NPC);
+    }
 
     #[test]
     fn caps_the_crash_log() {
