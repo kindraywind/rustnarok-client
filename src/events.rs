@@ -1597,7 +1597,7 @@ impl App {
                 });
             }
             MapEvent::Act(act) => {
-                crate::autohunt::hit(game, &act);
+                crate::autohunt::hit(game, &act, None);
                 // A landed hit sparks on whatever it hit, each hit as it lands.
                 let attacker_job = if act.source == game.account_id { Some(game.player.job) } else { game.units.get(&act.source).map(|actor| actor.job) };
                 let sparks = attack_sparks(act.damage, act.kind, attacker_job.is_some_and(|job| TAEKWON_LINE.contains(&job)));
@@ -3388,6 +3388,7 @@ impl App {
             },
             MapEvent::SkillRemoved(id) => game.skills.retain(|skill| skill.id != id),
             MapEvent::Casting { source, target, cell, skill, element, cast_ms } => {
+                crate::autohunt::cast(game, source, target, cell, skill, cast_ms);
                 // A cast with a cast time glows under the caster in its skill's aura: the element's color (EF_BEGINSPELL*),
                 // Bash's burst, a fixed effect or none (`Table::cast_aura`).
                 if cast_ms > 0
@@ -3449,7 +3450,7 @@ impl App {
             }
             MapEvent::SkillHit { skill, level, act } => {
                 // A monster's skill on the player counts as its hit for the auto hunt, like a normal attack.
-                crate::autohunt::hit(game, &act);
+                crate::autohunt::hit(game, &act, Some(skill));
                 game.casts.remove(&(act.source != game.account_id).then_some(act.source));
                 let me = game.account_id;
                 // Damage from a skill's unit on the ground (Storm Gust, Thunderstorm, Lord of Vermilion, Meteor Storm,

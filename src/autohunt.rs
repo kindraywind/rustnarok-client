@@ -2,7 +2,8 @@
 //! shared with an agent (mcp.rs). The vanilla client has no auto hunt and shouldn't get one: hunt logic belongs in the
 //! plugin, a program of its own that plays over the control socket, so changing it needs no client build. Here is what a
 //! plugin reads (`hunt_state`, `hunt_gat`), what it does (`hunt_do`: the game's own actions, so no packets of its own),
-//! and the news a state can't show: a typed `/hunt`, a monster's hit on the player, a skill the server refused.
+//! and the news a state can't show: a typed `/hunt`, a monster's hit on the player, a skill the server refused, a monster's
+//! cast at the player or at a cell near it.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -57,12 +58,38 @@ pub fn command(game: &mut Game, text: &str) -> bool {
     true
 }
 
-/// A hit in the game (`events.rs`): one a monster makes on the player, by a normal attack or a skill, and its damage.
-pub fn hit(game: &Game, act: &net::Act) {
+/// A hit in the game (`events.rs`): one a monster makes on the player, by a normal attack or a skill (`skill`), and its
+/// damage, so a plugin can learn how hard each skill hits.
+pub fn hit(game: &Game, act: &net::Act, skill: Option<u16>) {
     let by_monster = game.units.get(&act.source).is_some_and(|unit| unit.kind == MONSTER);
     if act.target == game.account_id && act.source != act.target && by_monster {
-        tell(json!({"kind": "hit", "source": act.source, "damage": act.damage}));
+        tell(json!({"kind": "hit", "source": act.source, "damage": act.damage, "skill": skill}));
     }
+}
+
+/// How near the player a monster's cast at a cell is still told (cells): the widest ground skills (Meteor Storm) reach about
+/// half of that from their cell.
+const CAST_NEAR: i32 = 10;
+
+/// A monster's cast with a cast time (`events.rs`): at the player, or at a cell within `CAST_NEAR` of it. A plugin has the
+/// cast time to step out of a ground skill's area or put up a defense.
+pub fn cast(game: &Game, source: u32, target: u32, cell: [u16; 2], skill: u16, cast_ms: u32) {
+    let by_monster = game.units.get(&source).is_some_and(|unit| unit.kind == MONSTER);
+    if let Some(news) = cast_news(by_monster, game.account_id, game.player.cell, source, target, cell, skill, cast_ms) {
+        tell(news);
+    }
+}
+
+/// The news for a cast, when it is one a plugin needs: by a monster, with a cast time, at the player or at a cell near it.
+#[allow(clippy::too_many_arguments)]
+fn cast_news(by_monster: bool, me: u32, at: [i32; 2], source: u32, target: u32, cell: [u16; 2], skill: u16, cast_ms: u32) -> Option<Value> {
+    if !by_monster || cast_ms == 0 || source == me {
+        return None;
+    }
+    let spot = [i32::from(cell[0]), i32::from(cell[1])];
+    let at_me = target == me;
+    let near = target == 0 && (spot[0] - at[0]).abs().max((spot[1] - at[1]).abs()) <= CAST_NEAR;
+    (at_me || near).then(|| json!({"kind": "cast", "source": source, "skill": skill, "ms": cast_ms, "at_me": at_me, "cell": (!at_me).then_some(spot)}))
 }
 
 /// A skill the server refused (`events.rs`), with its reason.
@@ -247,5 +274,18 @@ mod tests {
         let action: Action = serde_json::from_str(r#"{"do": "aim_skill", "id": 5, "level": 10, "unit": 7}"#).unwrap();
         assert_eq!(action, Action::AimSkill { id: 5, level: 10, unit: Some(7), cell: None });
         assert!(is_hunt("/hunt 8 poring") && is_hunt("/hunt") && !is_hunt("/hunted"));
+    }
+
+    #[test]
+    fn tells_casts_at_the_player_or_near_it() {
+        let news = |by_monster, target, cell: [u16; 2], ms| cast_news(by_monster, 7, [100, 100], 9, target, cell, 731, ms);
+        // At the player, and at a cell 3 away: told, with the cell for the ground one.
+        assert_eq!(news(true, 7, [0, 0], 3000).unwrap()["at_me"], json!(true));
+        assert_eq!(news(true, 0, [103, 100], 3000).unwrap()["cell"], json!([103, 100]));
+        // Far off, at another unit, instant, or not by a monster: not told.
+        assert!(news(true, 0, [150, 100], 3000).is_none());
+        assert!(news(true, 8, [0, 0], 3000).is_none());
+        assert!(news(true, 7, [0, 0], 0).is_none());
+        assert!(news(false, 7, [0, 0], 3000).is_none());
     }
 }
