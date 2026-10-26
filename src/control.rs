@@ -28,7 +28,8 @@
 //! - `say` `{text}`: a chat line or a GM command.
 //! - `state`: the scene and the login server; at character select the characters, selected slot and `pin` ("ask",
 //!   "new", "change" or "none"); in the game the map, the player, open windows, `escape` (the Esc or death
-//!   menu's buttons while it is open, null otherwise; not in `windows`, and it takes every click until closed), the NPC dialog, the aimed
+//!   menu's buttons while it is open, null otherwise; `windows` lists it as `GameMenu`, and it takes every click until closed, so a
+//!   click's `hit` then says `GameMenu`), the NPC dialog, the aimed
 //!   skill, units and ground items (with their sprites' screen boxes and the areas a click picks them in), counts and
 //!   status icons. Each unit's `tint` is `[r, g, b]` while a status colours it, or null. Everything comes from what
 //!   the client itself knows, whatever server it plays on.
@@ -800,7 +801,7 @@ fn unit_point(
 fn clicked_on(app: &App, at: [f32; 2], shift: bool) -> Value {
     let (Scene::Game(game), Some(assets)) = (&app.scene, &app.assets) else { return Value::Null };
     if game.on_ui(at, assets.message.size) {
-        return json!({"kind": "ui", "window": window_named(game.over_panels_at(at), game.window_at(at))});
+        return json!({"kind": "ui", "window": window_named(game.menu_takes(at), game.over_panels_at(at), game.window_at(at))});
     }
     let screen = crate::screen();
     let others = game.hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player);
@@ -815,9 +816,14 @@ fn clicked_on(app: &App, at: [f32; 2], shift: bool) -> Value {
     if play::mode() == Grade::Fair { json!({"kind": "ground"}) } else { json!({"kind": "ground", "cell": cell}) }
 }
 
-/// The window a click lands on, by name: one drawn over the panels takes it before the panel under it (#1151).
-fn window_named(over_panels: Option<&str>, panel: Option<Panel>) -> Option<String> {
-    over_panels.map(str::to_owned).or_else(|| panel.map(|panel| format!("{panel:?}")))
+/// The game menu's name in `windows` and in a click's `hit`.
+const GAME_MENU: &str = "GameMenu";
+
+/// The window a click lands on, by name: the game menu while it takes the click (`menu_takes`), else one drawn over the
+/// panels before the panel under it (#1151).
+fn window_named(menu: bool, over_panels: Option<&str>, panel: Option<Panel>) -> Option<String> {
+    let over = if menu { Some(GAME_MENU) } else { over_panels };
+    over.map(str::to_owned).or_else(|| panel.map(|panel| format!("{panel:?}")))
 }
 
 fn point(app: &mut App, at: [f32; 2]) {
@@ -1265,7 +1271,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     // Whether a click in the middle of a box reaches that window, not another one over it.
     let on_top = |panel: Panel, area: &[f32; 4]| {
         let middle = [area[0] + area[2] / 2.0, area[1] + area[3] / 2.0];
-        window_named(game.over_panels_at(middle), game.window_at(middle)) == Some(format!("{panel:?}"))
+        window_named(game.menu_takes(middle), game.over_panels_at(middle), game.window_at(middle)) == Some(format!("{panel:?}"))
     };
     let targets: Vec<Value> = game
         .inventory
@@ -1574,10 +1580,15 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The windows open: those Esc closes, in its order, then the ones it leaves up.
     let mut windows = game.esc_names();
     windows.extend(
-        [("Hotkeys", game.hotkeys.frame.open), ("BasicInfo", game.basic_info.frame.open), ("Shop", game.shop.as_ref().is_some_and(crate::shop::Shop::plain))]
-            .into_iter()
-            .filter(|(_, open)| *open)
-            .map(|(name, _)| name.to_owned()),
+        [
+            ("Hotkeys", game.hotkeys.frame.open),
+            ("BasicInfo", game.basic_info.frame.open),
+            ("Shop", game.shop.as_ref().is_some_and(crate::shop::Shop::plain)),
+            (GAME_MENU, game.escape.is_some()),
+        ]
+        .into_iter()
+        .filter(|(_, open)| *open)
+        .map(|(name, _)| name.to_owned()),
     );
     windows.extend(game.member_windows.names(game.party.as_ref()));
     let dialog = game.dialog.as_ref().map(|dialog| {
@@ -1692,7 +1703,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "shop_whole": game.shop.as_ref().map(|shop| shop.whole),
         // The windows Esc closes, in the order it closes them (newest first).
         "esc_order": game.esc_names(),
-        // The game menu's buttons, when it is open (null when it isn't). Newest-first `windows` does not include it.
+        // The game menu's buttons, when it is open (null when it isn't). `windows` names it GameMenu.
         "escape": game.escape.as_ref().map(|menu| menu.choices(game.can_resurrect()).into_iter().map(|choice| choice.button()).collect::<Vec<_>>()),
         "save_asked": game.save_asked,
         // What a test can click by name instead of by pixels: inventory items (index and item), hotkey slots, skill
@@ -2521,9 +2532,12 @@ mod tests {
 
     #[test]
     fn a_window_over_the_panels_takes_the_click() {
-        assert_eq!(window_named(Some("Reputation"), Some(Panel::Skills)).as_deref(), Some("Reputation"));
-        assert_eq!(window_named(None, Some(Panel::Skills)).as_deref(), Some("Skills"));
-        assert_eq!(window_named(None, None), None);
+        assert_eq!(window_named(false, Some("Reputation"), Some(Panel::Skills)).as_deref(), Some("Reputation"));
+        assert_eq!(window_named(false, None, Some(Panel::Skills)).as_deref(), Some("Skills"));
+        assert_eq!(window_named(false, None, None), None);
+        // The game menu takes every click while it's up, over the storage's Close too.
+        assert_eq!(window_named(true, Some("Reputation"), Some(Panel::Storage)).as_deref(), Some("GameMenu"));
+        assert_eq!(window_named(true, None, None).as_deref(), Some("GameMenu"));
     }
 
     #[test]

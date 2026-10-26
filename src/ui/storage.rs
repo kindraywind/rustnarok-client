@@ -540,7 +540,8 @@ impl Storage {
         (contains([CELL_X, ROWS_TOP], [CELL, self.rows as f32 * CELL], local) && row >= 0.0).then_some(row as usize)
     }
 
-    /// The tabs and the listed items' icon cells on screen (for the test driver): `storage_tab:<n>`, `storage_item:<id>`.
+    /// The tabs, the footer's buttons, the title's close (`storage_title_close`) and the listed items' icon cells on
+    /// screen (for the test driver): `storage_tab:<n>`, `storage_item:<id>`.
     pub fn button_boxes(&self, assets: &Assets, info: &HashMap<u32, ItemInfo>, names: Names) -> Vec<(String, [f32; 4])> {
         if !self.frame.open {
             return Vec::new();
@@ -554,6 +555,7 @@ impl Storage {
         let mut boxes: Vec<_> = tabs.collect();
         boxes.extend((0..TABS).map(|tab| (format!("storage_box:{tab}"), place(self.box_at(tab), [BOX_SIZE, BOX_SIZE]))));
         boxes.push(("storage_close".into(), place(self.footer_at(CLOSE), CLOSE_SIZE)));
+        boxes.push(("storage_title_close".into(), place(self.frame.close_button(), window::BUTTON_SIZE)));
         boxes.push(("storage_search".into(), place(self.search_at(), SEARCH_SIZE)));
         boxes.push(("storage_find".into(), place(self.footer_at(FIND), assets.search[0].size)));
         boxes.push(("storage_sort".into(), place(self.footer_at(SORT_AT), SORT_SIZE)));

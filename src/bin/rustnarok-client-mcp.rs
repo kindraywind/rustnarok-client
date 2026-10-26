@@ -126,7 +126,7 @@ fn tools() -> Value {
         tool(
             Grade::Fair,
             "state",
-            "The scene; in the game the map, the player (cell, HP/SP, levels, zeny, screen box), open windows, `escape` (the Esc or death menu's buttons while it is open, null otherwise; it is not in `windows` and takes every click until it is closed), the NPC dialog, the aimed skill, units and ground items nearest first (id, kind, name, cell, screen box [left, top, right, bottom]), counts, status icons and the last chat lines. cell_point turns player.cell or a unit's cell into a point to click. Under a play mode, what is above it is left out (src/play.rs).",
+            "The scene; in the game the map, the player (cell, HP/SP, levels, zeny, screen box), open windows, `escape` (the Esc or death menu's buttons while it is open, null otherwise; `windows` lists it as GameMenu, and it takes every click until it is closed: a click's hit then says GameMenu), the NPC dialog, the aimed skill, units and ground items nearest first (id, kind, name, cell, screen box [left, top, right, bottom]), counts, status icons and the last chat lines. cell_point turns player.cell or a unit's cell into a point to click. Under a play mode, what is above it is left out (src/play.rs).",
             json!({"only": {"type": "array", "items": {"type": "string"}, "description": "just these fields of the game's state, e.g. [\"player\", \"units\", \"dialog\"]: a smaller, faster answer"}}),
             &[],
         ),
