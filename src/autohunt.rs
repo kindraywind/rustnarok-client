@@ -71,24 +71,42 @@ pub fn hit(game: &Game, act: &net::Act, skill: Option<u16>) {
 /// half of that from their cell.
 const CAST_NEAR: i32 = 10;
 
-/// A monster's cast with a cast time (`events.rs`): at the player, or at a cell within `CAST_NEAR` of it. A plugin has the
-/// cast time to step out of a ground skill's area or put up a defense.
+/// A monster's cast with a cast time (`events.rs`): at the player, at a cell within `CAST_NEAR` of it, or on the monster itself
+/// within `CAST_NEAR` (an area around the caster, like NPC_EARTHQUAKE: the cell told is the caster's). A plugin has the cast
+/// time to step out of the area or put up a defense.
 pub fn cast(game: &Game, source: u32, target: u32, cell: [u16; 2], skill: u16, cast_ms: u32) {
-    let by_monster = game.units.get(&source).is_some_and(|unit| unit.kind == MONSTER);
-    if let Some(news) = cast_news(by_monster, game.account_id, game.player.cell, source, target, cell, skill, cast_ms) {
+    let caster = game.units.get(&source);
+    let by_monster = caster.is_some_and(|unit| unit.kind == MONSTER);
+    let caster_at = caster.map(|unit| unit.cell);
+    if let Some(news) = cast_news(by_monster, game.account_id, game.player.cell, source, target, cell, caster_at, skill, cast_ms) {
         tell(news);
     }
 }
 
-/// The news for a cast, when it is one a plugin needs: by a monster, with a cast time, at the player or at a cell near it.
+/// The news for a cast, when it is one a plugin needs: by a monster, with a cast time, at the player, at a cell near it, or on
+/// the caster itself near it (`caster_at`, its cell).
 #[allow(clippy::too_many_arguments)]
-fn cast_news(by_monster: bool, me: u32, at: [i32; 2], source: u32, target: u32, cell: [u16; 2], skill: u16, cast_ms: u32) -> Option<Value> {
+fn cast_news(
+    by_monster: bool,
+    me: u32,
+    at: [i32; 2],
+    source: u32,
+    target: u32,
+    cell: [u16; 2],
+    caster_at: Option<[i32; 2]>,
+    skill: u16,
+    cast_ms: u32,
+) -> Option<Value> {
     if !by_monster || cast_ms == 0 || source == me {
         return None;
     }
-    let spot = [i32::from(cell[0]), i32::from(cell[1])];
+    let on_itself = target == source;
+    let spot = match caster_at {
+        Some(caster) if on_itself => caster,
+        _ => [i32::from(cell[0]), i32::from(cell[1])],
+    };
     let at_me = target == me;
-    let near = target == 0 && (spot[0] - at[0]).abs().max((spot[1] - at[1]).abs()) <= CAST_NEAR;
+    let near = (target == 0 || on_itself && caster_at.is_some()) && (spot[0] - at[0]).abs().max((spot[1] - at[1]).abs()) <= CAST_NEAR;
     (at_me || near).then(|| json!({"kind": "cast", "source": source, "skill": skill, "ms": cast_ms, "at_me": at_me, "cell": (!at_me).then_some(spot)}))
 }
 
@@ -143,9 +161,10 @@ pub fn state(game: &Game, items: &HashMap<u32, ItemInfo>) -> Value {
         .iter()
         .map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "worn": item.worn, "name": name(item.id)}))
         .collect();
-    // Skills' units on the ground in sight (a Fire Wall's cells, a monster's burning ground): rathena's UNT_ kind and the cell.
-    // ponytail: one cell per entry; a unit with its own range (a few traps) covers more, add the range if one matters.
-    let ground_skills: Vec<Value> = game.skill_units.iter().map(|(id, &(kind, cell))| json!({"id": id, "kind": kind, "cell": cell})).collect();
+    // Skills' units on the ground in sight (a Fire Wall's cells, a monster's burning ground): rathena's UNT_ kind, the cell, and
+    // the unit's own range (a ranged single unit like Gravitation Field covers that many cells around its one cell).
+    let ground_skills: Vec<Value> =
+        game.skill_units.iter().map(|(id, &(kind, cell, range))| json!({"id": id, "kind": kind, "cell": cell, "range": range})).collect();
     let party: Vec<u32> = game.party.as_ref().map(|party| party.members.iter().map(|member| member.info.account).collect()).unwrap_or_default();
     json!({
         "map": game.map,
@@ -282,13 +301,17 @@ mod tests {
 
     #[test]
     fn tells_casts_at_the_player_or_near_it() {
-        let news = |by_monster, target, cell: [u16; 2], ms| cast_news(by_monster, 7, [100, 100], 9, target, cell, 731, ms);
+        let news = |by_monster, target, cell: [u16; 2], ms| cast_news(by_monster, 7, [100, 100], 9, target, cell, Some([102, 100]), 731, ms);
         // At the player, and at a cell 3 away: told, with the cell for the ground one.
         assert_eq!(news(true, 7, [0, 0], 3000).unwrap()["at_me"], json!(true));
         assert_eq!(news(true, 0, [103, 100], 3000).unwrap()["cell"], json!([103, 100]));
         // Far off, at another unit, instant, or not by a monster: not told.
         assert!(news(true, 0, [150, 100], 3000).is_none());
         assert!(news(true, 8, [0, 0], 3000).is_none());
+        // On the caster itself (an area around it, like Earthquake): told with the caster's cell, if near.
+        assert_eq!(news(true, 9, [0, 0], 3000).unwrap()["cell"], json!([102, 100]));
+        assert!(cast_news(true, 7, [100, 100], 9, 9, [0, 0], Some([130, 100]), 653, 3000).is_none());
+        assert!(cast_news(true, 7, [100, 100], 9, 9, [0, 0], None, 653, 3000).is_none());
         assert!(news(true, 7, [0, 0], 0).is_none());
         assert!(news(false, 7, [0, 0], 3000).is_none());
     }
