@@ -141,8 +141,8 @@ pub enum Command {
         hold: Option<u64>,
     },
     /// The wheel at a point: `rows` notches, positive toward the player (scrolls down). Or `pixels`, a trackpad's
-    /// delta as the window gets it (positive scrolls up; 0 is a gesture's start or end), through the window's own
-    /// conversion.
+    /// delta in canvas pixels (positive scrolls up; 0 is a gesture's start or end), adding up to notches as the
+    /// window's own do.
     Wheel {
         x: f32,
         y: f32,
@@ -628,7 +628,8 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
         }
         Command::Wheel { x, y, rows, pixels } => {
             point(app, [x, y]);
-            app.wheel(pixels.map_or(rows, crate::wheel_rows));
+            let rows = pixels.map_or(rows, |pixels| crate::pixel_rows(&mut app.wheel_carry, pixels));
+            app.wheel(rows);
             Ok(Value::Null)
         }
         Command::Key { key, repeat, hold: held_ms } => {
