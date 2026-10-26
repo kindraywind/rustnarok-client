@@ -418,8 +418,16 @@ impl Sheet<'_> {
         }
     }
 
+    /// What a skill needs first. One the server lists as upgradable needs nothing outside the line: the server has
+    /// judged it raisable already, and a custom server's data can keep prerequisites its own tree dropped (one that gives
+    /// a Novice Teleport while its skillinfolist still has Teleport needing Ruwach 1: it could never be raised, and under
+    /// rathena's skillup_limit the first job's skills stayed hidden behind the unspent Novice points).
     fn needs(&self, id: u16) -> Vec<(u16, u16)> {
-        self.info.get(&id).map(|info| info.needs_for(self.jobs).to_vec()).unwrap_or_default()
+        let needs = self.info.get(&id).map(|info| info.needs_for(self.jobs).to_vec()).unwrap_or_default();
+        if self.skills.iter().any(|skill| skill.id == id && skill.upgradable) {
+            return needs.into_iter().filter(|&(need, _)| self.in_line(need)).collect();
+        }
+        needs
     }
 
     /// Every skill `id` needs, however far back, each with the level it needs (the highest asked).
@@ -1352,6 +1360,25 @@ mod tests {
         // Listed but not upgradable (a skill the job can't take further): it stays where it is.
         let held = [Skill { level: 4, upgradable: false, ..skills[0] }];
         assert_eq!(Sheet { skills: &held, ..sheet }.max(1), 4);
+    }
+
+    #[test]
+    fn raises_a_listed_skill_its_data_ties_to_another_line() {
+        // A custom server's Novice tree holds Teleport (26), but its data still has Teleport needing Ruwach (24) 1, an
+        // Acolyte's (4) skill. The server lists Teleport as upgradable for a Swordman (1), and that is what counts.
+        let trees =
+            SkillTrees { trees: HashMap::from([(0, vec![(0, 1), (1, 26)]), (1, vec![(0, 5), (1, 7)]), (4, vec![(0, 24)])]), parents: HashMap::from([(1, 0)]) };
+        let skill = |id| Skill { id, kind: Skill::SELF, level: 0, sp: 0, range: 0, upgradable: true };
+        let skills = [skill(1), skill(26), skill(7)];
+        let skill_info = HashMap::from([(1, info(9, Vec::new())), (26, info(2, vec![(24, 1)])), (5, info(10, Vec::new())), (7, info(10, vec![(5, 5)]))]);
+        let sheet = Sheet { trees: &trees, jobs: &[0, 1], skills: &skills, info: &skill_info, points: 3 };
+        let window = SkillWindow::default();
+        assert!(window.raisable(&sheet, 26));
+        // What the line's own trees ask for still holds: Magnum Break (7) waits for Bash (5) 5.
+        assert!(!window.raisable(&sheet, 7));
+        // And a skill the server leaves out keeps everything it needs.
+        let unlisted = [skill(1)];
+        assert_eq!(Sheet { skills: &unlisted, ..sheet }.needs(26), [(24, 1)]);
     }
 
     #[test]
