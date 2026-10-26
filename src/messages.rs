@@ -14,6 +14,8 @@ pub const INVENTORY: usize = 106;
 pub const GOT_ITEM: usize = 153;
 /// "%s : %d 개": an item and how many.
 pub const ITEM_AMOUNT: usize = 183;
+/// "%s [%d Option] : %d Quantity": an identified item with random options, how many, and how many of it.
+pub const ITEM_OPTIONS_AMOUNT: usize = 2551;
 /// Picking up failed: too heavy, or anything else.
 pub const CANT_CARRY_WEIGHT: usize = 52;
 pub const CANT_CARRY: usize = 53;

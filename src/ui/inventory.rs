@@ -117,6 +117,19 @@ pub const ENCHANTED: [[u8; 3]; 4] = [[0xAD, 0xFF, 0x2F], [0x00, 0xBF, 0xFF], [0x
 
 /// The colour of an item's name in its name box, the first that fits: unidentified grey; by its enchants; bound
 /// yellow; else white. A broken item has none of its own.
+/// What names the items: the card names, the makers' names, and the random options' texts when the Extras show them.
+pub type Names<'a> = (&'a CardNames, &'a HashMap<u32, Option<String>>, Option<&'a HashMap<u16, String>>);
+
+/// The hover name box's text: the name and how many (183); an identified item with random options also says how many
+/// options (2551).
+fn hover_text(messages: &[String], name: &str, item: &InventoryItem) -> String {
+    let message = |id: usize| messages.get(id).map_or("", String::as_str);
+    match item.options.len() {
+        options if item.identified && options > 0 => messages::fill(message(messages::ITEM_OPTIONS_AMOUNT), &[&name, &options, &item.amount]),
+        _ => messages::fill(message(messages::ITEM_AMOUNT), &[&name, &item.amount]),
+    }
+}
+
 pub fn name_color(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> [u8; 3] {
     if !item.identified {
         return UNIDENTIFIED;
@@ -858,7 +871,7 @@ impl Inventory {
         messages: &[String],
         font: &Font,
         cursor: [f32; 2],
-        (cards, makers): (&CardNames, &HashMap<u32, Option<String>>),
+        (cards, makers, option_texts): Names,
     ) {
         if !self.frame.open {
             return;
@@ -928,9 +941,20 @@ impl Inventory {
             }
             if contains(place, [CELL, CELL], cursor) {
                 let name = full_name(items, cards, messages, makers, item, true);
-                let text = messages::fill(message(messages::ITEM_AMOUNT), &[&name, &item.amount]);
+                let text = hover_text(messages, &name, item);
                 let corner = if self.is_cart { offset(place, [35.0, 0.0]) } else { offset(place, [0.0, -NAME_BOX_ABOVE]) };
-                window::tooltip(tooltip, chrome, font, &text, corner, name_color(item, items));
+                // The Extras' item options (`option_texts` given): a row each under the name, the box growing upward.
+                let options: Vec<String> = option_texts
+                    .filter(|_| item.identified)
+                    .map_or_else(Vec::new, |texts| item.options.iter().filter_map(|option| crate::iteminfo::option_text(texts, option)).collect());
+                if options.is_empty() {
+                    window::tooltip(tooltip, chrome, font, &text, corner, name_color(item, items));
+                } else {
+                    let mut lines = vec![vec![(name_color(item, items), text)]];
+                    lines.extend(options.into_iter().map(|option| vec![([255; 3], option)]));
+                    let corner = offset(corner, [0.0, -((lines.len() - 1) as f32 * font.line_height())]);
+                    window::tooltip_lines(tooltip, chrome, font, &lines, corner);
+                }
             }
         }
 
@@ -1316,5 +1340,17 @@ mod tests {
         assert_eq!(Boxes::parse(""), Boxes { lock_drop: false, compare: true });
         assert_eq!(Boxes::parse("0 1").text(), "0 1");
         assert_eq!(Boxes::parse("").text(), "0 1");
+    }
+
+    #[test]
+    fn hover_text_counts_an_identified_items_options() {
+        let mut messages = vec![String::new(); 2552];
+        messages[messages::ITEM_AMOUNT] = "%s: %d ea.".into();
+        messages[messages::ITEM_OPTIONS_AMOUNT] = "%s [%d Option] : %d Quantity".into();
+        let option = rustnarok_client::net::ItemOption { id: 1, value: 1, param: 0 };
+        let item = InventoryItem { identified: true, amount: 1, options: vec![option, option], ..InventoryItem::default() };
+        assert_eq!(hover_text(&messages, "Sword", &item), "Sword [2 Option] : 1 Quantity");
+        assert_eq!(hover_text(&messages, "Sword", &InventoryItem { identified: false, ..item }), "Sword: 1 ea.");
+        assert_eq!(hover_text(&messages, "Apple", &InventoryItem { identified: true, amount: 3, ..InventoryItem::default() }), "Apple: 3 ea.");
     }
 }

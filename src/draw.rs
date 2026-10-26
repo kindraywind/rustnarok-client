@@ -2093,7 +2093,7 @@ impl App {
                     messages,
                     font,
                     pointer.0,
-                    (card_names, &game.char_names),
+                    (card_names, &game.char_names, self.graphics.item_options.then_some(option_texts)),
                 ),
                 Panel::Cart if game.cart.cart.is_some() => game.cart.draw(
                     &mut layer,
@@ -2105,7 +2105,7 @@ impl App {
                     messages,
                     font,
                     pointer.0,
-                    (card_names, &game.char_names),
+                    (card_names, &game.char_names, self.graphics.item_options.then_some(option_texts)),
                 ),
                 Panel::Cart => {}
                 Panel::Pet => {

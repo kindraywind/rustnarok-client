@@ -26,10 +26,12 @@ pub struct GraphicsSettings {
     /// /mable: Spirit Marble's spirits drawn.
     pub mable: bool,
     /// This client's extras, none of them in the game and all off at first (the Extras tab): a monster's HP on its
-    /// bar, its level after its name, and the camera going out much further.
+    /// bar, its level after its name, the camera going out much further, and an item's random options in its
+    /// inventory name box.
     pub monster_hp: bool,
     pub monster_level: bool,
     pub far_zoom: bool,
+    pub item_options: bool,
 }
 
 impl Default for GraphicsSettings {
@@ -46,6 +48,7 @@ impl Default for GraphicsSettings {
             monster_hp: false,
             monster_level: false,
             far_zoom: false,
+            item_options: false,
         }
     }
 }
@@ -83,6 +86,7 @@ impl GraphicsSettings {
             monster_hp: next(false),
             monster_level: next(false),
             far_zoom: next(false),
+            item_options: next(false),
         }
     }
 
@@ -99,6 +103,7 @@ impl GraphicsSettings {
             self.monster_hp,
             self.monster_level,
             self.far_zoom,
+            self.item_options,
         ]
         .map(|on| if on { "1" } else { "0" })
         .join(" ");
@@ -153,6 +158,7 @@ mod tests {
             monster_hp: true,
             monster_level: true,
             far_zoom: true,
+            item_options: true,
         };
         settings.save_to(&path);
         assert_eq!(GraphicsSettings::load_from(&path), settings);
