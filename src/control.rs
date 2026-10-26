@@ -1702,7 +1702,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "shop_goods": game.shop.as_ref().map(|shop| shop.goods().into_iter().map(|(item, count)| (item.to_string(), json!(count))).collect::<serde_json::Map<_, _>>()),
         "shop_whole": game.shop.as_ref().map(|shop| shop.whole),
         // The windows Esc closes, in the order it closes them (newest first).
-        "esc_order": game.esc_names(),
+        "esc_order": game.esc_order.iter().map(|id| id.name()).collect::<Vec<_>>(),
         // The game menu's buttons, when it is open (null when it isn't). `windows` names it GameMenu.
         "escape": game.escape.as_ref().map(|menu| menu.choices(game.can_resurrect()).into_iter().map(|choice| choice.button()).collect::<Vec<_>>()),
         "save_asked": game.save_asked,

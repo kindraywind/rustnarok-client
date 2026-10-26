@@ -1314,8 +1314,11 @@ impl App {
         // of both lines (drawn with the names below); the server tells those each time the pointer comes onto them, as
         // what it sends unasked can be stale.
         let mut name_block = None;
+        // Over a window, the chat or a dialog the pointer is on the interface: nothing in the world under it is named
+        // (nor asked for), as a click there doesn't reach the world either.
+        let on_world = !game.on_ui(pointer.0, assets.message.size);
         // Ourselves count here (not for clicks): the game picks the own character too, and names it.
-        let pointed = match hovered_named(&game.hit_boxes, pointer.0, players_first) {
+        let pointed = match hovered_named(&game.hit_boxes, pointer.0, players_first).filter(|_| on_world) {
             Some(Owner::Unit(id)) => game
                 .units
                 .get(&id)
@@ -1355,7 +1358,7 @@ impl App {
         }
         game.pointed = pointed_id;
         // The item under the pointer shows its name and amount.
-        if let Some(Owner::Item(id)) = hovered(&game.hit_boxes, pointer.0, players_first)
+        if let Some(Owner::Item(id)) = hovered(&game.hit_boxes, pointer.0, players_first).filter(|_| on_world)
             && let Some(item) = game.ground.get(&id)
         {
             let name = inventory::item_name(items, item.item, item.identified, 0);

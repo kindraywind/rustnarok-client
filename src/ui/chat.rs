@@ -823,7 +823,9 @@ impl Chat {
                 ("chat_scroll_up", area(self.scrollbar_corner(), [SCROLLBAR, ARROW])),
                 ("chat_scroll_down", area([self.scrollbar_corner()[0], LOG_BOX[1] + self.log_height() - ARROW], [SCROLLBAR, ARROW])),
             ]);
-            boxes.extend(top_row(self.locked).iter().map(|button| (button.name, area([button.x, 4.0], button.size))));
+            // The mode icon only while it's drawn (`hit` takes it only then).
+            let shown = |button: &&RowButton| button.hit != Hit::ModeIcon || self.mode_icon.is_some();
+            boxes.extend(top_row(self.locked).iter().filter(shown).map(|button| (button.name, area([button.x, 4.0], button.size))));
             if self.tabs.len() > MCP_TAB {
                 boxes.push(("chat_tab_2", area([MCP_TAB as f32 * TAB_WIDTH, 0.0], [TAB_WIDTH, TAB_HEIGHT])));
             }
@@ -2027,6 +2029,9 @@ mod tests {
         let mut chat = fresh();
         let at = |chat: &Chat, local: [f32; 2]| [local[0], top(chat) + local[1]];
         let x_of = |chat: &Chat, name: &str| chat.button_boxes().into_iter().find(|(button, _)| *button == name).map(|(_, box_)| box_[0]);
+        // Out of battle mode there's no icon to press, so no target for it.
+        assert_eq!(x_of(&chat, "chat_mode"), None);
+        chat.mode_icon = Some(true);
         // Unlocked, right to left from the lock: remove, add, tear-off, settings, icon.
         assert_eq!(
             ["chat_remove_tab", "chat_add_tab", "chat_stick", "chat_options", "chat_mode", "chat_lock"].map(|name| x_of(&chat, name)),
@@ -2036,6 +2041,7 @@ mod tests {
         chat.locked = true;
         assert_eq!(["chat_options", "chat_mode", "chat_remove_tab", "chat_stick"].map(|name| x_of(&chat, name)), [Some(569.0), Some(553.0), None, None]);
         chat.locked = false;
+        chat.mode_icon = None;
         // Out of battle mode the icon's place is empty; in it, (518, 5) hits it unlocked and (554, 5) locked.
         assert_ne!(chat.hit(at(&chat, [518.0, 5.0])), Some(Hit::ModeIcon));
         chat.mode_icon = Some(true);

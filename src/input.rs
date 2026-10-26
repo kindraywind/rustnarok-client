@@ -2968,10 +2968,12 @@ impl App {
         {
             return;
         }
-        // So is a press on the message box or Confirm Deal: nothing under it starts a drag, so its release still clicks.
+        // So is a press on the message box or Confirm Deal, and any press while the game menu keeps the pointer
+        // (`menu_takes`): nothing under it starts a drag, so its release still clicks.
         if let (Scene::Game(game), Some(assets)) = (&self.scene, &self.assets)
             && (game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor)
-                || game.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some()))
+                || game.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some())
+                || game.menu_takes(cursor))
         {
             return;
         }
