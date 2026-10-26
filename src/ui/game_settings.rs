@@ -68,10 +68,11 @@ const ROW_TEXT_WIDTH: f32 = 252.0;
 const SWITCHES: [((usize, &str), usize); 4] =
     [((3172, "Effects"), 37), ((4160, "Show aura"), 3162), ((4163, "Mini aura"), 710), ((2805, "Screen shake"), 3161)];
 /// The Extras page's rows, laid out as the Effect page's: title and description (`extras`, `extra`).
-const EXTRA_ROWS: [(&str, &str); 3] = [
+const EXTRA_ROWS: [(&str, &str); 4] = [
     ("Monster HP", "A hurt monster's HP in numbers under its bar"),
     ("Monster level", "A monster's level after its name"),
     ("Far zoom", "The camera goes out much further"),
+    ("Item options", "An item's random options in its name box"),
 ];
 /// The screen mode group, Graphics page y 160: "Screen mode", the Full screen and Window radios at (150, 12) and
 /// (270, 12), their labels 17 px right.
@@ -410,16 +411,17 @@ pub fn switch_on(graphics: &GraphicsSettings, row: usize) -> bool {
     }
 }
 
-/// The Extras page's switches, in its rows' order: monster HP, monster level, far zoom.
-fn extras(graphics: &GraphicsSettings) -> [bool; 3] {
-    [graphics.monster_hp, graphics.monster_level, graphics.far_zoom]
+/// The Extras page's switches, in its rows' order: monster HP, monster level, far zoom, item options.
+fn extras(graphics: &GraphicsSettings) -> [bool; 4] {
+    [graphics.monster_hp, graphics.monster_level, graphics.far_zoom, graphics.item_options]
 }
 
 fn extra(graphics: &mut GraphicsSettings, row: usize) -> &mut bool {
     match row {
         0 => &mut graphics.monster_hp,
         1 => &mut graphics.monster_level,
-        _ => &mut graphics.far_zoom,
+        2 => &mut graphics.far_zoom,
+        _ => &mut graphics.item_options,
     }
 }
 
@@ -509,21 +511,23 @@ mod tests {
     fn extras_start_off_and_switch_on_their_own_page() {
         let mut window = GameSettings::new([1024.0, 768.0], false);
         let (mut sound, mut graphics) = (Settings::default(), GraphicsSettings::default());
-        assert_eq!(extras(&graphics), [false; 3]);
+        assert_eq!(extras(&graphics), [false; 4]);
         window.click(Hit::Tab(EXTRAS), &mut sound, &mut graphics);
         let corner = window.frame.position;
         let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
         assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 2.0 * ROW + 8.0])), Some(Hit::Switch(2)));
-        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 3.0 * ROW + 8.0])), Some(Hit::Window), "three rows only");
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 4.0 * ROW + 8.0])), Some(Hit::Window), "four rows only");
         assert_eq!(window.click(Hit::Switch(2), &mut sound, &mut graphics), Some(Action::Graphics));
         assert!(graphics.far_zoom);
         window.click(Hit::Switch(0), &mut sound, &mut graphics);
         window.click(Hit::Switch(1), &mut sound, &mut graphics);
-        assert_eq!(extras(&graphics), [true; 3]);
+        window.click(Hit::Switch(3), &mut sound, &mut graphics);
+        assert_eq!(extras(&graphics), [true; 4]);
         // The Effect page's switches didn't move.
-        assert_eq!(graphics, GraphicsSettings { monster_hp: true, monster_level: true, far_zoom: true, ..GraphicsSettings::default() });
+        let all = GraphicsSettings { monster_hp: true, monster_level: true, far_zoom: true, item_options: true, ..GraphicsSettings::default() };
+        assert_eq!(graphics, all);
         assert!(window.button_boxes().iter().any(|(name, _)| name == "switch:2"));
         reset(&mut sound, &mut graphics);
-        assert_eq!(extras(&graphics), [false; 3]);
+        assert_eq!(extras(&graphics), [false; 4]);
     }
 }

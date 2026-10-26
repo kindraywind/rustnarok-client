@@ -1,0 +1,245 @@
+{
+  "about": "Item options on hover. Like the game, the inventory's hover name box of an identified item with random options says how many: \"Guard [1] [3 Option] : 1 Quantity\" (2551; main said only \"Guard [1]: 1 ea.\"). With Game Settings' Extras \"Item options\" on, the box also lists them, a row each above the name line's place (STR +1, MaxSP +3%, Medium monster resistance +3%); an unidentified Guard shows none. Guards come from npc/random-options.txt.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/random-options.txt"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/random-options.txt"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp iz_int01 18 26"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "npc:RustnarokOptions"
+    },
+    {
+      "key": "Tab"
+    },
+    {
+      "type": "guards"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "inventory_has": [
+          {
+            "id": 2101,
+            "identified": true,
+            "options": [
+              [
+                3,
+                1,
+                0
+              ],
+              [
+                10,
+                3,
+                0
+              ],
+              [
+                161,
+                3,
+                0
+              ]
+            ]
+          },
+          {
+            "id": 2101,
+            "identified": false,
+            "options": [
+              [
+                18,
+                5,
+                0
+              ],
+              [
+                22,
+                4,
+                0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "tab:equip"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "move": {
+        "inventory_item": 2101
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "hover-option-count",
+      "threshold": 5,
+      "crop": [
+        0,
+        60,
+        300,
+        140
+      ]
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings_tab:5"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "switch:3"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.item_options": true
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "settings_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "move": {
+        "inventory_item": 2101
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "hover-options",
+      "threshold": 5,
+      "crop": [
+        0,
+        60,
+        300,
+        140
+      ]
+    },
+    {
+      "move": {
+        "inventory_item": 2101,
+        "offset": [
+          64,
+          0
+        ]
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "hover-unidentified",
+      "threshold": 5,
+      "crop": [
+        0,
+        60,
+        300,
+        140
+      ]
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/random-options.txt"
+    },
+    {
+      "wait": 400
+    }
+  ]
+}
