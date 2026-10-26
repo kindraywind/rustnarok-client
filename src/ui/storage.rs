@@ -605,6 +605,11 @@ impl Storage {
         self.rows
     }
 
+    /// The list's first row shown.
+    pub fn scroll(&self) -> usize {
+        self.scroll
+    }
+
     /// Takes `rows` as far as the grip would go at this screen size.
     pub fn set_rows(&mut self, rows: usize) {
         self.rows = rows.clamp(LEAST_ROWS, most_rows(crate::screen()[1]));
@@ -1024,6 +1029,25 @@ mod tests {
         storage.search = "x".into();
         storage.click(Hit::Tab(6), &none, names);
         assert_eq!((storage.scroll, storage.search.as_str()), (0, "x"));
+    }
+
+    #[test]
+    fn the_wheel_stops_on_the_last_row() {
+        let none = HashMap::new();
+        let (cards, makers) = (CardNames::default(), HashMap::new());
+        let names: Names = (&[], &cards, &makers);
+        // A full window (as many items as rows) doesn't scroll; one item more scrolls one row, and stays there.
+        for (extra, bottom) in [(0, 0), (1, 1)] {
+            let mut storage = Storage::default();
+            storage.open(String::new());
+            storage.extend((0..LEAST_ROWS as u16 + extra).map(|index| item(index, 0, 0)).collect());
+            for _ in 0..3 {
+                storage.scroll_by(1, &none, names);
+                assert_eq!(storage.scroll(), bottom);
+            }
+            storage.scroll_by(-1, &none, names);
+            assert_eq!(storage.scroll(), 0);
+        }
     }
 
     #[test]

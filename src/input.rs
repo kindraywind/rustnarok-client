@@ -2430,6 +2430,9 @@ impl App {
     /// The left button went down or up: a press grabs, a release drops or clicks.
     /// The wheel turned `rows` notches (positive: toward the player): it scrolls what the pointer is over, or zooms.
     pub(crate) fn wheel(&mut self, rows: i32) {
+        if rows == 0 {
+            return;
+        }
         // Over a window the wheel zooms only with Ctrl (and never while aiming).
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
             && self.modifiers.control_key()
