@@ -143,6 +143,9 @@ pub fn state(game: &Game, items: &HashMap<u32, ItemInfo>) -> Value {
         .iter()
         .map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "worn": item.worn, "name": name(item.id)}))
         .collect();
+    // Skills' units on the ground in sight (a Fire Wall's cells, a monster's burning ground): rathena's UNT_ kind and the cell.
+    // ponytail: one cell per entry; a unit with its own range (a few traps) covers more, add the range if one matters.
+    let ground_skills: Vec<Value> = game.skill_units.iter().map(|(id, &(kind, cell))| json!({"id": id, "kind": kind, "cell": cell})).collect();
     let party: Vec<u32> = game.party.as_ref().map(|party| party.members.iter().map(|member| member.info.account).collect()).unwrap_or_default();
     json!({
         "map": game.map,
@@ -164,6 +167,7 @@ pub fn state(game: &Game, items: &HashMap<u32, ItemInfo>) -> Value {
         "zeny": status(net::STATUS_ZENY, 0),
         "units": units,
         "ground": ground,
+        "ground_skills": ground_skills,
         "skills": skills,
         "cooldowns": cooldowns,
         "icons": icons,
