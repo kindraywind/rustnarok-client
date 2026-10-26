@@ -59,7 +59,7 @@ fn describe(command: &Command) -> Option<String> {
         Command::Quit => "quit".to_owned(),
         Command::Screenshot { .. }
         | Command::CellPoint { .. }
-        | Command::State
+        | Command::State { .. }
         | Command::Wait { .. }
         | Command::Clock { .. }
         | Command::Trace { .. }

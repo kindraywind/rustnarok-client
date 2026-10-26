@@ -72,9 +72,13 @@ fn tools() -> Value {
         tool(
             Grade::Assist,
             "cell_point",
-            "Where map cell (x, y)'s middle is on the screen, as {\"point\": [x, y]} in the same 1024x768 pixels as click. Use it to click the ground at a cell. Errors outside the game and for a cell behind the camera.",
-            json!({"x": {"type": "integer"}, "y": {"type": "integer"}}),
-            &["x", "y"],
+            "Where map cell (x, y)'s middle is on the screen, as {\"point\": [x, y]} in the same 1024x768 pixels as click. Use it to click the ground at a cell. Errors outside the game and for a cell behind the camera. With `cells` instead of x and y, many cells in one call: {\"points\": [...]} in their order, null for a cell a single call would refuse.",
+            json!({
+                "x": {"type": "integer"},
+                "y": {"type": "integer"},
+                "cells": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}, "description": "[[x, y], ...] instead of x and y"},
+            }),
+            &[],
         ),
         tool(
             Grade::Fair,
@@ -123,7 +127,7 @@ fn tools() -> Value {
             Grade::Fair,
             "state",
             "The scene; in the game the map, the player (cell, HP/SP, levels, zeny, screen box), open windows, `escape` (the Esc or death menu's buttons while it is open, null otherwise; it is not in `windows` and takes every click until it is closed), the NPC dialog, the aimed skill, units and ground items nearest first (id, kind, name, cell, screen box [left, top, right, bottom]), counts, status icons and the last chat lines. cell_point turns player.cell or a unit's cell into a point to click. Under a play mode, what is above it is left out (src/play.rs).",
-            json!({}),
+            json!({"only": {"type": "array", "items": {"type": "string"}, "description": "just these fields of the game's state, e.g. [\"player\", \"units\", \"dialog\"]: a smaller, faster answer"}}),
             &[],
         ),
         tool(
@@ -358,10 +362,12 @@ fn offers_click_unit() {
 fn offers_cell_point() {
     let tools = tools();
     let tool = tools.as_array().unwrap().iter().find(|tool| tool["name"] == "cell_point").expect("a cell_point tool");
-    assert_eq!(tool["inputSchema"]["required"], json!(["x", "y"]));
+    // x and y, or cells.
+    assert_eq!(tool["inputSchema"]["required"], json!([]));
     let properties = &tool["inputSchema"]["properties"];
     assert_eq!((&properties["x"]["type"], &properties["y"]["type"]), (&json!("integer"), &json!("integer")));
-    assert_eq!(properties.as_object().unwrap().len(), 2);
+    assert_eq!(properties["cells"]["items"]["maxItems"], 2);
+    assert_eq!(properties.as_object().unwrap().len(), 3);
 }
 
 #[cfg(test)]

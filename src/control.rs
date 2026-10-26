@@ -173,12 +173,17 @@ pub enum Command {
         #[serde(default)]
         button: Button,
     },
-    /// Where a map cell's middle is on screen: `{"point": [x, y]}`.
+    /// Where a map cell's middle is on screen: `{"point": [x, y]}`. With `cells` instead, `{"points": [...]}` in their
+    /// order, null for a cell the single form refuses.
     CellPoint {
-        x: i32,
-        y: i32,
+        x: Option<i32>,
+        y: Option<i32>,
+        cells: Option<Vec<[i32; 2]>>,
     },
-    State,
+    /// The scene; `only` keeps just those fields of the game's state.
+    State {
+        only: Option<Vec<String>>,
+    },
     /// The auto hunt program's view, its map's walkable cells, and what it does (autohunt.rs).
     HuntState,
     HuntGat,
@@ -546,7 +551,7 @@ pub fn on_draw(gpu: &Gpu, world: Option<&dyn WorldPass>, sprites: &[Sprite], alp
 
 /// Runs a command on the event loop, where the client's state lives, and answers it.
 pub fn run(app: &mut App, event_loop: &ActiveEventLoop, Request { command, reply }: Request) {
-    let reads = matches!(command, Command::State | Command::Screenshot { .. });
+    let reads = matches!(command, Command::State { .. } | Command::Screenshot { .. });
     let answer = match execute(app, event_loop, command) {
         Ok(Value::Null) => json!({"ok": true}),
         Ok(value) => value,
@@ -569,16 +574,15 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             app.read_button();
             Ok(Value::Null)
         }
-        Command::CellPoint { x, y } => {
+        Command::CellPoint { x, y, cells } => {
             let Scene::Game(game) = &app.scene else { return Err("not in the game".into()) };
             let view = game.camera.view(crate::screen()[0] / crate::screen()[1]);
-            let point = view.project(game.world.cell_position([x as f32, y as f32])).ok_or("the cell is behind the camera")?;
-            let point = [point[0] * crate::screen()[0], point[1] * crate::screen()[1]];
-            // Off screen it's a cell a player can't point at.
-            if play::mode() < Grade::Test && !((0.0..crate::screen()[0]).contains(&point[0]) && (0.0..crate::screen()[1]).contains(&point[1])) {
-                return Err("the cell is off screen".into());
+            let point = |[x, y]: [i32; 2]| cell_point(view.project(game.world.cell_position([x as f32, y as f32])), crate::screen(), play::mode());
+            match (x, y, cells) {
+                (Some(x), Some(y), None) => Ok(json!({"ok": true, "point": point([x, y])?})),
+                (None, None, Some(cells)) => Ok(json!({"ok": true, "points": cells.into_iter().map(|cell| point(cell).ok()).collect::<Vec<_>>()})),
+                _ => Err("cell_point takes x and y, or cells".into()),
             }
-            Ok(json!({"ok": true, "point": point}))
         }
         Command::Move { x, y } => {
             point(app, [x, y]);
@@ -688,14 +692,18 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             let Scene::Game(game) = &mut app.scene else { return Err("not in the game".into()) };
             Ok(autohunt::perform(game, actions))
         }
-        Command::State => {
+        Command::State { only } => {
             // In the game, a frame first, so the held map packets are applied and what drawing places (units' and items'
             // boxes, signs, links) matches the screen after the last command. Not while the clock is paused, so frame
             // stepping stays the visual tests', nor when the last frame is already current.
             if fresh_frame_due(matches!(app.scene, Scene::Game(_)) && app.loading.is_none(), FROZEN.lock().unwrap().is_some(), app.frame_current) {
                 app.redraw(event_loop);
             }
-            Ok(state(app))
+            let mut state = state(app);
+            if let Some(only) = only {
+                keep_only(&mut state["game"], &only)?;
+            }
+            Ok(state)
         }
         Command::Clock { action, ms } => {
             // A pause lands after the packets that came in before it, as a pause at a packet shows its effect.
@@ -730,6 +738,17 @@ fn click(app: &mut App, event_loop: &ActiveEventLoop, at: [f32; 2], button: Butt
             press(app, event_loop, button, ElementState::Released);
         }
     });
+}
+
+/// A cell's middle on a `screen` of that size, from where the view projects it (`0..1`, None behind the camera). Off
+/// the screen, under a play mode, it's a cell a player can't point at.
+fn cell_point(projected: Option<[f32; 2]>, screen: [f32; 2], mode: Grade) -> Result<[f32; 2], String> {
+    let point = projected.ok_or("the cell is behind the camera")?;
+    let point = [point[0] * screen[0], point[1] * screen[1]];
+    if mode < Grade::Test && !((0.0..screen[0]).contains(&point[0]) && (0.0..screen[1]).contains(&point[1])) {
+        return Err("the cell is off screen".into());
+    }
+    Ok(point)
 }
 
 /// Where a click picks unit `id` among the last drawn frame's `hit_boxes`: the middle of its area, else the point of a
@@ -2374,6 +2393,18 @@ fn grade(state: &mut Value, mode: Grade, quests_open: bool) {
     }
 }
 
+/// Keeps just the named fields of the game's state (`state`'s `only`), after `grade`, so it never shows more. A name
+/// that isn't a field is an error, so a misspelt one doesn't read as an empty field.
+fn keep_only(game: &mut Value, only: &[String]) -> Result<(), String> {
+    if let Some(name) = only.iter().find(|name| !FIELD_GRADES.iter().any(|(field, _)| field == name)) {
+        return Err(format!("state has no field {name}"));
+    }
+    if let Some(fields) = game.as_object_mut() {
+        fields.retain(|key, _| only.contains(key));
+    }
+    Ok(())
+}
+
 /// The player's look as the game state reports it. Zeros until the server has sent one.
 /// A pushcart's spot (world X and Z), facing (degrees) and wheel frame, or null.
 /// Whether the Basic Information window's weight line is red: `basic_info::heavy` on the server's weight and limit.
@@ -2624,6 +2655,32 @@ mod tests {
     }
 
     #[test]
+    fn state_keeps_only_the_fields_asked_for() {
+        let mut game = json!({"map": "prontera.gat", "player": {"cell": [1, 2]}, "units": [], "windows": []});
+        keep_only(&mut game, &["player".into(), "units".into()]).unwrap();
+        assert_eq!(game, json!({"player": {"cell": [1, 2]}, "units": []}));
+        // A field the play mode left out stays out; a name that isn't a field is an error.
+        let mut graded = json!({"map": "prontera.gat"});
+        keep_only(&mut graded, &["navigation".into()]).unwrap();
+        assert_eq!(graded, json!({}));
+        assert!(keep_only(&mut json!({}), &["unitz".into()]).is_err());
+        // Outside the game there's nothing to keep.
+        let mut outside = Value::Null;
+        keep_only(&mut outside, &["player".into()]).unwrap();
+        assert!(outside.is_null());
+    }
+
+    #[test]
+    fn points_at_cells_on_the_screen() {
+        let screen = [1024.0, 768.0];
+        assert_eq!(cell_point(Some([0.5, 0.25]), screen, Grade::Assist), Ok([512.0, 192.0]));
+        assert_eq!(cell_point(None, screen, Grade::Test), Err("the cell is behind the camera".into()));
+        // Off the screen: refused under a play mode, a point for tests.
+        assert_eq!(cell_point(Some([1.5, 0.5]), screen, Grade::Assist), Err("the cell is off screen".into()));
+        assert_eq!(cell_point(Some([1.5, 0.5]), screen, Grade::Test), Ok([1536.0, 384.0]));
+    }
+
+    #[test]
     fn parses_commands() {
         let parse = |line: &str| serde_json::from_str::<Command>(line);
         assert_eq!(parse(r#"{"cmd":"wheel","x":390,"y":360,"rows":-2}"#).unwrap(), Command::Wheel { x: 390.0, y: 360.0, rows: -2 });
@@ -2646,7 +2703,10 @@ mod tests {
         assert!(matches!(parse(r#"{"cmd":"wait","packet":2248,"ms":500}"#), Ok(Command::Wait { packet: Some(0x08c8), ms: Some(500), .. })));
         assert!(matches!(parse(r#"{"cmd":"wait","sent":"0x0447"}"#), Ok(Command::Wait { sent: Some(0x0447), packet: None, .. })));
         assert_eq!(parse(r#"{"cmd":"clock","action":"step","ms":50}"#).unwrap(), Command::Clock { action: ClockAction::Step, ms: Some(50) });
-        assert_eq!(parse(r#"{"cmd":"state"}"#).unwrap(), Command::State);
+        assert_eq!(parse(r#"{"cmd":"state"}"#).unwrap(), Command::State { only: None });
+        assert_eq!(parse(r#"{"cmd":"state","only":["player","units"]}"#).unwrap(), Command::State { only: Some(vec!["player".into(), "units".into()]) });
+        assert_eq!(parse(r#"{"cmd":"cell_point","x":3,"y":4}"#).unwrap(), Command::CellPoint { x: Some(3), y: Some(4), cells: None });
+        assert_eq!(parse(r#"{"cmd":"cell_point","cells":[[1,2],[3,4]]}"#).unwrap(), Command::CellPoint { x: None, y: None, cells: Some(vec![[1, 2], [3, 4]]) });
         // A missing coordinate, a misspelt field, an unknown command, a bad packet ID.
         for wrong in [r#"{"cmd":"click","x":1}"#, r#"{"cmd":"click","x":1,"y":2,"buton":"left"}"#, r#"{"cmd":"fly"}"#, r#"{"cmd":"wait","packet":"zz"}"#] {
             assert!(parse(wrong).is_err(), "{wrong}");
