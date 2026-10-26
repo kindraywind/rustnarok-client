@@ -75,7 +75,10 @@ impl App {
             return self.draw_loading(event_loop);
         }
         if matches!(self.scene, Scene::Game(_)) {
-            self.redraw_game(event_loop);
+            // The game moves on, then its frame is drawn, at the same instant.
+            let now = control::now();
+            self.tick(now);
+            self.redraw_game(event_loop, now);
             self.frame_current = true;
             return;
         }
@@ -301,7 +304,7 @@ impl App {
         self.drawn_blink_phase = blink_phase;
     }
 
-    pub(crate) fn redraw_game(&mut self, event_loop: &ActiveEventLoop) {
+    pub(crate) fn redraw_game(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
         let (Some(gpu), Some(assets), Scene::Game(game)) = (&mut self.gpu, &self.assets, &mut self.scene) else { return };
         // ponytail: the client's own line for a saved screenshot isn't in the data; a plain one.
         if let Some(name) = self.shot_saved.take() {
@@ -318,7 +321,6 @@ impl App {
         let monster_sizes = &self.monster_sizes;
         let shadow_factors = &self.shadow_factors;
         let font = &self.font;
-        let now = control::now();
         let pointer = (self.cursor, self.mouse_down);
         let pet_window = &mut game.pet_window;
         pet_window.auto_label = font.width(messages.get(pet::AUTO_FEED_LABEL).map_or("", String::as_str));
@@ -338,34 +340,11 @@ impl App {
         for (effect, at) in launches {
             game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, now);
         }
-        game.poll_booking();
         game.poll_web_emblems(gpu);
         // The map's own effects: those started at its load, then each on its timer while the player is near.
         let near = actor::world_xz(game.player.position(now));
         for (effect, at) in game.world.map_effects.due(crate::whole_ms(now), near) {
             game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, now);
-        }
-        // The refine window's hammering: its sounds as the frames pass, and at its end the result's sound and chat line.
-        let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
-        let carried = &game.inventory.items;
-        let carried_of = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
-        let cues = game.refine.as_mut().map(|window| window.advance(control::now(), carried_of, zeny)).unwrap_or_default();
-        for cue in cues {
-            match cue {
-                refine::Cue::Sound(file) => {
-                    if let Some(audio) = audio.as_mut() {
-                        audio.play(grf, file, 1.0);
-                    }
-                }
-                refine::Cue::Chat(id) => game.chat_line(messages.get(id).cloned().unwrap_or_default(), CHAT_ITEM),
-            }
-        }
-        // The map's ambient sounds, each on its cycle.
-        if let Some(audio) = audio.as_mut() {
-            let at = actor::world_xz(game.player.position(now));
-            for (file, volume) in game.world.ambient.due(at, now) {
-                audio.play(grf, &file, volume);
-            }
         }
         // The party's docked window stays right of the party window.
         if game.party_window.frame.open
@@ -373,81 +352,10 @@ impl App {
         {
             dialog.frame.position = party::docked_at(Some((game.party_window.frame.position, game.party_window.size()[0])), screen());
         }
-        // The mercenary and the homunculus follow the player unless told otherwise.
-        if let Some(id) = game.mercenary.as_ref().map(|hired| hired.id) {
-            game.follow_player(id, false, now);
-        }
-        if let Some(id) = game.homunculus_id {
-            game.follow_player(id, true, now);
-        }
-        // Our pet left standing may say so.
-        if let Some(actor) = game.pet_id.and_then(|id| game.units.get(&id))
-            && game.pet_idle.due(actor.moving(), now)
-            && crate::effects::pick(0, 3) == 0
-            && let Some(hunger) = game.pet.as_ref().map(|pet| pet.hunger)
-        {
-            game.pet_talk(pet::ACT_STAND, hunger);
-        }
-
-        // Where the windows were left is kept for next time.
-        game.save_places();
-        game.save_small_windows();
-
-        // Bodies that finished dying leave; hits that land make their target flinch.
-        game.units.retain(|_, actor| actor.remove_at.is_none_or(|at| at > now));
-        // A hit's sound when it lands, at the target.
-        let mut hit_sounds = Vec::new();
-        for damage in &mut game.damages {
-            if damage.start <= now
-                && let Some(source) = damage.source.take()
-            {
-                let target = damage.target.map_or(Some(&game.player), |id| game.units.get(&id));
-                let attacker = if source == game.account_id { Some(&game.player) } else { game.units.get(&source) };
-                if let Some(target) = target {
-                    let lineage = (target.kind == PLAYER).then(|| self.skill_trees.lineage(target.job));
-                    let weapon = attacker.and_then(|actor| actor.look.as_ref()).map(|look| self.look_tables.weapon_type(look.weapon));
-                    let roll = damage.start.duration_since(game.entered).subsec_nanos() >> 8;
-                    let at = target.position(now);
-                    let me = game.player.position(now);
-                    hit_sounds.push((hit_sound(lineage.as_deref(), weapon, roll), heard(f32::hypot(at[0] - me[0], at[1] - me[1]))));
-                }
-            }
-            if damage.start <= now && damage.flinch.is_some() {
-                let motion = damage.flinch.take();
-                let target = match damage.target {
-                    None => Some(&mut game.player),
-                    Some(id) => game.units.get_mut(&id),
-                };
-                // The flinch stops a walk once its step is done and gets a sitting player up.
-                if let Some(target) =
-                    target.filter(|target| target.remove_at.is_none() && !target.dead && actor::flinches(target.kind, target.animation(now).0))
-                    && let Some(motion) = motion
-                {
-                    let (_, flinch, _) = actor::combat_actions(target.kind);
-                    target.flinch(flinch, now, motion);
-                    target.stop_after_step();
-                    target.sitting = false;
-                    target.stand_ready();
-                }
-            }
-        }
-        game.damages.retain(|damage| now < damage.start || now.duration_since(damage.start).as_secs_f32() < damage.kind.duration(damage.amount));
-
-        // Move everyone, follow the player, then decode the sprite frames (mutably) before borrowing them.
-        let walking = game.player.moving();
-        game.player.casting = game.casts.contains_key(&None);
-        // The test driver's clock can run back on a resume after a step: walks never see a frame earlier than the last,
-        // so only a change of the server's clock moves them back.
-        let walk_now = now.max(game.walk_clock);
-        game.walk_clock = walk_now;
-        let player_cell = game.player.update(walk_now);
-        game.player.step_companions(actor::world_xz(player_cell), now);
-        if walking
-            && !game.player.moving()
-            && let Some((_, arrived)) = &mut game.pending
-        {
-            *arrived = Some(now);
-        }
+        // The tick moved the player; the others walk on its clock. Then the sprite frames are decoded (mutably) before
+        // borrowing them.
+        let walk_now = game.walk_clock;
+        let player_cell = game.player.position(now);
         let mut player_feet = game.world.cell_position(player_cell);
         player_feet[1] += game.effects.lift(None);
         if game.weather.take_map_launch() && self.graphics.effects_on {
@@ -476,7 +384,7 @@ impl App {
         let view = game.camera.view(screen()[0] / screen()[1]);
         let yaw = game.camera.yaw;
         let mut frames = Vec::new();
-        let mut sounds: Vec<(String, f32)> = game.player.sounds_now(now).into_iter().map(|sound| (sound, 1.0)).chain(hit_sounds).collect();
+        let mut sounds: Vec<(String, f32)> = game.player.sounds_now(now).into_iter().map(|sound| (sound, 1.0)).collect();
         let (action, timing) = game.player.animation(now);
         let head_direction = game.player.head_direction;
         // Falcon Assault spins whoever it hits.
@@ -1443,9 +1351,6 @@ impl App {
                     labels.push((format!("{} (Lv {})", crate::actor::shown_name(shown_name), actor.level), feet, color));
                 }
                 None => labels.push((shown_name.to_owned(), feet, color)),
-            }
-            if actor.kind == PLAYER && game.pointed != pointed_id {
-                let _ = game.session.ask_name(id);
             }
         }
         game.pointed = pointed_id;

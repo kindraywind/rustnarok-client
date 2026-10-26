@@ -634,6 +634,7 @@ impl App {
                     emblems: HashMap::new(),
                     name_tags: HashMap::new(),
                     pointed: None,
+                    last_pointed: None,
                     signs: HashMap::new(),
                     sign_rects: Vec::new(),
                     chat_links: Vec::new(),
