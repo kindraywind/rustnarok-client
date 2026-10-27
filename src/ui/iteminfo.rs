@@ -166,17 +166,20 @@ impl Shown {
     }
 
     /// An item from a link: identified, with what the link carries.
-    // ponytail: a link doesn't say the item's type; one with slots is taken for equipment.
+    // ponytail: an `<ITEM>` link doesn't say the item's type; one with slots is taken for equipment (`with_link` takes
+    // an `<ITEML>`'s own flag).
     pub fn of_link(id: u32, refine: u8, cards: [u32; 4], card: bool, items: &HashMap<u32, ItemInfo>) -> Self {
         let kind = if items.get(&id).is_some_and(|info| info.slots > 0) { net::ITEM_ARMOR } else { 0 };
         // ponytail: nor where it's worn, so a link's item isn't compared.
         Self { item: id, identified: true, refine, cards, kind, grade: 0, broken: false, expires: 0, card, location: 0, worn: false, options: Vec::new() }
     }
 
-    /// A link's item with its random options (id, parameter, value).
-    pub fn with_link_options(self, options: &[[u32; 3]]) -> Self {
-        let options = options.iter().map(|&[id, param, value]| ItemOption { id: id as u16, value: value as i16, param: param as u8 }).collect();
-        Self { options, ..self }
+    /// A link's item with the rest the link says: its grade, random options (id, parameter, value), and whether it's
+    /// equipment.
+    pub fn with_link(self, link: &crate::links::ItemLink) -> Self {
+        let options = link.options.iter().map(|&[id, param, value]| ItemOption { id: id as u16, value: value as i16, param: param as u8 }).collect();
+        let kind = if link.equip { net::ITEM_ARMOR } else { self.kind };
+        Self { options, grade: link.grade, kind, ..self }
     }
 
     /// The same item to describe: ID, refine, cards and options (not which stack, how many, or where it was clicked).
@@ -857,8 +860,13 @@ mod tests {
         // A link: equipment when it has slots.
         assert_eq!(Shown::of_link(1201, 0, [0; 4], false, &items()).kind, net::ITEM_ARMOR);
         assert_eq!(Shown::of_link(4001, 0, [0; 4], true, &items()).kind, 0);
-        let linked = Shown::of_link(1201, 0, [0; 4], false, &items()).with_link_options(&[[3, 0, 1]]);
+        let link = crate::links::ItemLink { id: 1201, options: vec![[3, 0, 1]], ..Default::default() };
+        let linked = Shown::of_link(1201, 0, [0; 4], false, &items()).with_link(&link);
         assert_eq!(linked.options, [ItemOption { id: 3, value: 1, param: 0 }]);
+        // An <ITEML> says whether it's equipment, and its grade: a slotless +7 piece keeps its "+7 [A]".
+        let link = crate::links::ItemLink { id: 4001, refine: 7, grade: 4, equip: true, ..Default::default() };
+        let linked = Shown::of_link(4001, 7, [0; 4], false, &items()).with_link(&link);
+        assert_eq!((linked.kind, linked.grade), (net::ITEM_ARMOR, 4));
     }
 
     #[test]
