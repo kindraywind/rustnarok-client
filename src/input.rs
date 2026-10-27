@@ -121,7 +121,7 @@ impl App {
                 }
             }
             // A link in the chat log or the NPC window: an item's information, or a navigation to the place.
-            Scene::Game(game) if matches!(top, Some(Top::NpcDialog | Top::Chat)) && game.link_at(cursor).is_some() => {
+            Scene::Game(game) if takes_link(top) && game.link_at(cursor).is_some() => {
                 match game.link_at(cursor).cloned().unwrap() {
                     links::Target::Item(item) => {
                         let card = self.card_pictures.name(item.id).is_some();

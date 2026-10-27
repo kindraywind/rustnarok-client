@@ -2166,6 +2166,12 @@ fn esc_reached(top: Option<Top>, menu: bool) -> Option<escape::WindowId> {
     }
 }
 
+/// Whether a click with `top` on top may open a link under it: the NPC window's, or the chat log's. The log takes no
+/// click of its own (it lets the world have it), so nothing is on top over it; any other window over the log covers it.
+fn takes_link(top: Option<Top>) -> bool {
+    matches!(top, None | Some(Top::NpcDialog | Top::Chat))
+}
+
 fn esc_panel(id: Panel) -> Option<escape::WindowId> {
     use escape::WindowId::*;
     Some(match id {
@@ -6272,6 +6278,14 @@ mod tests {
         assert_eq!(esc_reached(None, false), None);
         // A press anywhere while the right-click menu is up is the menu's.
         assert_eq!(esc_reached(Some(Top::Panel(Panel::Inventory)), true), Some(Menu));
+    }
+
+    #[test]
+    fn a_click_opens_a_link_only_where_nothing_covers_it() {
+        // The chat log is nothing's (`top_at` gives None there), the NPC window and the chat's own parts are theirs.
+        assert!(takes_link(None) && takes_link(Some(Top::NpcDialog)) && takes_link(Some(Top::Chat)));
+        // A window drawn over the log keeps its links from the click.
+        assert!(!takes_link(Some(Top::Esc(escape::WindowId::ItemInfo))) && !takes_link(Some(Top::Panel(Panel::Inventory))));
     }
 
     #[test]
