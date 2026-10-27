@@ -1429,6 +1429,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(game.chat.settings.iter().flat_map(crate::chat::Settings::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.chat.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.chat.torn_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.room.iter().flat_map(|room| room.button_boxes(&game.me.name)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
             game.quest_window.button_boxes(&game.quests, &app.quest_texts).into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
@@ -1865,6 +1866,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         "whisper_name": game.chat.whisper,
         "chat_tabs": (0..game.chat.tabs.len()).map(|tab| game.chat.tab_lines(tab).iter().rev().take(5).rev().map(|(text, ..)| text.clone()).collect::<Vec<_>>()).collect::<Vec<_>>(),
         "chat_tab_names": game.chat.tabs.iter().map(|tab| tab.label.text(&app.messages)).collect::<Vec<_>>(),
+        // The tabs torn off into windows: each one's name, place and last lines; the name being typed for a tab.
+        "chat_torn": game.chat.torn.iter().map(|window| json!({
+            "name": window.tab.label.text(&app.messages),
+            "box": window.rect(),
+            "lines": window.tab_lines().iter().rev().take(5).rev().map(|(text, ..)| text.clone()).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
         "chat_send_to": format!("{:?}", game.chat.send_to),
         // The last chat line's kind (its colour says so on screen): "party", "public", "guild"...
         "chat_last_kind": game.chat.lines.last().map(|(_, _, kind)| kind.name()),
@@ -2236,6 +2243,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("chat_tab", Fair),
         ("chat_tabs", Fair),
         ("chat_tab_names", Fair),
+        ("chat_torn", Fair),
         ("chat_whisper", Fair),
         ("cooldowns", Assist),
         ("costumes_shown", Fair),

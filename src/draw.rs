@@ -1779,6 +1779,15 @@ impl App {
         game.chat.measure_tabs(messages, &|text| font.width(text));
         game.chat.mode_icon = game.chat_mode.icon();
         game.chat_links = game.chat.draw(&mut chat_window, &assets.chat, font, messages, open, caret, &name_of);
+        // Torn-off chat windows over it, each on its own layer to fade while held.
+        let caret_blink = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
+        let mut torn_layers = Vec::new();
+        for (index, window) in game.chat.torn.iter().enumerate() {
+            let mut layer = Layer { faded: window.faded(), ..Layer::default() };
+            let links = game.chat.draw_torn(index, &mut layer, &assets.chat, font, messages, caret_blink, &name_of);
+            game.chat_links.extend(links);
+            torn_layers.push(layer);
+        }
         // The input bar buttons' tooltips, over the pointer.
         if let Some(text) = game.chat.tooltip(pointer.0).and_then(|id| messages.get(id)) {
             let size = [font.width(text) + 8.0, font.line_height() + 4.0];
@@ -1953,7 +1962,9 @@ impl App {
             let icon = icons.get(&popup.icon).and_then(Option::as_ref);
             popup.draw(&mut announce_layer, &assets.chrome, &assets.pickup, icon, font);
         }
-        let mut layers = vec![base, announce_layer, chat_window, chat_layer];
+        let mut layers = vec![base, announce_layer, chat_window];
+        layers.extend(torn_layers);
+        layers.push(chat_layer);
         let mut preview = Some(preview);
         let numbers = self.graphics.cooldown_numbers.then_some(font);
         let cooling = skills::Cooling { cooldowns: &game.cooldowns, fan: &assets.fan, now: control::now(), numbers };
@@ -2243,8 +2254,10 @@ impl App {
         }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
-        if let Some(settings) = &game.chat.settings {
-            settings.draw(shop_layer.window(), &assets.chrome, &assets.chat, messages, &game.chat.tabs[settings.tab], pointer.0);
+        if let Some(settings) = &game.chat.settings
+            && let Some(tab) = game.chat.settings_tab()
+        {
+            settings.draw(shop_layer.window(), &assets.chrome, &assets.chat, messages, tab, pointer.0);
         }
         // A skill's description, over the windows.
         if let Some(window) = &game.skill_description {

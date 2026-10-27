@@ -1,5 +1,5 @@
 {
-  "about": "The chat window (issue #215): F10 steps through the input bar alone and logs 96, 138, 180, 222 and 264 tall, bottom edge in place; log lines 14 apart from x 7, tabs as wide as their labels and 10, the buttons right to left from the lock. The scrollbar's thumb drags the log back and forth. The window drags by the input bar's gaps (the spot left of the name box), snaps flush to the screen's edges, and stays put while locked. Add tab makes NewTab_3 (nothing ticked), remove tab takes the one shown. Battle mode (/bm) leaves the line open; Enter on the empty line closes it and the input bar goes with it (issue #353).",
+  "about": "The chat window (issue #215): F10 steps through the input bar alone and logs 96, 138, 180, 222 and 264 tall, bottom edge in place; log lines 14 apart from x 7, tabs as wide as their labels and 10, the buttons right to left from the lock. The scrollbar's thumb drags the log back and forth. The window drags by the input bar's gaps (the spot left of the name box), snaps flush to the screen's edges, and stays put while locked. Add tab makes NewTab_3 (nothing ticked), remove tab takes the one shown. Tear-off puts a tab in a window of its own (300×95 at 100, 100), dragged by its name, renamed by a double click there, and put back by its button; a double click on a tab renames it. Battle mode (/bm) leaves the line open; Enter on the empty line closes it and the input bar goes with it (issue #353).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -467,6 +467,208 @@
             768
           ]
         }
+      }
+    },
+    {
+      "click_on": {
+        "button": "chat_add_tab"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "chat_stick"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_tab_names": [
+            "Public",
+            "Battle"
+          ],
+          "chat_tab": 1,
+          "chat_torn.0.name": "NewTab_3",
+          "chat_torn.0.box": [
+            100,
+            100,
+            300,
+            95
+          ]
+        }
+      }
+    },
+    {
+      "mouse_down": {
+        "button": "torn_0_title"
+      }
+    },
+    {
+      "move": [
+        300,
+        250
+      ]
+    },
+    {
+      "move": [
+        400,
+        300
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          400,
+          300
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "chat_torn.0.box.0": 350,
+          "chat_torn.0.box.1": 280
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "torn_0_title"
+      },
+      "count": 2
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_focus": "rename"
+        }
+      }
+    },
+    {
+      "type": "Loot"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_torn.0.name": "Loot",
+          "chat_focus": "message"
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        200
+      ]
+    },
+    {
+      "shot": "chat-torn",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "torn_0_attach"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_tab_names": [
+            "Public",
+            "Battle",
+            "Loot"
+          ],
+          "chat_tab": 2,
+          "chat_torn": []
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "chat_tab_2"
+      },
+      "count": 2
+    },
+    {
+      "wait": 300
+    },
+    {
+      "type": "s"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_tab_names": [
+            "Public",
+            "Battle",
+            "Loots"
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        200
+      ]
+    },
+    {
+      "shot": "chat-renamed",
+      "crop": [
+        0,
+        640,
+        620,
+        128
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "chat_remove_tab"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_tab_names": [
+            "Public",
+            "Battle"
+          ]
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "chat_tab_0"
       }
     },
     {

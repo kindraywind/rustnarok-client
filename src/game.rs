@@ -1958,6 +1958,15 @@ impl Game {
 
     /// Sends what's typed: whispered when the name box has a name, to the party with a leading % (or `party`, Ctrl
     /// held). Returns a message to show when it can't.
+    /// What a chat window action asks to show: a red line in the chat, or a notice box.
+    pub(crate) fn chat_said(&mut self, said: Option<chat::Said>, messages: &[String]) {
+        match said {
+            Some(chat::Said::Line(id)) => self.chat_line(messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+            Some(chat::Said::Notice(id)) => self.question_box = Some(BoxQuestion::Notice(id)),
+            None => {}
+        }
+    }
+
     pub(crate) fn send_chat(&mut self, party: bool, guild: bool, messages: &[String], graphics: &mut options::GraphicsSettings) -> Option<usize> {
         let typed = std::mem::take(&mut self.chat.input);
         if typed.is_empty() {
