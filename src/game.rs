@@ -4353,7 +4353,14 @@ impl Game {
         }
         let me = self.account_id;
         let target_cell = if act.target == me { Some(self.player.cell) } else { self.units.get(&act.target).map(|actor| actor.cell) };
-        let source = if act.source == me { Some(&mut self.player) } else { self.units.get_mut(&act.source) };
+        // A tick of poison, bleeding, ... comes as a hit from the unit on itself: no one swings.
+        let source = if act.source == act.target {
+            None
+        } else if act.source == me {
+            Some(&mut self.player)
+        } else {
+            self.units.get_mut(&act.source)
+        };
         let mut hit_ms = None;
         let mut bow = false;
         if let Some(source) = source {
