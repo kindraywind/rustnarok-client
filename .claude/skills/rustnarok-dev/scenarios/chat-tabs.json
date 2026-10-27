@@ -1,5 +1,5 @@
 {
-  "about": "Chat tabs (issue #312): two players form a party (as in party.json); the second's party line and the first's public line land in Public, and Battle (the damage lines) has neither. The first's tab settings for Public untick Party Chat, and the party line leaves Public (ticked again after). The window drags by its tab strip, the lock and the stick button work, and typing 300 letters stops at 234 (that line is sent, so the box is empty for the leaving). Both leave the party at the end.",
+  "about": "Chat tabs (issue #312): two players form a party (as in party.json); the second's party line and the first's public line land in Public, and Battle (the damage lines) has neither. The first's tab settings for Public untick Party Chat, and the party line leaves Public (ticked again after). The window drags by its tab strip, the lock and the stick button work, and typing 300 letters stops at 234 (that line is sent, so the box is empty for the leaving). The send-to list picks Party: a plain line reaches the second as party chat, a % line as public. Both leave the party at the end.",
   "account": "",
   "slot": 0,
   "second": {
@@ -340,6 +340,81 @@
     },
     {
       "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "chat_send_to"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        1000,
+        300
+      ]
+    },
+    {
+      "shot": "send-to-list",
+      "crop": [
+        380,
+        600,
+        260,
+        168
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "send_to:Party"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_send_to": "Party"
+        }
+      }
+    },
+    {
+      "type": "plain to the party"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "expect": {
+        "chat": "plain to the party",
+        "state": {
+          "chat_last_kind": "party"
+        }
+      }
+    },
+    {
+      "type": "%back to everyone"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "as": "second",
+      "expect": {
+        "chat": "back to everyone",
+        "state": {
+          "chat_last_kind": "public"
+        }
+      }
     },
     {
       "as": "second",

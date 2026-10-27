@@ -1866,6 +1866,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "chat_tabs": (0..game.chat.tabs.len()).map(|tab| game.chat.tab_lines(tab).iter().rev().take(5).rev().map(|(text, ..)| text.clone()).collect::<Vec<_>>()).collect::<Vec<_>>(),
         "chat_tab_names": game.chat.tabs.iter().map(|tab| tab.label.text(&app.messages)).collect::<Vec<_>>(),
         "chat_send_to": format!("{:?}", game.chat.send_to),
+        // The last chat line's kind (its colour says so on screen): "party", "public", "guild"...
+        "chat_last_kind": game.chat.lines.last().map(|(_, _, kind)| kind.name()),
         "chat_locked": game.chat.locked,
         "chat_corner": game.chat.corner_moved(),
         "chat_input": game.chat.input,
@@ -2230,6 +2232,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("chat_names", Fair),
         ("chat_scroll", Fair),
         ("chat_send_to", Fair),
+        ("chat_last_kind", Fair),
         ("chat_tab", Fair),
         ("chat_tabs", Fair),
         ("chat_tab_names", Fair),
