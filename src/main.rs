@@ -62,6 +62,7 @@ mod draw;
 mod emotion;
 mod events;
 mod game;
+use game::Top;
 mod head_marks;
 mod input;
 mod mcp;
@@ -2155,6 +2156,16 @@ fn storage_list(panel: Panel) -> Option<storage::List> {
 }
 
 /// A panel Esc closes. The hotbar and the basic info window stay up.
+/// The Esc window a press reached: any press is the right-click menu's while it's up.
+fn esc_reached(top: Option<Top>, menu: bool) -> Option<escape::WindowId> {
+    match top {
+        _ if menu => Some(escape::WindowId::Menu),
+        Some(Top::Esc(id)) => Some(id),
+        Some(Top::Panel(panel)) => esc_panel(panel),
+        _ => None,
+    }
+}
+
 fn esc_panel(id: Panel) -> Option<escape::WindowId> {
     use escape::WindowId::*;
     Some(match id {
@@ -6247,6 +6258,20 @@ mod tests {
         assert!(rounds_facing(4008, actor::SIT) && !rounds_facing(WARP_JOB, actor::IDLE));
         // 6018–6052: standing, walking or sitting; not the ready stance.
         assert!(rounds_facing(6020, actor::WALK) && !rounds_facing(6020, actor::READY) && !rounds_facing(6020, attack));
+    }
+
+    #[test]
+    fn a_press_moves_the_window_it_reached_in_the_esc_order() {
+        use escape::WindowId::*;
+        assert_eq!(esc_reached(Some(Top::Esc(Minimap)), false), Some(Minimap));
+        assert_eq!(esc_reached(Some(Top::Panel(Panel::Inventory)), false), Some(Inventory));
+        // The storage, the hotbar and what isn't a window aren't Esc's.
+        assert_eq!(esc_reached(Some(Top::Panel(Panel::Storage)), false), None);
+        assert_eq!(esc_reached(Some(Top::Panel(Panel::Hotkeys)), false), None);
+        assert_eq!(esc_reached(Some(Top::Chat), false), None);
+        assert_eq!(esc_reached(None, false), None);
+        // A press anywhere while the right-click menu is up is the menu's.
+        assert_eq!(esc_reached(Some(Top::Panel(Panel::Inventory)), true), Some(Menu));
     }
 
     #[test]

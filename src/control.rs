@@ -84,7 +84,7 @@ use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, NativeKeyCode, Phy
 
 use crate::actor::Look;
 use crate::render::{Gpu, Sprite, WorldPass};
-use crate::{App, DialogButton, Game, HOMUNCULUS, MERCENARY, MONSTER, NPC, NetEvent, Owner, PET, PLAYER, Panel, Scene, inventory};
+use crate::{App, DialogButton, Game, HOMUNCULUS, MERCENARY, MONSTER, NPC, NetEvent, Owner, PET, PLAYER, Panel, Scene, Top, inventory};
 use crate::{autohunt, mcp};
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -801,7 +801,7 @@ fn unit_point(
 fn clicked_on(app: &App, at: [f32; 2], shift: bool) -> Value {
     let (Scene::Game(game), Some(assets)) = (&app.scene, &app.assets) else { return Value::Null };
     if game.on_ui(at, assets.message.size) {
-        return json!({"kind": "ui", "window": window_named(game.menu_takes(at), game.over_panels_at(at), game.window_at(at))});
+        return json!({"kind": "ui", "window": window_named(game, at, assets.message.size)});
     }
     let screen = crate::screen();
     let others = game.hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player);
@@ -819,11 +819,19 @@ fn clicked_on(app: &App, at: [f32; 2], shift: bool) -> Value {
 /// The game menu's name in `windows` and in a click's `hit`.
 const GAME_MENU: &str = "GameMenu";
 
-/// The window a click lands on, by name: the game menu while it takes the click (`menu_takes`), else one drawn over the
-/// panels before the panel under it (#1151).
-fn window_named(menu: bool, over_panels: Option<&str>, panel: Option<Panel>) -> Option<String> {
-    let over = if menu { Some(GAME_MENU) } else { over_panels };
-    over.map(str::to_owned).or_else(|| panel.map(|panel| format!("{panel:?}")))
+/// The window a click at `at` reaches, by name: the game menu while it keeps the pointer (`menu_takes`), else the one
+/// drawn on top there (`Game::top_at`); a member's small window by their name, as `windows` has it.
+fn window_named(game: &Game, at: [f32; 2], message: [f32; 2]) -> Option<String> {
+    let member = |account: u32| game.party.as_ref()?.members.iter().find(|member| member.info.account == account).map(|member| member.info.name.clone());
+    match top_named(game.menu_takes(at), game.top_at(at, message)) {
+        Some(Top::PartyHp(account)) => Some(format!("PartyHp:{}", member(account).unwrap_or_default())),
+        top => top.map(Top::name),
+    }
+}
+
+/// The game menu takes every click while it keeps the pointer, over whatever is drawn there.
+fn top_named(menu: bool, top: Option<Top>) -> Option<Top> {
+    if menu { Some(Top::GameMenu) } else { top }
 }
 
 fn point(app: &mut App, at: [f32; 2]) {
@@ -1269,9 +1277,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         _ => Vec::new(),
     };
     // Whether a click in the middle of a box reaches that window, not another one over it.
+    let message = app.assets.as_ref().map_or([0.0; 2], |assets| assets.message.size);
     let on_top = |panel: Panel, area: &[f32; 4]| {
         let middle = [area[0] + area[2] / 2.0, area[1] + area[3] / 2.0];
-        window_named(game.menu_takes(middle), game.over_panels_at(middle), game.window_at(middle)) == Some(format!("{panel:?}"))
+        top_named(game.menu_takes(middle), game.top_at(middle, message)) == Some(Top::Panel(panel))
     };
     let targets: Vec<Value> = game
         .inventory
@@ -2543,15 +2552,21 @@ pub(crate) fn quests_state(quests: &[net::Quest], texts: &HashMap<u32, crate::qu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::escape::WindowId;
 
     #[test]
-    fn a_window_over_the_panels_takes_the_click() {
-        assert_eq!(window_named(false, Some("Reputation"), Some(Panel::Skills)).as_deref(), Some("Reputation"));
-        assert_eq!(window_named(false, None, Some(Panel::Skills)).as_deref(), Some("Skills"));
-        assert_eq!(window_named(false, None, None), None);
+    fn a_click_names_the_window_it_reaches() {
+        let named = |menu, top| top_named(menu, top).map(Top::name);
+        assert_eq!(named(false, Some(Top::Esc(WindowId::Reputation))).as_deref(), Some("Reputation"));
+        assert_eq!(named(false, Some(Top::Panel(Panel::Skills))).as_deref(), Some("Skills"));
+        assert_eq!(named(false, None), None);
+        // Named as `windows` names them.
+        assert_eq!(named(false, Some(Top::Esc(WindowId::ExpansionAsked))).as_deref(), Some("InventoryExpansion"));
+        assert_eq!(named(false, Some(Top::PartyBooking)).as_deref(), Some("PartyBooking"));
+        assert_eq!(named(false, Some(Top::MakingMaterial)).as_deref(), Some("MakingMaterial"));
         // The game menu takes every click while it's up, over the storage's Close too.
-        assert_eq!(window_named(true, Some("Reputation"), Some(Panel::Storage)).as_deref(), Some("GameMenu"));
-        assert_eq!(window_named(true, None, None).as_deref(), Some("GameMenu"));
+        assert_eq!(named(true, Some(Top::Panel(Panel::Storage))).as_deref(), Some("GameMenu"));
+        assert_eq!(named(true, None).as_deref(), Some("GameMenu"));
     }
 
     #[test]
