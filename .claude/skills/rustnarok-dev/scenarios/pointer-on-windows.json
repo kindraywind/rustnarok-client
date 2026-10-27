@@ -1,5 +1,5 @@
 {
-  "about": "What a pointer on the interface reaches. The game menu keeps the pointer: with the chat window made taller (its top under the menu's Return), Return still closes the menu; with the menu up (from the basic info's option button), a drag on the party window's grip under it doesn't resize it. The party window opens over the player: the pointer on its grip names nobody and asks the server for no name (0x0368).",
+  "about": "What a pointer on the interface reaches. The game menu keeps the pointer: with the chat window made taller (its top under the menu's Return), Return still closes the menu; with the menu up (from the basic info's option button), it takes every press, so a drag on the party window's grip doesn't resize it. The party window opens over the player: the pointer on its grip names nobody and asks the server for no name (0x0368).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -22,11 +22,11 @@
     {"wait": 300},
     {"click_on": {"menu_item": "party"}},
     {"wait": 300},
-    {"expect": {"windows_open": ["Party"], "state": {"party_window_size.rows": 7}, "button": {"name": "party_resize", "box": [528, 364, 15, 15]}}},
+    {"expect": {"windows_open": ["Party"], "state": {"party_window_size.rows": 7}}},
     {"click_on": {"menu_item": "option"}},
     {"wait": 300},
     {"expect": {"windows_open": ["Party", "GameMenu"]}},
-    {"drag": [[535, 371], [535, 250]]},
+    {"drag_on": [{"button": "party_resize"}, {"point": [565, 200]}]},
     {"wait": 300},
     {"expect": {"windows_open": ["Party", "GameMenu"], "state": {"party_window_size.rows": 7}}},
     {"click_on": {"menu_item": "option"}},

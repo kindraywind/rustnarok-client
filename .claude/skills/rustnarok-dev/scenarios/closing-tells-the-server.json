@@ -23,7 +23,7 @@
     {"key": "Escape"},
     {"wait": 300},
     {"expect": {"windows_closed": ["Mailbox"]}},
-    {"click_on": {"cell": [156, 175]}},
+    {"click_on": {"cell": [156, 184]}},
     {"wait_for": {"packet": "0x0087", "ms": 3000}},
     {"wait": 1500},
     {"say": "@storage"},
