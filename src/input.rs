@@ -1883,6 +1883,7 @@ impl App {
             game.chat.drag_to(self.cursor);
             let hotkeys_height = game.hotkeys.height();
             game.hotkeys.frame.drag_to(self.cursor, hotkeys_height);
+            game.hotkeys.quick_window.drag_to(self.cursor, hotkeys::QUICK_SIZE[1]);
             game.inventory.frame.drag_to(self.cursor, inventory_height);
             game.inventory.resize_to(self.cursor);
             game.cart.resize_to(self.cursor);
@@ -2255,20 +2256,20 @@ impl App {
                 }
                 return;
             }
-            // A right press on a skill on the hotkey bar: its description under or over that row (the same skill again
-            // closes it).
+            // A right press on a skill on the hotkey bar or the quick slot window: its description under or over that row
+            // (the same skill again closes it).
             if state == ElementState::Pressed
                 && game.window_at(self.cursor) == Some(Panel::Hotkeys)
                 && let Some(hotkeys::Hit::Slot(slot)) = game.hotkeys.hit(self.cursor)
                 && let Some(key) = game.hotkeys.keys.get(slot).copied().flatten().filter(|key| key.skill)
-                && let Some(row) = game.hotkeys.slot_row(slot)
+                && let Some((bar_y, row)) = game.hotkeys.slot_place(slot)
             {
                 let id = key.id as u16;
                 if game.skill_description.as_ref().is_some_and(|window| window.skill == id) {
                     game.skill_description = None;
                 } else {
                     let lines = self.skill_descriptions.get(&id).cloned().unwrap_or_default();
-                    let (pointer_x, bar_y) = (self.cursor[0], game.hotkeys.frame.position[1]);
+                    let pointer_x = self.cursor[0];
                     let active = game.skill_active(id);
                     game.skill_description = Some(skill_descript::SkillDescription::new(id, &lines, true, active, |height| {
                         skill_descript::at_hotbar(pointer_x, bar_y, row, height)
@@ -2588,7 +2589,7 @@ impl App {
                     if let Some(key) = key {
                         for (slot, key) in hotkeys::drop_on(&game.hotkeys.keys, key, slot) {
                             game.hotkeys.keys[slot] = key;
-                            let _ = game.session.set_hotkey(game.hotkeys.tab(), slot as u16, key);
+                            let _ = game.session.set_hotkey(game.hotkeys.tab_of(slot), slot as u16, key);
                         }
                     }
                 }
@@ -2604,7 +2605,7 @@ impl App {
                         _ if elsewhere => {}
                         _ if key.skill => {
                             game.hotkeys.keys[from] = None;
-                            let _ = game.session.set_hotkey(game.hotkeys.tab(), from as u16, None);
+                            let _ = game.session.set_hotkey(game.hotkeys.tab_of(from), from as u16, None);
                         }
                         Some(_) => {}
                         None => game.chat_line(self.messages.get(HOTKEY_ITEM_STAYS).cloned().unwrap_or_default(), CHAT_ERROR),
@@ -2835,6 +2836,7 @@ impl App {
                     | game.equipment.frame.drop_drag()
                     | game.basic_info.frame.drop_drag()
                     | game.hotkeys.frame.drop_drag()
+                    | game.hotkeys.quick_window.drop_drag()
                     | game.skill_window.frame.drop_drag()
                     | game.talks.drop_drag()
                     | game.friend_setup.as_mut().is_some_and(|setup| setup.frame.drop_drag())
@@ -3437,6 +3439,7 @@ impl App {
             match id {
                 Panel::BasicInfo if game.basic_info.hit(cursor) == Some(basic_info::Hit::Title) => game.basic_info.frame.start_drag(cursor),
                 Panel::Hotkeys if game.hotkeys.grabbed(cursor) => game.hotkeys.frame.start_drag(cursor),
+                Panel::Hotkeys if game.hotkeys.hit(cursor) == Some(hotkeys::Hit::QuickGrip) => game.hotkeys.quick_window.start_drag(cursor),
                 Panel::Inventory if game.inventory.hit(cursor) == Some(inventory::Hit::Title(TitleHit::Title)) => game.inventory.frame.start_drag(cursor),
                 // A member's row, unlocked: dragged out it makes a small window; a second press on another member's row
                 // soon after opens the 1:1 chat with them.

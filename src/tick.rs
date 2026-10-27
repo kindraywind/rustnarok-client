@@ -8,6 +8,8 @@ impl App {
     pub(crate) fn tick(&mut self, now: Instant) {
         let Scene::Game(game) = &mut self.scene else { return };
         let (grf, messages, audio) = (&self.grf, &self.messages, &mut self.audio);
+        // The quick slot window shows while the Control tab's Quick Slots switch is on.
+        game.hotkeys.quick_window.open = self.graphics.quick_slot;
         // A player's name block is asked for each time the pointer comes onto them; the last frame found what it's on.
         if game.pointed != game.last_pointed {
             game.last_pointed = game.pointed;

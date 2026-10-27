@@ -28,6 +28,8 @@ pub struct GraphicsSettings {
     /// The game's extended damage numbers (on at first): a million and up in thousands with K, a
     /// hundred million and up in millions with M; off, numbers stop at 999,999.
     pub extended_damage: bool,
+    /// The game's Quick Slots (Control tab, on at first): the quick slot window shows.
+    pub quick_slot: bool,
     /// This client's extras, none of them in the game and all off at first (the Extras tab): a monster's HP on its
     /// bar, its level after its name, the camera going out much further, an item's random options in its inventory
     /// name box, and the seconds left on a cooling skill's hotkey.
@@ -50,6 +52,7 @@ impl Default for GraphicsSettings {
             fog: true,
             mable: true,
             extended_damage: true,
+            quick_slot: true,
             monster_hp: false,
             monster_level: false,
             far_zoom: false,
@@ -95,6 +98,7 @@ impl GraphicsSettings {
             item_options: next(false),
             cooldown_numbers: next(false),
             extended_damage: next(true),
+            quick_slot: next(true),
         }
     }
 
@@ -114,6 +118,7 @@ impl GraphicsSettings {
             self.item_options,
             self.cooldown_numbers,
             self.extended_damage,
+            self.quick_slot,
         ]
         .map(|on| if on { "1" } else { "0" })
         .join(" ");
@@ -171,6 +176,7 @@ mod tests {
             item_options: true,
             cooldown_numbers: true,
             extended_damage: false,
+            quick_slot: false,
         };
         settings.save_to(&path);
         assert_eq!(GraphicsSettings::load_from(&path), settings);
