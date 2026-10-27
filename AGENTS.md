@@ -46,9 +46,10 @@ Start from a recent one, e.g. `ui/memorial.rs`. Besides its own module, it's wir
 - `main.rs`: a `Game` field, its images in `Assets`/`load`; a draggable panel also needs a `Panel` and `esc_panel`.
 - `events.rs`: the field's first value in `enter_map`; open and fill it in `map_event`.
 - `draw.rs`: `redraw_game`.
-- `input.rs`: `click`, `press`, `left_button`, `pointer_moved`; also `wheel`, `key` and `perform_shortcut` if it uses
-  them.
-- `game.rs`: `on_ui`, `close_windows`, `esc_open`, `esc_names`, `close_esc`, `esc_at`, plus `window_at`, `titled_frame`,
+- `input.rs`: `click` and `press`, their arms gated on its `Top` (`top == ...`); `left_button`, `pointer_moved`; also
+  `wheel`, `key` and `perform_shortcut` if it uses them.
+- `game.rs`: `top_at`, at the place `redraw_game` draws it (presses and clicks go by that order), `on_ui`,
+  `close_windows`, `esc_open`, `esc_names`, `close_esc`, plus `window_at`, `titled_frame`,
   `panel_open` and `panel_frames` for a panel. If it has text boxes or questions, also `text_box_focused`,
   `focused_text`, `question_open` and `answer_no`.
 - `ui/escape.rs`: a `WindowId` and its `name`.

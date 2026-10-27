@@ -21,6 +21,49 @@ pub(crate) fn blocked_cells(units: &HashMap<u32, Actor>, skill_units: &HashMap<u
 /// rathena's UNT_ICEWALL: the one ground skill unit whose cell the server makes unwalkable.
 const ICE_WALL_UNIT: u32 = 0x8d;
 
+/// What a press or click reaches: the window drawn on top under the pointer (`Game::top_at`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Top {
+    Panel(Panel),
+    /// A window Esc knows, whether or not it closes it.
+    Esc(escape::WindowId),
+    // The rest, named as `windows` names them where it does.
+    /// Taming's slot machine.
+    Slot,
+    /// The NPC's say window, its menu or its input box.
+    NpcDialog,
+    SpecialPopup,
+    PartyBooking,
+    GameMenu,
+    GuildReason,
+    GuildStorageLog,
+    TradeAsked,
+    BookingAsked,
+    Refine,
+    RouletteIcon,
+    ConfirmDeal,
+    MakingMaterial,
+    ChatSettings,
+    /// A party member's small window, by their account.
+    PartyHp(u32),
+    SmallMinimap,
+    Chat,
+    QuestIcon,
+    LevelUp,
+}
+
+impl Top {
+    /// Its name in a click's `hit` (a member's window needs their name, `control::window_named` adds it).
+    pub(crate) fn name(self) -> String {
+        match self {
+            Self::Panel(panel) => format!("{panel:?}"),
+            Self::Esc(id) => id.name().to_owned(),
+            Self::PartyHp(_) => "PartyHp".to_owned(),
+            other => format!("{other:?}"),
+        }
+    }
+}
+
 impl Game {
     pub(crate) fn dialog_for(&mut self, npc: u32) -> &mut Dialog {
         if self.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) {
@@ -638,20 +681,122 @@ impl Game {
         }
     }
 
-    /// The window drawn over the panels under the pointer, by its name in `windows`: `click` gives it the press before
-    /// any panel, whichever opened last (#1151).
-    pub(crate) fn over_panels_at(&self, cursor: [f32; 2]) -> Option<&'static str> {
-        if self.booking.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
-            Some("PartyBooking")
-        } else if self.navi_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
-            Some(escape::WindowId::Navigation.name())
-        } else if self.reputation_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
-            Some(escape::WindowId::Reputation.name())
-        } else if self.chat.settings.as_ref().is_some_and(|settings| settings.hit(cursor).is_some()) {
-            Some("ChatSettings")
-        } else {
-            None
-        }
+    /// What a press or click at `cursor` reaches: the window drawn on top there. They're listed top first, the reverse
+    /// of the order `redraw_game` draws them in, each by the area its click takes. Questions in the message box are
+    /// `message` in size.
+    pub(crate) fn top_at(&self, cursor: [f32; 2], message: [f32; 2]) -> Option<Top> {
+        use escape::WindowId::*;
+        let esc = |id: escape::WindowId, here: bool| here.then_some(Top::Esc(id));
+        let asked = |shown: bool| shown && contains(dialog_position_of(screen()), message, cursor);
+        let invited = |shown: bool| shown && contains(party::invitation_at(screen()), message, cursor);
+        let notice = matches!(self.question_box, Some(BoxQuestion::Notice(_) | BoxQuestion::Said(_)));
+        let mail = self.mail.hit(cursor).map(|hit| match hit {
+            mail::Hit::Compose(_) => MailWrite,
+            mail::Hit::Letter(_) => MailRead,
+            _ => Mailbox,
+        });
+        let docked = self.party_dialog.as_ref().filter(|dialog| dialog.hit(cursor).is_some()).map(|dialog| match dialog.kind {
+            party::DialogKind::Setup => PartySetup,
+            party::DialogKind::Create => PartyCreate,
+            party::DialogKind::Invite => PartyInviteName,
+        });
+        [
+            // Drawn after every layer.
+            (self.slot.is_some() && contains(taming::place(screen()), taming::SIZE, cursor)).then_some(Top::Slot),
+            esc(WorldMap, self.world_map.is_some()),
+            esc(Menu, self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())),
+            self.on_npc_window(cursor).then_some(Top::NpcDialog),
+            esc(Minimap, self.minimap_window.covers(cursor)),
+            (self.special_popup.is_some() && special_popup::covers(cursor)).then_some(Top::SpecialPopup),
+            // The windows' layer.
+            esc(if notice { Notice } else { PartyAsked }, asked(self.question_box.is_some())),
+            esc(ShortcutSettings, self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(GameSettings, self.settings_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(DressRoom, self.dressroom.as_ref().is_some_and(|room| room.hit(cursor).is_some())),
+            esc(Reputation, self.reputation_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(Navigation, self.navi_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            self.booking.as_ref().is_some_and(|window| window.hit(cursor).is_some()).then_some(Top::PartyBooking),
+            esc(Ranking, self.ranking.as_ref().is_some_and(|board| board.hit(cursor).is_some())),
+            esc(AwayMessage, self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some())),
+            esc(BlockList, self.block_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())),
+            esc(FriendSetup, self.friend_setup.as_ref().is_some_and(|setup| setup.hit(cursor).is_some())),
+            esc(Whisper, self.talks.hit(cursor).is_some()),
+            self.escape.as_ref().is_some_and(|menu| menu.hit(cursor, self.can_resurrect()).is_some()).then_some(Top::GameMenu),
+            esc(SaveAsked, asked(self.save_asked)),
+            esc(MemorialAsked, asked(self.memorial_asked)),
+            esc(SkillApplyAsked, asked(self.apply_asked)),
+            esc(CardPicture, self.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some())),
+            esc(CardInfo, self.card_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(ItemInfo, self.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(Amount, self.amount.as_ref().is_some_and(|amount| amount.hit(cursor, message, [0.0; 2]).is_some())),
+            esc(PartyInvite, invited(self.party_invite.is_some())),
+            self.reason_box.as_ref().is_some_and(|reason| reason.hit(cursor, screen()).is_some()).then_some(Top::GuildReason),
+            esc(GuildCompanion, self.guild_companion.hit(cursor).is_some()),
+            esc(AdoptAsked, asked(self.adopt_asked.is_some())),
+            esc(QueueAsked, asked(self.queue_asked.is_some())),
+            esc(BattleQueue, self.queue_window.covers(cursor)),
+            self.storage_log.as_ref().is_some_and(|log| log.covers(cursor)).then_some(Top::GuildStorageLog),
+            esc(Memorial, self.memorial.frame.open && self.memorial.hit(cursor).is_some()),
+            esc(FriendAsked, asked(self.friend_asked.is_some())),
+            // One box, the first of these that's asked.
+            esc(DismissAsked, asked(self.dismiss_asked)),
+            esc(HomunculusAsked, asked(self.homunculus_asked.is_some())),
+            esc(LeaderAsked, asked(self.leader_asked.is_some())),
+            esc(BindAsked, asked(self.bind_asked.is_some())),
+            esc(ExpansionAsked, asked(self.expansion_asked.is_some())),
+            esc(PetAsked, asked(self.pet_asked.is_some())),
+            esc(GuildInvite, invited(self.guild_invite.is_some())),
+            esc(GuildAsked, asked(self.guild_asked.is_some())),
+            esc(CashShopBuy, asked(self.cashshop_buy_asked && self.cashshop.is_some())),
+            asked(self.trade_asked.is_some()).then_some(Top::TradeAsked),
+            asked(self.booking_asked.is_some()).then_some(Top::BookingAsked),
+            esc(Trade, self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())),
+            esc(LaphineUpgrade, self.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(LaphineSynthesis, self.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(Materials, self.materials.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(Stylist, self.stylist.as_ref().is_some_and(|window| window.covers(cursor))),
+            esc(Enchant, self.enchant.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(GradeEnchant, self.grade.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(ItemReform, self.reform.as_ref().is_some_and(|window| window.hit(cursor, &self.inventory.items).is_some())),
+            self.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some()).then_some(Top::Refine),
+            esc(OtherEquipment, self.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some())),
+            esc(CashShop, self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())),
+            esc(Bank, self.bank.as_ref().is_some_and(|bank| bank.hit(cursor).is_some())),
+            esc(RoomMake, self.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some())),
+            mail.map(Top::Esc),
+            esc(Macros, self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(EmotionList, self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())),
+            esc(Roulette, self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            esc(MonsterInfo, self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
+            roulette::icon_hit(cursor).then_some(Top::RouletteIcon),
+            esc(Achievements, self.achievement_window.covers(cursor)),
+            esc(Quests, self.quest_window.covers(cursor)),
+            esc(MyBuyingStore, self.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some())),
+            esc(BuyingStoreSetup, self.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.inventory.items).is_some())),
+            esc(SellHistory, self.sell_history.as_ref().is_some_and(|history| history.hit(cursor).is_some())),
+            esc(MyShop, self.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())),
+            esc(VendSetup, self.vend_setup.as_ref().is_some_and(|setup| setup.covers(cursor))),
+            esc(ChatRoom, self.room.as_ref().is_some_and(|room| room.hit(cursor, &self.me.name).is_some())),
+            esc(DealChoice, self.deal_choice.is_some() && contains(self.deal_frame.position, shop::DEAL_SIZE, cursor)),
+            self.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some()).then_some(Top::ConfirmDeal),
+            esc(Shop, self.shop.as_ref().is_some_and(|shop| shop.covers(cursor))),
+            self.forge.as_ref().is_some_and(|forge| forge.covers(cursor)).then_some(Top::MakingMaterial),
+            esc(PickList, self.pick.as_ref().is_some_and(|(list, _)| list.covers(cursor))),
+            esc(SkillDescription, self.skill_description.as_ref().is_some_and(|window| window.contains(cursor))),
+            self.chat.settings.as_ref().is_some_and(|settings| settings.hit(cursor).is_some()).then_some(Top::ChatSettings),
+            // Layers of their own, under the windows.
+            esc(Catalog, self.catalog.as_ref().is_some_and(|catalog| catalog.hit(cursor).is_some())),
+            docked.map(Top::Esc),
+            self.party_member_at(cursor).map(Top::PartyHp),
+            self.window_at(cursor).map(Top::Panel),
+            (self.minimap_shown() && minimap::covers(cursor)).then_some(Top::SmallMinimap),
+            (self.chat.on_list(cursor) || self.chat.blocks(cursor)).then_some(Top::Chat),
+            (self.quest_icon && quest_notice::on_icon(cursor)).then_some(Top::QuestIcon),
+            self.level_ups.hit(cursor).is_some().then_some(Top::LevelUp),
+        ]
+        .into_iter()
+        .flatten()
+        .next()
     }
 
     /// The topmost window under the pointer.
@@ -2135,14 +2280,6 @@ impl Game {
         };
         self.chat_line(line, CHAT_ITEM);
         self.sync_esc();
-    }
-
-    /// The pointer is on a whisper window, the friend setup, the block list or the away box.
-    pub(crate) fn whisper_at(&self, cursor: [f32; 2]) -> bool {
-        self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some())
-            || self.talks.hit(cursor).is_some()
-            || self.block_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
-            || self.friend_setup.as_ref().is_some_and(|setup| setup.hit(cursor).is_some())
     }
 
     /// A click on a whisper window, the friend setup, the block list or the away box.
@@ -3707,49 +3844,13 @@ impl Game {
         }
     }
 
-    /// The window under a press, so Esc closes the one the player just touched.
-    pub(crate) fn press_esc(&mut self, cursor: [f32; 2]) {
-        if let Some(id) = self.esc_at(cursor) {
+    /// The window a press reached (`top_at`) goes to the front of the Esc order, so Esc closes the one the player just
+    /// touched. One Esc doesn't close (an NPC shop, the deal) stays out of it.
+    pub(crate) fn press_esc(&mut self, top: Option<Top>) {
+        self.sync_esc();
+        if let Some(id) = esc_reached(top, self.menu.is_some()).filter(|id| self.esc_order.contains(id)) {
             escape::touch(&mut self.esc_order, id);
         }
-    }
-
-    pub(crate) fn esc_at(&self, cursor: [f32; 2]) -> Option<escape::WindowId> {
-        use escape::WindowId::*;
-        if self.menu.is_some() {
-            return Some(Menu);
-        }
-        // An NPC shop isn't Esc's to close.
-        if self.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) {
-            return self.shop.as_ref().filter(|shop| !shop.plain()).map(|_| Shop);
-        }
-        if self.world_map.is_some() {
-            return Some(WorldMap);
-        }
-        if self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some()) {
-            return Some(AwayMessage);
-        }
-        if self.talks.hit(cursor).is_some() {
-            return Some(Whisper);
-        }
-        if self.block_list.as_ref().is_some_and(|list| list.hit(cursor).is_some()) {
-            return Some(BlockList);
-        }
-        if self.friend_setup.as_ref().is_some_and(|setup| setup.hit(cursor).is_some()) {
-            return Some(FriendSetup);
-        }
-        if self.minimap_window.covers(cursor) {
-            return Some(Minimap);
-        }
-        if self.memorial.covers(cursor) {
-            return Some(Memorial);
-        }
-        // A window drawn over the panels takes the press first (#1151); the booking board and the chat settings aren't
-        // Esc's to close.
-        if let Some(name) = self.over_panels_at(cursor) {
-            return [Navigation, Reputation].into_iter().find(|id| id.name() == name);
-        }
-        self.window_at(cursor).and_then(esc_panel)
     }
 
     /// Asks to wear an item.

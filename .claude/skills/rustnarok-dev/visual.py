@@ -10,6 +10,7 @@
 A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_select", "env": {...}, "steps": [...]} with steps such as
   {"say": "@warp prontera 156 180"}  {"settle": 1500}  {"wait": 1500}  {"key": "Alt+E"}  {"type": "hello"}
   {"click": [x, y], "button": "right", "count": 2}  {"drag": [[x, y], [x2, y2]], "button": "right", "mods": "Ctrl"}  {"move": [x, y]} (or a target)
+  "hit": "Minimap" on a click or click_on: the window the control socket says the click reached (null: none)
   {"drag": [[x, y], [x2, y2]], "held": true} ... {"cmd": {"cmd": "release"}}  (the button stays down: look mid-drag)
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
     (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
@@ -213,6 +214,14 @@ def quit_all(scenario):
         shutil.rmtree(FRESH_DIRS.pop(), ignore_errors=True)
 
 
+def reached(answer, action):
+    """A click's answer, or with the step's "hit" a failure when the click reached another window than that one."""
+    if "hit" not in action:
+        return answer
+    have = (answer.get("hit") or {}).get("window") if isinstance(answer, dict) else None
+    return [] if have == action["hit"] else [f"the click reached {have!r}, not {action['hit']!r}"]
+
+
 def locate(target):
     """A target's screen point: {"inventory_item": <item id>}, {"hotkey": <slot>}, {"skill": <id>} (the centre of its
     box in the control socket's `targets`), or {"point": [x, y]}. None when it isn't on screen."""
@@ -414,7 +423,7 @@ def step_on_client(action, shots_dir, name):
         for key in ("button", "count", "mods"):
             if key in action:
                 command[key] = action[key]
-        return drive.send(command)
+        return reached(drive.send(command), action)
     if "click_on" in action:
         point = locate(action["click_on"])
         if point is None:
@@ -423,7 +432,7 @@ def step_on_client(action, shots_dir, name):
         for key in ("button", "count", "mods"):
             if key in action:
                 command[key] = action[key]
-        return drive.send(command)
+        return reached(drive.send(command), action)
     for key in ("mouse_down", "mouse_up"):
         if key in action:
             point = locate(action[key])

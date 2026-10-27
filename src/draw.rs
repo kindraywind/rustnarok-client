@@ -2739,6 +2739,7 @@ impl App {
         if let Some(id) = game.special_popup {
             special_popup::draw(&mut popup_layer, &assets.chrome, &assets.pickup, id);
         }
+        // Bottom to top. `Game::top_at` lists the windows in this order, top first: presses and clicks go by it.
         layers.extend([catalog_layer, shop_layer, popup_layer, minimap_layer, overlay, menu_layer, tooltip, minimap_tooltip, world_layer]);
         let composed = compose(gpu, font, layers);
         let (mut sprites, alphas) = flatten(&composed);

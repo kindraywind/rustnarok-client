@@ -4,10 +4,20 @@ use super::*;
 
 impl App {
     pub(crate) fn click(&mut self, _event_loop: &ActiveEventLoop) {
+        use Top::Esc;
+        use escape::WindowId as W;
         let Some(assets) = &self.assets else { return };
         let cursor = self.cursor;
         let shift = self.modifiers.shift_key();
         let hit = |position: [f32; 2], images: &ButtonImages| contains(position, images[0].size, cursor);
+        // The window drawn on top under the click (`top_at`) is the one whose arm below takes it. The arms' order matters
+        // only for those that take every click while they're up: the deal box, the world map, the game menu, a
+        // right-click menu, the amount box.
+        let top = match &self.scene {
+            Scene::Game(game) => game.top_at(cursor, assets.message.size),
+            _ => None,
+        };
+        let on = |reached: Top| top == Some(reached);
         // A click anywhere but the storage's search field takes the caret from it.
         if let Scene::Game(game) = &mut self.scene {
             game.storage.typing = false;
@@ -20,8 +30,11 @@ impl App {
             if let Some(bank) = &mut game.bank {
                 bank.typing = false;
             }
-            // A double click on a speaker's line in the log: whisper them (the click still reaches the world).
-            if let Some(name) = game.chat.log_click(cursor) {
+            // A double click on a speaker's line in the log: whisper them (the click still reaches the world), not
+            // through a window over it.
+            if top.is_none()
+                && let Some(name) = game.chat.log_click(cursor)
+            {
                 game.chat.whisper_to(&name);
             }
         }
@@ -108,30 +121,32 @@ impl App {
                 }
             }
             // A link in the chat log or the NPC window: an item's information, or a navigation to the place.
-            Scene::Game(game) if game.link_at(cursor).is_some() => match game.link_at(cursor).cloned().unwrap() {
-                links::Target::Item(item) => {
-                    let card = self.card_pictures.name(item.id).is_some();
-                    game.show_item(iteminfo::Shown::of_link(item.id, item.refine, item.cards, card, &self.items).with_link_options(&item.options));
-                }
-                links::Target::Navi { map, cell } => {
-                    let map = navigation::map_key(&map);
-                    let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
-                    let target = navigation::Target { cell: (cell != [0, 0]).then_some(cell), monster: None, name, map };
-                    game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
-                }
-                links::Target::Url(address) => {
-                    if let Some(page) = links::page(&address) {
-                        open_page(game, page);
+            Scene::Game(game) if matches!(top, Some(Top::NpcDialog | Top::Chat)) && game.link_at(cursor).is_some() => {
+                match game.link_at(cursor).cloned().unwrap() {
+                    links::Target::Item(item) => {
+                        let card = self.card_pictures.name(item.id).is_some();
+                        game.show_item(iteminfo::Shown::of_link(item.id, item.refine, item.cards, card, &self.items).with_link_options(&item.options));
                     }
-                }
-                // The quest window at that quest, or a notice that no list has it.
-                links::Target::Quest(id) => {
-                    if !game.quest_window.show_quest(id, &game.quests, &self.quest_texts) {
-                        game.question_box = Some(BoxQuestion::Said(format!("Not found Quest Info = {id}")));
+                    links::Target::Navi { map, cell } => {
+                        let map = navigation::map_key(&map);
+                        let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
+                        let target = navigation::Target { cell: (cell != [0, 0]).then_some(cell), monster: None, name, map };
+                        game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
                     }
+                    links::Target::Url(address) => {
+                        if let Some(page) = links::page(&address) {
+                            open_page(game, page);
+                        }
+                    }
+                    // The quest window at that quest, or a notice that no list has it.
+                    links::Target::Quest(id) => {
+                        if !game.quest_window.show_quest(id, &game.quests, &self.quest_texts) {
+                            game.question_box = Some(BoxQuestion::Said(format!("Not found Quest Info = {id}")));
+                        }
+                    }
+                    links::Target::Tip => {}
                 }
-                links::Target::Tip => {}
-            },
+            }
             Scene::Game(game) if game.deal_choice.is_some() => {
                 let npc = game.deal_choice.unwrap();
                 match shop::deal_hit(game.deal_frame.position, cursor) {
@@ -156,7 +171,7 @@ impl App {
                 }
             }
             // The skill window's Apply asks first: OK sends the pending levels; Cancel keeps them pending.
-            Scene::Game(game) if game.apply_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::SkillApplyAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -165,7 +180,7 @@ impl App {
                 }
             }
             // Destroy asks first. OK sends the command; Cancel stays in the dungeon window.
-            Scene::Game(game) if game.memorial_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::MemorialAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -177,7 +192,7 @@ impl App {
                 }
             }
             // Save point asks first. OK goes; Cancel stays.
-            Scene::Game(game) if game.save_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::SaveAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -190,7 +205,7 @@ impl App {
                 }
             }
             // Confirm Deal: Buy sends the vendor's deal; either button closes it.
-            Scene::Game(game) if game.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Top::ConfirmDeal) => {
                 if let Some(buy) = game.deal_confirm.as_ref().unwrap().hit(cursor).unwrap() {
                     let confirm = game.deal_confirm.take().unwrap();
                     if buy {
@@ -199,7 +214,7 @@ impl App {
                 }
             }
             // The message box, over every window: OK (alone when it only tells) or Cancel.
-            Scene::Game(game) if game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if matches!(top, Some(Esc(W::Notice | W::PartyAsked))) => {
                 let dialog = dialog_position(&assets.message);
                 let asks = game.question_box.as_ref().is_some_and(BoxQuestion::asks);
                 for (place, yes) in box_buttons(asks) {
@@ -249,13 +264,13 @@ impl App {
                     None => {}
                 }
             }
-            Scene::Game(game) if game.whisper_at(cursor) => {
+            Scene::Game(game) if matches!(top, Some(Esc(W::AwayMessage | W::Whisper | W::BlockList | W::FriendSetup))) => {
                 game.whisper_click(cursor);
             }
             // Game Settings: the sound and the effect switches change at once, the screen mode on Apply (the sliders go on
             // press).
             // ponytail: Apply sets the screen mode at once; the game asks first (3168) and restarts.
-            Scene::Game(game) if game.settings_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::GameSettings)) => {
                 let window = game.settings_window.as_mut().unwrap();
                 let hit = window.hit(cursor).unwrap();
                 match window.click(hit, &mut self.sound, &mut self.graphics) {
@@ -279,7 +294,7 @@ impl App {
                 }
             }
             // Shortcut Settings: OK makes the draft the shortcuts and writes UserKeys.lua; Reset goes back to the data's keys.
-            Scene::Game(game) if game.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::ShortcutSettings)) => {
                 let window = game.shortcuts_window.as_mut().unwrap();
                 let hit = window.hit(cursor).unwrap();
                 match window.click(hit, &self.keybinds) {
@@ -296,14 +311,14 @@ impl App {
                 }
             }
             // The quest window: tabs, quests, their locks, and the picked one's details.
-            Scene::Game(game) if game.achievement_window.covers(cursor) => {
+            Scene::Game(game) if on(Esc(W::Achievements)) => {
                 let hit = game.achievement_window.hit(cursor, &self.achievement_info, &game.achievements).unwrap();
                 if let Some(id) = game.achievement_window.click(hit) {
                     let _ = game.session.claim_achievement(id);
                 }
             }
             // The quest details' NPC picture: navigation to it, as a <NAVI> link.
-            Scene::Game(game) if game.quest_window.hit(cursor, &game.quests, &self.quest_texts) == Some(quest::Hit::DetailNpc) => {
+            Scene::Game(game) if on(Esc(W::Quests)) && game.quest_window.hit(cursor, &game.quests, &self.quest_texts) == Some(quest::Hit::DetailNpc) => {
                 if let Some((map, cell)) = game.quest_window.npc_place(&self.quest_texts) {
                     let map = navigation::map_key(&map);
                     let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
@@ -311,7 +326,7 @@ impl App {
                     game.navigation = Some(navigation::Active::new(navigation::Target { cell, monster: None, name, map }, NAVI_SERVICES));
                 }
             }
-            Scene::Game(game) if game.quest_window.covers(cursor) => {
+            Scene::Game(game) if on(Esc(W::Quests)) => {
                 let hit = game.quest_window.hit(cursor, &game.quests, &self.quest_texts).unwrap();
                 let tracker = game.quest_window.tracker;
                 if let Some((id, active)) = game.quest_window.click(hit, &game.quests, &self.quest_texts) {
@@ -328,7 +343,7 @@ impl App {
                 }
             }
             // The mail windows: the mailbox, a mail read, one written, and the new-mail icon.
-            Scene::Game(game) if game.mail.hit(cursor).is_some() => {
+            Scene::Game(game) if matches!(top, Some(Esc(W::Mailbox | W::MailRead | W::MailWrite))) => {
                 let hit = game.mail.hit(cursor).unwrap();
                 if let Some(action) = game.mail.click(hit)
                     && let Some(id) = game.mail_action(action)
@@ -337,7 +352,7 @@ impl App {
                 }
             }
             // Setting up a shop: its name, its goods and prices, OK or cancel.
-            Scene::Game(game) if game.vend_setup.as_ref().is_some_and(|setup| setup.covers(cursor)) => {
+            Scene::Game(game) if on(Esc(W::VendSetup)) => {
                 let setup = game.vend_setup.as_mut().unwrap();
                 let Some(hit) = setup.hit(cursor) else { return };
                 match setup.click(hit) {
@@ -352,7 +367,7 @@ impl App {
                 }
             }
             // Our open shop: the tick box, and closing it closes the shop.
-            Scene::Game(game) if game.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::MyShop)) => {
                 let shop = game.my_shop.as_mut().unwrap();
                 match shop.hit(cursor) {
                     Some(vend::ShopHit::Notify) => shop.notify = !shop.notify,
@@ -361,15 +376,13 @@ impl App {
                     _ => {}
                 }
             }
-            Scene::Game(game) if game.sell_history.as_ref().is_some_and(|history| history.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::SellHistory)) => {
                 if game.sell_history.as_ref().unwrap().hit(cursor) == Some(true) {
                     game.sell_history = None;
                 }
             }
             // Setting up a buying store: its name, zeny limit, wanted items, OK or cancel.
-            Scene::Game(game)
-                if game.amount.is_none() && game.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &game.inventory.items).is_some()) =>
-            {
+            Scene::Game(game) if game.amount.is_none() && on(Esc(W::BuyingStoreSetup)) => {
                 let setup = game.buying_setup.as_mut().unwrap();
                 let hit = setup.hit(cursor, &game.inventory.items).unwrap();
                 match setup.click(hit, &game.inventory.items) {
@@ -402,7 +415,7 @@ impl App {
                 }
             }
             // Our open buying store: closing it closes the store and drops the sign.
-            Scene::Game(game) if game.amount.is_none() && game.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some()) => {
+            Scene::Game(game) if game.amount.is_none() && on(Esc(W::MyBuyingStore)) => {
                 if game.my_buying_store.as_ref().unwrap().hit(cursor) == Some(true) {
                     let _ = game.session.close_buying_store();
                     game.my_buying_store = None;
@@ -410,36 +423,32 @@ impl App {
                 }
             }
             // A card's picture: its close button. A click anywhere on it stays there.
-            Scene::Game(game) if game.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::CardPicture)) => {
                 if game.card_view.as_ref().unwrap().hit(cursor) == Some(iteminfo::ViewHit::Close) {
                     game.card_view = None;
                 }
             }
             // A card's own window, over the description: its close button or its picture.
-            Scene::Game(game) if game.card_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
-                match game.card_window.as_ref().unwrap().hit(cursor) {
-                    Some(iteminfo::Hit::Close) => game.card_window = None,
-                    Some(iteminfo::Hit::View) => {
-                        let card = game.card_window.as_ref().unwrap().shown.item;
-                        game.toggle_card_view(card, &self.card_pictures, &self.items);
-                    }
-                    _ => {}
+            Scene::Game(game) if on(Esc(W::CardInfo)) => match game.card_window.as_ref().unwrap().hit(cursor) {
+                Some(iteminfo::Hit::Close) => game.card_window = None,
+                Some(iteminfo::Hit::View) => {
+                    let card = game.card_window.as_ref().unwrap().shown.item;
+                    game.toggle_card_view(card, &self.card_pictures, &self.items);
                 }
-            }
+                _ => {}
+            },
             // The item description window: its close button or a card's picture (a click on a card in the strip does nothing).
-            Scene::Game(game) if game.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
-                match game.item_window.as_ref().unwrap().hit(cursor) {
-                    Some(iteminfo::Hit::Close) => {
-                        game.item_window = None;
-                        game.card_view = None;
-                    }
-                    Some(iteminfo::Hit::View) => {
-                        let item = game.item_window.as_ref().unwrap().shown.item;
-                        game.toggle_card_view(item, &self.card_pictures, &self.items);
-                    }
-                    _ => {}
+            Scene::Game(game) if on(Esc(W::ItemInfo)) => match game.item_window.as_ref().unwrap().hit(cursor) {
+                Some(iteminfo::Hit::Close) => {
+                    game.item_window = None;
+                    game.card_view = None;
                 }
-            }
+                Some(iteminfo::Hit::View) => {
+                    let item = game.item_window.as_ref().unwrap().shown.item;
+                    game.toggle_card_view(item, &self.card_pictures, &self.items);
+                }
+                _ => {}
+            },
             // The right-click menu takes the next click, wherever it lands.
             Scene::Game(game) if game.menu.is_some() => match game.menu.take().unwrap().hit(cursor).flatten() {
                 // Not while talking to an NPC or in its shop.
@@ -581,24 +590,20 @@ impl App {
             },
             // The room maker's fields and buttons.
             // The emotion list: a click shows that emotion.
-            Scene::Game(game) if game.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some()) => {
-                match game.emotion_list.as_ref().unwrap().hit(cursor) {
-                    Some(emotion_list::Hit::Title(TitleHit::Close)) => game.emotion_list = None,
-                    Some(emotion_list::Hit::Emotion(kind)) => {
-                        let _ = game.session.emote(kind);
-                    }
-                    _ => {}
+            Scene::Game(game) if on(Esc(W::EmotionList)) => match game.emotion_list.as_ref().unwrap().hit(cursor) {
+                Some(emotion_list::Hit::Title(TitleHit::Close)) => game.emotion_list = None,
+                Some(emotion_list::Hit::Emotion(kind)) => {
+                    let _ = game.session.emote(kind);
                 }
-            }
+                _ => {}
+            },
             // The macro window: a line's field takes the typing.
-            Scene::Game(game) if game.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
-                match game.macro_window.as_ref().unwrap().hit(cursor) {
-                    Some(macros::Hit::Title(TitleHit::Close)) => game.toggle_macro_window(),
-                    Some(macros::Hit::Line(line)) => game.macro_window.as_mut().unwrap().editing = Some(line),
-                    _ => game.macro_window.as_mut().unwrap().editing = None,
-                }
-            }
-            Scene::Game(game) if game.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::Macros)) => match game.macro_window.as_ref().unwrap().hit(cursor) {
+                Some(macros::Hit::Title(TitleHit::Close)) => game.toggle_macro_window(),
+                Some(macros::Hit::Line(line)) => game.macro_window.as_mut().unwrap().editing = Some(line),
+                _ => game.macro_window.as_mut().unwrap().editing = None,
+            },
+            Scene::Game(game) if on(Esc(W::RoomMake)) => {
                 let make = game.room_make.as_mut().unwrap();
                 let hit = make.hit(cursor).unwrap();
                 if make.click(hit) {
@@ -608,7 +613,7 @@ impl App {
                 }
             }
             // The room we're in: closing it leaves.
-            Scene::Game(game) if game.room.as_ref().is_some_and(|room| room.hit(cursor, &game.me.name).is_some()) => {
+            Scene::Game(game) if on(Esc(W::ChatRoom)) => {
                 let room = game.room.as_mut().unwrap();
                 match room.hit(cursor, &game.me.name) {
                     Some(chatroom::RoomHit::Title(TitleHit::Close)) => {
@@ -654,7 +659,7 @@ impl App {
             }
             // A guild invites us: OK or cancel.
             // At the party invitation's place; accepting closes the Guild Companion.
-            Scene::Game(game) if game.guild_invite.is_some() && contains(party::invitation_at(screen()), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::GuildInvite)) => {
                 let dialog = party::invitation_at(screen());
                 for (place, accept) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
@@ -667,7 +672,7 @@ impl App {
                 }
             }
             // A guild question: OK or cancel. Whoever is asked for an alliance answers either way.
-            Scene::Game(game) if game.guild_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::GuildAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -677,7 +682,7 @@ impl App {
                 }
             }
             // Wearing an item that binds: OK wears it.
-            Scene::Game(game) if game.bind_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::BindAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -686,7 +691,7 @@ impl App {
                 }
             }
             // Growing the inventory: OK or cancel.
-            Scene::Game(game) if game.expansion_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::ExpansionAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -696,7 +701,7 @@ impl App {
                 }
             }
             // A queue question: OK applies, leaves the queue or enters the battle; Cancel doesn't (or declines entering).
-            Scene::Game(game) if game.queue_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::QueueAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -710,7 +715,7 @@ impl App {
                 }
             }
             // The memorial window: drag is a press; a click closes, or asks before Destroy.
-            Scene::Game(game) if game.memorial.frame.open && game.memorial.hit(cursor).is_some() => match game.memorial.hit(cursor) {
+            Scene::Game(game) if on(Esc(W::Memorial)) => match game.memorial.hit(cursor) {
                 Some(memorial::Hit::Title(title)) => {
                     game.memorial.frame.click_title(title);
                     if !game.memorial.frame.open {
@@ -722,7 +727,7 @@ impl App {
                 _ => {}
             },
             // The queue window: a battleground picked, applying, cancelling.
-            Scene::Game(game) if game.queue_window.frame.open && game.queue_window.hit(cursor, &self.battlegrounds, game.queued.is_some()).is_some() => {
+            Scene::Game(game) if on(Esc(W::BattleQueue)) && game.queue_window.hit(cursor, &self.battlegrounds, game.queued.is_some()).is_some() => {
                 match game.queue_window.hit(cursor, &self.battlegrounds, game.queued.is_some()) {
                     Some(battle_queue::Hit::Title(title)) => game.queue_window.frame.click_title(title),
                     Some(battle_queue::Hit::Row(row)) => game.queue_window.picked = Some(row),
@@ -740,7 +745,7 @@ impl App {
                 }
             }
             // The big minimap: a click on it, before the small one's buttons (it can cover them).
-            Scene::Game(game) if game.minimap_window.covers(cursor) => {
+            Scene::Game(game) if on(Esc(W::Minimap)) => {
                 let size = [game.world.gat.width as u32, game.world.gat.height as u32];
                 let quests = game.big_minimap_quests();
                 let pins = minimap_window::Pins { player: game.player.cell, party: &[], guild: &[], boss: None, quests: &quests };
@@ -761,7 +766,7 @@ impl App {
             }
             // The minimap's bottom row: zoom (kept with the settings), the big map, the route flag.
             // A click elsewhere on the minimap does nothing.
-            Scene::Game(game) if game.window_at(cursor).is_none() && game.minimap_shown() && minimap::covers(cursor) => match minimap::button_at(cursor) {
+            Scene::Game(game) if on(Top::SmallMinimap) => match minimap::button_at(cursor) {
                 Some(button @ ("plus" | "minus")) => {
                     game.minimap_zoom = if button == "plus" { minimap::zoom_in(game.minimap_zoom) } else { minimap::zoom_out(game.minimap_zoom) };
                     if let Some(path) = settings_path("minimap_zoom") {
@@ -780,13 +785,13 @@ impl App {
                 _ => {}
             },
             // The new-quest icon: the quest window.
-            Scene::Game(game) if game.quest_icon && quest_notice::on_icon(cursor) && game.window_at(cursor).is_none() => {
+            Scene::Game(game) if on(Top::QuestIcon) => {
                 game.quest_window.open();
                 game.quest_icon = false;
                 game.sync_esc();
             }
             // A level up button: the status window (base level) or the skill window (job level), restored if minimised.
-            Scene::Game(game) if game.level_ups.hit(cursor).is_some() && game.window_at(cursor).is_none() => {
+            Scene::Game(game) if on(Top::LevelUp) => {
                 match game.level_ups.hit(cursor).unwrap() {
                     level_up::Button::Base => {
                         game.status_window.frame.open = true;
@@ -803,7 +808,7 @@ impl App {
             }
             // A skill's description: its delay button opens or closes the delays beside it, its close button closes it;
             // a click elsewhere on it does nothing.
-            Scene::Game(game) if game.skill_description.as_ref().is_some_and(|window| window.contains(cursor)) => {
+            Scene::Game(game) if on(Esc(W::SkillDescription)) => {
                 if let Some(window) = game.skill_description.as_mut().filter(|window| window.on_delay(cursor)) {
                     window.delays = !window.delays;
                     game.sync_esc();
@@ -814,25 +819,21 @@ impl App {
             }
             // The store search: the kind, the fields, searching, paging, and a row twice to find its store.
             // A store it opened stands over it.
-            Scene::Game(game)
-                if game.catalog.as_ref().and_then(|catalog| catalog.hit(cursor)).is_some() && !game.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) =>
-            {
+            Scene::Game(game) if on(Esc(W::Catalog)) => {
                 let hit = game.catalog.as_ref().and_then(|catalog| catalog.hit(cursor));
                 game.click_catalog(hit.unwrap(), &self.items, &self.messages);
             }
             // The ranking board: another ranking, or closing it.
-            Scene::Game(game) if game.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some() => {
-                match game.ranking.as_ref().and_then(|board| board.hit(cursor)) {
-                    Some(ranking::Hit::Kind(kind)) => {
-                        let _ = game.session.ask_ranking(kind);
-                    }
-                    Some(ranking::Hit::Title(TitleHit::Close)) => game.ranking = None,
-                    Some(ranking::Hit::Title(title)) => game.ranking.as_mut().unwrap().frame.click_title(title),
-                    _ => {}
+            Scene::Game(game) if on(Esc(W::Ranking)) => match game.ranking.as_ref().and_then(|board| board.hit(cursor)) {
+                Some(ranking::Hit::Kind(kind)) => {
+                    let _ = game.session.ask_ranking(kind);
                 }
-            }
+                Some(ranking::Hit::Title(TitleHit::Close)) => game.ranking = None,
+                Some(ranking::Hit::Title(title)) => game.ranking.as_mut().unwrap().frame.click_title(title),
+                _ => {}
+            },
             // The party booking board.
-            Scene::Game(game) if game.booking.as_ref().and_then(|window| window.hit(cursor)).is_some() => {
+            Scene::Game(game) if on(Top::PartyBooking) => {
                 let window = game.booking.as_mut().unwrap();
                 let hit = window.hit(cursor).unwrap();
                 if let Some(action) = window.click(hit) {
@@ -840,7 +841,7 @@ impl App {
                 }
             }
             // Someone asks to join through our post: OK lets them in.
-            Scene::Game(game) if game.booking_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Top::BookingAsked) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, accept) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
@@ -850,7 +851,7 @@ impl App {
                 }
             }
             // The navigation window: its field, a result to go to, stopping.
-            Scene::Game(game) if game.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some() => {
+            Scene::Game(game) if on(Esc(W::Navigation)) => {
                 let window = game.navi_window.as_mut().unwrap();
                 match window.hit(cursor).unwrap() {
                     navigation::Hit::Title(TitleHit::Close) => game.navi_window = None,
@@ -869,15 +870,13 @@ impl App {
                 }
             }
             // The reputation window: its title bar.
-            Scene::Game(game) if game.reputation_window.as_ref().and_then(|window| window.hit(cursor)).is_some() => {
-                match game.reputation_window.as_ref().and_then(|window| window.hit(cursor)) {
-                    Some(reputation::Hit::Title(TitleHit::Close)) => game.reputation_window = None,
-                    Some(reputation::Hit::Title(title)) => game.reputation_window.as_mut().unwrap().frame.click_title(title),
-                    _ => {}
-                }
-            }
+            Scene::Game(game) if on(Esc(W::Reputation)) => match game.reputation_window.as_ref().and_then(|window| window.hit(cursor)) {
+                Some(reputation::Hit::Title(TitleHit::Close)) => game.reputation_window = None,
+                Some(reputation::Hit::Title(title)) => game.reputation_window.as_mut().unwrap().frame.click_title(title),
+                _ => {}
+            },
             // The dress room: pickers, turning, closing.
-            Scene::Game(game) if game.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some() => {
+            Scene::Game(game) if on(Esc(W::DressRoom)) => {
                 let room = game.dressroom.as_mut().unwrap();
                 if room.hit(cursor).is_some_and(|hit| room.click(hit, &game.dress_lists)) {
                     game.dressroom = None;
@@ -885,7 +884,7 @@ impl App {
                 }
             }
             // Handing the party over: OK asks the server.
-            Scene::Game(game) if game.leader_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::LeaderAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -897,21 +896,19 @@ impl App {
                 }
             }
             // The Guild Companion and its windows; the create (or disband) window's OK checks the name.
-            Scene::Game(game) if game.guild_companion.hit(cursor).is_some() => match game.guild_companion.hit(cursor) {
+            Scene::Game(game) if on(Esc(W::GuildCompanion)) => match game.guild_companion.hit(cursor) {
                 Some(guild_companion::Hit::CreateOk) => game.guild_name_ok(&self.messages),
                 Some(hit) => game.guild_companion.click(hit),
                 None => {}
             },
             // The guild's reason box: OK sends, Cancel closes.
-            Scene::Game(game) if game.reason_box.as_ref().is_some_and(|reason| reason.hit(cursor, screen()).is_some()) => {
-                match game.reason_box.as_ref().and_then(|reason| reason.hit(cursor, screen())) {
-                    Some(guild::ReasonHit::Ok) => game.answer_reason(true),
-                    Some(guild::ReasonHit::Cancel) => game.answer_reason(false),
-                    _ => {}
-                }
-            }
+            Scene::Game(game) if on(Top::GuildReason) => match game.reason_box.as_ref().and_then(|reason| reason.hit(cursor, screen())) {
+                Some(guild::ReasonHit::Ok) => game.answer_reason(true),
+                Some(guild::ReasonHit::Cancel) => game.answer_reason(false),
+                _ => {}
+            },
             // The party's docked windows (setup, create, invite): choices, the edit box, OK and Cancel.
-            Scene::Game(game) if game.party_dialog.as_ref().and_then(|dialog| dialog.hit(cursor)).is_some() => {
+            Scene::Game(game) if matches!(top, Some(Esc(W::PartySetup | W::PartyCreate | W::PartyInviteName))) => {
                 let dialog = game.party_dialog.as_mut().unwrap();
                 let hit = dialog.hit(cursor);
                 dialog.typing = hit == Some(party::DialogHit::Edit) || (dialog.typing && hit != Some(party::DialogHit::Window));
@@ -921,7 +918,7 @@ impl App {
                 }
             }
             // Dismissing the mercenary: OK lets it go.
-            Scene::Game(game) if game.dismiss_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::DismissAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -930,7 +927,7 @@ impl App {
                 }
             }
             // A homunculus question: OK feeds, deletes or renames it.
-            Scene::Game(game) if game.homunculus_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::HomunculusAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -939,7 +936,7 @@ impl App {
                 }
             }
             // A pet question: OK feeds it or renames it.
-            Scene::Game(game) if game.pet_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::PetAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -948,7 +945,7 @@ impl App {
                 }
             }
             // A cash shop purchase: OK sends the cart.
-            Scene::Game(game) if game.cashshop_buy_asked && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::CashShopBuy)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, accept) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
@@ -960,7 +957,7 @@ impl App {
                 }
             }
             // Someone wants to be friends: OK or cancel.
-            Scene::Game(game) if game.friend_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::FriendAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, accept) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
@@ -970,7 +967,7 @@ impl App {
                 }
             }
             // Asked to be adopted: OK asks again, then accepts; Cancel at either step refuses.
-            Scene::Game(game) if game.adopt_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::AdoptAsked)) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
@@ -987,7 +984,7 @@ impl App {
             }
             // A party invites us: OK or cancel.
             // Yes joins and opens the party window on its party tab.
-            Scene::Game(game) if game.party_invite.is_some() && contains(party::invitation_at(screen()), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Esc(W::PartyInvite)) => {
                 let dialog = party::invitation_at(screen());
                 for (place, accept) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
@@ -1000,7 +997,7 @@ impl App {
                 }
             }
             // Someone asks for a deal: OK or cancel.
-            Scene::Game(game) if game.trade_asked.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor) => {
+            Scene::Game(game) if on(Top::TradeAsked) => {
                 let dialog = dialog_position(&assets.message);
                 for (place, accept) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
                     if hit(offset(dialog, place), if accept { &assets.ok } else { &assets.cancel }) {
@@ -1009,7 +1006,7 @@ impl App {
                     }
                 }
             }
-            Scene::Game(game) if game.bank.as_ref().is_some_and(|bank| bank.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::Bank)) => {
                 let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                 let bank = game.bank.as_mut().unwrap();
                 let hit = bank.hit(cursor).unwrap();
@@ -1029,7 +1026,7 @@ impl App {
                     None => {}
                 }
             }
-            Scene::Game(game) if game.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::CashShop)) => {
                 let shop = game.cashshop.as_mut().unwrap();
                 let hit = shop.hit(cursor).unwrap();
                 match shop.click(hit) {
@@ -1038,7 +1035,7 @@ impl App {
                     None => {}
                 }
             }
-            Scene::Game(game) if game.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some()) => {
+            Scene::Game(game) if on(Esc(W::OtherEquipment)) => {
                 let viewed = game.viewing.as_mut().unwrap();
                 match viewed.window.hit(cursor, &viewed.items).unwrap() {
                     equipment::Hit::Title(TitleHit::Close) => game.viewing = None,
@@ -1048,13 +1045,13 @@ impl App {
                 }
             }
             // Sense's window: its close button.
-            Scene::Game(game) if game.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::MonsterInfo)) => {
                 if game.monster_window.as_ref().unwrap().hit(cursor) == Some(true) {
                     game.monster_window = None;
                 }
             }
             // The Lucky Roulette: START spins, Get Prize claims (neither while the wheel spins), close lets it go.
-            Scene::Game(game) if game.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::Roulette)) => {
                 let window = game.roulette.as_mut().unwrap();
                 let hit = window.hit(cursor).unwrap();
                 match window.click(hit, control::now()) {
@@ -1066,14 +1063,14 @@ impl App {
                 }
             }
             // Its icon asks for it.
-            Scene::Game(game) if roulette::icon_hit(cursor) => {
+            Scene::Game(game) if on(Top::RouletteIcon) => {
                 if game.roulette.is_none() {
                     let _ = game.session.roulette(net::RouletteRequest::Open);
                 }
             }
             // The material window: OK sends what's in; Cancel and the close button send nothing in (rathena forgets the
             // window either way).
-            Scene::Game(game) if game.materials.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::Materials)) => {
                 let window = game.materials.as_mut().unwrap();
                 let hit = window.hit(cursor).unwrap();
                 if let Some(ok) = window.click(hit) {
@@ -1082,7 +1079,7 @@ impl App {
                     game.materials = None;
                 }
             }
-            Scene::Game(game) if game.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::LaphineSynthesis)) => {
                 let hit = game.synthesis.as_ref().unwrap().hit(cursor).unwrap();
                 match game.synthesis.as_mut().unwrap().click(hit) {
                     Some(laphine::Action::Make) => {
@@ -1099,7 +1096,7 @@ impl App {
                     None => {}
                 }
             }
-            Scene::Game(game) if game.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::LaphineUpgrade)) => {
                 let hit = game.upgrade.as_ref().unwrap().hit(cursor).unwrap();
                 match game.upgrade.as_mut().unwrap().click(hit) {
                     Some(laphine::Action::Make) => {
@@ -1115,7 +1112,7 @@ impl App {
                     None => {}
                 }
             }
-            Scene::Game(game) if game.reform.as_ref().is_some_and(|window| window.hit(cursor, &game.inventory.items).is_some()) => {
+            Scene::Game(game) if on(Esc(W::ItemReform)) => {
                 let hit = game.reform.as_ref().unwrap().hit(cursor, &game.inventory.items).unwrap();
                 match game.reform.as_mut().unwrap().click(hit, &game.inventory.items) {
                     Some(reform::Action::Reform { item, index }) => {
@@ -1129,7 +1126,7 @@ impl App {
                     None => {}
                 }
             }
-            Scene::Game(game) if game.enchant.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::Enchant)) => {
                 let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                 let action = {
                     let carried = &game.inventory.items;
@@ -1165,10 +1162,11 @@ impl App {
                 }
             }
             Scene::Game(game)
-                if game.stylist.as_ref().is_some_and(|window| {
-                    let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
-                    window.hit(cursor, &self.styling_shop, job).is_some()
-                }) =>
+                if on(Esc(W::Stylist))
+                    && game.stylist.as_ref().is_some_and(|window| {
+                        let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
+                        window.hit(cursor, &self.styling_shop, job).is_some()
+                    }) =>
             {
                 let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
                 let hair = game.player.look.as_ref().map(|look| look.hair).unwrap_or(0);
@@ -1193,7 +1191,7 @@ impl App {
                     dress_stylist(window, &self.grf, &self.look_tables, &look, &self.items, &self.styling_shop);
                 }
             }
-            Scene::Game(game) if game.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Top::Refine) => {
                 let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                 let carried = &game.inventory.items;
                 let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
@@ -1217,7 +1215,7 @@ impl App {
                 }
             }
             // Grade enchanting: Start sends the try, a refusal is the client's own line, close tells the server.
-            Scene::Game(game) if game.grade.as_ref().is_some_and(|window| window.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::GradeEnchant)) => {
                 let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                 let carried = &game.inventory.items;
                 let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
@@ -1235,7 +1233,7 @@ impl App {
                     None => {}
                 }
             }
-            Scene::Game(game) if game.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some()) => {
+            Scene::Game(game) if on(Esc(W::Trade)) => {
                 let trade = game.trade.as_mut().unwrap();
                 let hit = trade.hit(cursor).unwrap();
                 match trade.click(hit) {
@@ -1256,7 +1254,7 @@ impl App {
                     game.answer_amount(ok, &self.messages);
                 }
             }
-            Scene::Game(game) if game.pick.as_ref().is_some_and(|(list, _)| list.covers(cursor)) => {
+            Scene::Game(game) if on(Esc(W::PickList)) => {
                 let (list, picking) = game.pick.as_mut().unwrap();
                 let hit = list.hit(cursor).unwrap();
                 // Item merge: rows pick and unpick, OK sends the picked stacks and waits for the answer.
@@ -1280,7 +1278,7 @@ impl App {
                     game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
             }
-            Scene::Game(game) if game.forge.as_ref().is_some_and(|forge| forge.covers(cursor)) => {
+            Scene::Game(game) if on(Top::MakingMaterial) => {
                 let forge = game.forge.as_mut().unwrap();
                 let hit = forge.hit(cursor).unwrap();
                 match forge.click(hit) {
@@ -1290,7 +1288,7 @@ impl App {
                     None => {}
                 }
             }
-            Scene::Game(game) if game.shop.as_ref().is_some_and(|shop| shop.covers(cursor)) => {
+            Scene::Game(game) if on(Esc(W::Shop)) => {
                 let shop = game.shop.as_mut().unwrap();
                 let hit = shop.hit(cursor).unwrap();
                 match shop.click(hit) {
@@ -1330,20 +1328,18 @@ impl App {
             }
             // The chat tab settings: a kind of line on or off for the tab. It's drawn over the panels, so it takes the
             // click before them (#1157).
-            Scene::Game(game) if game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).is_some() => {
-                match game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).unwrap() {
-                    chat::SettingsHit::Title(TitleHit::Close) => game.chat.settings = None,
-                    chat::SettingsHit::Title(title) => game.chat.settings.as_mut().unwrap().frame.click_title(title),
-                    chat::SettingsHit::Kind(kind) => game.chat.toggle_kind(kind),
-                    chat::SettingsHit::All => game.chat.set_all(),
-                    chat::SettingsHit::ScrollUp => game.chat.settings.as_mut().unwrap().scroll(-1),
-                    chat::SettingsHit::ScrollDown => game.chat.settings.as_mut().unwrap().scroll(1),
-                    chat::SettingsHit::Window => {}
-                }
-            }
+            Scene::Game(game) if on(Top::ChatSettings) => match game.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).unwrap() {
+                chat::SettingsHit::Title(TitleHit::Close) => game.chat.settings = None,
+                chat::SettingsHit::Title(title) => game.chat.settings.as_mut().unwrap().frame.click_title(title),
+                chat::SettingsHit::Kind(kind) => game.chat.toggle_kind(kind),
+                chat::SettingsHit::All => game.chat.set_all(),
+                chat::SettingsHit::ScrollUp => game.chat.settings.as_mut().unwrap().scroll(-1),
+                chat::SettingsHit::ScrollDown => game.chat.settings.as_mut().unwrap().scroll(1),
+                chat::SettingsHit::Window => {}
+            },
             // A small party window: a click on it was a drag (handled on press).
-            Scene::Game(game) if game.party_member_at(cursor).is_some() => {}
-            Scene::Game(game) if game.window_at(cursor).is_some() => {
+            Scene::Game(game) if matches!(top, Some(Top::PartyHp(_))) => {}
+            Scene::Game(game) if matches!(top, Some(Top::Panel(_))) => {
                 let id = game.window_at(cursor).unwrap();
                 game.raise(id);
                 match id {
@@ -1785,7 +1781,7 @@ impl App {
             }
             // A click on the chat window: the battle-mode icon opens or closes the line (the focus stays); the rest
             // focuses the boxes but doesn't open the line.
-            Scene::Game(game) if game.chat.on_list(cursor) || game.chat.blocks(cursor) => {
+            Scene::Game(game) if on(Top::Chat) => {
                 if game.chat.hit(cursor) == Some(chat::Hit::ModeIcon) {
                     game.chat_mode.toggle_line();
                     game.chat.mode_icon = game.chat_mode.icon();
@@ -1794,7 +1790,7 @@ impl App {
                     game.chat_said(said, &self.messages);
                 }
             }
-            Scene::Game(game) if game.dialog.is_some() && (game.on_npc_window(cursor) || game.talk_blocks()) => {
+            Scene::Game(game) if game.dialog.is_some() && (on(Top::NpcDialog) || game.talk_blocks()) => {
                 // NPC windows take the click; the map doesn't react while talking.
                 let dialog = game.dialog.as_mut().unwrap();
                 if dialog.input.as_ref().is_some_and(|input| hit(input.ok_on(screen()), &assets.ok)) {
@@ -1812,7 +1808,7 @@ impl App {
                 }
             }
             // The slot machine: the first press on it makes the try.
-            Scene::Game(game) if game.slot.is_some() && contains(taming::place(screen()), taming::SIZE, cursor) => {
+            Scene::Game(game) if on(Top::Slot) => {
                 let machine = game.slot.as_mut().unwrap();
                 if machine.press(Instant::now()) {
                     let _ = game.session.try_capture(machine.monster);
@@ -1830,9 +1826,11 @@ impl App {
                 }
             }
             // The special popup sits over the map, under the windows: a click on it (and not on a window) dismisses it.
-            Scene::Game(game) if game.special_popup.is_some() && special_popup::covers(cursor) => {
+            Scene::Game(game) if on(Top::SpecialPopup) => {
                 game.special_popup = None;
             }
+            // A window the click reached but took nothing: the world under it doesn't get it either.
+            Scene::Game(_) if top.is_some() => {}
             Scene::Game(game) => {
                 if game.store_open() || game.world_locked() {
                     return;
@@ -2967,6 +2965,8 @@ impl App {
 
     /// A mouse press: grabs a window by its title bar, and notes it for Esc.
     pub(crate) fn press(&mut self) {
+        use Top::Esc;
+        use escape::WindowId as W;
         let cursor = self.cursor;
         // A press on the right-click menu is the menu's (its choice is taken on the release), not the window's under it.
         if let Scene::Game(game) = &self.scene
@@ -3035,36 +3035,29 @@ impl App {
             self.button.due = true;
             return;
         }
+        // The window drawn on top under the press (`top_at`) is the one that takes it.
+        let top = match (&self.scene, &self.assets) {
+            (Scene::Game(game), Some(assets)) => game.top_at(cursor, assets.message.size),
+            _ => None,
+        };
         // The big minimap is above the other windows, under the world map.
         if let Scene::Game(game) = &mut self.scene
-            && game.world_map.is_none()
-            && game.minimap_window.covers(cursor)
+            && top == Some(Esc(W::Minimap))
         {
             let size = [game.world.gat.width as u32, game.world.gat.height as u32];
             let pins = minimap_window::Pins { player: game.player.cell, party: &[], guild: &[], boss: None, quests: &[] };
             if game.minimap_window.hit(cursor, size, &pins) == Some(minimap_window::Hit::Title(TitleHit::Title)) {
                 game.minimap_window.frame.start_drag(cursor);
             }
-            game.press_esc(cursor);
+            game.press_esc(top);
             return;
         }
         if let Scene::Game(game) = &mut self.scene {
-            // Windows opened since the last Esc join the list before this press moves one to the front.
-            game.sync_esc();
-            // A button on the game menu is not a press on the window under it.
-            let on_menu = game.escape.as_ref().is_some_and(|menu| menu.hit(cursor, game.can_resurrect()).is_some());
-            if !on_menu && game.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some()) {
-                escape::touch(&mut game.esc_order, escape::WindowId::CardPicture);
-            } else if !on_menu && game.card_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
-                escape::touch(&mut game.esc_order, escape::WindowId::CardInfo);
-            } else if !on_menu && game.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some()) {
-                escape::touch(&mut game.esc_order, escape::WindowId::ItemInfo);
-            } else if !on_menu {
-                game.press_esc(cursor);
-            }
+            game.press_esc(top);
         }
         // The guild storage log: its tabs and arrows on the press, Close too, and anywhere else drags it.
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Top::GuildStorageLog)
             && let Some(log) = &mut game.storage_log
             && let Some(hit) = log.hit(cursor)
         {
@@ -3074,14 +3067,16 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
-            && game.memorial.hit(cursor).is_some()
+            && top == Some(Esc(W::Memorial))
         {
             if game.memorial.hit(cursor) == Some(memorial::Hit::Title(TitleHit::Title)) {
                 game.memorial.frame.start_drag(cursor);
             }
             return;
         }
-        if let Scene::Game(game) = &mut self.scene {
+        if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::Stylist))
+        {
             let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
             let hit = game.stylist.as_ref().and_then(|window| window.hit(cursor, &self.styling_shop, job));
             if let Some(hit) = hit {
@@ -3093,6 +3088,7 @@ impl App {
         }
         // A card's picture sits over the item info.
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::CardPicture))
             && let Some(view) = &mut game.card_view
             && let Some(hit) = view.hit(cursor)
         {
@@ -3103,6 +3099,7 @@ impl App {
         }
         // The chat window goes by its tab strip.
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Top::Chat)
             && game.chat.press(cursor)
         {
             return;
@@ -3110,7 +3107,7 @@ impl App {
         // The item description window goes by its top band, and its height by the grip (the NPC window's links are
         // over it).
         if let Scene::Game(game) = &mut self.scene
-            && links::at(&game.dialog_links, cursor).is_none()
+            && matches!(top, Some(Esc(W::CardInfo | W::ItemInfo)))
             && let Some((window, hit)) =
                 [&mut game.card_window, &mut game.item_window].into_iter().flatten().find_map(|window| window.hit(cursor).map(|hit| (window, hit)))
         {
@@ -3124,6 +3121,7 @@ impl App {
         // The NPC menu, over the say window: a press on a row selects it (a double click picks it); any part but the
         // list and the buttons drags it.
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Top::NpcDialog)
             && let Some(menu) = game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut())
             && let Some(local) = game.npc_menu.local(cursor, menu.size()[1])
         {
@@ -3136,6 +3134,7 @@ impl App {
         }
         // The NPC say window goes by any part but its button, links and scrollbar.
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Top::NpcDialog)
             && game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none())
             && game.say.contains(cursor)
         {
@@ -3149,6 +3148,7 @@ impl App {
         }
         // The chat room's window is over the others too.
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::ChatRoom))
             && let Some(room) = &mut game.room
             && let Some(hit) = room.hit(cursor, &game.me.name)
         {
@@ -3159,6 +3159,7 @@ impl App {
         }
         // The deal's window is over the others.
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::Trade))
             && let Some(trade) = &mut game.trade
             && let Some(hit) = trade.hit(cursor)
         {
@@ -3170,7 +3171,7 @@ impl App {
         }
         // The deal-type box (Buy / Sell / Cancel) is dragged by its body.
         if let Scene::Game(game) = &mut self.scene
-            && game.deal_choice.is_some()
+            && top == Some(Esc(W::DealChoice))
             && let Some(hit) = shop::deal_hit(game.deal_frame.position, cursor)
         {
             if hit == shop::DealHit::Body {
@@ -3180,15 +3181,16 @@ impl App {
         }
         // The vending windows' corner grips.
         if let Scene::Game(game) = &mut self.scene {
-            if let Some(setup) = &mut game.vend_setup
+            if top == Some(Esc(W::VendSetup))
+                && let Some(setup) = &mut game.vend_setup
                 && setup.on_grip(cursor)
             {
                 setup.start_resize(cursor);
                 return;
             }
             // A press on the setup's mirror or on a row on sale starts a drag.
-            if let Some(setup) = &game.vend_setup
-                && setup.covers(cursor)
+            if top == Some(Esc(W::VendSetup))
+                && let Some(setup) = &game.vend_setup
             {
                 match (setup.mirror_hit(cursor, &game.cart.items), setup.hit(cursor)) {
                     (Some(Some(index)), _) => game.dragging = Some((Dragged::VendMirror(index), cursor, false)),
@@ -3196,7 +3198,8 @@ impl App {
                     _ => {}
                 }
             }
-            if let Some(shop) = &mut game.my_shop
+            if top == Some(Esc(W::MyShop))
+                && let Some(shop) = &mut game.my_shop
                 && shop.on_grip(cursor)
             {
                 shop.start_resize(cursor);
@@ -3205,6 +3208,7 @@ impl App {
         }
         // A shop's row starts a drag at once; its title bar moves the window.
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::Shop))
             && let Some(hit) = game.shop.as_ref().and_then(|shop| shop.hit(cursor))
         {
             match hit {
@@ -3220,12 +3224,13 @@ impl App {
         }
         // So are the mail windows, and the audio settings.
         if let Scene::Game(game) = &mut self.scene
-            && game.mail.hit(cursor).is_some()
+            && matches!(top, Some(Esc(W::Mailbox | W::MailRead | W::MailWrite)))
         {
             game.mail.start_drag(cursor);
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::MonsterInfo))
             && let Some(window) = &mut game.monster_window
             && window.hit(cursor) == Some(false)
         {
@@ -3235,6 +3240,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Top::MakingMaterial)
             && let Some(hit) = game.forge.as_ref().and_then(|window| window.hit(cursor))
         {
             if hit == forge::Hit::Title(TitleHit::Title) {
@@ -3243,6 +3249,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::LaphineSynthesis))
             && let Some(hit) = game.synthesis.as_ref().and_then(|window| window.hit(cursor))
         {
             if hit == laphine::Hit::Title(TitleHit::Title) {
@@ -3251,6 +3258,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::LaphineUpgrade))
             && let Some(hit) = game.upgrade.as_ref().and_then(|window| window.hit(cursor))
         {
             if hit == laphine::Hit::Title(TitleHit::Title) {
@@ -3259,6 +3267,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::Enchant))
             && let Some(hit) = game.enchant.as_ref().and_then(|window| window.hit(cursor))
         {
             if hit == enchant::Hit::Title(TitleHit::Title) {
@@ -3267,6 +3276,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::Roulette))
             && let Some(hit) = game.roulette.as_ref().and_then(|window| window.hit(cursor))
         {
             if hit == roulette::Hit::Title(TitleHit::Title) {
@@ -3275,6 +3285,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::ItemReform))
             && let Some(hit) = game.reform.as_ref().and_then(|window| window.hit(cursor, &game.inventory.items))
         {
             if hit == reform::Hit::Title(TitleHit::Title) {
@@ -3283,6 +3294,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Top::Refine)
             && let Some(hit) = game.refine.as_ref().and_then(|window| window.hit(cursor))
         {
             if hit == refine::Hit::Title(TitleHit::Title) {
@@ -3291,6 +3303,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::GradeEnchant))
             && let Some(hit) = game.grade.as_ref().and_then(|window| window.hit(cursor))
         {
             if hit == grade::Hit::Title(TitleHit::Title) {
@@ -3299,7 +3312,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
-            && game.achievement_window.covers(cursor)
+            && top == Some(Esc(W::Achievements))
         {
             if game.achievement_window.hit(cursor, &self.achievement_info, &game.achievements) == Some(achievement::Hit::Title(TitleHit::Title)) {
                 game.achievement_window.frame.start_drag(cursor);
@@ -3307,6 +3320,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::Quests))
             && let Some(hit) = game.quest_window.hit(cursor, &game.quests, &self.quest_texts)
         {
             // Each drags from anywhere that isn't a control (the details stay put when the list moves).
@@ -3319,6 +3333,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::GameSettings))
             && let Some(window) = &mut game.settings_window
             && let Some(hit) = window.hit(cursor)
         {
@@ -3330,6 +3345,7 @@ impl App {
             return;
         }
         if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::ShortcutSettings))
             && let Some(window) = &mut game.shortcuts_window
             && let Some(hit) = window.hit(cursor)
         {
@@ -3338,6 +3354,7 @@ impl App {
         }
         // A small party window: a press anywhere on it grabs it, unless the party window's lock is on.
         if let Scene::Game(game) = &mut self.scene
+            && matches!(top, Some(Top::PartyHp(_)))
             && let Some(account) = game.party_member_at(cursor)
         {
             if !game.party_window.locked {
@@ -3345,10 +3362,9 @@ impl App {
             }
             return;
         }
-        // A window drawn over the panels takes the press: the panel under it isn't raised or dragged from (#1151).
+        // A panel on top: raised, and maybe dragged from (a window over it takes the press instead, #1151).
         if let Scene::Game(game) = &mut self.scene
-            && game.over_panels_at(cursor).is_none()
-            && let Some(id) = game.window_at(cursor)
+            && let Some(Top::Panel(id)) = top
         {
             game.raise(id);
             if let (Panel::Inventory, Some(inventory::Hit::Item(index))) = (id, game.inventory.hit(cursor)) {
