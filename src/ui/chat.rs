@@ -843,8 +843,15 @@ impl Chat {
         self.contains(cursor) && self.hit(cursor) != Some(Hit::Log)
     }
 
-    /// What `cursor` is on.
+    /// What `cursor` is on. The bare window grabs only outside y 1 to 20 (at step 0, where the window is the input
+    /// bar alone, that leaves its top and bottom few pixels).
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
+        let hit = self.hit_anywhere(cursor)?;
+        let local_y = cursor[1] - self.at([0.0, 0.0])[1];
+        Some(if hit == Hit::Strip && (1.0..=TOP_ROW).contains(&local_y) { Hit::TopRow } else { hit })
+    }
+
+    fn hit_anywhere(&self, cursor: [f32; 2]) -> Option<Hit> {
         if !self.contains(cursor) {
             return None;
         }
@@ -1262,7 +1269,7 @@ impl Chat {
         }
     }
 
-    /// A tab "NewTab_<n>" after the others (n counts it), showing nothing until its settings say. Refused with the
+    /// A tab "NewTab_<n>" after the others (n counts it), shown, showing nothing until its settings say. Refused with the
     /// message to show when there are ten, or when the strip has no room for it.
     // ponytail: a tab the strip has no room for is refused; the game makes it a torn-off window instead.
     pub fn add_tab(&mut self) -> Result<(), usize> {
@@ -1276,9 +1283,7 @@ impl Chat {
         // After the agent's tab it would sit past the game's; before it, with the others.
         let at = self.tabs.iter().position(Tab::is_mcp).unwrap_or(self.tabs.len());
         self.tabs.insert(at, Tab::new(label, HashSet::new()));
-        if self.tab >= at && self.tabs.len() > at + 1 {
-            self.tab += 1;
-        }
+        self.select_tab(at);
         self.save_tabs();
         Ok(())
     }
@@ -2377,6 +2382,11 @@ mod tests {
         chat.corner = None;
         chat.mode_icon = Some(false);
         assert_eq!(chat.hit([300.0, screen()[1] - 12.0]), Some(Hit::Strip));
+        // The input bar alone (step 0): only its top pixel and bottom three, outside y 1 to 20.
+        chat.size = 0;
+        let rows = [0.0, 1.0, 12.0, 20.0, 21.0, 23.0].map(|y| chat.hit([300.0, screen()[1] - 24.0 + y]));
+        assert_eq!(rows, [Some(Hit::Strip), Some(Hit::TopRow), Some(Hit::TopRow), Some(Hit::TopRow), Some(Hit::Strip), Some(Hit::Strip)]);
+        chat.size = DEFAULT_STEP;
         chat.mode_icon = None;
         // Locked it is held (and fades) but stays.
         chat.locked = true;
@@ -2407,7 +2417,7 @@ mod tests {
         // A new tab after the two, as wide as its label and 10 ("NewTab_3" is 48 px here), showing nothing.
         assert_eq!(chat.click(middle_of(&chat, "chat_add_tab")), None);
         chat.measure_tabs(&labels(), &six_px);
-        assert_eq!(chat.tabs[2].label, Label::Text("NewTab_3".into()));
+        assert_eq!((chat.tabs[2].label.clone(), chat.tab), (Label::Text("NewTab_3".into()), 2));
         assert!(chat.tabs[2].kinds.is_empty());
         assert_eq!((chat.tab_corner(2), chat.tab_width(2)), ([95.0, 0.0], 58.0));
         chat.push("Poring : hi".into(), PUBLIC);
