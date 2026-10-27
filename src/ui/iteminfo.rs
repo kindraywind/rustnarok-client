@@ -618,10 +618,9 @@ impl ItemWindow {
         if let Some(Some(picture)) = info.and_then(|info| images.get(&picture_path(info, self.shown.identified))) {
             layer.sprites.push((picture, at(PICTURE), picture.size));
         }
-        // The title, each piece over its shadow, cut to 180 px.
-        // ponytail: " [slots]" ends the title as before.
+        // The title, each piece over its shadow, cut to 180 px: the whole name without " [slots]".
         let item = self.shown.as_item();
-        let (name, maker) = inventory::full_name_maker(items, cards, messages, makers, &item, true);
+        let (name, maker) = inventory::full_name_maker(items, cards, messages, makers, &item, false);
         let fitted = crate::window::fit(font, &name, TITLE_WIDTH);
         let mut left = TITLE[0];
         for (piece, color, shadow) in title_pieces(&fitted, maker, &item, items) {

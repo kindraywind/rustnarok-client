@@ -670,7 +670,9 @@ impl Refine {
                 layer.sprites.push((&assets.grades[usize::from(item.grade - 1)], at(GRADE_AT), assets.grades[0].size));
             }
             if shown.is_none_or(|shown| shown.result != 1) {
-                let name = window::fit(font, &inventory::full_name(items, names.0, messages, names.1, item, true), SIZE[0] - 8.0);
+                // The whole name without " [slots]", with its options' count.
+                let name = inventory::option_text(messages, &inventory::full_name(items, names.0, messages, names.1, item, false), item);
+                let name = window::fit(font, &name, SIZE[0] - 8.0);
                 centered(&name, 0.0, SIZE[0], if shown.is_some() { RESULT_NAME_Y } else { NAME_Y }, NAME_COLOR, layer);
             }
         }

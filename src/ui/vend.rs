@@ -509,6 +509,7 @@ impl Setup {
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
+        (cards, makers): inventory::Naming,
         cart: &[InventoryItem],
         font: &Font,
         messages: &[String],
@@ -539,7 +540,7 @@ impl Setup {
             let top = self.row_top(row);
             let shown = InventoryItem { amount: good.amount, ..item.clone() };
             draw_icon(layer, icons, items, font, &shown, at([GOOD_ICON[0], GOOD_ICON[1] + top]));
-            let name = inventory::item_name(items, item.id, item.identified, item.refine);
+            let name = inventory::full_name(items, cards, messages, makers, item, true);
             layer.texts.push((window::fit(font, &name, GOOD_NAME_WIDTH), at([GOOD_NAME[0], GOOD_NAME[1] + top]), [0, 0, 0]));
             layer.texts.push((message(PRICE_ASKS).to_owned(), at([width - PRICE_LABEL[0], PRICE_LABEL[1] + top]), [0, 0, 0]));
             let place = self.price_box(row);
@@ -591,6 +592,8 @@ impl Setup {
 /// sells out" box (2642), and Close.
 const MY_SHOP_AT: [f32; 2] = [200.0, 120.0];
 const MY_SHOP_TITLE: usize = 3237;
+/// "%s [%d ea.] %s Zeny": a good under the pointer, how many are left, its price.
+const MY_SHOP_HOVER: usize = 2757;
 const NOTIFY_MESSAGE: usize = 2642;
 /// The box and its words in the white under the cells; Close in the footer, left of the grip.
 // ponytail: the box's and Close's places aren't knowable.
@@ -742,6 +745,7 @@ impl MyShop {
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
+        (cards, makers): inventory::Naming,
         font: &Font,
         messages: &[String],
         pointer: ([f32; 2], bool),
@@ -763,12 +767,12 @@ impl MyShop {
         layer.texts.push((message(NOTIFY_MESSAGE).to_owned(), at([NOTIFY_TEXT[0], place[1]]), [0, 0, 0]));
         let look = if self.hit(pointer.0) == Some(ShopHit::Close) { 1 + usize::from(pointer.1) } else { 0 };
         layer.sprites.push((&assets.close[look], at(self.close_button()), BUTTON));
-        // The one under the pointer: its name and price beside it.
+        // The one under the pointer: "%s [%d ea.] %s Zeny" (2757) beside it, in the item's colour.
         if let Some((cell, good)) = shown.clone().find(|&(cell, _)| contains(at(self.size.cell(cell)), [CELL, CELL], pointer.0)) {
-            let name = inventory::item_name(items, good.item.id, good.item.identified, good.item.refine);
-            let text = format!("{name} : {} z", group(u64::from(good.price)));
+            let name = inventory::full_name(items, cards, messages, makers, &good.item, true);
+            let text = rustnarok_client::messages::fill(message(MY_SHOP_HOVER), &[&name, &good.item.amount, &group(u64::from(good.price))]);
             let [x, y] = self.size.cell(cell);
-            window::tooltip(layer, chrome, font, &text, at([x + 35.0, y]), [0, 0, 0]);
+            window::tooltip(layer, chrome, font, &text, at([x + 35.0, y]), inventory::name_color(&good.item, items));
         }
     }
 }
@@ -820,6 +824,7 @@ impl SellHistory {
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
+        naming: inventory::Naming,
         font: &Font,
         messages: &[String],
         pointer: ([f32; 2], bool),
@@ -833,7 +838,7 @@ impl SellHistory {
         layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT - FOOTER]));
         for (row, sale) in self.sales.iter().enumerate().skip(self.scroll).take(HISTORY_ROWS) {
             let top = TITLE_HEIGHT + (row - self.scroll) as f32 * HISTORY_ROW;
-            draw_item(layer, icons, items, font, &InventoryItem { amount: sale.amount, ..sale.item.clone() }, at([4.0, top + 4.0]));
+            draw_item(layer, icons, items, naming, messages, font, &InventoryItem { amount: sale.amount, ..sale.item.clone() }, at([4.0, top + 4.0]));
             let text = format!("{} z", group(u64::from(sale.zeny.max(0).unsigned_abs())));
             layer.texts.push((text.clone(), at([width - 10.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
         }
@@ -861,17 +866,20 @@ fn draw_icon<'a>(
     layer.texts.push((amount, place, [0, 0, 0]));
 }
 
-/// An item's icon, how many, and its name, from `corner`.
+/// An item's icon, how many, and its whole name, from `corner`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_item<'a>(
     layer: &mut Layer<'a>,
     icons: &'a HashMap<String, Option<Texture>>,
     items: &HashMap<u32, ItemInfo>,
+    (cards, makers): inventory::Naming,
+    messages: &[String],
     font: &Font,
     item: &InventoryItem,
     corner: [f32; 2],
 ) {
     draw_icon(layer, icons, items, font, item, corner);
-    let name = inventory::item_name(items, item.id, item.identified, item.refine);
+    let name = inventory::full_name(items, cards, messages, makers, item, true);
     layer.texts.push((window::fit(font, &name, 150.0), [corner[0] + 30.0, corner[1] + 6.0], [0, 0, 0]));
 }
 

@@ -183,6 +183,14 @@ impl Offer {
             ..Default::default()
         })
     }
+
+    /// Its name: the whole item's when there is one (cards, maker), else from what the offer says.
+    pub fn name(&self, items: &HashMap<u32, ItemInfo>, (cards, makers): inventory::Naming, messages: &[String]) -> String {
+        match &self.whole {
+            Some(item) => inventory::full_name(items, cards, messages, makers, item, true),
+            None => inventory::item_name(items, self.item, self.identified, self.refine),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -734,6 +742,7 @@ impl Shop {
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
+        naming: inventory::Naming,
         messages: &[String],
         font: &Font,
         pointer: ([f32; 2], bool),
@@ -787,7 +796,7 @@ impl Shop {
                     layer.texts.push((text.clone(), offset(place, [-1.0, -1.0]), [255; 3]));
                     layer.texts.push((text, place, [0, 0, 0]));
                 }
-                let name = inventory::item_name(items, offer.item, offer.identified, offer.refine);
+                let name = offer.name(items, naming, messages);
                 // ponytail: a barter's costs go on a second line, in grey; where the real client shows them isn't known.
                 if barter {
                     layer.texts.push((window::fit(font, &name, width - LEFT - 40.0), frame.at([LEFT + 32.0, top + 3.0]), [0, 0, 0]));
@@ -834,7 +843,7 @@ impl Shop {
         if let (Some(Hit::Row(window, row)), Some(_)) = (hit, &self.vendor)
             && let Some(offer) = self.offer_at(window, row)
         {
-            let name = inventory::item_name(items, offer.item, offer.identified, offer.refine);
+            let name = offer.name(items, naming, messages);
             if window::fit(font, &name, price_text(offer.listed, offer.price).1) != name {
                 let top = TITLE_HEIGHT + (row - self.scroll[window]) as f32 * ROW;
                 window::whole_text(layer.window(), chrome, font, &name, self.frames[window].at([NAME[0], top + NAME[1]]));
@@ -844,8 +853,8 @@ impl Shop {
         if let (Some(Hit::Row(window, row)), true) = (hit, self.plain()) {
             let (Some(offer), frame) = (self.offer_at(window, row), &self.frames[window]) else { return };
             let count = if window == 0 { self.left(row) } else { self.deal[row].1 };
-            let item = InventoryItem { id: offer.item, kind: offer.kind, identified: offer.identified, refine: offer.refine, ..Default::default() };
-            let text = tooltip_text(&inventory::item_name(items, offer.item, offer.identified, offer.refine), offer, count, self.selling);
+            let item = offer.described();
+            let text = tooltip_text(&offer.name(items, naming, messages), offer, count, self.selling);
             let local = pointer.0[0] - frame.position[0];
             let x = TIP_STEP[0] + TIP_STEP[1] * ((local - TIP_STEP[0]) / TIP_STEP[1]).floor();
             let place = if window == 0 { self.rows(0).iter().position(|&(offer, _)| offer == row).unwrap_or(row) } else { row };

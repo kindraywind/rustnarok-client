@@ -791,6 +791,7 @@ impl Mail {
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
+        (cards, makers): inventory::Naming,
         font: &Font,
         messages: &[String],
         job_names: &HashMap<u16, String>,
@@ -820,7 +821,8 @@ impl Mail {
                 layer.texts.push((amount.clone(), offset(place, [-1.0, -1.0]), [255; 3]));
                 layer.texts.push((amount, place, TEXT));
                 if hovered == Some(slot) {
-                    let name = inventory::item_name(items, item.id, item.identified, item.refine);
+                    // ponytail: the balloon's colour and place in the game's mail window aren't known; the whole name in white.
+                    let name = inventory::full_name(items, cards, messages, makers, item, true);
                     window::tooltip(tooltip, chrome, font, &name, offset(pointer.0, [12.0, 12.0]), [255; 3]);
                 }
             }

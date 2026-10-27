@@ -1,0 +1,19 @@
+// Item names: @itemnames gives the player a +7 Knife with two Lucky cards and a Vital, a Cutter with three "of
+// Champion" cards and a Lucky, a Main Gauche forged by the player (three Star Crumbs, fire), a Red Potion brewed by the
+// player, and an unidentified +4 Main Gauche. Loaded and unloaded by scenarios/item-names.json.
+-	script	Item Names	-1,{
+OnInit:
+	bindatcmd "itemnames", strnpcinfo(3) + "::OnGive";
+	end;
+OnGive:
+	.@id = getcharid(0);
+	getitem2 1201, 1, 1, 7, 0, 4001, 4001, 4002, 0;
+	getitem2 1205, 1, 1, 0, 0, 4014, 4014, 4014, 4001;
+	getitem2 1207, 1, 1, 0, 0, 255, (15 << 8) | 3, .@id & 0xFFFF, .@id >> 16;
+	getitem2 501, 1, 1, 0, 0, 254, 0, .@id & 0xFFFF, .@id >> 16;
+	getitem2 1208, 1, 0, 4, 0, 0, 0, 0, 0;
+	end;
+OnUnload:
+	unbindatcmd "itemnames";
+	end;
+}

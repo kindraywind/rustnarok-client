@@ -828,7 +828,7 @@ impl Storage {
                 layer.sprites.push((grade, offset(place, [4.0, 16.0]), grade.size));
             }
             if contains(place, [CELL, CELL], pointer.0) {
-                let name = inventory::full_name(items, cards, messages, makers, item, true);
+                let name = inventory::option_text(messages, &inventory::full_name(items, cards, messages, makers, item, true), item);
                 window::tooltip(tooltip, chrome, font, &name, offset(place, [0.0, -NAME_BOX_ABOVE]), inventory::name_color(item, items));
             }
         }
@@ -933,7 +933,7 @@ impl Storage {
             // The name box comes up over the pointer's cell, 10 px right of the drawn one.
             let pointer_cell = at([CATEGORY_POINTER[0], top]);
             if contains(pointer_cell, [CATEGORY_POINTER[1] - CATEGORY_POINTER[0], CELL], pointer) {
-                let name = inventory::full_name(items, cards, messages, makers, item, true);
+                let name = inventory::option_text(messages, &inventory::full_name(items, cards, messages, makers, item, true), item);
                 window::tooltip(tooltip, chrome, font, &name, offset(at([NAME_X - CELL_X, top]), [0.0, -NAME_BOX_ABOVE]), inventory::name_color(item, items));
             }
         }

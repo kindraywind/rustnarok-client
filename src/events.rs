@@ -1738,7 +1738,7 @@ impl App {
             MapEvent::BoundOnEquip(index) => {
                 if let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index) {
                     item.bind = 2;
-                    let name = inventory::item_name(&self.items, item.id, item.identified, item.refine);
+                    let name = inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, item, true);
                     game.chat_line(messages::fill(self.messages.get(BOUND).map_or("", String::as_str), &[&name]), CHAT_ITEM);
                 }
             }
@@ -1756,7 +1756,7 @@ impl App {
                 let asked = game.switch_asked.take_if(|asked| *asked == index).is_some();
                 let name = game.inventory.items.iter_mut().find(|item| item.index == index && result == 0).map(|item| {
                     item.switch = places;
-                    inventory::item_name(&self.items, item.id, item.identified, item.refine)
+                    inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, item, true)
                 });
                 match result {
                     0 if asked => game.chat_line(format!("{}{}", name.unwrap_or_default(), message(SWITCH_ADDED)), CHAT_ITEM),
@@ -1769,7 +1769,7 @@ impl App {
                 let asked = game.switch_asked.take_if(|asked| *asked == index).is_some();
                 let name = game.inventory.items.iter_mut().find(|item| item.index == index).map(|item| {
                     item.switch = 0;
-                    inventory::item_name(&self.items, item.id, item.identified, item.refine)
+                    inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, item, true)
                 });
                 if let Some(name) = name.filter(|_| asked) {
                     game.chat_line(format!("{name}{}", self.messages.get(SWITCH_REMOVED).cloned().unwrap_or_default()), CHAT_ITEM);
@@ -2073,7 +2073,7 @@ impl App {
                     .goods
                     .iter()
                     .find(|good| good.index == index)
-                    .map(|good| inventory::item_name(&self.items, good.item.id, good.item.identified, good.item.refine));
+                    .map(|good| inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, &good.item, true));
                 let sold_out = shop.sold(index, amount, zeny);
                 if let Some(name) = name {
                     game.chat_line(
@@ -2177,7 +2177,11 @@ impl App {
                 game.open_shop(shop::Shop::new_buying_store(owner, store_id, limit, &items, &game.inventory.items));
             }
             MapEvent::BuyingStoreSold { index, amount, price } => {
-                let name = game.inventory.get(index).map(|item| inventory::item_name(&self.items, item.id, item.identified, item.refine)).unwrap_or_default();
+                let name = game
+                    .inventory
+                    .get(index)
+                    .map(|item| inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, item, true))
+                    .unwrap_or_default();
                 game.inventory.remove(index, amount);
                 let total = u64::from(price) * u64::from(amount);
                 let line = rustnarok_client::messages::fill(self.messages.get(1746).map_or("", String::as_str), &[&name, &amount, &total]);
@@ -4017,7 +4021,11 @@ impl App {
                 }
             }
             MapEvent::Equipped { index, location, result } => {
-                let name = game.inventory.get(index).map(|item| inventory::item_name(&self.items, item.id, item.identified, item.refine)).unwrap_or_default();
+                let name = game
+                    .inventory
+                    .get(index)
+                    .map(|item| inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, item, true))
+                    .unwrap_or_default();
                 let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
                 match result {
                     0 => {
@@ -4044,7 +4052,11 @@ impl App {
             // An item no longer carried (a rental that ended) comes off without a word.
             MapEvent::Unequipped { index, failed: false, .. } if game.inventory.get(index).is_none() => {}
             MapEvent::Unequipped { index, failed: false, .. } => {
-                let name = game.inventory.get(index).map(|item| inventory::item_name(&self.items, item.id, item.identified, item.refine)).unwrap_or_default();
+                let name = game
+                    .inventory
+                    .get(index)
+                    .map(|item| inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, item, true))
+                    .unwrap_or_default();
                 game.inventory.set_worn(index, 0);
                 game.chat_line(format!("{name} {}", self.messages.get(171).cloned().unwrap_or_default()), CHAT_ERROR);
             }

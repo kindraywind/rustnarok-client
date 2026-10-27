@@ -337,6 +337,7 @@ impl PickList {
         npc_menu: &'a npc_menu::Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
+        (cards, makers): inventory::Naming,
         skill_info: &HashMap<u16, SkillInfo>,
         messages: &[String],
         font: &Font,
@@ -395,7 +396,7 @@ impl PickList {
             let name = if self.skills {
                 u16::try_from(item.id).ok().and_then(|skill| skill_info.get(&skill)).map_or_else(|| item.id.to_string(), |info| info.name.clone())
             } else {
-                inventory::item_name(items, item.id, item.identified, item.refine)
+                inventory::full_name(items, cards, messages, makers, item, true)
             };
             layer.texts.push((window::fit(font, &name, WIDTH - LEFT - 80.0), frame.at([LEFT + 32.0, y + 10.0]), [0, 0, 0]));
             if self.merging {

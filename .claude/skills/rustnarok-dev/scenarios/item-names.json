@@ -1,0 +1,228 @@
+{
+  "about": "Item names as the game builds them, from npc/item-names.txt: one card in several slots says \"Double\"/\"Triple\" (before a word that goes first, after one that goes last: \"+7 Double Lucky Vital Knife [3]\", \"Lucky Cutter of Champion Triple [4]\"); a forged weapon has Very Strong, the maker in blue and its element, and no slot count; a brewed potion names its maker; an unidentified +4 item shows its unidentified name only. The description window's title has no slot count. Main said \"+7 Lucky Vital Knife [3]\", \"Lucky Cutter of Champion [4]\", put [3] on the forged weapon and \"+4 Unidentified Dagger\", and named no brewer.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/item-names.txt"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/item-names.txt"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@itemnames"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b41",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "chat": "You got Unidentified Dagger (1).",
+        "inventory_has": [
+          {
+            "id": 1201,
+            "name": "+7 Double Lucky Vital Knife [3]"
+          },
+          {
+            "id": 1205,
+            "name": "Lucky Cutter of Champion Triple [4]"
+          },
+          {
+            "id": 1207,
+            "name": "Very Very Very Strong {first}'s Fire Main Gauche"
+          },
+          {
+            "id": 501,
+            "name": "{first}'s Red Potion"
+          },
+          {
+            "id": 1208,
+            "name": "Unidentified Dagger"
+          }
+        ]
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "tab:equip"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "move": {
+        "inventory_item": 1201
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "names-double",
+      "threshold": 5,
+      "crop": [
+        0,
+        60,
+        360,
+        160
+      ]
+    },
+    {
+      "move": {
+        "inventory_item": 1205
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "names-postfix-triple",
+      "threshold": 5,
+      "crop": [
+        0,
+        60,
+        360,
+        160
+      ]
+    },
+    {
+      "move": {
+        "inventory_item": 1207
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "names-forged",
+      "threshold": 5,
+      "crop": [
+        0,
+        60,
+        420,
+        160
+      ]
+    },
+    {
+      "move": {
+        "inventory_item": 1208
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "names-unidentified",
+      "threshold": 5,
+      "crop": [
+        0,
+        60,
+        360,
+        160
+      ]
+    },
+    {
+      "click_on": {
+        "inventory_item": 1207
+      },
+      "button": "right"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "names-forged-title",
+      "threshold": 5
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "tab:item"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "move": {
+        "inventory_item": 501
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "names-brewed",
+      "threshold": 5,
+      "crop": [
+        0,
+        60,
+        360,
+        160
+      ]
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/item-names.txt"
+    },
+    {
+      "wait": 400
+    }
+  ]
+}

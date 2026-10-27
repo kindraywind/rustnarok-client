@@ -193,9 +193,9 @@ mod tests {
         assert_eq!(popup.runs("Smith's Knife", 0), [("Smith's Knife".to_owned(), INK)]);
         popup.maker = Some((0..5, crate::inventory::MAKER_COLOR));
         assert_eq!(popup.runs("Smith's Knife", 0), [("Smith".to_owned(), crate::inventory::MAKER_COLOR), ("'s Knife".to_owned(), INK)]);
-        // "Nameless" in red; a second line starting past the maker is plain.
-        popup.maker = Some((2..10, crate::inventory::NAMELESS_COLOR));
-        assert_eq!(popup.runs("+7Nameless's", 0)[1], ("Nameless".to_owned(), crate::inventory::NAMELESS_COLOR));
+        // "Nameless" too; a second line starting past the maker is plain.
+        popup.maker = Some((2..10, crate::inventory::MAKER_COLOR));
+        assert_eq!(popup.runs("+7Nameless's", 0)[1], ("Nameless".to_owned(), crate::inventory::MAKER_COLOR));
         assert_eq!(popup.runs("obtained.", 20), [("obtained.".to_owned(), INK)]);
     }
 
