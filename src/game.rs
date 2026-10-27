@@ -2040,14 +2040,6 @@ impl Game {
             let _ = self.session.battle_chat(&self.me.name, text);
             return None;
         }
-        if to.is_empty() && (guild || text.starts_with('$')) {
-            let _ = self.session.guild_chat(&self.me.name, text.trim_start_matches('$'));
-            return None;
-        }
-        if to.is_empty() && (party || text.starts_with('%')) {
-            let _ = self.session.party_chat(&self.me.name, text.trim_start_matches('%'));
-            return None;
-        }
         // The client's own commands (message 136): /deal, /거래 or /교환 and a name ask for a deal.
         if let Some(name) = ["/deal ", "/거래 ", "/교환 "].iter().find_map(|command| text.strip_prefix(command)) {
             return (!self.ask_trade(name.trim())).then_some(TRADE_NO_ONE);
@@ -2058,7 +2050,15 @@ impl Game {
             return None;
         }
         if to.is_empty() {
-            let _ = self.session.chat(&self.me.name, text);
+            // The send-to group, the `%` / `$` in front and Ctrl / Alt pick where it goes.
+            let member = [self.party.is_some(), self.guild.is_some(), self.clan.is_some()];
+            let _ = match chat::route(self.chat.send_to, text, party, guild, member) {
+                Some((chat::Route::Public, text)) => self.session.chat(&self.me.name, text),
+                Some((chat::Route::Party, text)) => self.session.party_chat(&self.me.name, text),
+                Some((chat::Route::Guild, text)) => self.session.guild_chat(&self.me.name, text),
+                Some((chat::Route::Clan, text)) => self.session.clan_chat(&self.me.name, text),
+                None => Ok(()),
+            };
         } else {
             let _ = self.session.whisper(&to, text);
             self.whispered.push_back((to.clone(), text.to_owned()));

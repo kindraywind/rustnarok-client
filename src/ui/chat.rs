@@ -252,7 +252,7 @@ impl Kind {
         messages.get(id).filter(|text| id != 0 && !text.is_empty()).cloned().unwrap_or_else(|| fallback.to_owned())
     }
 
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Kind::General => "general",
             Kind::Public => "public",
@@ -446,13 +446,82 @@ fn settings_path() -> Option<PathBuf> {
     crate::settings_path("chattabs")
 }
 
-/// Where the line typed goes when no key says otherwise (the button at the input bar's right).
+/// Where the line typed goes when no key says otherwise: the send-to list of the button at the input bar's right.
+// ponytail: the game's list also has Ally; rathena has no ally chat, so it isn't offered.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum SendTo {
     #[default]
     Public,
     Party,
     Guild,
+    Clan,
+}
+
+impl SendTo {
+    pub const ALL: [SendTo; 4] = [SendTo::Public, SendTo::Party, SendTo::Guild, SendTo::Clan];
+
+    /// "Send to All", "Send to Party", "Send to Guild", "Send to Clan".
+    fn message(self) -> usize {
+        match self {
+            SendTo::Public => 85,
+            SendTo::Party => 86,
+            SendTo::Guild => 437,
+            SendTo::Clan => 2361,
+        }
+    }
+
+    /// The message box's text colour while it's picked; Clan keeps the one before.
+    fn ink(self) -> Option<[u8; 3]> {
+        match self {
+            SendTo::Public => Some([0, 0, 0]),
+            SendTo::Party => Some([128, 0, 128]),
+            SendTo::Guild => Some([0, 128, 128]),
+            SendTo::Clan => None,
+        }
+    }
+}
+
+/// Where a typed line goes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Route {
+    Public,
+    Party,
+    Guild,
+    Clan,
+}
+
+/// Where `text` goes and what of it is sent, from the send-to group, a `%` (party) or `$` (guild) in front (taken
+/// off), Ctrl (party) or Alt (guild) held, and whether the player is in a party, a guild and a clan. In the Party or
+/// Guild group, its own mark sends to everyone instead. A lone `%` or `$` sends nothing.
+pub fn route(group: SendTo, text: &str, party_key: bool, guild_key: bool, member: [bool; 3]) -> Option<(Route, &str)> {
+    if text == "%" || text == "$" {
+        return None;
+    }
+    let [in_party, in_guild, in_clan] = member;
+    let (party, guild, body) = match text.as_bytes().first() {
+        Some(b'%') => (true, guild_key, &text[1..]),
+        Some(b'$') => (party_key, true, &text[1..]),
+        _ => (party_key, guild_key, text),
+    };
+    let all = if party && in_party {
+        Route::Party
+    } else if guild {
+        Route::Guild
+    } else {
+        Route::Public
+    };
+    let to = match group {
+        SendTo::Public => all,
+        SendTo::Party if party => Route::Public,
+        SendTo::Guild if guild => Route::Public,
+        SendTo::Party | SendTo::Guild if party || guild => all,
+        SendTo::Clan if party || guild => all,
+        SendTo::Party if in_party => Route::Party,
+        SendTo::Guild if in_guild => Route::Guild,
+        SendTo::Clan if in_clan => Route::Clan,
+        _ => Route::Public,
+    };
+    Some((to, body))
 }
 
 /// Who a unit in a hit is to the player.
@@ -523,6 +592,9 @@ pub struct Assets {
     selection: Texture,
     /// Battle mode's icon: the line open, closed.
     mode_icon: [Texture; 2],
+    /// The tab settings window's rows, on and off, and its "all on" box, off and on.
+    shown_kind: [Texture; 2],
+    all_box: [Texture; 2],
 }
 
 impl Assets {
@@ -549,12 +621,13 @@ impl Assets {
             navi_link: gpu.solid([crate::links::NAVI_COLOR[0], crate::links::NAVI_COLOR[1], crate::links::NAVI_COLOR[2], 0xFF]),
             arrows: [image("dialscr_up"), image("dialscr_down")],
             track: gpu.solid([0, 0, 0, 0xFF]),
-            // ponytail: dialscr_bar stretched as the thumb.
-            thumb: image("dialscr_bar"),
+            thumb: gpu.solid([165, 170, 175, 0xFF]),
             picked: gpu.solid([0x73, 0x9C, 0xEF, 0xFF]),
             // ponytail: the selection's colour is a choice.
             selection: gpu.solid([0xA8, 0xC8, 0xF0, 0xFF]),
             mode_icon: [image("chatmode_on"), image("chatmode_off")],
+            shown_kind: [image("grp_online"), image("grp_offline")],
+            all_box: ["checkbox_0", "checkbox_1"].map(|name| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false)),
         }
     }
 }
@@ -592,6 +665,8 @@ pub enum Hit {
     ScrollUp,
     ScrollDown,
     Track(bool),
+    /// The thumb: it drags the log.
+    Thumb,
     List,
     SendTo,
     Size,
@@ -646,6 +721,9 @@ pub struct Chat {
     /// The whisper-name list, in the order names came, and whether it is dropped down.
     pub recent: Vec<String>,
     list_open: bool,
+    /// The send-to list, while dropped down; the message box's text colour (the group picked shows in it).
+    groups_open: bool,
+    ink: [u8; 3],
     /// The size step, 0 to 15.
     size: usize,
     pub tabs: Vec<Tab>,
@@ -662,6 +740,8 @@ pub struct Chat {
     let_go: Option<(std::time::Instant, f32)>,
     /// While the top edge is dragged: the pointer's height and the window's when it started.
     resize: Option<(f32, f32)>,
+    /// While the scrollbar's thumb is dragged: the pointer's height and the scroll when it started.
+    thumb_drag: Option<(f32, usize)>,
     /// Clicks on the log's rows, for double clicks.
     clicks: crate::window::Clicks,
     /// The lock: no dragging.
@@ -721,6 +801,8 @@ impl Chat {
             history: History::default(),
             recent: Vec::new(),
             list_open: false,
+            groups_open: false,
+            ink: [0, 0, 0],
             size: DEFAULT_STEP,
             tabs,
             tab: 0,
@@ -730,6 +812,7 @@ impl Chat {
             held: None,
             let_go: None,
             resize: None,
+            thumb_drag: None,
             clicks: crate::window::Clicks::default(),
             locked: false,
             send_to: SendTo::default(),
@@ -882,14 +965,17 @@ impl Chat {
         if self.step() > 0 && on(RESIZE.0, RESIZE.1) {
             return Some(Hit::Resize);
         }
-        if self.step() > 0 && on(self.scrollbar_corner(), [SCROLLBAR, self.log_height()]) {
+        if self.step() > 0 && self.scroll_room() > 0 && on(self.scrollbar_corner(), [SCROLLBAR, self.log_height()]) {
             let y = local[1] - LOG_BOX[1];
+            let (thumb_top, thumb_height) = self.thumb();
             return Some(if y < ARROW {
                 Hit::ScrollUp
             } else if y >= self.log_height() - ARROW {
                 Hit::ScrollDown
+            } else if (thumb_top..thumb_top + thumb_height).contains(&local[1]) {
+                Hit::Thumb
             } else {
-                Hit::Track(y < self.thumb().0)
+                Hit::Track(local[1] < thumb_top)
             });
         }
         if local[1] < TAB_HEIGHT {
@@ -943,9 +1029,15 @@ impl Chat {
                 ("chat_lock", area(LOCK_AT, LOCK_HIT)),
                 ("chat_strip", area([0.0, TOP_ROW + 4.0], [LOG_BOX[0] - 1.0, 12.0])),
                 ("chat_resize", area([RESIZE.0[0] + 300.0, RESIZE.0[1]], [100.0, RESIZE.1[1]])),
-                ("chat_scroll_up", area(self.scrollbar_corner(), [SCROLLBAR, ARROW])),
-                ("chat_scroll_down", area([self.scrollbar_corner()[0], LOG_BOX[1] + self.log_height() - ARROW], [SCROLLBAR, ARROW])),
             ]);
+            if self.scroll_room() > 0 {
+                let [bar_x, _] = self.scrollbar_corner();
+                boxes.extend([
+                    ("chat_scroll_up", area(self.scrollbar_corner(), [SCROLLBAR, ARROW])),
+                    ("chat_scroll_down", area([bar_x, LOG_BOX[1] + self.log_height() - ARROW], [SCROLLBAR, ARROW])),
+                    ("chat_thumb", area([bar_x, self.thumb().0], [SCROLLBAR, self.thumb().1])),
+                ]);
+            }
             // The mode icon only while it's drawn (`hit` takes it only then).
             let shown = |button: &&RowButton| button.hit != Hit::ModeIcon || self.mode_icon.is_some();
             boxes.extend(top_row(self.locked).iter().filter(shown).map(|button| (button.name, area([button.x, 4.0], button.size))));
@@ -973,6 +1065,10 @@ impl Chat {
                 self.resize = Some((cursor[1], self.height()));
                 true
             }
+            Some(Hit::Thumb) => {
+                self.thumb_drag = Some((cursor[1], self.scroll()));
+                true
+            }
             Some(Hit::Strip) => {
                 let corner = self.corner();
                 self.drag = Some([cursor[0] - corner[0], cursor[1] - corner[1]]);
@@ -994,6 +1090,14 @@ impl Chat {
                 self.set_step(step);
             }
         }
+        // The thumb follows the pointer: the rows it passes over the track's free length are the rows scrolled.
+        if let Some((start, scroll)) = self.thumb_drag {
+            let room = self.tabs[self.tab].rows.len().saturating_sub(rows(self.step()));
+            // The thumb is drawn a pixel short of its length.
+            let free = self.log_height() - 2.0 * ARROW - (self.thumb().1 + 1.0);
+            let moved = if free > 0.0 { ((cursor[1] - start) / free * room as f32).round() as i32 } else { 0 };
+            self.tabs[self.tab].scroll = (scroll as i32 - moved).clamp(0, room as i32) as usize;
+        }
         if let Some(offset) = self.drag.filter(|_| !self.locked) {
             let height = self.height();
             let [x, top] = crate::window::dragged_to([cursor[0] - offset[0], cursor[1] - offset[1] - height], [WIDTH, height]);
@@ -1007,7 +1111,7 @@ impl Chat {
             let now = crate::control::now();
             self.let_go = Some((now, crate::window::hold_fade(Some(held), None, now)));
         }
-        self.resize.take().is_some() | self.drag.take().is_some()
+        self.resize.take().is_some() | self.drag.take().is_some() | self.thumb_drag.take().is_some()
     }
 
     /// A taller step keeps the bottom edge, but not past the screen's top: the tabs stay where they can be reached.
@@ -1034,7 +1138,7 @@ impl Chat {
         self.lines.push((text, color, kind));
     }
 
-    /// Wraps the new pieces at 576 px and keeps each tab's last 240 lines. A tab at the bottom follows the new lines;
+    /// Wraps the new pieces at 576 px; a tab holds 240 lines at most (then the newest 120 stay). A tab at the bottom follows the new lines;
     /// one scrolled back stays on what it shows.
     pub fn layout(&mut self, measure: &dyn Fn(&str) -> f32) {
         let shown = rows(self.step());
@@ -1044,10 +1148,14 @@ impl Chat {
                 if tab.scroll > 0 {
                     tab.scroll += wrapped.len();
                 }
-                tab.rows.extend(wrapped.into_iter().map(|row| (row, color, kind, speaker.clone())));
+                for row in wrapped {
+                    // A full log drops its oldest half.
+                    if tab.rows.len() >= MOST_LINES {
+                        tab.rows.drain(..MOST_LINES / 2);
+                    }
+                    tab.rows.push((row, color, kind, speaker.clone()));
+                }
             }
-            let over = tab.rows.len().saturating_sub(MOST_LINES);
-            tab.rows.drain(..over);
             tab.scroll = tab.scroll.min(tab.rows.len().saturating_sub(shown));
         }
     }
@@ -1095,17 +1203,22 @@ impl Chat {
         self.height() - LOG_UNDER
     }
 
-    /// The thumb between the arrows: its top and height, window-local.
-    // ponytail: the thumb's least height is a choice.
+    /// How many rows the shown tab's log can scroll: the scrollbar shows only when there are some.
+    fn scroll_room(&self) -> usize {
+        self.tabs[self.tab].rows.len().saturating_sub(rows(self.step()))
+    }
+
+    /// The thumb between the arrows: its top and height, window-local. It is the track's length times the rows shown
+    /// over all the rows, at least 8, drawn a pixel short, one under the track's top.
     fn thumb(&self) -> (f32, f32) {
         let track = self.log_height() - 2.0 * ARROW;
         let total = self.tabs[self.tab].rows.len().max(1);
         let shown = rows(self.step()).min(total);
-        let height = (track * shown as f32 / total as f32).max(8.0).min(track);
-        let first = total - shown - self.tabs[self.tab].scroll.min(total - shown);
-        let room = total - shown;
-        let top = if room == 0 { track - height } else { (track - height) * first as f32 / room as f32 };
-        (LOG_BOX[1] + ARROW + top, height)
+        let length = (track * shown as f32 / total as f32).max(8.0).min(track);
+        let room = self.scroll_room();
+        let first = room - self.tabs[self.tab].scroll.min(room);
+        let top = if room == 0 { 0.0 } else { (track - length) * first as f32 / room as f32 };
+        (LOG_BOX[1] + ARROW + top + 1.0, length - 1.0)
     }
 
     /// The speaker of the log row under `cursor`, if it has one.
@@ -1163,9 +1276,22 @@ impl Chat {
         }
     }
 
-    /// A row of the open recent-name list.
+    /// A row of the open recent-name list or of the send-to list.
     pub fn on_list(&self, cursor: [f32; 2]) -> bool {
-        self.list_row(cursor).is_some()
+        self.list_row(cursor).is_some() || self.group_at(cursor).is_some()
+    }
+
+    /// A row of the dropped send-to list: 112 wide at the window's right, its bottom one pixel over the input bar.
+    // ponytail: the game's list is 48 tall and scrolls (it has Ally too); here its four rows all show.
+    fn group_box(&self, row: usize) -> [f32; 4] {
+        let height = SendTo::ALL.len() as f32 * LIST_ROW;
+        let [x, y] = self.at([WIDTH - LIST_WIDTH - 2.0, self.height() - INPUT_HEIGHT - height + 1.0]);
+        [x, y + row as f32 * LIST_ROW, LIST_WIDTH, LIST_ROW]
+    }
+
+    fn group_at(&self, cursor: [f32; 2]) -> Option<SendTo> {
+        let rows = SendTo::ALL.into_iter().enumerate();
+        self.groups_open.then(|| rows.into_iter().find(|&(row, _)| contains_box(self.group_box(row), cursor)).map(|(_, group)| group)).flatten()
     }
 
     /// The list button and each open row, for the test driver.
@@ -1178,6 +1304,9 @@ impl Chat {
             for (row, name) in self.list_entries().into_iter().enumerate() {
                 boxes.push((if name.is_empty() { "recent:".to_owned() } else { format!("recent:{name}") }, self.row_box(row)));
             }
+        }
+        if self.groups_open {
+            boxes.extend(SendTo::ALL.into_iter().enumerate().map(|(row, group)| (format!("send_to:{group:?}"), self.group_box(row))));
         }
         boxes
     }
@@ -1219,6 +1348,17 @@ impl Chat {
             self.list_open = false;
             return None;
         }
+        // A group picked: lines go there, the message box's text shows it, the caret goes to the message.
+        if let Some(group) = self.group_at(cursor) {
+            self.send_to = group;
+            self.ink = group.ink().unwrap_or(self.ink);
+            self.groups_open = false;
+            self.naming = false;
+            return None;
+        }
+        if self.hit(cursor) != Some(Hit::SendTo) {
+            self.groups_open = false;
+        }
         if self.hit(cursor) == Some(Hit::List) {
             if self.recent.is_empty() {
                 return Some(Said::Line(NO_WHISPER_LIST));
@@ -1246,14 +1386,8 @@ impl Chat {
                 self.save_tabs();
             }
             Some(Hit::Size) => self.cycle_size(),
-            // ponytail: "Select receiving group" turns where a line goes: public, the party, the guild.
-            Some(Hit::SendTo) => {
-                self.send_to = match self.send_to {
-                    SendTo::Public => SendTo::Party,
-                    SendTo::Party => SendTo::Guild,
-                    SendTo::Guild => SendTo::Public,
-                }
-            }
+            // "Select receiving group": the list of groups drops down, or goes up again.
+            Some(Hit::SendTo) => self.groups_open = !std::mem::take(&mut self.groups_open),
             Some(Hit::Name) => self.naming = true,
             Some(Hit::Message | Hit::Strip) => self.naming = false,
             _ => {}
@@ -1261,11 +1395,13 @@ impl Chat {
         None
     }
 
-    /// Shows tab `tab`; the tab settings window, if open, switches to it.
+    /// Shows tab `tab`; the tab settings window, if open, switches to it where it is (the MCP tab has none).
     fn select_tab(&mut self, tab: usize) {
         self.tab = tab;
-        if self.settings.is_some() {
-            self.settings = (!self.on_mcp_tab()).then(|| Settings::new(tab));
+        if self.on_mcp_tab() {
+            self.settings = None;
+        } else if let Some(settings) = &mut self.settings {
+            settings.tab = tab;
         }
     }
 
@@ -1434,6 +1570,7 @@ impl Chat {
         self.naming = false;
         self.stale = !self.input.is_empty();
         self.list_open = false;
+        self.groups_open = false;
     }
 
     /// The line opened again: what was typed is kept.
@@ -1542,12 +1679,17 @@ impl Chat {
                     x += width;
                 }
             }
-            let [bar_x, bar_y] = self.scrollbar_corner();
-            layer.sprites.push((&assets.track, at([bar_x, bar_y]), [SCROLLBAR, self.log_height()]));
-            let (thumb_top, thumb_height) = self.thumb();
-            layer.sprites.push((&assets.thumb, at([bar_x + 1.0, thumb_top]), [SCROLLBAR - 3.0, thumb_height]));
-            layer.sprites.push((&assets.arrows[0], at([bar_x + 1.0, bar_y]), [ARROW; 2]));
-            layer.sprites.push((&assets.arrows[1], at([bar_x + 1.0, bar_y + self.log_height() - ARROW]), [ARROW; 2]));
+            // The scrollbar, only while there's something to scroll: 10 wide, the arrows at its ends, a black track
+            // between, the grey thumb.
+            if self.scroll_room() > 0 {
+                let [bar_x, bar_y] = self.scrollbar_corner();
+                let height = self.log_height();
+                layer.sprites.push((&assets.track, at([bar_x, bar_y + ARROW + 1.0]), [ARROW, height - 2.0 * ARROW - 1.0]));
+                let (thumb_top, thumb_height) = self.thumb();
+                layer.sprites.push((&assets.thumb, at([bar_x, thumb_top]), [ARROW, thumb_height]));
+                layer.sprites.push((&assets.arrows[0], at([bar_x, bar_y]), [ARROW; 2]));
+                layer.sprites.push((&assets.arrows[1], at([bar_x, bar_y + height - ARROW - 1.0]), [ARROW; 2]));
+            }
             // The line over the input bar.
             layer.sprites.push((&assets.frame_line, at([4.0, self.height() - INPUT_HEIGHT]), [592.0, 1.0]));
         }
@@ -1575,18 +1717,25 @@ impl Chat {
         }
         let (name, typed) = if self.naming { (shown, self.input.clone()) } else { (self.whisper.clone(), shown) };
         layer.texts.push((name, [name_x, text_top], [0, 0, 0]));
-        layer.texts.push((typed, [message_x, text_top], [0, 0, 0]));
+        layer.texts.push((typed, [message_x, text_top], self.ink));
         if caret {
             let x = focused_x + font.width(&format!("{}{}", &focused[..at], self.preedit));
             layer.sprites.push((&assets.darker, [x + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
         }
-        // ponytail: the list's look (white rows, the picked name blue) is ours.
+        // ponytail: the lists' look (white rows, the picked one blue) is ours.
         if self.list_open {
             for (row, name) in self.list_entries().into_iter().enumerate() {
                 let [x, y, w, h] = self.row_box(row);
                 let picked = !name.is_empty() && name == self.whisper;
                 layer.sprites.push((if picked { &assets.picked } else { &assets.white }, [x, y], [w, h]));
                 layer.texts.push((name.to_owned(), [x + 3.0, y + 2.0], [0, 0, 0]));
+            }
+        }
+        if self.groups_open {
+            for (row, group) in SendTo::ALL.into_iter().enumerate() {
+                let [x, y, w, h] = self.group_box(row);
+                layer.sprites.push((if group == self.send_to { &assets.picked } else { &assets.white }, [x, y], [w, h]));
+                layer.texts.push((messages.get(group.message()).cloned().unwrap_or_default(), [x + 3.0, y + 2.0], [0, 0, 0]));
             }
         }
         link_boxes
@@ -1656,8 +1805,10 @@ pub enum SettingsHit {
 }
 
 impl Settings {
+    /// At ((W − 640) / 2 + 400, 200·H / 480): (592, 320) on 1024×768.
     pub fn new(tab: usize) -> Self {
-        let mut frame = Frame::new([620.0, screen()[1] - 360.0], SETTINGS_WIDTH);
+        let [width, height] = screen();
+        let mut frame = Frame::new([(width - 640.0) / 2.0 + 400.0, 200.0 * height / 480.0], SETTINGS_WIDTH);
         frame.open = true;
         Self { frame, tab, first: 0 }
     }
@@ -1715,7 +1866,7 @@ impl Settings {
         boxes
     }
 
-    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, messages: &[String], tab: &Tab, pointer: [f32; 2]) {
+    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, messages: &[String], tab: &Tab, pointer: [f32; 2]) {
         let at = |local: [f32; 2]| self.frame.at(local);
         let kinds = &tab.kinds;
         let title = format!("{} {}", tab.label.text(messages), messages.get(SETTINGS_TITLE).map_or("", |text| text.trim())).trim().to_owned();
@@ -1728,9 +1879,12 @@ impl Settings {
             layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, SETTINGS_HEIGHT - TITLE_HEIGHT]));
         }
         layer.sprites.push((&chrome.border, at([0.0, SETTINGS_HEIGHT - 1.0]), [SETTINGS_WIDTH, 1.0]));
+        // Each row: the on or off icon at x 27, its label at x 50.
         for (row, kind) in self.rows() {
-            let mark = if kinds.contains(&kind) { "■" } else { "□" };
-            layer.texts.push((format!("{mark} {}", kind.label(messages)), at([8.0, SETTINGS_TOP + row as f32 * SETTINGS_ROW]), [0, 0, 0]));
+            let y = SETTINGS_TOP + row as f32 * SETTINGS_ROW;
+            let icon = &assets.shown_kind[usize::from(!kinds.contains(&kind))];
+            layer.sprites.push((icon, at([27.0, y]), icon.size));
+            layer.texts.push((kind.label(messages), at([50.0, y]), [0, 0, 0]));
         }
         for (down, mark) in [(false, "▲"), (true, "▼")] {
             layer.texts.push((
@@ -1739,8 +1893,10 @@ impl Settings {
                 if (down && self.first + SETTINGS_SHOWN < SETTINGS_KINDS.len()) || (!down && self.first > 0) { [0, 0, 0] } else { [160; 3] },
             ));
         }
-        let all = if all_on(kinds) { "■" } else { "□" };
-        layer.texts.push((format!("{all} All"), at(SETTINGS_ALL.0), [0, 0, 0]));
+        let check = &assets.all_box[usize::from(all_on(kinds))];
+        layer.sprites.push((check, at(SETTINGS_ALL.0), check.size));
+        // ponytail: the box's label is ours.
+        layer.texts.push(("All".into(), at([SETTINGS_ALL.0[0] + check.size[0] + 4.0, SETTINGS_ALL.0[1] - 1.0]), [0, 0, 0]));
     }
 }
 
@@ -1982,9 +2138,57 @@ mod tests {
         assert_eq!(chat.focus(), "message");
         assert_eq!(chat.tooltip([576.0, screen()[1] - 12.0]), Some(3188));
         chat.click([576.0, screen()[1] - 12.0]);
-        assert_eq!(chat.send_to, SendTo::Party);
+        assert!(chat.groups_open);
         chat.click([590.0, screen()[1] - 12.0]);
         assert_eq!(chat.height(), 138.0);
+        assert!(!chat.groups_open, "a click elsewhere closes the list");
+    }
+
+    #[test]
+    fn picks_where_lines_go() {
+        let mut chat = fresh();
+        let row = |chat: &Chat, name: &str| {
+            let [x, y, w, h] = chat.list_boxes().into_iter().find(|(box_name, _)| box_name == name).unwrap_or_else(|| panic!("{name}")).1;
+            [x + w / 2.0, y + h / 2.0]
+        };
+        // The button drops the four groups at the window's right, over the input bar.
+        chat.click(middle_of(&chat, "chat_send_to"));
+        let names: Vec<String> = chat.list_boxes().into_iter().skip(1).map(|(name, _)| name).collect();
+        assert_eq!(names, ["send_to:Public", "send_to:Party", "send_to:Guild", "send_to:Clan"]);
+        let [x, y, w, h] = chat.group_box(3);
+        assert_eq!([x, x + w, y + h], [WIDTH - 114.0, WIDTH - 2.0, screen()[1] - INPUT_HEIGHT + 1.0]);
+        // Picking one sets it, colours the message box, and closes the list; Clan keeps the colour before it.
+        chat.click(row(&chat, "send_to:Party"));
+        assert_eq!((chat.send_to, chat.ink, chat.groups_open), (SendTo::Party, [128, 0, 128], false));
+        chat.click(middle_of(&chat, "chat_send_to"));
+        chat.click(row(&chat, "send_to:Clan"));
+        assert_eq!((chat.send_to, chat.ink), (SendTo::Clan, [128, 0, 128]));
+        chat.click(middle_of(&chat, "chat_send_to"));
+        chat.click(row(&chat, "send_to:Guild"));
+        assert_eq!(chat.ink, [0, 128, 128]);
+        // Where a line goes: in a party, a guild and a clan ...
+        let all = [true; 3];
+        let go = |group, text, party_key, guild_key| route(group, text, party_key, guild_key, all);
+        assert_eq!(go(SendTo::Public, "hi", false, false), Some((Route::Public, "hi")));
+        assert_eq!(go(SendTo::Public, "%hi", false, false), Some((Route::Party, "hi")));
+        assert_eq!(go(SendTo::Public, "$hi", false, false), Some((Route::Guild, "hi")));
+        assert_eq!(go(SendTo::Public, "hi", true, false), Some((Route::Party, "hi")));
+        assert_eq!(go(SendTo::Public, "hi", false, true), Some((Route::Guild, "hi")));
+        // ... the Party group sends plain lines to the party, and its own mark or Ctrl to everyone.
+        assert_eq!(go(SendTo::Party, "hi", false, false), Some((Route::Party, "hi")));
+        assert_eq!(go(SendTo::Party, "%hi", false, false), Some((Route::Public, "hi")));
+        assert_eq!(go(SendTo::Party, "hi", true, false), Some((Route::Public, "hi")));
+        assert_eq!(go(SendTo::Party, "$hi", false, false), Some((Route::Guild, "hi")));
+        assert_eq!(go(SendTo::Guild, "hi", false, false), Some((Route::Guild, "hi")));
+        assert_eq!(go(SendTo::Guild, "$hi", false, false), Some((Route::Public, "hi")));
+        assert_eq!(go(SendTo::Guild, "hi", false, true), Some((Route::Public, "hi")));
+        assert_eq!(go(SendTo::Clan, "hi", false, false), Some((Route::Clan, "hi")));
+        assert_eq!(go(SendTo::Clan, "%hi", false, false), Some((Route::Party, "hi")));
+        // Out of a party, guild or clan their group's plain lines go to everyone; a lone mark sends nothing.
+        let alone = |group, text| route(group, text, false, false, [false; 3]);
+        assert_eq!([SendTo::Party, SendTo::Guild, SendTo::Clan].map(|group| alone(group, "hi")), [Some((Route::Public, "hi")); 3]);
+        assert_eq!(alone(SendTo::Public, "%hi"), Some((Route::Public, "hi")));
+        assert_eq!([alone(SendTo::Public, "%"), alone(SendTo::Party, "$")], [None, None]);
     }
 
     #[test]
@@ -2041,18 +2245,23 @@ mod tests {
         let rows = wrap(&words, WRAP_WIDTH, &measure);
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| measure(row) <= WRAP_WIDTH && !row.starts_with(' ')));
-        // 300 lines: the oldest 60 go.
+        // 240 lines fill a log; the next drops the oldest 120, so 300 leave 180, from line 120.
         let mut chat = fresh();
-        for line in 0..300 {
+        for line in 0..240 {
+            chat.push(format!("line {line}"), PUBLIC);
+        }
+        chat.layout(&measure);
+        assert_eq!(chat.tab_lines(0).len(), MOST_LINES);
+        for line in 240..300 {
             chat.push(format!("line {line}"), PUBLIC);
         }
         chat.layout(&measure);
         let tab = chat.tab_lines(0);
-        assert_eq!((tab.len(), tab[0].0.as_str()), (MOST_LINES, "line 60"));
-        // A 120-byte line takes two rows (cut at 94 bytes), still 240 in all.
+        assert_eq!((tab.len(), tab[0].0.as_str()), (180, "line 120"));
+        // A 120-byte line takes two rows (cut at 94 bytes).
         chat.push("z ".repeat(60), PUBLIC);
         chat.layout(&measure);
-        assert_eq!(chat.tab_lines(0).len(), MOST_LINES);
+        assert_eq!(chat.tab_lines(0).len(), 182);
         assert_eq!(chat.tab_lines(0).last().unwrap().0, "z ".repeat(13));
     }
 
@@ -2472,20 +2681,39 @@ mod tests {
     #[test]
     fn pages_by_the_scrollbar() {
         let mut chat = fresh();
-        for line in 0..20 {
+        // Three lines fit the three rows: no scrollbar, and its place is the log's (presses go through).
+        for line in 0..3 {
             chat.push(format!("line {line}"), PUBLIC);
         }
         chat.layout(&|text: &str| text.len() as f32);
-        let boxes = chat.button_boxes();
-        let middle = |name: &str| {
-            let [x, y, w, h] = boxes.iter().find(|(box_name, _)| *box_name == name).unwrap().1;
-            [x + w / 2.0, y + h / 2.0]
-        };
-        chat.click(middle("chat_scroll_up"));
+        assert!(chat.button_boxes().iter().all(|(name, _)| !name.starts_with("chat_scroll") && *name != "chat_thumb"));
+        let bar = [chat.at(chat.scrollbar_corner())[0] + 5.0, top(&chat) + 30.0];
+        assert_eq!(chat.hit(bar), Some(Hit::Log));
+        for line in 3..20 {
+            chat.push(format!("line {line}"), PUBLIC);
+        }
+        chat.layout(&|text: &str| text.len() as f32);
+        chat.click(middle_of(&chat, "chat_scroll_up"));
         assert_eq!(chat.tabs[0].scroll, 1);
-        chat.click(middle("chat_scroll_down"));
+        chat.click(middle_of(&chat, "chat_scroll_down"));
         assert_eq!(chat.tabs[0].scroll, 0);
-        assert!(chat.blocks(middle("chat_scroll_up")), "the scrollbar is the window's");
+        assert!(chat.blocks(middle_of(&chat, "chat_scroll_up")), "the scrollbar is the window's");
+        // The thumb: the 32-px track times 3 of 20 rows is under 8, so 8 (drawn 7), at the bottom one under the track.
+        let (thumb_top, thumb_height) = chat.thumb();
+        assert_eq!((thumb_top, thumb_height), (LOG_BOX[1] + ARROW + 24.0 + 1.0, 7.0));
+        // Dragged to the top of the track it shows the oldest rows; halfway, about half.
+        let grab = middle_of(&chat, "chat_thumb");
+        assert_eq!(chat.hit(grab), Some(Hit::Thumb));
+        assert!(chat.press(grab));
+        chat.drag_to([grab[0], grab[1] - 24.0]);
+        assert_eq!(chat.scroll(), 17);
+        chat.drag_to([grab[0], grab[1] - 12.0]);
+        assert_eq!(chat.scroll(), 9);
+        chat.drag_to([grab[0], grab[1] + 100.0]);
+        assert_eq!(chat.scroll(), 0);
+        assert!(chat.drop_drag());
+        // Above and below the thumb the track pages.
+        assert_eq!(chat.hit([grab[0], chat.at([0.0, LOG_BOX[1] + ARROW + 2.0])[1]]), Some(Hit::Track(true)));
     }
 
     #[test]

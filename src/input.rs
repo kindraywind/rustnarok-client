@@ -3518,8 +3518,6 @@ impl App {
             }
         } else {
             let before = self.graphics;
-            // The receiving group button's choice, or the key held.
-            let (party, guild) = (party || game.chat.send_to == chat::SendTo::Party, guild || game.chat.send_to == chat::SendTo::Guild);
             if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.graphics) {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
             }

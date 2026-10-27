@@ -2244,7 +2244,7 @@ impl App {
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();
         if let Some(settings) = &game.chat.settings {
-            settings.draw(shop_layer.window(), &assets.chrome, messages, &game.chat.tabs[settings.tab], pointer.0);
+            settings.draw(shop_layer.window(), &assets.chrome, &assets.chat, messages, &game.chat.tabs[settings.tab], pointer.0);
         }
         // A skill's description, over the windows.
         if let Some(window) = &game.skill_description {

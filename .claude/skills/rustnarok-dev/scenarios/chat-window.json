@@ -1,5 +1,5 @@
 {
-  "about": "The chat window (issue #215): F10 steps through the input bar alone and logs 96, 138, 180, 222 and 264 tall, bottom edge in place; log lines 14 apart from x 7, tabs as wide as their labels and 10, the buttons right to left from the lock. The window drags by the input bar's gaps (the spot left of the name box), snaps flush to the screen's edges, and stays put while locked. Add tab makes NewTab_3 (nothing ticked), remove tab takes the one shown. Battle mode (/bm) leaves the line open; Enter on the empty line closes it and the input bar goes with it (issue #353).",
+  "about": "The chat window (issue #215): F10 steps through the input bar alone and logs 96, 138, 180, 222 and 264 tall, bottom edge in place; log lines 14 apart from x 7, tabs as wide as their labels and 10, the buttons right to left from the lock. The scrollbar's thumb drags the log back and forth. The window drags by the input bar's gaps (the spot left of the name box), snaps flush to the screen's edges, and stays put while locked. Add tab makes NewTab_3 (nothing ticked), remove tab takes the one shown. Battle mode (/bm) leaves the line open; Enter on the empty line closes it and the input bar goes with it (issue #353).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -184,6 +184,64 @@
       "expect": {
         "state": {
           "chat_height": 96
+        }
+      }
+    },
+    {
+      "mouse_down": {
+        "button": "chat_thumb"
+      }
+    },
+    {
+      "move": [
+        590,
+        680
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          590,
+          680
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "chat_scroll": 1
+        }
+      }
+    },
+    {
+      "mouse_down": {
+        "button": "chat_thumb"
+      }
+    },
+    {
+      "move": [
+        590,
+        760
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          590,
+          760
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_scroll": 0
         }
       }
     },
