@@ -1790,11 +1790,8 @@ impl App {
                     game.chat_mode.toggle_line();
                     game.chat.mode_icon = game.chat_mode.icon();
                 } else {
-                    match game.chat.click(cursor) {
-                        Some(chat::Said::Line(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
-                        Some(chat::Said::Notice(id)) => game.question_box = Some(BoxQuestion::Notice(id)),
-                        None => {}
-                    }
+                    let said = game.chat.click(cursor);
+                    game.chat_said(said, &self.messages);
                 }
             }
             Scene::Game(game) if game.dialog.is_some() && (game.on_npc_window(cursor) || game.talk_blocks()) => {
@@ -2537,8 +2534,11 @@ impl App {
                 }
                 Some(_) => {}
                 // Three rows a notch.
-                None if game.chat.contains(self.cursor) => game.chat.scroll_by(rows * 3),
-                None => game.camera_goal.wheel(rows, Instant::now(), self.modifiers.control_key(), self.modifiers.shift_key()),
+                None => {
+                    if !game.chat.wheel(self.cursor, rows * 3) {
+                        game.camera_goal.wheel(rows, Instant::now(), self.modifiers.control_key(), self.modifiers.shift_key());
+                    }
+                }
             }
         }
     }
@@ -3544,6 +3544,12 @@ impl App {
     /// One Esc in the game: the battle-mode line, a focused text box, a question's No, the newest window, or the menu.
     pub(crate) fn game_escape(&mut self) {
         let Scene::Game(game) = &mut self.scene else { return };
+        // A tab's rename box goes first: a tab keeps its name, a torn-off window takes the typed one.
+        if game.chat.renaming() {
+            let said = game.chat.escape_rename(&|text| self.font.width(text));
+            game.chat_said(said, &self.messages);
+            return;
+        }
         // The special popup is a notice: Esc dismisses it before any window.
         if game.special_popup.take().is_some() {
             return;
@@ -4374,7 +4380,7 @@ impl App {
                         // while the line is closed is not typed either.
                         if typing || !matches!(kind, battle_mode::KeyKind::Char(_)) {
                             match key {
-                                Key::Named(NamedKey::Tab) if typing => game.chat.naming = !game.chat.naming,
+                                Key::Named(NamedKey::Tab) if typing && !game.chat.renaming() => game.chat.naming = !game.chat.naming,
                                 // Shift+Insert pastes, Shift+Delete cuts; Ctrl (or Cmd) with A, C, X, V edit.
                                 Key::Named(NamedKey::Insert) if typing && self.modifiers.shift_key() => game.chat.type_text(&clipboard_line()),
                                 Key::Named(NamedKey::Delete) if typing && self.modifiers.shift_key() => set_clipboard(&game.chat.cut()),
@@ -4401,13 +4407,19 @@ impl App {
                                     };
                                     game.chat.go(to, self.modifiers.shift_key());
                                 }
-                                Key::Named(named @ (NamedKey::ArrowUp | NamedKey::ArrowDown)) if typing => game.chat.recall(*named == NamedKey::ArrowUp),
+                                Key::Named(named @ (NamedKey::ArrowUp | NamedKey::ArrowDown)) if typing && !game.chat.renaming() => {
+                                    game.chat.recall(*named == NamedKey::ArrowUp)
+                                }
                                 Key::Named(NamedKey::Delete) if typing => game.chat.delete(),
                                 // PageUp / PageDown page the log; with Ctrl, to its top or bottom.
                                 Key::Named(key @ (NamedKey::PageUp | NamedKey::PageDown)) if game.chat_mode.chat_line_open() => {
                                     game.chat.page(*key == NamedKey::PageDown, self.modifiers.control_key());
                                 }
-                                // Enter sends from either box.
+                                // Enter names a tab being renamed, else sends from either box.
+                                Key::Named(NamedKey::Enter) if typing && game.chat.renaming() => {
+                                    let said = game.chat.finish_rename(&|text| self.font.width(text));
+                                    game.chat_said(said, &self.messages);
+                                }
                                 Key::Named(NamedKey::Enter) if typing => self.send_chat_input(self.modifiers.control_key(), self.modifiers.alt_key()),
                                 Key::Named(NamedKey::Backspace) if typing => game.chat.backspace(),
                                 _ if typing && !self.modifiers.alt_key() && !self.modifiers.super_key() && !self.modifiers.control_key() => {

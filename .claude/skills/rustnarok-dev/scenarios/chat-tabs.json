@@ -1,5 +1,5 @@
 {
-  "about": "Chat tabs (issue #312): two players form a party (as in party.json); the second's party line and the first's public line land in Public, and Battle (the damage lines) has neither. The first's tab settings for Public untick Party Chat, and the party line leaves Public (ticked again after). The window drags by its tab strip, the lock and the stick button work, and typing 300 letters stops at 234 (that line is sent, so the box is empty for the leaving). The send-to list picks Party: a plain line reaches the second as party chat, a % line as public. Both leave the party at the end.",
+  "about": "Chat tabs (issue #312): two players form a party (as in party.json); the second's party line and the first's public line land in Public, and Battle (the damage lines) has neither. The first's tab settings for Public untick Party Chat, and the party line leaves Public (ticked again after). The window drags by its tab strip, the lock works, the tear-off button puts Public in a window of its own and its button puts it back, and typing 300 letters stops at 234 (that line is sent, so the box is empty for the leaving). The send-to list picks Party: a plain line reaches the second as party chat, a % line as public. Both leave the party at the end.",
   "account": "",
   "slot": 0,
   "second": {
@@ -303,12 +303,73 @@
       }
     },
     {
-      "wait": 200
+      "wait": 300
     },
     {
       "expect": {
         "state": {
-          "chat_corner": null
+          "chat_tab_names": [
+            "Battle"
+          ],
+          "chat_torn.0.name": "Public"
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "torn_0_attach"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_tab_names": [
+            "Battle",
+            "Public"
+          ],
+          "chat_tab": 1,
+          "chat_torn": []
+        }
+      }
+    },
+    {
+      "mouse_down": {
+        "button": "chat_grip"
+      }
+    },
+    {
+      "move": [
+        100,
+        700
+      ]
+    },
+    {
+      "move": [
+        3,
+        756
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          3,
+          756
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_corner": [
+            0,
+            768
+          ]
         }
       }
     },

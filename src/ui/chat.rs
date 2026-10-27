@@ -13,6 +13,9 @@ use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, screen};
 
+mod torn;
+pub use torn::Torn;
+
 /// The size steps go 0 to 15; F10 walks 0 → 1 → 4 → 7 → 10 → 13 → 0, dragging the top edge gives any.
 const MOST_STEP: usize = 15;
 /// The step a new window has: 96 tall.
@@ -54,7 +57,8 @@ pub const NO_WHISPER_LIST: usize = 192;
 /// Each tab keeps this many lines; a line is cut into pieces of at most this many bytes, then wrapped at this width.
 pub const MOST_LINES: usize = 240;
 const PIECE_BYTES: usize = 94;
-pub const WRAP_WIDTH: f32 = 576.0;
+#[cfg(test)]
+const WRAP_WIDTH: f32 = 576.0;
 /// The scrollbar at the log's right: its width and its arrows' height.
 const SCROLLBAR: f32 = 13.0;
 const ARROW: f32 = 10.0;
@@ -120,6 +124,7 @@ fn rows(step: usize) -> usize {
 }
 
 /// Where line `row` of the log box puts its text, window-local; the black copy goes one down and right.
+#[cfg(test)]
 fn line_at(row: usize) -> [f32; 2] {
     [LOG_BOX[0] + LINE_TEXT[0], LOG_BOX[1] + LINE_TEXT[1] + LINE * row as f32]
 }
@@ -334,6 +339,176 @@ impl Tab {
     fn is_mcp(&self) -> bool {
         self.kinds.contains(&Kind::Mcp)
     }
+
+    /// Wraps the new pieces to fit `log`; a log holds 240 lines at most (then the newest 120 stay). At the bottom it
+    /// follows the new lines; scrolled back, it stays on what it shows.
+    fn layout(&mut self, log: LogBox, measure: &dyn Fn(&str) -> f32) {
+        for (piece, color, kind, speaker) in std::mem::take(&mut self.fresh) {
+            let wrapped = if links::has_links(&piece) { vec![piece] } else { wrap(&piece, log.wrap_width(), measure) };
+            if self.scroll > 0 {
+                self.scroll += wrapped.len();
+            }
+            for row in wrapped {
+                // A full log drops its oldest half.
+                if self.rows.len() >= MOST_LINES {
+                    self.rows.drain(..MOST_LINES / 2);
+                }
+                self.rows.push((row, color, kind, speaker.clone()));
+            }
+        }
+        self.scroll = self.scroll.min(self.room(log));
+    }
+
+    /// How many rows the log can scroll in `log`: its scrollbar shows only when there are some.
+    fn room(&self, log: LogBox) -> usize {
+        self.rows.len().saturating_sub(log.rows())
+    }
+
+    /// Scrolls by `rows` (negative: back in time).
+    fn scroll_by(&mut self, rows: i32, log: LogBox) {
+        self.scroll = (self.scroll as i32 - rows).clamp(0, self.room(log) as i32) as usize;
+    }
+
+    /// The rows on screen: from the scroll back, filling from the top.
+    fn shown_range(&self, log: LogBox) -> (usize, usize) {
+        let end = self.rows.len().saturating_sub(self.scroll);
+        (end.saturating_sub(log.rows()), end)
+    }
+
+    /// The thumb between the scrollbar's arrows: its top on screen and its height. It is the track's length times the
+    /// rows shown over all the rows, at least 8, drawn a pixel short, one under the track's top.
+    fn thumb(&self, log: LogBox) -> (f32, f32) {
+        let track = log.size[1] - 2.0 * ARROW;
+        let total = self.rows.len().max(1);
+        let shown = log.rows().min(total);
+        let length = (track * shown as f32 / total as f32).max(8.0).min(track);
+        let room = self.room(log);
+        let first = room - self.scroll.min(room);
+        let top = if room == 0 { 0.0 } else { (track - length) * first as f32 / room as f32 };
+        (log.corner[1] + ARROW + top + 1.0, length - 1.0)
+    }
+
+    /// The thumb held since the pointer was at `start` with the log scrolled `scroll`, the pointer now at `y`: the rows
+    /// it passed over the track's free length are the rows scrolled.
+    fn drag_thumb(&mut self, log: LogBox, (start, scroll): (f32, usize), y: f32) {
+        let room = self.room(log);
+        let free = log.size[1] - 2.0 * ARROW - (self.thumb(log).1 + 1.0);
+        let moved = if free > 0.0 { ((y - start) / free * room as f32).round() as i32 } else { 0 };
+        self.scroll = (scroll as i32 - moved).clamp(0, room as i32) as usize;
+    }
+
+    /// What `cursor` is on in `log`: the scrollbar's arrows, track or thumb (while it shows), else the log.
+    fn log_hit(&self, log: LogBox, cursor: [f32; 2]) -> Option<Hit> {
+        if !log.contains(cursor) {
+            return None;
+        }
+        let bar = log.scrollbar();
+        if self.room(log) == 0 || cursor[0] < bar[0] {
+            return Some(Hit::Log);
+        }
+        let y = cursor[1] - bar[1];
+        let (thumb_top, thumb_height) = self.thumb(log);
+        Some(if y < ARROW {
+            Hit::ScrollUp
+        } else if y >= log.size[1] - ARROW {
+            Hit::ScrollDown
+        } else if (thumb_top..thumb_top + thumb_height).contains(&cursor[1]) {
+            Hit::Thumb
+        } else {
+            Hit::Track(cursor[1] < thumb_top)
+        })
+    }
+
+    /// The speaker of the row under `cursor` in `log`, if it has one.
+    fn speaker_at(&self, log: LogBox, cursor: [f32; 2]) -> Option<&str> {
+        let row = log.row_at(cursor)?;
+        let (start, end) = self.shown_range(log);
+        (start + row < end).then(|| self.rows[start + row].3.as_deref()).flatten()
+    }
+
+    /// The scrollbar's up and down arrows and its thumb, while it shows (for the test driver).
+    fn scrollbar_boxes(&self, log: LogBox) -> Option<[[f32; 4]; 3]> {
+        let [x, y] = log.scrollbar();
+        let (thumb_top, thumb_height) = self.thumb(log);
+        (self.room(log) > 0).then_some([[x, y, SCROLLBAR, ARROW], [x, y + log.size[1] - ARROW, SCROLLBAR, ARROW], [x, thumb_top, SCROLLBAR, thumb_height]])
+    }
+
+    /// The rows in `log` from the top, links in their colour and underlined (their boxes go to `link_boxes`), then
+    /// the scrollbar while there's something to scroll: 10 wide, the arrows at its ends, a black track, the thumb.
+    #[allow(clippy::too_many_arguments)]
+    fn draw<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        assets: &'a Assets,
+        font: &Font,
+        log: LogBox,
+        name_of: &dyn Fn(&ItemLink) -> String,
+        link_boxes: &mut Vec<([f32; 4], Target)>,
+    ) {
+        let (start, end) = self.shown_range(log);
+        for (row, (line, color, ..)) in self.rows[start..end].iter().enumerate() {
+            let [mut x, y] = log.line_at(row);
+            for (piece, item) in links::pieces(&links::mark(line, name_of)) {
+                let width = font.width(&piece);
+                let color = item.as_ref().map_or(*color, Target::color);
+                layer.texts.push((piece.clone(), [x + 1.0, y + 1.0], [0, 0, 0]));
+                layer.texts.push((piece, [x, y], color));
+                if let Some(item) = item {
+                    let under = y + font.line_height() - 1.0;
+                    let line = if item.item().is_some() { &assets.link } else { &assets.navi_link };
+                    layer.sprites.push((line, [x, under], [width, 1.0]));
+                    link_boxes.push(([x, y, width, font.line_height()], item));
+                }
+                x += width;
+            }
+        }
+        if self.room(log) > 0 {
+            let [x, y] = log.scrollbar();
+            let height = log.size[1];
+            layer.sprites.push((&assets.track, [x, y + ARROW + 1.0], [ARROW, height - 2.0 * ARROW - 1.0]));
+            let (thumb_top, thumb_height) = self.thumb(log);
+            layer.sprites.push((&assets.thumb, [x, thumb_top], [ARROW, thumb_height]));
+            layer.sprites.push((&assets.arrows[0], [x, y], [ARROW; 2]));
+            layer.sprites.push((&assets.arrows[1], [x, y + height - ARROW - 1.0], [ARROW; 2]));
+        }
+    }
+}
+
+/// A log on screen: its box's top left and size. Rows are 14 apart from the top, the scrollbar at the box's right.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LogBox {
+    pub corner: [f32; 2],
+    pub size: [f32; 2],
+}
+
+impl LogBox {
+    /// The rows whose 14 px fit under the first one's 3 px.
+    fn rows(self) -> usize {
+        ((self.size[1] - LINE_TEXT[1]) / LINE).max(0.0) as usize
+    }
+
+    fn scrollbar(self) -> [f32; 2] {
+        [self.corner[0] + self.size[0] - SCROLLBAR, self.corner[1]]
+    }
+
+    /// Lines wrap this wide: the box less the scrollbar's room (576 in the main window).
+    fn wrap_width(self) -> f32 {
+        self.size[0] - 16.0
+    }
+
+    /// Where row `row` puts its text; the black copy goes one down and right.
+    fn line_at(self, row: usize) -> [f32; 2] {
+        [self.corner[0] + LINE_TEXT[0], self.corner[1] + LINE_TEXT[1] + LINE * row as f32]
+    }
+
+    fn contains(self, cursor: [f32; 2]) -> bool {
+        contains(self.corner, self.size, cursor)
+    }
+
+    /// The row under `cursor`, from the top.
+    fn row_at(self, cursor: [f32; 2]) -> Option<usize> {
+        self.contains(cursor).then(|| ((cursor[1] - self.corner[1] - LINE_TEXT[1]) / LINE).floor().max(0.0) as usize)
+    }
 }
 
 /// A row of a log: its text, colour, kind and speaker (public, party, guild and clan lines).
@@ -405,36 +580,57 @@ fn kinds_names(kinds: &HashSet<Kind>) -> String {
     Kind::ALL.into_iter().filter(|kind| kinds.contains(kind)).map(Kind::name).collect::<Vec<_>>().join(" ")
 }
 
-/// The tabs as saved and whether the window was locked: "v3", "locked 0|1", then a line a tab, "tab", its name
-/// and its kinds between tab characters. A "v2" file is the game's two tabs' kinds, unlocked.
-pub fn tabs_from(text: &str) -> Option<(Vec<Tab>, bool)> {
+/// The tabs and torn-off windows as kept.
+#[derive(Debug, PartialEq)]
+pub struct Saved {
+    pub tabs: Vec<Tab>,
+    /// Each torn-off window's tab and place (x, y, width, height).
+    pub torn: Vec<(Tab, [f32; 4])>,
+    pub locked: bool,
+}
+
+/// The tabs as saved: "v3", "locked 0|1", then a line a tab ("tab", its name, its kinds) or torn-off window
+/// ("window", its name, its kinds, "x y w h"), the fields between tab characters. A "v2" file is the game's two tabs'
+/// kinds, unlocked.
+pub fn tabs_from(text: &str) -> Option<Saved> {
     let mut lines = text.lines();
     match lines.next()? {
         KINDS_HEADER => {
             let mut next = || lines.next().map(kinds_of);
             let tabs = TAB_MESSAGES.map(|id| next().map(|kinds| Tab::new(Label::Message(id), kinds)));
-            Some((tabs.into_iter().collect::<Option<_>>()?, false))
+            Some(Saved { tabs: tabs.into_iter().collect::<Option<_>>()?, torn: Vec::new(), locked: false })
         }
         TABS_HEADER => {
             let locked = lines.next()?.strip_prefix("locked ")? == "1";
-            let tabs: Vec<Tab> = lines
-                .filter_map(|line| {
-                    let mut fields = line.split('\t');
-                    (fields.next()? == "tab").then_some(())?;
-                    let label = Label::from_saved(fields.next()?);
-                    Some(Tab::new(label, kinds_of(fields.next().unwrap_or(""))))
-                })
-                .collect();
-            (!tabs.is_empty()).then_some((tabs, locked))
+            let mut saved = Saved { tabs: Vec::new(), torn: Vec::new(), locked };
+            for line in lines {
+                let fields: Vec<&str> = line.split('\t').collect();
+                let tab = |fields: &[&str]| Tab::new(Label::from_saved(fields[1]), kinds_of(fields.get(2).copied().unwrap_or("")));
+                match fields[..] {
+                    ["tab", _, ..] => saved.tabs.push(tab(&fields)),
+                    ["window", _, _, rect] => {
+                        let rect: Vec<f32> = rect.split_whitespace().filter_map(|number| number.parse().ok()).collect();
+                        if let [x, y, w, h] = rect[..] {
+                            saved.torn.push((tab(&fields), [x, y, w, h]));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            (!saved.tabs.is_empty()).then_some(saved)
         }
         _ => None,
     }
 }
 
-/// The tabs as `tabs_from` reads them; the MCP tab isn't kept.
-pub fn tabs_text(tabs: &[Tab], locked: bool) -> String {
-    let lines = tabs.iter().filter(|tab| !tab.is_mcp()).map(|tab| format!("tab\t{}\t{}", tab.label.saved(), kinds_names(&tab.kinds)));
-    [TABS_HEADER.to_owned(), format!("locked {}", u8::from(locked))].into_iter().chain(lines).collect::<Vec<_>>().join("\n")
+/// The tabs and torn-off windows as `tabs_from` reads them; the MCP tab isn't kept.
+pub fn tabs_text(tabs: &[Tab], torn: &[Torn], locked: bool) -> String {
+    let tabs = tabs.iter().filter(|tab| !tab.is_mcp()).map(|tab| format!("tab\t{}\t{}", tab.label.saved(), kinds_names(&tab.kinds)));
+    let windows = torn.iter().filter(|window| !window.tab.is_mcp()).map(|window| {
+        let [x, y, w, h] = window.rect().map(|number| number as i32);
+        format!("window\t{}\t{}\t{x} {y} {w} {h}", window.tab.label.saved(), kinds_names(&window.tab.kinds))
+    });
+    [TABS_HEADER.to_owned(), format!("locked {}", u8::from(locked))].into_iter().chain(tabs).chain(windows).collect::<Vec<_>>().join("\n")
 }
 
 /// The game's two tabs, with their kinds when nothing is saved.
@@ -572,6 +768,9 @@ pub struct Assets {
     add_tab: [Texture; 2],
     tear: [Texture; 2],
     tab_settings: [Texture; 2],
+    /// A torn-off window's "put back" button and its resize grip.
+    attach: [Texture; 2],
+    grip: Texture,
     /// The lock at the strip's right: locked and not.
     lock: [Texture; 2],
     dark: Texture,
@@ -610,6 +809,8 @@ impl Assets {
             add_tab: [image("battle_option_a"), image("battle_option_b")],
             tear: [image("stickoff_a"), image("stickoff_b")],
             tab_settings: [image("battle_option2_a"), image("battle_option2_b")],
+            attach: [image("stickon_a"), image("stickon_b")],
+            grip: gpu.load_texture(grf, &format!("{UI}btn_resize.bmp"), false),
             lock: [image("lock_dragwnd"), image("unlock_dragwnd")],
             dark: gpu.solid(DARK),
             tab_dark: gpu.solid(TAB_DARK),
@@ -631,6 +832,27 @@ impl Assets {
         }
     }
 }
+
+/// A rename under way: of a tab of the strip or of a torn-off window, what's typed and its caret.
+struct Rename {
+    target: Renamed,
+    text: String,
+    caret: Caret,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Renamed {
+    Tab(usize),
+    Torn(usize),
+}
+
+/// The most a tab's name takes, in bytes; "Not very long to change the name of the specified tab." when it's too wide,
+/// and "Failed to add because you have reached the limit." when a torn-off window's tab can't go back.
+const NAME_LONGEST: usize = 255;
+pub const NAME_TOO_LONG: usize = 1577;
+pub const CANNOT_PUT_BACK: usize = 1776;
+/// Torn-off windows' names count their double clicks from here (the tabs' from 0).
+const TORN_CLICKS: u16 = 100;
 
 /// What a click asks the game to show: a red chat line, or a notice box.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -655,6 +877,9 @@ pub enum Hit {
     /// The bare window outside the top row (the margins beside the log, the input bar's gaps between its boxes, all
     /// of the bar while battle mode's line is closed): it focuses the message box and drags the window, unlocked.
     Strip,
+    /// A torn-off window's button that puts its tab back, and the tab at its top left with its name.
+    Attach,
+    Title,
     /// The rest of the top row: nothing.
     TopRow,
     /// The strip along the top edge that resizes the window.
@@ -740,6 +965,15 @@ pub struct Chat {
     let_go: Option<(std::time::Instant, f32)>,
     /// While the top edge is dragged: the pointer's height and the window's when it started.
     resize: Option<(f32, f32)>,
+    /// The tabs torn off into windows of their own, drawn in this order (the last on top).
+    pub torn: Vec<Torn>,
+    /// A press on a tab: where, and which; dragged 5 px up or left it tears the tab off.
+    tab_press: Option<([f32; 2], usize)>,
+    /// Clicks on the tabs and on torn-off windows' names, for double clicks (a rename).
+    tab_clicks: crate::window::Clicks,
+    /// A tab being renamed, and each tab's label as last drawn (a rename starts from it).
+    rename: Option<Rename>,
+    labels: Vec<String>,
     /// While the scrollbar's thumb is dragged: the pointer's height and the scroll when it started.
     thumb_drag: Option<(f32, usize)>,
     /// Clicks on the log's rows, for double clicks.
@@ -762,9 +996,10 @@ pub struct Chat {
 impl Default for Chat {
     fn default() -> Self {
         let saved = settings_path().and_then(|path| std::fs::read_to_string(path).ok()).and_then(|text| tabs_from(&text));
-        let (tabs, locked) = saved.unwrap_or_else(|| (default_tabs(), false));
-        let mut chat = Self::with_tabs(tabs);
-        chat.locked = locked;
+        let saved = saved.unwrap_or_else(|| Saved { tabs: default_tabs(), torn: Vec::new(), locked: false });
+        let mut chat = Self::with_tabs(saved.tabs);
+        chat.locked = saved.locked;
+        chat.torn = saved.torn.into_iter().enumerate().map(|(nth, (tab, rect))| Torn::new(tab, nth, Some(rect))).collect();
         let kept = crate::settings_path("chat_window").filter(|_| crate::keeps_windows()).and_then(|path| std::fs::read_to_string(path).ok());
         if let Some((corner, size, hidden)) = kept.as_deref().and_then(|text| Self::from_saved(text, screen())) {
             (chat.corner, chat.size, chat.hidden) = (corner, size, hidden);
@@ -813,6 +1048,11 @@ impl Chat {
             let_go: None,
             resize: None,
             thumb_drag: None,
+            torn: Vec::new(),
+            tab_press: None,
+            tab_clicks: crate::window::Clicks::default(),
+            rename: None,
+            labels: Vec::new(),
             clicks: crate::window::Clicks::default(),
             locked: false,
             send_to: SendTo::default(),
@@ -923,7 +1163,29 @@ impl Chat {
     /// Whether a press here is the window's alone: its tabs, the strips around the log and the input bar. The log
     /// box's lines let presses through to the world (the wheel still scrolls them).
     pub fn blocks(&self, cursor: [f32; 2]) -> bool {
-        self.contains(cursor) && self.hit(cursor) != Some(Hit::Log)
+        match self.torn_at(cursor) {
+            Some(index) => self.torn[index].hit(cursor, self.locked) != Some(Hit::Log),
+            None => self.contains(cursor) && self.hit(cursor) != Some(Hit::Log),
+        }
+    }
+
+    /// The topmost torn-off window under `cursor`.
+    fn torn_at(&self, cursor: [f32; 2]) -> Option<usize> {
+        self.torn.iter().rposition(|window| window.contains(cursor))
+    }
+
+    /// The wheel over the chat window or a torn-off one scrolls its log by `rows`; whether it was over one.
+    pub fn wheel(&mut self, cursor: [f32; 2], rows: i32) -> bool {
+        if let Some(index) = self.torn_at(cursor) {
+            let window = &mut self.torn[index];
+            let log = window.log_box();
+            window.tab.scroll_by(rows, log);
+        } else if self.contains(cursor) {
+            self.scroll_by(rows);
+        } else {
+            return false;
+        }
+        true
     }
 
     /// What `cursor` is on. The bare window grabs only outside y 1 to 20 (at step 0, where the window is the input
@@ -965,18 +1227,8 @@ impl Chat {
         if self.step() > 0 && on(RESIZE.0, RESIZE.1) {
             return Some(Hit::Resize);
         }
-        if self.step() > 0 && self.scroll_room() > 0 && on(self.scrollbar_corner(), [SCROLLBAR, self.log_height()]) {
-            let y = local[1] - LOG_BOX[1];
-            let (thumb_top, thumb_height) = self.thumb();
-            return Some(if y < ARROW {
-                Hit::ScrollUp
-            } else if y >= self.log_height() - ARROW {
-                Hit::ScrollDown
-            } else if (thumb_top..thumb_top + thumb_height).contains(&local[1]) {
-                Hit::Thumb
-            } else {
-                Hit::Track(local[1] < thumb_top)
-            });
+        if let Some(hit) = self.tabs[self.tab].log_hit(self.log_box(), cursor) {
+            return Some(hit);
         }
         if local[1] < TAB_HEIGHT {
             if let Some(tab) = (0..self.tabs.len()).find(|&tab| on(self.tab_corner(tab), [self.tab_width(tab), TAB_HEIGHT])) {
@@ -998,13 +1250,7 @@ impl Chat {
             }
             return Some(Hit::TopRow);
         }
-        Some(if on(LOG_BOX, [LOG_WIDTH, self.log_height()]) {
-            Hit::Log
-        } else if local[1] <= TOP_ROW {
-            Hit::TopRow
-        } else {
-            Hit::Strip
-        })
+        Some(if local[1] <= TOP_ROW { Hit::TopRow } else { Hit::Strip })
     }
 
     /// The tabs and buttons on screen (for the test driver).
@@ -1030,13 +1276,8 @@ impl Chat {
                 ("chat_strip", area([0.0, TOP_ROW + 4.0], [LOG_BOX[0] - 1.0, 12.0])),
                 ("chat_resize", area([RESIZE.0[0] + 300.0, RESIZE.0[1]], [100.0, RESIZE.1[1]])),
             ]);
-            if self.scroll_room() > 0 {
-                let [bar_x, _] = self.scrollbar_corner();
-                boxes.extend([
-                    ("chat_scroll_up", area(self.scrollbar_corner(), [SCROLLBAR, ARROW])),
-                    ("chat_scroll_down", area([bar_x, LOG_BOX[1] + self.log_height() - ARROW], [SCROLLBAR, ARROW])),
-                    ("chat_thumb", area([bar_x, self.thumb().0], [SCROLLBAR, self.thumb().1])),
-                ]);
+            if let Some([up, down, thumb]) = self.tabs[self.tab].scrollbar_boxes(self.log_box()) {
+                boxes.extend([("chat_scroll_up", up), ("chat_scroll_down", down), ("chat_thumb", thumb)]);
             }
             // The mode icon only while it's drawn (`hit` takes it only then).
             let shown = |button: &&RowButton| button.hit != Hit::ModeIcon || self.mode_icon.is_some();
@@ -1060,7 +1301,28 @@ impl Chat {
     /// A press: on the top edge's strip it starts resizing (locked or not); on the bare window outside the top row
     /// it focuses the message box and grabs the window, which goes half see-through and, unlocked, follows the pointer.
     pub fn press(&mut self, cursor: [f32; 2]) -> bool {
+        if let Some(index) = self.torn_at(cursor) {
+            let hit = self.torn[index].hit(cursor, self.locked);
+            // Grabbed with the tab settings window open, that window switches to it.
+            if !self.locked
+                && matches!(hit, Some(Hit::Strip | Hit::Title))
+                && let Some(settings) = &mut self.settings
+            {
+                settings.tab = self.tabs.len() + index;
+            }
+            self.torn[index].press(cursor, self.locked);
+            return hit != Some(Hit::Log);
+        }
         match self.hit(cursor) {
+            // A press shows the tab (and cancels a rename); dragged up or left it tears off.
+            Some(Hit::Tab(tab)) => {
+                if self.rename.as_ref().is_some_and(|rename| matches!(rename.target, Renamed::Tab(_))) {
+                    self.rename = None;
+                }
+                self.select_tab(tab);
+                self.tab_press = Some((cursor, tab));
+                true
+            }
             Some(Hit::Resize) => {
                 self.resize = Some((cursor[1], self.height()));
                 true
@@ -1090,13 +1352,26 @@ impl Chat {
                 self.set_step(step);
             }
         }
-        // The thumb follows the pointer: the rows it passes over the track's free length are the rows scrolled.
-        if let Some((start, scroll)) = self.thumb_drag {
-            let room = self.tabs[self.tab].rows.len().saturating_sub(rows(self.step()));
-            // The thumb is drawn a pixel short of its length.
-            let free = self.log_height() - 2.0 * ARROW - (self.thumb().1 + 1.0);
-            let moved = if free > 0.0 { ((cursor[1] - start) / free * room as f32).round() as i32 } else { 0 };
-            self.tabs[self.tab].scroll = (scroll as i32 - moved).clamp(0, room as i32) as usize;
+        if let Some(held) = self.thumb_drag {
+            let log = self.log_box();
+            self.tabs[self.tab].drag_thumb(log, held, cursor[1]);
+        }
+        // A tab pulled more than 5 px up or left tears off: its window starts where the tab sat and follows the pointer.
+        if let Some((from, tab)) = self.tab_press
+            && (cursor[0] < from[0] - 5.0 || cursor[1] < from[1] - 5.0)
+        {
+            self.tab_press = None;
+            let spot = self.at([self.average_tab() * tab as f32, 0.0]);
+            if self.tab == tab
+                && let Some(index) = self.tear_off()
+            {
+                let window = &mut self.torn[index];
+                window.position = spot;
+                window.grab(from);
+            }
+        }
+        for window in &mut self.torn {
+            window.drag_to(cursor);
         }
         if let Some(offset) = self.drag.filter(|_| !self.locked) {
             let height = self.height();
@@ -1111,7 +1386,25 @@ impl Chat {
             let now = crate::control::now();
             self.let_go = Some((now, crate::window::hold_fade(Some(held), None, now)));
         }
-        self.resize.take().is_some() | self.drag.take().is_some() | self.thumb_drag.take().is_some()
+        self.tab_press = None;
+        // A torn-off window let go with its bottom left corner on the chat window goes back to the strip.
+        let mut moved = false;
+        let mut put_back = None;
+        let (chat_top, chat_size, drops) = (self.at([0.0, 0.0]), [WIDTH, self.height()], !self.locked && !self.hidden);
+        for (index, window) in self.torn.iter_mut().enumerate() {
+            let held = window.dragging();
+            moved |= window.drop_drag();
+            if held && drops && contains_inclusive(chat_top, chat_size, window.bottom_left()) {
+                put_back = Some(index);
+            }
+        }
+        // ponytail: a window dropped back whose name is too wide stays out without the message the button gives.
+        if let Some(index) = put_back {
+            self.attach(index);
+        } else if moved {
+            self.save_tabs();
+        }
+        self.resize.take().is_some() | self.drag.take().is_some() | self.thumb_drag.take().is_some() | moved
     }
 
     /// A taller step keeps the bottom edge, but not past the screen's top: the tabs stay where they can be reached.
@@ -1135,35 +1428,33 @@ impl Chat {
         for tab in self.tabs.iter_mut().filter(|tab| forced || tab.kinds.contains(&kind.category())) {
             tab.fresh.extend(pieces(&text).into_iter().map(|piece| (piece, color, kind, speaker.clone())));
         }
+        // Torn-off windows take the whole line by the same rule.
+        for window in self.torn.iter_mut().filter(|window| forced || window.tab.kinds.contains(&kind.category())) {
+            window.tab.fresh.push((text.clone(), color, kind, speaker.clone()));
+        }
         self.lines.push((text, color, kind));
     }
 
-    /// Wraps the new pieces at 576 px; a tab holds 240 lines at most (then the newest 120 stay). A tab at the bottom follows the new lines;
-    /// one scrolled back stays on what it shows.
+    /// Wraps the new lines of every tab (at 576 px) and torn-off window (see `Tab::layout`).
     pub fn layout(&mut self, measure: &dyn Fn(&str) -> f32) {
-        let shown = rows(self.step());
+        let log = self.log_box();
         for tab in &mut self.tabs {
-            for (piece, color, kind, speaker) in std::mem::take(&mut tab.fresh) {
-                let wrapped = if links::has_links(&piece) { vec![piece] } else { wrap(&piece, WRAP_WIDTH, measure) };
-                if tab.scroll > 0 {
-                    tab.scroll += wrapped.len();
-                }
-                for row in wrapped {
-                    // A full log drops its oldest half.
-                    if tab.rows.len() >= MOST_LINES {
-                        tab.rows.drain(..MOST_LINES / 2);
-                    }
-                    tab.rows.push((row, color, kind, speaker.clone()));
-                }
-            }
-            tab.scroll = tab.scroll.min(tab.rows.len().saturating_sub(shown));
+            tab.layout(log, measure);
+        }
+        for window in &mut self.torn {
+            let log = window.log_box();
+            window.tab.layout(log, measure);
         }
     }
 
     /// Measures the tabs' labels: each tab is its label's width and 10, the label cut to 600 / tabs less 10.
     pub fn measure_tabs(&mut self, messages: &[String], measure: &dyn Fn(&str) -> f32) {
         let most = self.label_room();
-        self.tab_widths = self.tabs.iter().map(|tab| measure(tab.label.text(messages)).min(most) + TAB_PADDING).collect();
+        self.labels = self.tabs.iter().map(|tab| tab.label.text(messages).to_owned()).collect();
+        self.tab_widths = self.labels.iter().map(|label| measure(label).min(most) + TAB_PADDING).collect();
+        for window in &mut self.torn {
+            window.measure(messages, measure);
+        }
     }
 
     /// The widest a tab's label is drawn.
@@ -1178,9 +1469,8 @@ impl Chat {
 
     /// Scrolls the shown tab's log by `rows` lines (negative: back in time).
     pub fn scroll_by(&mut self, rows: i32) {
-        let most = self.tabs[self.tab].rows.len().saturating_sub(self::rows(self.step()));
-        let tab = &mut self.tabs[self.tab];
-        tab.scroll = (tab.scroll as i32 - rows).clamp(0, most as i32) as usize;
+        let log = self.log_box();
+        self.tabs[self.tab].scroll_by(rows, log);
     }
 
     /// How far the shown tab is scrolled back, in rows.
@@ -1194,59 +1484,30 @@ impl Chat {
         self.scroll_by(if down { rows } else { -rows });
     }
 
-    /// The scrollbar's corner, window-local, and the log box's height.
-    fn scrollbar_corner(&self) -> [f32; 2] {
-        [LOG_BOX[0] + LOG_WIDTH - SCROLLBAR, LOG_BOX[1]]
+    /// The main window's log box on screen; its height is the window's less 44.
+    fn log_box(&self) -> LogBox {
+        LogBox { corner: self.at(LOG_BOX), size: [LOG_WIDTH, self.height() - LOG_UNDER] }
     }
 
-    fn log_height(&self) -> f32 {
-        self.height() - LOG_UNDER
-    }
-
-    /// How many rows the shown tab's log can scroll: the scrollbar shows only when there are some.
-    fn scroll_room(&self) -> usize {
-        self.tabs[self.tab].rows.len().saturating_sub(rows(self.step()))
-    }
-
-    /// The thumb between the arrows: its top and height, window-local. It is the track's length times the rows shown
-    /// over all the rows, at least 8, drawn a pixel short, one under the track's top.
-    fn thumb(&self) -> (f32, f32) {
-        let track = self.log_height() - 2.0 * ARROW;
-        let total = self.tabs[self.tab].rows.len().max(1);
-        let shown = rows(self.step()).min(total);
-        let length = (track * shown as f32 / total as f32).max(8.0).min(track);
-        let room = self.scroll_room();
-        let first = room - self.tabs[self.tab].scroll.min(room);
-        let top = if room == 0 { 0.0 } else { (track - length) * first as f32 / room as f32 };
-        (LOG_BOX[1] + ARROW + top + 1.0, length - 1.0)
-    }
-
-    /// The speaker of the log row under `cursor`, if it has one.
+    /// The speaker of the log row under `cursor`, if it has one: in the main window, or in a torn-off window on top.
     pub fn speaker_at(&self, cursor: [f32; 2]) -> Option<&str> {
-        if self.hit(cursor) != Some(Hit::Log) {
-            return None;
+        if let Some(index) = self.torn_at(cursor) {
+            let window = &self.torn[index];
+            return (window.hit(cursor, self.locked) == Some(Hit::Log)).then(|| window.tab.speaker_at(window.log_box(), cursor)).flatten();
         }
-        let local_y = cursor[1] - self.at([0.0, 0.0])[1] - LOG_BOX[1] - LINE_TEXT[1];
-        let row = (local_y / LINE).floor();
-        let (start, end) = self.shown_range();
-        let index = start + usize::try_from(row as i64).ok()?;
-        (index < end).then(|| self.tabs[self.tab].rows[index].3.as_deref()).flatten()
+        (self.hit(cursor) == Some(Hit::Log)).then(|| self.tabs[self.tab].speaker_at(self.log_box(), cursor)).flatten()
     }
 
-    /// The shown tab's rows on screen: from the scroll back, filling from the top.
-    fn shown_range(&self) -> (usize, usize) {
-        let rows = &self.tabs[self.tab].rows;
-        let end = rows.len().saturating_sub(self.tabs[self.tab].scroll);
-        (end.saturating_sub(self::rows(self.step())), end)
-    }
-
-    /// A click on the log: the speaker of the row when it completes a double click there.
+    /// A click on a log: the speaker of the row when it completes a double click there.
     pub fn log_click(&mut self, cursor: [f32; 2]) -> Option<String> {
-        if self.hit(cursor) != Some(Hit::Log) {
-            return None;
-        }
-        let row = ((cursor[1] - self.at([0.0, 0.0])[1] - LOG_BOX[1] - LINE_TEXT[1]) / LINE).floor().max(0.0) as u16;
-        if !self.clicks.double(row) {
+        let row = match self.torn_at(cursor) {
+            Some(index) => {
+                let window = &self.torn[index];
+                (window.hit(cursor, self.locked) == Some(Hit::Log)).then(|| window.log_box().row_at(cursor)).flatten().map(|row| 1000 * (index + 1) + row)
+            }
+            None => (self.hit(cursor) == Some(Hit::Log)).then(|| self.log_box().row_at(cursor)).flatten(),
+        }?;
+        if !self.clicks.double(row as u16) {
             return None;
         }
         self.speaker_at(cursor).map(str::to_owned)
@@ -1359,6 +1620,10 @@ impl Chat {
         if self.hit(cursor) != Some(Hit::SendTo) {
             self.groups_open = false;
         }
+        if let Some(index) = self.torn_at(cursor) {
+            self.list_open = false;
+            return self.click_torn(index, cursor);
+        }
         if self.hit(cursor) == Some(Hit::List) {
             if self.recent.is_empty() {
                 return Some(Said::Line(NO_WHISPER_LIST));
@@ -1371,12 +1636,18 @@ impl Chat {
             Some(Hit::ScrollUp) => self.scroll_by(-1),
             Some(Hit::ScrollDown) => self.scroll_by(1),
             Some(Hit::Track(above)) => self.page(!above, false),
-            Some(Hit::Tab(tab)) => self.select_tab(tab),
+            // A double click on a tab renames it, starting from its name.
+            Some(Hit::Tab(tab)) => {
+                self.select_tab(tab);
+                if self.tab_clicks.double(tab as u16) {
+                    let text = self.labels.get(tab).cloned().unwrap_or_default();
+                    self.rename = Some(Rename { target: Renamed::Tab(tab), caret: Caret::default(), text });
+                }
+            }
             // Locked, these buttons aren't there.
             Some(Hit::AddTab) if !self.locked => return self.add_tab().err().map(Said::Notice),
             Some(Hit::RemoveTab) if !self.locked => self.remove_tab(),
-            // Tear-off puts the window back at the screen's bottom left.
-            Some(Hit::Stick) if !self.locked => self.corner = None,
+            Some(Hit::Stick) if !self.locked => drop(self.tear_off()),
             // The same button again closes it; the MCP tab has none.
             Some(Hit::Options) => {
                 self.settings = (self.settings.is_none() && !self.on_mcp_tab()).then(|| Settings::new(self.tab));
@@ -1395,6 +1666,87 @@ impl Chat {
         None
     }
 
+    /// A click on torn-off window `index`: its buttons (close and put back only unlocked), a double click on its name
+    /// (unlocked) renames it from empty, its scrollbar scrolls.
+    fn click_torn(&mut self, index: usize, cursor: [f32; 2]) -> Option<Said> {
+        let window = &mut self.torn[index];
+        let log = window.log_box();
+        match window.hit(cursor, self.locked) {
+            Some(Hit::RemoveTab) if !self.locked => self.close_torn(index),
+            Some(Hit::Attach) if !self.locked => return self.attach(index),
+            Some(Hit::Options) => {
+                let key = self.tabs.len() + index;
+                self.settings = (self.settings.as_ref().map(|settings| settings.tab) != Some(key)).then(|| Settings::new(key));
+            }
+            Some(Hit::Title) if !self.locked && self.tab_clicks.double(TORN_CLICKS + index as u16) => {
+                self.rename = Some(Rename { target: Renamed::Torn(index), text: String::new(), caret: Caret::default() });
+            }
+            Some(Hit::ScrollUp) => window.tab.scroll_by(-1, log),
+            Some(Hit::ScrollDown) => window.tab.scroll_by(1, log),
+            Some(Hit::Track(above)) => {
+                let rows = (log.rows() as i32 - 1).max(1);
+                window.tab.scroll_by(if above { -rows } else { rows }, log);
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Tears the tab shown off into a window of its own (unlocked, with another tab left), the tab before it shown
+    /// next; the new window's index.
+    pub fn tear_off(&mut self) -> Option<usize> {
+        if self.locked || self.tabs.len() < 2 {
+            return None;
+        }
+        let tab = self.tabs.remove(self.tab);
+        if self.tab < self.tab_widths.len() {
+            self.tab_widths.remove(self.tab);
+        }
+        self.tab = self.tab.saturating_sub(1);
+        self.torn.push(Torn::new(tab, self.torn.len(), None));
+        (self.settings, self.rename) = (None, None);
+        self.save_tabs();
+        Some(self.torn.len() - 1)
+    }
+
+    /// Puts torn-off window `index`'s tab back at the end of the strip, shown (unlocked). Refused without a word when
+    /// the strip has no room for another tab, and with "Failed to add..." when its name is too wide for one more.
+    pub fn attach(&mut self, index: usize) -> Option<Said> {
+        let strip = self.tab_corner(self.tabs.len())[0] - STRIP_X;
+        if self.locked || strip + self.average_tab() > WIDTH - STRIP_ROOM {
+            return None;
+        }
+        if self.torn[index].name_width() * (self.tabs.len() + 1) as f32 > WIDTH - STRIP_ROOM {
+            return Some(Said::Line(CANNOT_PUT_BACK));
+        }
+        let window = self.torn.remove(index);
+        let at = self.tabs.iter().position(Tab::is_mcp).unwrap_or(self.tabs.len());
+        self.tabs.insert(at, window.tab);
+        self.tab = at;
+        (self.settings, self.rename) = (None, None);
+        self.save_tabs();
+        None
+    }
+
+    /// Closes torn-off window `index`: its lines and what it showed go.
+    fn close_torn(&mut self, index: usize) {
+        self.torn.remove(index);
+        (self.settings, self.rename) = (None, None);
+        self.save_tabs();
+    }
+
+    /// The tab the settings window is about: a tab of the strip, or past them a torn-off window's.
+    pub fn settings_tab(&self) -> Option<&Tab> {
+        let key = self.settings.as_ref()?.tab;
+        self.tabs.get(key).or_else(|| self.torn.get(key - self.tabs.len()).map(|window| &window.tab))
+    }
+
+    fn settings_tab_mut(&mut self) -> Option<&mut Tab> {
+        let key = self.settings.as_ref()?.tab;
+        let tabs = self.tabs.len();
+        if key < tabs { self.tabs.get_mut(key) } else { self.torn.get_mut(key - tabs).map(|window| &mut window.tab) }
+    }
+
     /// Shows tab `tab`; the tab settings window, if open, switches to it where it is (the MCP tab has none).
     fn select_tab(&mut self, tab: usize) {
         self.tab = tab;
@@ -1405,17 +1757,23 @@ impl Chat {
         }
     }
 
-    /// A tab "NewTab_<n>" after the others (n counts it), shown, showing nothing until its settings say. Refused with the
-    /// message to show when there are ten, or when the strip has no room for it.
-    // ponytail: a tab the strip has no room for is refused; the game makes it a torn-off window instead.
+    /// A tab "NewTab_<n>" after the others (n counts it and the torn-off windows), shown, showing nothing until its
+    /// settings say; a torn-off window when the strip has no room for it. Refused with the message to show when there
+    /// are ten tabs and windows.
     pub fn add_tab(&mut self) -> Result<(), usize> {
         let fits = (self.tabs.len() + 1) as f32 * self.average_tab() <= WIDTH - STRIP_ROOM;
         // The agent's tab isn't the game's: it doesn't count.
-        let tabs = self.tabs.iter().filter(|tab| !tab.is_mcp()).count();
-        if tabs >= MOST_TABS || !fits {
+        let tabs = self.tabs.iter().filter(|tab| !tab.is_mcp()).count() + self.torn.len();
+        if tabs >= MOST_TABS {
             return Err(CANNOT_ADD_MORE);
         }
         let label = Label::Text(format!("{NEW_TAB}{}", tabs + 1));
+        self.rename = None;
+        if !fits {
+            self.torn.push(Torn::new(Tab::new(label, HashSet::new()), self.torn.len(), None));
+            self.save_tabs();
+            return Ok(());
+        }
         // After the agent's tab it would sit past the game's; before it, with the others.
         let at = self.tabs.iter().position(Tab::is_mcp).unwrap_or(self.tabs.len());
         self.tabs.insert(at, Tab::new(label, HashSet::new()));
@@ -1430,20 +1788,43 @@ impl Chat {
             return;
         }
         self.tabs.remove(self.tab);
-        self.tab_widths.clear();
+        if self.tab < self.tab_widths.len() {
+            self.tab_widths.remove(self.tab);
+        }
         self.tab = self.tab.saturating_sub(1);
-        self.settings = None;
+        (self.settings, self.rename) = (None, None);
         self.save_tabs();
     }
 
-    /// The control socket's `chat_focus`: which box has the caret, "name" or "message".
+    /// The control socket's `chat_focus`: which box has the caret, "name", "message" or "rename" (a tab's name).
     pub fn focus(&self) -> &'static str {
-        if self.naming { "name" } else { "message" }
+        if self.rename.is_some() {
+            "rename"
+        } else if self.naming {
+            "name"
+        } else {
+            "message"
+        }
     }
 
-    /// The box with the caret, its caret, and the most it takes.
+    /// The box with the caret, its caret, and the most it takes: a tab's new name while one is renamed.
     fn focused(&mut self) -> (&mut String, &mut Caret, usize) {
+        if let Some(rename) = &mut self.rename {
+            return (&mut rename.text, &mut rename.caret, NAME_LONGEST);
+        }
         if self.naming { (&mut self.whisper, &mut self.carets[1], NAME_MOST) } else { (&mut self.input, &mut self.carets[0], MESSAGE_MOST) }
+    }
+
+    fn focused_ref(&self) -> (&String, &Caret) {
+        match &self.rename {
+            Some(rename) => (&rename.text, &rename.caret),
+            None => self.box_ref(),
+        }
+    }
+
+    /// The input bar's box with the caret.
+    fn box_ref(&self) -> (&String, &Caret) {
+        if self.naming { (&self.whisper, &self.carets[1]) } else { (&self.input, &self.carets[0]) }
     }
 
     /// Types `text` at the caret of the box that has it (over the selection), up to that box's most.
@@ -1487,7 +1868,7 @@ impl Chat {
 
     /// The selected text, for the clipboard.
     pub fn selected(&self) -> String {
-        let (typing, caret) = if self.naming { (&self.whisper, &self.carets[1]) } else { (&self.input, &self.carets[0]) };
+        let (typing, caret) = self.focused_ref();
         caret.selection(typing).map(|range| typing[range].to_owned()).unwrap_or_default()
     }
 
@@ -1498,9 +1879,89 @@ impl Chat {
     }
 
     /// Where the caret and the selection are in the box with the caret, in bytes.
+    #[cfg(test)]
     pub fn caret(&self) -> (usize, Option<std::ops::Range<usize>>) {
-        let (typing, caret) = if self.naming { (&self.whisper, &self.carets[1]) } else { (&self.input, &self.carets[0]) };
+        let (typing, caret) = self.focused_ref();
         (caret.at(typing), caret.selection(typing))
+    }
+
+    /// The input bar's caret and selection, in bytes.
+    fn box_caret(&self) -> (usize, Option<std::ops::Range<usize>>) {
+        let (typing, caret) = self.box_ref();
+        (caret.at(typing), caret.selection(typing))
+    }
+
+    /// Whether a tab's name is being typed.
+    pub fn renaming(&self) -> bool {
+        self.rename.is_some()
+    }
+
+    /// Enter in a rename: a tab of the strip takes the name unless it's empty (the box stays) or too wide for the
+    /// strip ("Not very long to change the name...", the name kept); a torn-off window's unless it's empty (kept) or
+    /// too wide for the window. What to show, if anything.
+    pub fn finish_rename(&mut self, measure: &dyn Fn(&str) -> f32) -> Option<Said> {
+        let rename = self.rename.as_ref()?;
+        let text = rename.text.clone();
+        match rename.target {
+            Renamed::Tab(index) => {
+                if text.is_empty() {
+                    return None;
+                }
+                self.rename = None;
+                if (measure(&text) + TAB_PADDING) * self.tabs.len() as f32 >= WIDTH - STRIP_ROOM {
+                    return Some(Said::Notice(NAME_TOO_LONG));
+                }
+                if let Some(tab) = self.tabs.get_mut(index) {
+                    tab.label = Label::Text(text);
+                }
+                self.naming = false;
+            }
+            Renamed::Torn(index) => {
+                self.rename = None;
+                let window = self.torn.get_mut(index).filter(|_| !text.is_empty())?;
+                if !window.fits(measure(&text)) {
+                    return Some(Said::Notice(NAME_TOO_LONG));
+                }
+                window.tab.label = Label::Text(text);
+            }
+        }
+        self.save_tabs();
+        None
+    }
+
+    /// Esc in a rename: a tab of the strip keeps its name; a torn-off window takes the typed one as Enter does.
+    pub fn escape_rename(&mut self, measure: &dyn Fn(&str) -> f32) -> Option<Said> {
+        match self.rename.as_ref()?.target {
+            Renamed::Tab(_) => {
+                self.rename = None;
+                None
+            }
+            Renamed::Torn(_) => self.finish_rename(measure),
+        }
+    }
+
+    /// Where the rename box is on screen: over the tab, its width less 4 and 14 tall from 2 in; on a torn-off window
+    /// over its name.
+    fn rename_box(&self) -> Option<[f32; 4]> {
+        Some(match self.rename.as_ref()?.target {
+            Renamed::Tab(index) => {
+                let [x, y] = self.at(self.tab_corner(index));
+                [x + 2.0, y + 2.0, self.tab_width(index) - 4.0, 14.0]
+            }
+            Renamed::Torn(index) => self.torn.get(index)?.rename_box(),
+        })
+    }
+
+    /// The rename box: white, the name typed, the caret when it blinks on.
+    fn draw_rename<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, caret: bool) {
+        let (Some(rename), Some([x, y, w, h])) = (&self.rename, self.rename_box()) else { return };
+        layer.sprites.push((&assets.white, [x, y], [w, h]));
+        let text_y = y + ((h - font.line_height()) / 2.0).round();
+        layer.texts.push((format!("{}{}", rename.text, self.preedit), [x + 1.0, text_y], [0, 0, 0]));
+        if caret {
+            let at = rename.caret.at(&rename.text);
+            layer.sprites.push((&assets.darker, [x + 2.0 + font.width(&rename.text[..at]), text_y + 1.0], [1.0, font.line_height() - 2.0]));
+        }
     }
 
     /// A line was sent: kept for Up / Down.
@@ -1534,19 +1995,17 @@ impl Chat {
 
     /// Ticks or unticks `kind` for the settings window's tab, and saves the tabs.
     pub fn toggle_kind(&mut self, kind: Kind) {
-        let Some(settings) = &self.settings else { return };
-        let kinds = &mut self.tabs[settings.tab].kinds;
-        if !kinds.remove(&kind) {
-            kinds.insert(kind);
+        let Some(tab) = self.settings_tab_mut() else { return };
+        if !tab.kinds.remove(&kind) {
+            tab.kinds.insert(kind);
         }
-        self.tabs[settings.tab].scroll = 0;
+        tab.scroll = 0;
         self.save_tabs();
     }
 
     /// The "all on" box: every option on, or off when they all were on. Saves the tabs.
     pub fn set_all(&mut self) {
-        let Some(settings) = &self.settings else { return };
-        let tab = &mut self.tabs[settings.tab];
+        let Some(tab) = self.settings_tab_mut() else { return };
         flip_all(&mut tab.kinds);
         tab.scroll = 0;
         self.save_tabs();
@@ -1560,7 +2019,7 @@ impl Chat {
     }
 
     pub fn save_to(&self, path: &Path) {
-        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, tabs_text(&self.tabs, self.locked)));
+        let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, tabs_text(&self.tabs, &self.torn, self.locked)));
     }
 
     /// Closes the battle-mode line: the typed text stays in the box until a key no shortcut takes, and the
@@ -1661,37 +2120,12 @@ impl Chat {
             layer.sprites.push((&assets.white, [corner[0] + size[0] - 1.0, corner[1]], [1.0, size[1]]));
             layer.sprites.push((&assets.white, at([tabs_end, LOG_BOX[1]]), [LOG_BOX[0] + size[0] - tabs_end, 1.0]));
             // The rows from the top down, then the scrollbar at the right.
-            let (start, end) = self.shown_range();
-            for (row, (line, color, ..)) in self.tabs[self.tab].rows[start..end].iter().enumerate() {
-                let [mut x, y] = at(line_at(row));
-                // Links in their colour, underlined.
-                for (piece, item) in links::pieces(&links::mark(line, name_of)) {
-                    let width = font.width(&piece);
-                    let color = item.as_ref().map_or(*color, Target::color);
-                    layer.texts.push((piece.clone(), [x + 1.0, y + 1.0], [0, 0, 0]));
-                    layer.texts.push((piece, [x, y], color));
-                    if let Some(item) = item {
-                        let under = y + font.line_height() - 1.0;
-                        let line = if item.item().is_some() { &assets.link } else { &assets.navi_link };
-                        layer.sprites.push((line, [x, under], [width, 1.0]));
-                        link_boxes.push(([x, y, width, font.line_height()], item));
-                    }
-                    x += width;
-                }
-            }
-            // The scrollbar, only while there's something to scroll: 10 wide, the arrows at its ends, a black track
-            // between, the grey thumb.
-            if self.scroll_room() > 0 {
-                let [bar_x, bar_y] = self.scrollbar_corner();
-                let height = self.log_height();
-                layer.sprites.push((&assets.track, at([bar_x, bar_y + ARROW + 1.0]), [ARROW, height - 2.0 * ARROW - 1.0]));
-                let (thumb_top, thumb_height) = self.thumb();
-                layer.sprites.push((&assets.thumb, at([bar_x, thumb_top]), [ARROW, thumb_height]));
-                layer.sprites.push((&assets.arrows[0], at([bar_x, bar_y]), [ARROW; 2]));
-                layer.sprites.push((&assets.arrows[1], at([bar_x, bar_y + height - ARROW - 1.0]), [ARROW; 2]));
-            }
+            self.tabs[self.tab].draw(layer, assets, font, self.log_box(), name_of, &mut link_boxes);
             // The line over the input bar.
             layer.sprites.push((&assets.frame_line, at([4.0, self.height() - INPUT_HEIGHT]), [592.0, 1.0]));
+            if self.rename.as_ref().is_some_and(|rename| matches!(rename.target, Renamed::Tab(_))) {
+                self.draw_rename(layer, assets, font, caret);
+            }
         }
         if !open {
             return link_boxes;
@@ -1707,10 +2141,13 @@ impl Chat {
         }
         let [name_x, text_top] = in_bar([NAME_BOX.0[0], NAME_BOX.0[1] + ((NAME_BOX.1[1] - font.line_height()) / 2.0).round()]);
         let message_x = in_bar(MESSAGE_BOX.0)[0];
-        // The box with the caret shows what the input method is composing at the caret, and its selection.
-        let (at, selection) = self.caret();
+        // The box with the caret shows what the input method is composing at the caret, and its selection; a rename
+        // has them instead.
+        let (at, selection) = self.box_caret();
         let (focused, focused_x) = if self.naming { (&self.whisper, name_x) } else { (&self.input, message_x) };
-        let shown = format!("{}{}{}", &focused[..at], self.preedit, &focused[at..]);
+        let renaming = self.rename.is_some();
+        let preedit = if renaming { "" } else { self.preedit.as_str() };
+        let shown = format!("{}{preedit}{}", &focused[..at], &focused[at..]);
         if let Some(range) = selection {
             let left = focused_x + font.width(&focused[..range.start]);
             layer.sprites.push((&assets.selection, [left, text_top], [font.width(&focused[range]), font.line_height()]));
@@ -1718,8 +2155,8 @@ impl Chat {
         let (name, typed) = if self.naming { (shown, self.input.clone()) } else { (self.whisper.clone(), shown) };
         layer.texts.push((name, [name_x, text_top], [0, 0, 0]));
         layer.texts.push((typed, [message_x, text_top], self.ink));
-        if caret {
-            let x = focused_x + font.width(&format!("{}{}", &focused[..at], self.preedit));
+        if caret && !renaming {
+            let x = focused_x + font.width(&format!("{}{preedit}", &focused[..at]));
             layer.sprites.push((&assets.darker, [x + 1.0, text_top + 1.0], [1.0, font.line_height() - 2.0]));
         }
         // ponytail: the lists' look (white rows, the picked one blue) is ours.
@@ -1740,6 +2177,36 @@ impl Chat {
         }
         link_boxes
     }
+
+    /// Torn-off window `index`, and the boxes of the links in its log; its rename box over its name while renamed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_torn<'a>(
+        &self,
+        index: usize,
+        layer: &mut Layer<'a>,
+        assets: &'a Assets,
+        font: &Font,
+        messages: &[String],
+        caret: bool,
+        name_of: &dyn Fn(&ItemLink) -> String,
+    ) -> Vec<([f32; 4], Target)> {
+        let mut link_boxes = Vec::new();
+        self.torn[index].draw(layer, assets, font, messages, self.locked, name_of, &mut link_boxes);
+        if self.rename.as_ref().is_some_and(|rename| rename.target == Renamed::Torn(index)) {
+            self.draw_rename(layer, assets, font, caret);
+        }
+        link_boxes
+    }
+
+    /// The torn-off windows' buttons and grips, for the test driver.
+    pub fn torn_boxes(&self) -> Vec<(String, [f32; 4])> {
+        self.torn.iter().enumerate().flat_map(|(nth, window)| window.button_boxes(nth, self.locked)).collect()
+    }
+}
+
+/// Whether `point` is in the box, its edges included.
+fn contains_inclusive(corner: [f32; 2], size: [f32; 2], point: [f32; 2]) -> bool {
+    (corner[0]..=corner[0] + size[0]).contains(&point[0]) && (corner[1]..=corner[1] + size[1]).contains(&point[1])
 }
 
 fn contains_box(box_: [f32; 4], cursor: [f32; 2]) -> bool {
@@ -2271,7 +2738,7 @@ mod tests {
         chat.push("Bob : hi".into(), PUBLIC);
         chat.push_kind("( From Ann ) : psst".into(), [0xFF, 0xFF, 0x00], Kind::Whisper);
         chat.layout(&|text: &str| text.len() as f32);
-        assert_eq!(chat.shown_range(), (0, 2));
+        assert_eq!(chat.tabs[0].shown_range(chat.log_box()), (0, 2));
         // The first row sits at the top of the log, the second under it.
         let rows: Vec<[f32; 2]> = (0..3)
             .map(|index| {
@@ -2380,7 +2847,7 @@ mod tests {
         assert!(chat.on_mcp_tab());
         chat.click(middle_of(&chat, "chat_options"));
         assert!(chat.settings.is_none());
-        assert_eq!(tabs_from(&tabs_text(&chat.tabs, false)).map(|(tabs, _)| tabs.len()), Some(2));
+        assert_eq!(tabs_from(&tabs_text(&chat.tabs, &[], false)).map(|saved| saved.tabs.len()), Some(2));
         assert_eq!(chat.tabs[2].label.text(&[]), "MCP");
     }
 
@@ -2678,6 +3145,154 @@ mod tests {
         assert!(chat.button_boxes().iter().all(|(name, _)| !["chat_add_tab", "chat_remove_tab"].contains(name)));
     }
 
+    fn torn_box(chat: &Chat, name: &str) -> [f32; 2] {
+        let [x, y, w, h] = chat.torn_boxes().into_iter().find(|(box_name, _)| box_name == name).unwrap_or_else(|| panic!("{name}")).1;
+        [x + w / 2.0, y + h / 2.0]
+    }
+
+    #[test]
+    fn tears_tabs_off_and_puts_them_back() {
+        let mut chat = fresh();
+        chat.add_tab().unwrap();
+        chat.tabs[2].kinds.insert(Kind::Public);
+        chat.push("Poring : before".into(), PUBLIC);
+        chat.layout(&six_px);
+        chat.measure_tabs(&labels(), &six_px);
+        // The tear-off button: the tab shown goes into a 300×95 window at (100, 100) with its name, kinds and lines;
+        // the tab before it shows.
+        chat.click(middle_of(&chat, "chat_stick"));
+        assert_eq!((chat.tabs.len(), chat.tab, chat.torn.len()), (2, 1, 1));
+        assert_eq!(chat.torn[0].rect(), [100.0, 100.0, 300.0, 95.0]);
+        assert_eq!((chat.torn[0].tab.label.clone(), chat.torn[0].tab_lines().len()), (Label::Text("NewTab_3".into()), 1));
+        // New lines reach it by its kinds; the next one opens 10 right and 20 down.
+        chat.push("Poring : after".into(), PUBLIC);
+        chat.layout(&six_px);
+        chat.measure_tabs(&labels(), &six_px);
+        assert_eq!(chat.torn[0].tab_lines().last().map(|row| row.0.as_str()), Some("Poring : after"));
+        assert_eq!(chat.torn[0].log_box(), LogBox { corner: [105.0, 120.0], size: [292.0, 60.0] });
+        assert_eq!(chat.torn[0].log_box().rows(), 4);
+        // Its buttons right to left at y 4: close 290, put back 274, settings 263; locked only settings at 289.
+        let x_of = |chat: &Chat, name: &str| chat.torn_boxes().into_iter().find(|(box_name, _)| box_name == name).map(|(_, area)| area[0] - 100.0);
+        assert_eq!(["torn_0_close", "torn_0_attach", "torn_0_options"].map(|name| x_of(&chat, name)), [Some(290.0), Some(274.0), Some(263.0)]);
+        chat.locked = true;
+        assert_eq!(["torn_0_close", "torn_0_options", "torn_0_grip"].map(|name| x_of(&chat, name)), [None, Some(289.0), None]);
+        // Locked, a press on it does nothing: it stays.
+        assert!(chat.press(torn_box(&chat, "torn_0_title")));
+        chat.drag_to([300.0, 300.0]);
+        chat.drop_drag();
+        assert_eq!(chat.torn[0].position, [100.0, 100.0]);
+        chat.locked = false;
+        // Its settings button opens the settings for it; what's ticked there is its own.
+        chat.click(torn_box(&chat, "torn_0_options"));
+        assert_eq!(chat.settings.as_ref().map(|settings| settings.tab), Some(2));
+        chat.toggle_kind(Kind::Whisper);
+        assert!(chat.torn[0].tab.kinds.contains(&Kind::Whisper) && !chat.tabs[0].kinds.is_empty());
+        // Grabbed by its name it follows the pointer; the grip resizes it in 32-px steps from 280×74.
+        let title = torn_box(&chat, "torn_0_title");
+        assert!(chat.press(title));
+        chat.drag_to([title[0] + 50.0, title[1] + 200.0]);
+        assert!(chat.drop_drag());
+        assert_eq!(chat.torn[0].position, [150.0, 300.0]);
+        let grip = torn_box(&chat, "torn_0_grip");
+        chat.press(grip);
+        chat.drag_to([grip[0] + 40.0, grip[1] + 40.0]);
+        chat.drop_drag();
+        assert_eq!(chat.torn[0].size, [312.0, 106.0]);
+        // Put back by its button: at the end of the strip, shown, with its lines.
+        assert_eq!(chat.click(torn_box(&chat, "torn_0_attach")), None);
+        assert_eq!((chat.tabs.len(), chat.tab, chat.torn.len()), (3, 2, 0));
+        assert_eq!(chat.tab_lines(2).len(), 2);
+        // Pulled 6 px up by its tab, a tab tears off under the pointer and follows it; let go over the chat window it
+        // goes straight back, let go above it stays out.
+        chat.measure_tabs(&labels(), &six_px);
+        let tab = middle_of(&chat, "chat_tab_2");
+        assert!(chat.press(tab));
+        chat.drag_to([tab[0], tab[1] - 6.0]);
+        assert_eq!(chat.torn.len(), 1);
+        chat.drag_to([tab[0], tab[1] - 20.0]);
+        assert!(chat.drop_drag());
+        assert_eq!((chat.torn.len(), chat.tabs.len()), (0, 3), "dropped onto the chat window");
+        chat.measure_tabs(&labels(), &six_px);
+        let tab = middle_of(&chat, "chat_tab_2");
+        chat.press(tab);
+        chat.drag_to([tab[0] + 2.0, tab[1] - 300.0]);
+        chat.drop_drag();
+        assert_eq!(chat.torn.len(), 1);
+        assert!(chat.torn[0].bottom_left()[1] < top(&chat));
+        // A tab pulled right or down stays put; the last tab can't be torn off.
+        chat.measure_tabs(&labels(), &six_px);
+        let tab = middle_of(&chat, "chat_tab_1");
+        chat.press(tab);
+        chat.drag_to([tab[0] + 40.0, tab[1] + 40.0]);
+        chat.drop_drag();
+        assert_eq!(chat.torn.len(), 1);
+        chat.remove_tab();
+        assert_eq!(chat.tear_off(), None);
+        // Close: the window and its lines go.
+        chat.click(torn_box(&chat, "torn_0_close"));
+        assert!(chat.torn.is_empty());
+        // Add tab with a full strip makes a window instead; tabs and windows count to ten together.
+        let mut full = fresh();
+        let wide = |text: &str| text.chars().count() as f32 * 12.0;
+        while full.torn.is_empty() {
+            full.add_tab().unwrap();
+            full.measure_tabs(&labels(), &wide);
+        }
+        while full.add_tab().is_ok() {}
+        assert_eq!(full.tabs.len() + full.torn.len(), MOST_TABS);
+        assert_eq!(full.torn.last().map(|window| window.tab.label.clone()), Some(Label::Text("NewTab_10".into())));
+    }
+
+    #[test]
+    fn renames_tabs() {
+        let mut chat = fresh();
+        let measure = six_px;
+        // A double click on a tab: a box over it from its name, 4 narrower and 14 tall.
+        let tab = middle_of(&chat, "chat_tab_1");
+        chat.click(tab);
+        assert!(!chat.renaming());
+        chat.click(tab);
+        assert_eq!((chat.focus(), chat.rename.as_ref().map(|rename| rename.text.clone())), ("rename", Some("Battle".into())));
+        assert_eq!(chat.rename_box(), Some([49.0 + 2.0, top(&chat) + 2.0, 42.0, 14.0]));
+        // Typing goes to it; an empty name keeps the box open; Enter takes the name and the caret goes to the message.
+        chat.select_all();
+        chat.backspace();
+        assert_eq!(chat.finish_rename(&measure), None);
+        assert!(chat.renaming());
+        chat.type_text("Fights");
+        assert_eq!(chat.finish_rename(&measure), None);
+        assert_eq!((chat.tabs[1].label.clone(), chat.renaming(), chat.focus()), (Label::Text("Fights".into()), false, "message"));
+        // Esc keeps the name; a name too wide for the strip says so and keeps the old one.
+        chat.measure_tabs(&labels(), &measure);
+        chat.click(tab);
+        chat.click(tab);
+        chat.type_text("x");
+        chat.escape_rename(&measure);
+        assert_eq!(chat.tabs[1].label, Label::Text("Fights".into()));
+        chat.click(tab);
+        chat.click(tab);
+        chat.type_text(&"w".repeat(40));
+        assert_eq!(chat.finish_rename(&measure), Some(Said::Notice(NAME_TOO_LONG)));
+        assert_eq!(chat.tabs[1].label, Label::Text("Fights".into()));
+        // A torn-off window: a double click on its name (unlocked) starts empty; Esc takes the name too.
+        chat.measure_tabs(&labels(), &measure);
+        chat.tear_off();
+        chat.measure_tabs(&labels(), &measure);
+        let title = torn_box(&chat, "torn_0_title");
+        chat.click(title);
+        chat.click(title);
+        assert_eq!(chat.rename.as_ref().map(|rename| rename.text.as_str()), Some(""));
+        chat.type_text("Loot");
+        chat.escape_rename(&measure);
+        assert_eq!(chat.torn[0].tab.label, Label::Text("Loot".into()));
+        // Locked, its name doesn't open the box.
+        chat.locked = true;
+        chat.measure_tabs(&labels(), &measure);
+        chat.click(title);
+        chat.click(title);
+        assert!(!chat.renaming());
+    }
+
     #[test]
     fn pages_by_the_scrollbar() {
         let mut chat = fresh();
@@ -2687,7 +3302,7 @@ mod tests {
         }
         chat.layout(&|text: &str| text.len() as f32);
         assert!(chat.button_boxes().iter().all(|(name, _)| !name.starts_with("chat_scroll") && *name != "chat_thumb"));
-        let bar = [chat.at(chat.scrollbar_corner())[0] + 5.0, top(&chat) + 30.0];
+        let bar = [chat.log_box().scrollbar()[0] + 5.0, top(&chat) + 30.0];
         assert_eq!(chat.hit(bar), Some(Hit::Log));
         for line in 3..20 {
             chat.push(format!("line {line}"), PUBLIC);
@@ -2699,8 +3314,8 @@ mod tests {
         assert_eq!(chat.tabs[0].scroll, 0);
         assert!(chat.blocks(middle_of(&chat, "chat_scroll_up")), "the scrollbar is the window's");
         // The thumb: the 32-px track times 3 of 20 rows is under 8, so 8 (drawn 7), at the bottom one under the track.
-        let (thumb_top, thumb_height) = chat.thumb();
-        assert_eq!((thumb_top, thumb_height), (LOG_BOX[1] + ARROW + 24.0 + 1.0, 7.0));
+        let (thumb_top, thumb_height) = chat.tabs[0].thumb(chat.log_box());
+        assert_eq!((thumb_top, thumb_height), (top(&chat) + LOG_BOX[1] + ARROW + 24.0 + 1.0, 7.0));
         // Dragged to the top of the track it shows the oldest rows; halfway, about half.
         let grab = middle_of(&chat, "chat_thumb");
         assert_eq!(chat.hit(grab), Some(Hit::Thumb));
@@ -2738,19 +3353,24 @@ mod tests {
     fn saves_the_tabs_and_the_lock() {
         let mut tabs = default_tabs();
         tabs.push(Tab::new(Label::Text("Trade talk".into()), HashSet::from([Kind::Public, Kind::Whisper])));
-        let text = tabs_text(&tabs, true);
+        // A torn-off window keeps its place and size.
+        let torn = vec![Torn::new(Tab::new(Label::Text("Loot".into()), HashSet::from([Kind::ItemLog])), 0, Some([120.0, 140.0, 312.0, 106.0]))];
+        let text = tabs_text(&tabs, &torn, true);
         assert_eq!(text.lines().take(2).collect::<Vec<_>>(), ["v3", "locked 1"]);
         assert_eq!(text.lines().nth(3), Some("tab\t#1292\tbattle party_battle"));
         assert_eq!(text.lines().nth(4), Some("tab\tTrade talk\tpublic whisper"));
-        assert_eq!(tabs_from(&text), Some((tabs, true)));
+        assert_eq!(text.lines().nth(5), Some("window\tLoot\titem_log\t120 140 312 106"));
+        let windows = vec![(torn[0].tab.clone(), [120.0, 140.0, 312.0, 106.0])];
+        assert_eq!(tabs_from(&text), Some(Saved { tabs, torn: windows, locked: true }));
         // A tab with nothing ticked keeps its empty kinds.
         let empty = vec![Tab::new(Label::Text("NewTab_3".into()), HashSet::new())];
-        assert_eq!(tabs_from(&tabs_text(&empty, false)), Some((empty, false)));
+        assert_eq!(tabs_from(&tabs_text(&empty, &[], false)), Some(Saved { tabs: empty, torn: Vec::new(), locked: false }));
         // The two-tab file before names and the lock: the game's two tabs, unlocked.
         let old = format!("v2\n{}\nbattle", kinds_names(&default_kinds()[0]));
+        let saved = tabs_from(&old).unwrap();
         assert_eq!(
-            tabs_from(&old).map(|(tabs, locked)| (tabs.iter().map(|tab| tab.label.clone()).collect::<Vec<_>>(), locked)),
-            Some((vec![Label::Message(1291), Label::Message(1292)], false))
+            (saved.tabs.iter().map(|tab| tab.label.clone()).collect::<Vec<_>>(), saved.locked),
+            (vec![Label::Message(1291), Label::Message(1292)], false)
         );
         // A file from before the game's 25 categories, or cut short, is dropped for the defaults.
         assert_eq!(tabs_from("public own\nbattle"), None);
