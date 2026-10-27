@@ -276,7 +276,7 @@ impl Companion {
             [x, y, size[0], size[1]]
         };
         let mut boxes = Vec::new();
-        if self.frame.open {
+        if self.frame.open && !self.frame.minimized {
             boxes.push(("companion_help", place(&self.frame, HELP_AT)));
             boxes.push(("companion_create", place(&self.frame, CREATE_AT)));
             boxes.push(("companion_ok", place(&self.frame, (COMPANION_OK, BUTTON))));
@@ -313,7 +313,10 @@ impl Companion {
                 layer.sprites.push((right, frame.at([size[0] - right.size[0], top]), [right.size[0], FOOTER]));
             }
         };
-        if self.frame.open {
+        // Minimized: the title bar alone.
+        if self.frame.open && self.frame.minimized {
+            self.frame.draw_title(layer, chrome, &message(COMPANION_TITLE), pointer.0);
+        } else if self.frame.open {
             body(layer, &self.frame, COMPANION_SIZE, true);
             self.frame.draw_title(layer, chrome, &message(COMPANION_TITLE), pointer.0);
             layer.texts.push((message(COMPANION_TEXT), self.frame.at([15.0, 32.0]), [0, 0, 0]));

@@ -219,7 +219,9 @@ impl App {
             // The option menu keeps the pointer until it's closed (`menu_takes`).
             // ponytail: a click off its buttons does nothing.
             Scene::Game(game) if game.menu_takes(cursor) => {
-                match game.escape.as_ref().unwrap().hit(cursor, game.can_resurrect()).flatten() {
+                let menu = game.escape.as_ref().unwrap();
+                let choice = if menu.on_close(cursor) { Some(escape::Choice::Return) } else { menu.hit(cursor, game.can_resurrect()).flatten() };
+                match choice {
                     Some(escape::Choice::SavePoint) => game.save_asked = true,
                     Some(escape::Choice::CharSelect) => {
                         game.escape = None;
@@ -2968,10 +2970,12 @@ impl App {
         {
             return;
         }
-        // So is a press on the message box or Confirm Deal: nothing under it starts a drag, so its release still clicks.
+        // So is a press on the message box or Confirm Deal, and any press while the game menu keeps the pointer
+        // (`menu_takes`): nothing under it starts a drag, so its release still clicks.
         if let (Scene::Game(game), Some(assets)) = (&self.scene, &self.assets)
             && (game.question_box.is_some() && contains(dialog_position(&assets.message), assets.message.size, cursor)
-                || game.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some()))
+                || game.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some())
+                || game.menu_takes(cursor))
         {
             return;
         }

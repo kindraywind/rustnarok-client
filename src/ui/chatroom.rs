@@ -376,7 +376,11 @@ impl Make {
         }
         let [title, limit, mode] = Self::places();
         let footer = MAKE_SIZE[1] - MAKE_FOOTER;
-        Some(if contains([MAKE_SIZE[0] - 110.0, footer + 4.0], BUTTON, local) {
+        // The title bar's close is Cancel.
+        let close = Frame::new([0.0; 2], MAKE_SIZE[0]).close_button();
+        Some(if contains(close, window::BUTTON_SIZE, local) {
+            MakeHit::Cancel
+        } else if contains([MAKE_SIZE[0] - 110.0, footer + 4.0], BUTTON, local) {
             MakeHit::Ok
         } else if contains([MAKE_SIZE[0] - 60.0, footer + 4.0], BUTTON, local) {
             MakeHit::Cancel
@@ -534,5 +538,8 @@ mod tests {
         make.type_text("123456789");
         assert_eq!(make.password, "12345678");
         assert!(make.click(MakeHit::Ok));
+        // The title bar's close is Cancel.
+        let close = offset(Make::corner(), [MAKE_SIZE[0] - 14.0 + 5.0, 3.0 + 5.0]);
+        assert_eq!(make.hit(close), Some(MakeHit::Cancel));
     }
 }

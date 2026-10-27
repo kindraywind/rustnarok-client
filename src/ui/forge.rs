@@ -177,6 +177,9 @@ impl Forge {
     }
 
     pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
+        if self.frame.minimized {
+            return Vec::new();
+        }
         let mut buttons = [("btn_ok", OK), ("btn_cancel", CANCEL)]
             .map(|(name, corner)| {
                 let [x, y] = self.frame.at(corner);
@@ -207,7 +210,12 @@ impl Forge {
         font: &Font,
         pointer: ([f32; 2], bool),
     ) {
-        if !self.frame.open || self.frame.minimized {
+        if !self.frame.open {
+            return;
+        }
+        // Minimized: the title bar alone, so its buttons can bring it back.
+        if self.frame.minimized {
+            self.frame.draw_title(layer, chrome, "", pointer.0);
             return;
         }
         let pos = self.frame.position;

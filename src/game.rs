@@ -2518,6 +2518,14 @@ impl Game {
 
     /// F11 closes the player's windows. A talk with an NPC stays until the server ends it.
     pub(crate) fn close_windows(&mut self) {
+        // The storage and the mailbox are closed the way their close buttons close them: the server is told.
+        if self.storage.frame.open {
+            let _ = self.session.close_storage();
+        }
+        if self.mail.list.frame.open {
+            let _ = self.session.close_mailbox();
+        }
+        self.storage.close();
         for frame in [
             &mut self.hotkeys.frame,
             &mut self.basic_info.frame,
@@ -2570,7 +2578,7 @@ impl Game {
         self.room_make = None;
         self.viewing = None;
         self.mail.letter = None;
-        self.mail.compose = None;
+        self.drop_compose();
         if self.bank.is_some() {
             let _ = self.session.close_bank(self.account_id);
             self.bank = None;
@@ -2583,6 +2591,14 @@ impl Game {
     pub(crate) fn settings_at(&self, cursor: [f32; 2]) -> bool {
         self.settings_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
             || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
+    }
+
+    /// The mail being written goes, and the server hears it's cancelled: until then rathena keeps the player from
+    /// walking (`mail_writing`).
+    pub(crate) fn drop_compose(&mut self) {
+        if self.mail.compose.take().is_some() {
+            let _ = self.session.cancel_mail();
+        }
     }
 
     /// The game menu is up and a click here is its, whatever is under it: all but the settings windows it opened and
@@ -3596,7 +3612,7 @@ impl Game {
                 let _ = self.session.close_mailbox();
             }
             MailRead => self.mail.letter = None,
-            MailWrite => self.mail.compose = None,
+            MailWrite => self.drop_compose(),
             GameSettings => self.settings_window = None,
             ShortcutSettings => self.shortcuts_window = None,
             WorldMap => self.world_map = None,

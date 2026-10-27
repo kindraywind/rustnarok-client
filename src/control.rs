@@ -1497,6 +1497,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.guild.iter().flat_map(|guild| game.guild_window.button_boxes(guild)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.guild_companion.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.mail.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.trade.iter().flat_map(|trade| trade.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.card_view.iter().map(|view| json!({"kind": "button", "name": "card_picture_close", "box": view.close_box()})))
         .chain(question_buttons)
@@ -1702,7 +1703,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "shop_goods": game.shop.as_ref().map(|shop| shop.goods().into_iter().map(|(item, count)| (item.to_string(), json!(count))).collect::<serde_json::Map<_, _>>()),
         "shop_whole": game.shop.as_ref().map(|shop| shop.whole),
         // The windows Esc closes, in the order it closes them (newest first).
-        "esc_order": game.esc_names(),
+        "esc_order": game.esc_order.iter().map(|id| id.name()).collect::<Vec<_>>(),
         // The game menu's buttons, when it is open (null when it isn't). `windows` names it GameMenu.
         "escape": game.escape.as_ref().map(|menu| menu.choices(game.can_resurrect()).into_iter().map(|choice| choice.button()).collect::<Vec<_>>()),
         "save_asked": game.save_asked,

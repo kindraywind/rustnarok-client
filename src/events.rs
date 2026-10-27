@@ -1121,8 +1121,11 @@ impl App {
                 let window = refine::Refine::new(crate::screen(), control::now());
                 // Opening shuts an open mail window and bank window, each with a red line.
                 if game.mail.list.frame.open || game.mail.compose.is_some() || game.mail.letter.is_some() {
+                    if game.mail.list.frame.open {
+                        let _ = game.session.close_mailbox();
+                    }
                     game.mail.list.frame.open = false;
-                    game.mail.compose = None;
+                    game.drop_compose();
                     game.mail.letter = None;
                     game.chat_line(self.messages.get(REFINE_CLOSED_MAIL).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
