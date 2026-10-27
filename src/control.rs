@@ -1863,7 +1863,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "show_emblems": game.show_emblems,
         // The name in the chat's whisper box.
         "whisper_name": game.chat.whisper,
-        "chat_tabs": (0..2).map(|tab| game.chat.tab_lines(tab).iter().rev().take(5).rev().map(|(text, ..)| text.clone()).collect::<Vec<_>>()).collect::<Vec<_>>(),
+        "chat_tabs": (0..game.chat.tabs.len()).map(|tab| game.chat.tab_lines(tab).iter().rev().take(5).rev().map(|(text, ..)| text.clone()).collect::<Vec<_>>()).collect::<Vec<_>>(),
+        "chat_tab_names": game.chat.tabs.iter().map(|tab| tab.label.text(&app.messages)).collect::<Vec<_>>(),
         "chat_send_to": format!("{:?}", game.chat.send_to),
         "chat_locked": game.chat.locked,
         "chat_corner": game.chat.corner_moved(),
@@ -2231,6 +2232,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("chat_send_to", Fair),
         ("chat_tab", Fair),
         ("chat_tabs", Fair),
+        ("chat_tab_names", Fair),
         ("chat_whisper", Fair),
         ("cooldowns", Assist),
         ("costumes_shown", Fair),
