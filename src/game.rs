@@ -871,10 +871,11 @@ impl Game {
     }
 
     /// Every window's frame, by name, for saving where each was left. `minimap` is the game's MINIMAPWNDINFO.
-    pub(crate) fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 28] {
+    pub(crate) fn panel_frames(&mut self) -> [(&'static str, &mut window::Frame); 29] {
         let [used, cash, armors, weapons, costumes, ammo, card, etc] = &mut self.storage.categories;
         [
             ("hotkeys", &mut self.hotkeys.frame),
+            ("quick_slot", &mut self.hotkeys.quick_window),
             ("basic_info", &mut self.basic_info.frame),
             ("inventory", &mut self.inventory.frame),
             ("equipment", &mut self.equipment.frame),

@@ -1593,6 +1593,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     windows.extend(
         [
             ("Hotkeys", game.hotkeys.frame.open),
+            ("QuickSlot", game.hotkeys.quick_window.open),
             ("BasicInfo", game.basic_info.frame.open),
             ("Shop", game.shop.as_ref().is_some_and(crate::shop::Shop::plain)),
             (GAME_MENU, game.escape.is_some()),
@@ -1727,9 +1728,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         "hotkeys": game.hotkeys.keys.iter().map(|key| key.map(|key| json!({"skill": key.skill, "id": key.id, "count": key.count}))).collect::<Vec<_>>(),
         // The hotbar showing: 0 (hotbar 1) or 1.
         "hotkey_tab": game.hotkeys.tab(),
-        // Each bar's row rotation (hotbar 1, hotbar 2), and whether the quick item row shows.
+        // Each bar's row rotation (hotbar 1, hotbar 2).
         "hotkey_rotations": game.hotkeys.rotations(),
-        "hotkey_quick": game.hotkeys.quick,
+        // The quick slot window's place, null while the Quick Slots switch is off.
+        "quick_slot": game.hotkeys.quick_window.open.then_some(game.hotkeys.quick_window.position),
         "hotkey_position": game.hotkeys.frame.position,
         // Bound shortcuts: action name to the chord ("Alt+V", "F1"). Unbound rows are left out.
         "shortcuts": app.keybinds.labels(),
@@ -2277,7 +2279,6 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("hit_sparks", Test),
         ("homunculus", Fair),
         ("hotkey_position", Fair),
-        ("hotkey_quick", Fair),
         ("hotkey_rotations", Fair),
         ("hotkey_tab", Fair),
         ("hotkeys", Fair),
@@ -2321,6 +2322,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("quest_picked", Fair),
         ("quest_tracker", Fair),
         ("quests", Fair),
+        ("quick_slot", Fair),
         ("ranking", Fair),
         ("refusing_party", Fair),
         ("reputation", Fair),

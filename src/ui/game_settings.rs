@@ -1,7 +1,7 @@
 //! Game Settings (2374): one 400×350 window, centred and made fresh each time it opens, with the game's five tabs and
 //! this client's Extras. Basic has the music and effect sound rows, Effect the effect switches this client has,
-//! Graphics the screen mode; Control and Other stay empty here. Extras has switches the game doesn't have, all off at
-//! first.
+//! Control the Quick Slots switch, Graphics the screen mode; Other stays empty here. Extras has switches the game
+//! doesn't have, all off at first.
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::text::Font;
@@ -29,6 +29,7 @@ const TAB_HEIGHT: f32 = 18.0;
 const TAB_TOP: f32 = 17.0;
 pub const BASIC: usize = 0;
 pub const EFFECT: usize = 1;
+pub const CONTROL: usize = 2;
 pub const GRAPHICS: usize = 3;
 pub const EXTRAS: usize = 5;
 /// The pages: 400×288 at (0, 34), outlined in #CECECE (`options::OUTLINE`).
@@ -75,6 +76,9 @@ const SWITCHES: [(Worded, Worded); 5] = [
     ((2805, "Screen shake"), (3161, "")),
     ((4164, "Extended damage"), (usize::MAX, "Big damage in thousands (K) or millions (M)")),
 ];
+/// The Control page's row, laid out as the Effect page's: the game's Quick Slots (TT_QUICK_SLOT_ON_OFF, on at first),
+/// the quick slot window. Its words are ours; the game's come from GameSettings.lub, which this data lacks.
+const CONTROL_ROWS: [(&str, &str); 1] = [("Quick Slots", "The two quick slots in a window of their own")];
 /// The Extras page's rows, laid out as the Effect page's: title and description (`extras`, `extra`).
 const EXTRA_ROWS: [(&str, &str); 5] = [
     ("Monster HP", "A hurt monster's HP in numbers under its bar"),
@@ -193,10 +197,9 @@ impl GameSettings {
                     _ => None,
                 })
                 .unwrap_or(Hit::Window),
-            EFFECT | EXTRAS => {
-                let rows = if self.tab == EFFECT { SWITCHES.len() } else { EXTRA_ROWS.len() };
+            EFFECT | CONTROL | EXTRAS => {
                 let row = ((y - 1.0) / ROW).floor();
-                if (0.0..rows as f32).contains(&row) && x < ROW_TITLE { Hit::Switch(row as usize) } else { Hit::Window }
+                if (0.0..row_count(self.tab) as f32).contains(&row) && x < ROW_TITLE { Hit::Switch(row as usize) } else { Hit::Window }
             }
             GRAPHICS if (SCREEN_TOP..SCREEN_TOP + 32.0).contains(&y) => {
                 SCREEN_RADIOS.iter().position(|&(radio, _)| (radio..radio + 90.0).contains(&x)).map_or(Hit::Window, |radio| Hit::Screen(radio == 0))
@@ -244,6 +247,10 @@ impl GameSettings {
             Hit::Off(row) => {
                 sound.on[row] = !sound.on[row];
                 Some(Action::Sound)
+            }
+            Hit::Switch(_) if self.tab == CONTROL => {
+                graphics.quick_slot = !graphics.quick_slot;
+                Some(Action::Graphics)
             }
             Hit::Switch(row) if self.tab == EXTRAS => {
                 let on = extra(graphics, row);
@@ -295,9 +302,8 @@ impl GameSettings {
             BASIC => boxes.extend(
                 SOUND_ROWS.iter().enumerate().map(|(row, &y)| (format!("sound_off:{row}"), place([OFF_BOX, PAGE_TOP + SOUND_TOP + y + 1.0], [10.0, 10.0]))),
             ),
-            EFFECT | EXTRAS => boxes.extend(
-                (0..if self.tab == EFFECT { SWITCHES.len() } else { EXTRA_ROWS.len() })
-                    .map(|row| (format!("switch:{row}"), place([SWITCH[0], PAGE_TOP + 1.0 + row as f32 * ROW + SWITCH[1]], [20.0, 15.0]))),
+            EFFECT | CONTROL | EXTRAS => boxes.extend(
+                (0..row_count(self.tab)).map(|row| (format!("switch:{row}"), place([SWITCH[0], PAGE_TOP + 1.0 + row as f32 * ROW + SWITCH[1]], [20.0, 15.0]))),
             ),
             GRAPHICS => boxes.extend(
                 SCREEN_RADIOS.iter().enumerate().map(|(radio, &(x, _))| (format!("screen:{radio}"), place([x, PAGE_TOP + SCREEN_TOP + 12.0], [12.0, 12.0]))),
@@ -371,12 +377,14 @@ impl GameSettings {
                     layer.texts.push((worded(OFF), group([OFF_X, y]), black));
                 }
             }
-            EFFECT | EXTRAS => {
-                let rows: Vec<(String, String, bool)> = if self.tab == EFFECT {
-                    let title = |title| worded(title).trim_end_matches(" ON").to_owned();
-                    SWITCHES.iter().enumerate().map(|(row, &(title_id, text))| (title(title_id), worded(text), switch_on(graphics, row))).collect()
-                } else {
-                    EXTRA_ROWS.iter().zip(extras(graphics)).map(|(&(title, text), on)| (title.to_owned(), text.to_owned(), on)).collect()
+            EFFECT | CONTROL | EXTRAS => {
+                let rows: Vec<(String, String, bool)> = match self.tab {
+                    EFFECT => {
+                        let title = |title| worded(title).trim_end_matches(" ON").to_owned();
+                        SWITCHES.iter().enumerate().map(|(row, &(title_id, text))| (title(title_id), worded(text), switch_on(graphics, row))).collect()
+                    }
+                    CONTROL => CONTROL_ROWS.iter().map(|&(title, text)| (title.to_owned(), text.to_owned(), graphics.quick_slot)).collect(),
+                    _ => EXTRA_ROWS.iter().zip(extras(graphics)).map(|(&(title, text), on)| (title.to_owned(), text.to_owned(), on)).collect(),
                 };
                 for (row, (title, text, on)) in rows.into_iter().enumerate() {
                     let top = 1.0 + row as f32 * ROW;
@@ -408,6 +416,15 @@ impl GameSettings {
 pub fn reset(sound: &mut Settings, graphics: &mut GraphicsSettings) {
     *sound = Settings::default();
     *graphics = GraphicsSettings { fullscreen: graphics.fullscreen, ..GraphicsSettings::default() };
+}
+
+/// How many switch rows a page has: Effect's, Control's, Extras'.
+fn row_count(tab: usize) -> usize {
+    match tab {
+        EFFECT => SWITCHES.len(),
+        CONTROL => CONTROL_ROWS.len(),
+        _ => EXTRA_ROWS.len(),
+    }
 }
 
 /// Whether an Effect page switch is on: effects shown, the aura shown, the mini aura, the screen shaking, the extended
@@ -522,6 +539,24 @@ mod tests {
         assert_eq!(window.click(Hit::Reset, &mut sound, &mut graphics), Some(Action::AskReset));
         assert_eq!(window.click(Hit::CloseButton, &mut sound, &mut graphics), Some(Action::Close));
         assert!(!window.frame.open);
+    }
+
+    #[test]
+    fn control_has_the_quick_slots_switch_on_at_first() {
+        let mut window = GameSettings::new([1024.0, 768.0], false);
+        let (mut sound, mut graphics) = (Settings::default(), GraphicsSettings::default());
+        assert!(graphics.quick_slot);
+        window.click(Hit::Tab(CONTROL), &mut sound, &mut graphics);
+        let corner = window.frame.position;
+        let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 8.0])), Some(Hit::Switch(0)));
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + ROW + 8.0])), Some(Hit::Window), "one row only");
+        assert_eq!(window.click(Hit::Switch(0), &mut sound, &mut graphics), Some(Action::Graphics));
+        assert!(!graphics.quick_slot);
+        assert_eq!(graphics, GraphicsSettings { quick_slot: false, ..GraphicsSettings::default() }, "nothing else moved");
+        assert!(window.button_boxes().iter().any(|(name, _)| name == "switch:0"));
+        reset(&mut sound, &mut graphics);
+        assert!(graphics.quick_slot);
     }
 
     #[test]
