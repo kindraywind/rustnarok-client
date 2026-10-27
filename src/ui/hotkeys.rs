@@ -345,6 +345,13 @@ impl Hotkeys {
     }
 
     /// The bar row a shown slot is on.
+    /// What a right press on `slot` describes: the carried stack of the item on it. A skill, an empty slot or an item
+    /// not carried: nothing.
+    pub fn carried<'a>(&self, slot: usize, inventory: &'a [InventoryItem]) -> Option<&'a InventoryItem> {
+        let key = self.keys.get(slot).copied().flatten().filter(|key| !key.skill)?;
+        inventory.iter().find(|item| item.id == key.id)
+    }
+
     pub fn slot_row(&self, slot: usize) -> Option<usize> {
         self.slot_boxes().iter().position(|(index, _)| *index == slot).map(|visible| visible / PER_ROW)
     }
@@ -429,6 +436,21 @@ mod tests {
         assert_eq!(drop_on(&keys, heal, 12), vec![(9, None), (12, Some(heal))]);
         // The same item id as a skill id is another key.
         assert_eq!(drop_on(&keys, Hotkey { skill: false, id: 28, count: 1 }, 2), vec![(2, Some(Hotkey { skill: false, id: 28, count: 1 }))]);
+    }
+
+    #[test]
+    fn a_right_press_describes_a_carried_item_key() {
+        let mut bar = Hotkeys::default();
+        bar.keys[0] = Some(Hotkey { skill: true, id: 501, count: 10 });
+        bar.keys[2] = Some(item_key(501));
+        bar.keys[3] = Some(item_key(909));
+        bar.keys[QUICK[0]] = Some(item_key(501));
+        let potion = InventoryItem { index: 4, id: 501, amount: 5, ..Default::default() };
+        let inventory = [InventoryItem { index: 2, id: 1201, ..Default::default() }, potion.clone()];
+        assert_eq!(bar.carried(2, &inventory), Some(&potion));
+        assert_eq!(bar.carried(QUICK[0], &inventory), Some(&potion));
+        // A skill with the same id, an item not carried, an empty slot: nothing to describe.
+        assert_eq!((bar.carried(0, &inventory), bar.carried(3, &inventory), bar.carried(4, &inventory)), (None, None, None));
     }
 
     #[test]
