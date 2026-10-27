@@ -96,7 +96,7 @@ pub fn dragged_to(to: [f32; 2], size: [f32; 2]) -> [f32; 2] {
 
 /// How see-through a window is `now`: easing to HELD_FADED while held (since `held`), and back once let go (at
 /// `let_go`, from how faded it was then).
-fn hold_fade(held: Option<Instant>, let_go: Option<(Instant, f32)>, now: Instant) -> f32 {
+pub(crate) fn hold_fade(held: Option<Instant>, let_go: Option<(Instant, f32)>, now: Instant) -> f32 {
     let eased = |since: Instant| (now.saturating_duration_since(since).as_secs_f32() / HOLD_EASE.as_secs_f32()).min(1.0);
     match (held, let_go) {
         (Some(held), _) => HELD_FADED * eased(held),

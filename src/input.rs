@@ -1789,8 +1789,12 @@ impl App {
                 if game.chat.hit(cursor) == Some(chat::Hit::ModeIcon) {
                     game.chat_mode.toggle_line();
                     game.chat.mode_icon = game.chat_mode.icon();
-                } else if let Some(id) = game.chat.click(cursor) {
-                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                } else {
+                    match game.chat.click(cursor) {
+                        Some(chat::Said::Line(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                        Some(chat::Said::Notice(id)) => game.question_box = Some(BoxQuestion::Notice(id)),
+                        None => {}
+                    }
                 }
             }
             Scene::Game(game) if game.dialog.is_some() && (game.on_npc_window(cursor) || game.talk_blocks()) => {

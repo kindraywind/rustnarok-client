@@ -1,5 +1,5 @@
 {
-  "about": "The chat window (issue #215): F10 steps through the input bar alone and logs 96, 138, 180, 222 and 264 tall, bottom edge in place; log lines 14 apart from x 7, 110-wide tabs with the stick, battle-option and option buttons right after them. Battle mode (/bm) leaves the line open; Enter on the empty line closes it and the input bar goes with it (issue #353).",
+  "about": "The chat window (issue #215): F10 steps through the input bar alone and logs 96, 138, 180, 222 and 264 tall, bottom edge in place; log lines 14 apart from x 7, tabs as wide as their labels and 10, the buttons right to left from the lock. The window drags by the input bar's gaps (the spot left of the name box), snaps flush to the screen's edges, and stays put while locked. Add tab makes NewTab_3 (nothing ticked), remove tab takes the one shown. Battle mode (/bm) leaves the line open; Enter on the empty line closes it and the input bar goes with it (issue #353).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -184,6 +184,230 @@
       "expect": {
         "state": {
           "chat_height": 96
+        }
+      }
+    },
+    {
+      "mouse_down": {
+        "button": "chat_grip"
+      }
+    },
+    {
+      "move": [
+        200,
+        500
+      ]
+    },
+    {
+      "move": [
+        310,
+        400
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          310,
+          400
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_corner": [
+            307,
+            412
+          ],
+          "chat_focus": "message"
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        200
+      ]
+    },
+    {
+      "shot": "chat-dragged",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "chat_add_tab"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_tab_names": [
+            "Public",
+            "Battle",
+            "NewTab_3"
+          ]
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "chat_tab_2"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_tab": 2
+        }
+      }
+    },
+    {
+      "say": "Only Public shows this"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_log_rows": 0
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        200
+      ]
+    },
+    {
+      "shot": "chat-new-tab",
+      "crop": [
+        300,
+        300,
+        620,
+        130
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "chat_remove_tab"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_tab_names": [
+            "Public",
+            "Battle"
+          ],
+          "chat_tab": 1
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "chat_tab_0"
+      }
+    },
+    {
+      "click_on": {
+        "button": "chat_lock"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "mouse_down": {
+        "button": "chat_grip"
+      }
+    },
+    {
+      "move": [
+        100,
+        300
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          100,
+          300
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_locked": true,
+          "chat_corner": [
+            307,
+            412
+          ]
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "chat_lock"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "mouse_down": {
+        "button": "chat_grip"
+      }
+    },
+    {
+      "move": [
+        100,
+        700
+      ]
+    },
+    {
+      "move": [
+        8,
+        749
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          8,
+          749
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_locked": false,
+          "chat_corner": [
+            0,
+            768
+          ]
         }
       }
     },
