@@ -8,7 +8,7 @@ use rustnarok_client::lua::ItemInfo;
 use rustnarok_client::net::InventoryItem;
 use rustnarok_client::text::Font;
 
-use crate::inventory::{self, UNIDENTIFIED};
+use crate::inventory;
 use crate::render::{Gpu, Texture};
 use crate::shop::group;
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT};
@@ -279,6 +279,8 @@ impl Trade {
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
+        (cards, makers): inventory::Naming,
+        messages: &[String],
         font: &Font,
         pointer: ([f32; 2], bool),
         caret: bool,
@@ -316,10 +318,12 @@ impl Trade {
                     layer.texts.push((amount.clone(), offset(place, [-1.0, -1.0]), [255; 3]));
                     layer.texts.push((amount, place, [0, 0, 0]));
                 }
-                let name = inventory::item_name(items, item.id, item.identified, item.refine);
-                layer.texts.push((window::fit(font, &name, 190.0), at(offset(top, [34.0, 9.0])), if item.identified { [0, 0, 0] } else { UNIDENTIFIED }));
+                // The whole name in black; the balloon in the item's colour, with its options' count.
+                let name = inventory::full_name(items, cards, messages, makers, item, true);
+                layer.texts.push((window::fit(font, &name, 190.0), at(offset(top, [34.0, 9.0])), [0, 0, 0]));
                 if hit == Some(Hit::Item(side, row)) {
-                    window::tooltip(tooltip, chrome, font, &name, offset(pointer.0, [12.0, 12.0]), [255; 3]);
+                    let text = inventory::option_text(messages, &name, item);
+                    window::tooltip(tooltip, chrome, font, &text, offset(pointer.0, [12.0, 12.0]), inventory::name_color(item, items));
                 }
             }
         }

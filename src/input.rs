@@ -125,7 +125,7 @@ impl App {
                 match game.link_at(cursor).cloned().unwrap() {
                     links::Target::Item(item) => {
                         let card = self.card_pictures.name(item.id).is_some();
-                        game.show_item(iteminfo::Shown::of_link(item.id, item.refine, item.cards, card, &self.items).with_link_options(&item.options));
+                        game.show_item(iteminfo::Shown::of_link(item.id, item.refine, item.cards, card, &self.items).with_link(&item));
                     }
                     links::Target::Navi { map, cell } => {
                         let map = navigation::map_key(&map);
@@ -1310,7 +1310,7 @@ impl App {
                         game.amount = if shop.plain()
                             && let Some(offer) = shop.offers.get(row)
                         {
-                            let name = inventory::item_name(&self.items, offer.item, offer.identified, offer.refine);
+                            let name = offer.name(&self.items, (&self.card_names, &game.char_names), &self.messages);
                             Some(window::Amount::shop(Asked::Shop(row), name, None))
                         } else {
                             Some(window::Amount::new(Asked::Shop(row), None))
@@ -2638,7 +2638,7 @@ impl App {
                             game.amount = if shop.plain()
                                 && let Some(offer) = shop.offers.get(row)
                             {
-                                let name = inventory::item_name(&self.items, offer.item, offer.identified, offer.refine);
+                                let name = offer.name(&self.items, (&self.card_names, &game.char_names), &self.messages);
                                 Some(window::Amount::shop(Asked::Shop(row), name, amount))
                             } else {
                                 Some(window::Amount::new(Asked::Shop(row), amount))
@@ -2650,7 +2650,7 @@ impl App {
                                 && let Some(&(offer_idx, _)) = shop.deal.get(row)
                                 && let Some(offer) = shop.offers.get(offer_idx)
                             {
-                                let name = inventory::item_name(&self.items, offer.item, offer.identified, offer.refine);
+                                let name = offer.name(&self.items, (&self.card_names, &game.char_names), &self.messages);
                                 Some(window::Amount::shop(Asked::ShopOut(row), name, amount))
                             } else {
                                 Some(window::Amount::new(Asked::ShopOut(row), amount))

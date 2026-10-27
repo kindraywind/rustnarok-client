@@ -2264,13 +2264,25 @@ impl App {
             window.draw(shop_layer.window(), &assets.chrome, &assets.skill_descript, font, pointer.0, &cooling, skill_info);
         }
         if let Some((list, _)) = &game.pick {
-            list.draw(shop_layer.window(), &assets.chrome, &assets.pick_list, &assets.npc_menu, icons, items, skill_info, messages, font, pointer);
+            list.draw(
+                shop_layer.window(),
+                &assets.chrome,
+                &assets.pick_list,
+                &assets.npc_menu,
+                icons,
+                items,
+                (card_names, &game.char_names),
+                skill_info,
+                messages,
+                font,
+                pointer,
+            );
         }
         if let Some(forge) = &game.forge {
             forge.draw(shop_layer.window(), &assets.chrome, &assets.forge, icons, items, messages, font, pointer);
         }
         if let Some(shop) = &game.shop {
-            shop.draw(shop_layer.window(), &assets.chrome, &assets.shop, icons, items, messages, font, pointer);
+            shop.draw(shop_layer.window(), &assets.chrome, &assets.shop, icons, items, (card_names, &game.char_names), messages, font, pointer);
         }
         if let Some(confirm) = &game.deal_confirm {
             confirm.draw(shop_layer.window(), &assets.chrome, &assets.shop, messages, pointer);
@@ -2287,19 +2299,43 @@ impl App {
             room.draw(shop_layer.window(), &assets.chrome, font, messages, &game.me.name, pointer.0, caret);
         }
         if let Some(setup) = &game.vend_setup {
-            setup.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, &game.cart.items, font, messages, pointer, caret);
+            setup.draw(
+                shop_layer.window(),
+                &assets.chrome,
+                &assets.vend,
+                icons,
+                items,
+                (card_names, &game.char_names),
+                &game.cart.items,
+                font,
+                messages,
+                pointer,
+                caret,
+            );
         }
         if let Some(shop) = &game.my_shop {
-            shop.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
+            shop.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, (card_names, &game.char_names), font, messages, pointer);
         }
         if let Some(history) = &game.sell_history {
-            history.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
+            history.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, (card_names, &game.char_names), font, messages, pointer);
         }
         if let Some(setup) = &game.buying_setup {
-            setup.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, &game.inventory.items, font, messages, pointer, caret);
+            setup.draw(
+                shop_layer.window(),
+                &assets.chrome,
+                &assets.vend,
+                icons,
+                items,
+                (card_names, &game.char_names),
+                &game.inventory.items,
+                font,
+                messages,
+                pointer,
+                caret,
+            );
         }
         if let Some(store) = &game.my_buying_store {
-            store.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, font, messages, pointer);
+            store.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, (card_names, &game.char_names), font, messages, pointer);
         }
         game.quest_window.draw(
             shop_layer.window(),
@@ -2342,7 +2378,20 @@ impl App {
         if let Some(window) = &game.macro_window {
             window.draw(shop_layer.window(), &assets.chrome, font, messages, &game.macro_lines, pointer.0, caret);
         }
-        game.mail.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.mail, icons, items, font, messages, pc_job_names, pointer, caret);
+        game.mail.draw(
+            shop_layer.window(),
+            &mut tooltip,
+            &assets.chrome,
+            &assets.mail,
+            icons,
+            items,
+            (card_names, &game.char_names),
+            font,
+            messages,
+            pc_job_names,
+            pointer,
+            caret,
+        );
         if let Some(make) = &game.room_make {
             make.draw(shop_layer.window(), &assets.chrome, &assets.chatroom, messages, pointer, caret);
         }
@@ -2413,7 +2462,19 @@ impl App {
             window.draw(shop_layer.window(), &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(trade) = &game.trade {
-            trade.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.trade, icons, items, font, pointer, caret);
+            trade.draw(
+                shop_layer.window(),
+                &mut tooltip,
+                &assets.chrome,
+                &assets.trade,
+                icons,
+                items,
+                (card_names, &game.char_names),
+                messages,
+                font,
+                pointer,
+                caret,
+            );
         }
         // Someone asks to join through our booking post: who, their level and job.
         // ponytail: the question's words are plain English; the client's own aren't identified.

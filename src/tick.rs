@@ -17,6 +17,18 @@ impl App {
             }
         }
         game.poll_booking();
+        // The makers of forged and brewed items anywhere on screen: each one's name asked for once, as the game does.
+        let shown = (game.inventory.items.iter().chain(&game.cart.items).chain(&game.storage.items))
+            .chain(game.trade.iter().flat_map(|trade| trade.items.iter().flatten()))
+            .chain(game.my_shop.iter().flat_map(|shop| shop.goods.iter().map(|good| &good.item)))
+            .chain(game.shop.iter().flat_map(|shop| shop.offers.iter().filter_map(|offer| offer.whole.as_ref())))
+            .chain(game.mail.letter.iter().flat_map(|letter| &letter.items));
+        let makers: Vec<u32> = shown.filter_map(|item| inventory::maker(&item.cards)).filter(|maker| !game.char_names.contains_key(maker)).collect();
+        for maker in makers {
+            if game.names_asked.insert(maker) {
+                let _ = game.session.ask_char_name(maker);
+            }
+        }
         // The refine window's hammering: its sounds as the frames pass, and at its end the result's sound and chat line.
         let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
         let carried = &game.inventory.items;

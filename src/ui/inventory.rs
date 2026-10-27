@@ -115,8 +115,6 @@ pub const BOUND: [u8; 3] = [0xFF, 0xFF, 0x00];
 /// An item's name by how many enchants it has, 1 to 4.
 pub const ENCHANTED: [[u8; 3]; 4] = [[0xAD, 0xFF, 0x2F], [0x00, 0xBF, 0xFF], [0xFF, 0xA5, 0x00], [0x94, 0x00, 0xD3]];
 
-/// The colour of an item's name in its name box, the first that fits: unidentified grey; by its enchants; bound
-/// yellow; else white. A broken item has none of its own.
 /// What names the items: the card names, the makers' names, and the random options' texts when the Extras show them.
 pub type Names<'a> = (&'a CardNames, &'a HashMap<u32, Option<String>>, Option<&'a HashMap<u16, String>>);
 
@@ -130,6 +128,16 @@ fn hover_text(messages: &[String], name: &str, item: &InventoryItem) -> String {
     }
 }
 
+/// A name balloon's text: the name, or for an identified item with random options "%s [%d Option]" (2600).
+pub fn option_text(messages: &[String], name: &str, item: &InventoryItem) -> String {
+    match item.options.len() {
+        options if item.identified && options > 0 => messages::fill(messages.get(messages::ITEM_OPTIONS).map_or("", String::as_str), &[&name, &options]),
+        _ => name.to_owned(),
+    }
+}
+
+/// The colour of an item's name in its name box and balloons, the first that fits: unidentified grey; by its enchants;
+/// bound yellow; else white. A broken item has none of its own.
 pub fn name_color(item: &InventoryItem, items: &HashMap<u32, ItemInfo>) -> [u8; 3] {
     if !item.identified {
         return UNIDENTIFIED;
@@ -366,14 +374,18 @@ pub fn tab_of(kind: u8) -> usize {
     }
 }
 
-/// An item's name as the client shows it: refine level, name, card slots.
+/// An item's name from its ID alone, as for an item the game knows no more of: identified, "+N " for a refine the caller
+/// knows, the name and " [slots]"; unidentified, the unidentified name only.
 pub fn item_name(items: &HashMap<u32, ItemInfo>, id: u32, identified: bool, refine: u8) -> String {
     let Some(info) = items.get(&id) else { return id.to_string() };
-    let mut name = info.name(identified).to_owned();
+    if !identified {
+        return info.name(false).to_owned();
+    }
+    let mut name = info.name(true).to_owned();
     if refine > 0 {
         name = format!("+{refine} {name}");
     }
-    if identified && info.slots > 0 {
+    if info.slots > 0 {
         name = format!("{name} [{}]", info.slots);
     }
     name
@@ -389,16 +401,23 @@ pub struct CardNames {
 
 const CARD_WORDS: &str = "data\\cardprefixnametable.txt";
 const CARDS_AFTER: &str = "data\\cardpostfixnametable.txt";
-/// card0 of a forged weapon and of a brewed item; the maker's character ID is in cards 2 and 3.
+/// card0 of a forged weapon and of a brewed or crafted item; the maker's character ID is in cards 2 and 3.
 const FORGED: u32 = 0x00FF;
 const BREWED: u32 = 0x00FE;
 /// A pet egg's first card.
 const PET_CARD: u32 = 0x0100;
+/// "Double", "Triple", "Quadruple": one card in two, three or four slots.
+const REPEATS: usize = 446;
 /// "Very Strong ", "Very Very Strong ", "Very Very Very Strong ": a forged weapon's Star Crumbs.
 const VERY_STRONG: usize = 459;
-/// "'s ", then "'s Fire ", "'s Ice ", "'s Wind ", "'s Earth ": after the maker's name.
+/// "'s ", then "'s Fire ", "'s Water ", "'s Wind ", "'s Earth ": after the maker's name.
 const MAKERS: usize = 450;
 const NAMELESS: usize = 581;
+/// A wedding ring's words after the maker's name, instead of "'s ".
+const WEDDING_RINGS: [u32; 2] = [2634, 2635];
+const WEDDED: usize = 2976;
+/// "Beloved ": before a renamed pet's egg or accessory.
+const BELOVED: usize = 756;
 
 impl CardNames {
     pub fn load(grf: &Grf) -> Self {
@@ -414,6 +433,21 @@ impl CardNames {
             after: after.lines().filter_map(id).collect(),
         }
     }
+
+    /// The words that go before the name (or `after` it), in slot order: each card that has one, once, with how many
+    /// slots hold it.
+    fn of(&self, cards: &[u32; 4], after: bool) -> Vec<(&str, usize)> {
+        let mut words = Vec::new();
+        for (slot, card) in cards.iter().enumerate() {
+            if cards[..slot].contains(card) || self.after.contains(card) != after {
+                continue;
+            }
+            if let Some(word) = self.words.get(card).filter(|word| !word.is_empty()) {
+                words.push((word.as_str(), cards.iter().filter(|other| *other == card).count()));
+            }
+        }
+        words
+    }
 }
 
 /// A forged or brewed item's maker (character ID), if it is one.
@@ -421,10 +455,15 @@ pub fn maker(cards: &[u32; 4]) -> Option<u32> {
     matches!(cards[0], FORGED | BREWED).then(|| (cards[2] & 0xFFFF) | (cards[3] << 16))
 }
 
-/// An item's whole name, as pickups and the inventory show it: unidentified, the unidentified name only; equipment,
-/// "+N " and the grade "[X] ", then its cards' words before and after the name, or for a forged or brewed one "Very
-/// Strong " and the maker's name with its element; then " [slots]" when `slots`. `makers` names makers by character
-/// ID (unknown: "Nameless").
+/// Pet eggs and pet accessories, by ID.
+fn pet_item(id: u32) -> bool {
+    (9001..=9499).contains(&id) || (10_000..=10_999).contains(&id)
+}
+
+/// What item names take besides the item table and the messages: the cards' words and the makers' names.
+pub type Naming<'a> = (&'a CardNames, &'a HashMap<u32, Option<String>>);
+
+/// An item's whole name, as every window shows it; see `full_name_maker`.
 pub fn full_name(
     items: &HashMap<u32, ItemInfo>,
     cards: &CardNames,
@@ -436,13 +475,20 @@ pub fn full_name(
     full_name_maker(items, cards, messages, makers, item, slots).0
 }
 
-/// The maker's name piece of a forged or brewed item's name: blue, or red when the maker has no name ("Nameless").
+/// The maker's name piece of a forged or brewed item's name, "Nameless" too.
 pub const MAKER_COLOR: [u8; 3] = [64, 64, 224];
-pub const NAMELESS_COLOR: [u8; 3] = [224, 64, 64];
 /// Where in a name the maker's name is, and its colour.
 pub type MakerRun = (std::ops::Range<usize>, [u8; 3]);
 
-/// The full name, and where in it the maker's name is with its colour (forged or brewed items).
+/// An item's whole name, and where in it the maker's name is with its colour:
+/// - unidentified: the unidentified name only;
+/// - a renamed pet's egg or accessory (card3 1): "Beloved " and the name;
+/// - brewed or crafted (card0 0xFE, card1 0), of any type, and forged equipment (card0 0xFF, or 0xFE with card1):
+///   "+N ", the grade "[X] ", "Very Strong " for 1 to 3 Star Crumbs, the maker's name (`makers` by character ID,
+///   unknown: "Nameless"), "'s " or its element's words ("With Mr/Miss" on a wedding ring), the name; no slots;
+/// - other equipment: "+N ", "[X] ", the cards' words before the name ("Double " and so on for a card in several
+///   slots), the name, the words after it (each followed by its " Double"), then " [slots]" when `slots`;
+/// - anything else: the name, then " [slots]" when `slots`.
 pub fn full_name_maker(
     items: &HashMap<u32, ItemInfo>,
     cards: &CardNames,
@@ -455,12 +501,16 @@ pub fn full_name_maker(
     if !item.identified {
         return (info.name(false).to_owned(), None);
     }
-    let equipment = matches!(item.kind, net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR);
-    if !equipment {
-        return (info.name(true).to_owned(), None);
-    }
-    let mut maker_run = None;
     let message = |id: usize| messages.get(id).map_or("", String::as_str);
+    if pet_item(item.id) && item.cards[3] == 1 {
+        return (format!("{}{}", message(BELOVED), info.name(true)), None);
+    }
+    let slot_count = if slots && info.slots > 0 { format!(" [{}]", info.slots) } else { String::new() };
+    let equipment = matches!(item.kind, net::ITEM_WEAPON | net::ITEM_ARMOR | net::ITEM_SHADOW_GEAR);
+    let made = item.cards[0] == BREWED && item.cards[1] == 0 || equipment && maker(&item.cards).is_some();
+    if !equipment && !made {
+        return (format!("{}{slot_count}", info.name(true)), None);
+    }
     let mut name = String::new();
     if item.refine > 0 {
         name.push_str(&format!("+{} ", item.refine));
@@ -468,47 +518,47 @@ pub fn full_name_maker(
     if let Some(grade) = ["D", "C", "B", "A"].get(usize::from(item.grade).wrapping_sub(1)) {
         name.push_str(&format!("[{grade}] "));
     }
-    let mut after = String::new();
-    match maker(&item.cards) {
-        Some(maker) => {
-            let strength = (item.cards[1] >> 8) / 5;
-            if (1..=3).contains(&strength) {
-                name.push_str(message(VERY_STRONG + strength as usize - 1));
-            }
-            let start = name.len();
-            let known = makers.get(&maker).and_then(Option::as_deref);
-            name.push_str(known.unwrap_or(message(NAMELESS)));
-            maker_run = Some((start..name.len(), if known.is_some() { MAKER_COLOR } else { NAMELESS_COLOR }));
-            // Water, earth, fire, wind (rathena's 1 to 4) have lines of their own; none is plain "'s ".
-            let element = match item.cards[1] & 0x0F {
-                1 => 2,
-                2 => 4,
-                3 => 1,
-                4 => 3,
-                _ => 0,
-            };
-            name.push_str(message(MAKERS + element));
+    if made {
+        // card1: the Star Crumbs times 5 in its high byte, the element in its low byte.
+        if let Some(strength) = [5, 10, 15].iter().position(|&crumbs| (item.cards[1] >> 8) & 0xFF == crumbs) {
+            name.push_str(message(VERY_STRONG + strength));
         }
-        None => {
-            // ponytail: each card says its word once, in card order; the game's "Double"/"Triple" for repeats isn't
-            // done.
-            let mut seen = HashSet::new();
-            for card in item.cards.iter().filter(|&&card| card != 0 && seen.insert(card)) {
-                let Some(word) = cards.words.get(card) else { continue };
-                if cards.after.contains(card) {
-                    after.push_str(&format!(" {word}"));
-                } else {
-                    name.push_str(&format!("{word} "));
-                }
-            }
+        let start = name.len();
+        let maker = maker(&item.cards).unwrap_or_default();
+        name.push_str(makers.get(&maker).and_then(Option::as_deref).unwrap_or(message(NAMELESS)));
+        let maker_run = Some((start..name.len(), MAKER_COLOR));
+        // rathena's water, earth, fire and wind (1 to 4) have lines of their own; past 4, nothing.
+        let after_maker = match item.cards[1] & 0xFF {
+            0 if WEDDING_RINGS.contains(&item.id) => Some(WEDDED),
+            0 => Some(MAKERS),
+            1 => Some(MAKERS + 2),
+            2 => Some(MAKERS + 4),
+            3 => Some(MAKERS + 1),
+            4 => Some(MAKERS + 3),
+            _ => None,
+        };
+        name.push_str(after_maker.map_or("", message));
+        name.push_str(info.name(true));
+        return (name, maker_run);
+    }
+    // A pet's egg or accessory keeps the pet's number in its cards: no words.
+    let words = |after| if pet_item(item.id) { Vec::new() } else { cards.of(&item.cards, after) };
+    let repeat = |count: usize| (2..=4).contains(&count).then(|| message(REPEATS + count - 2));
+    for (word, count) in words(false) {
+        if let Some(repeat) = repeat(count) {
+            name.push_str(&format!("{repeat} "));
         }
+        name.push_str(&format!("{word} "));
     }
     name.push_str(info.name(true));
-    name.push_str(&after);
-    if slots && info.slots > 0 {
-        name.push_str(&format!(" [{}]", info.slots));
+    for (word, count) in words(true) {
+        name.push_str(&format!(" {word}"));
+        if let Some(repeat) = repeat(count) {
+            name.push_str(&format!(" {repeat}"));
+        }
     }
-    (name, maker_run)
+    name.push_str(&slot_count);
+    (name, None)
 }
 
 /// The icon file of an item.
@@ -1156,10 +1206,29 @@ mod tests {
     #[test]
     fn names_items_in_full() {
         let info = |name: &str, unidentified: &str, slots| ItemInfo { name: name.into(), unidentified_name: unidentified.into(), slots, ..Default::default() };
-        let items: HashMap<u32, ItemInfo> = [(1201, info("Knife", "Dagger", 3)), (501, info("Red Potion", "Red Potion", 0))].into_iter().collect();
-        let cards = CardNames::parse("4001#Lucky#\n4014#of Hermes#\n", "4014#\n");
-        let mut messages = vec![String::new(); 600];
-        for (id, text) in [(450, "'s "), (451, "'s Fire "), (452, "'s Ice "), (459, "Very Strong "), (460, "Very Very Strong "), (581, "Nameless")] {
+        let items: HashMap<u32, ItemInfo> = [
+            (1201, info("Knife", "Dagger", 3)),
+            (501, info("Red Potion", "Red Potion", 0)),
+            (2634, info("Wedding Ring", "Ring", 0)),
+            (9001, info("Poring Egg", "Poring Egg", 0)),
+        ]
+        .into_iter()
+        .collect();
+        let cards = CardNames::parse("4001#Lucky#\n4014#of Hermes#\n4002#Fabre#\n4003##\n", "4014#\n");
+        let mut messages = vec![String::new(); 3000];
+        for (id, text) in [
+            (446, "Double"),
+            (447, "Triple"),
+            (448, "Quadruple"),
+            (450, "'s "),
+            (451, "'s Fire "),
+            (452, "'s Water "),
+            (459, "Very Strong "),
+            (460, "Very Very Strong "),
+            (581, "Nameless"),
+            (756, "Beloved "),
+            (2976, " with "),
+        ] {
             messages[id] = text.into();
         }
         let makers: HashMap<u32, Option<String>> = [(150_004, Some("LaneA1".to_owned()))].into_iter().collect();
@@ -1176,17 +1245,37 @@ mod tests {
         let name = |item: &InventoryItem, slots| full_name(&items, &cards, &messages, &makers, item, slots);
         // Refined, graded, carded before and after the name; slots in the chat line, not the popup.
         assert_eq!(name(&knife(7, 4, [4001, 4014, 0, 0]), true), "+7 [A] Lucky Knife of Hermes [3]");
-        assert_eq!(name(&knife(0, 0, [4001, 4001, 0, 0]), false), "Lucky Knife");
-        // Forged: Star Crumbs, the maker, the element (fire 3; water 1 is ice).
+        // A card in several slots: "Double " before a word that goes first, " Double" after one that goes last.
+        assert_eq!(name(&knife(0, 0, [4001, 4001, 0, 0]), false), "Double Lucky Knife");
+        assert_eq!(name(&knife(0, 0, [4001, 4001, 4001, 4001]), false), "Quadruple Lucky Knife");
+        assert_eq!(name(&knife(0, 0, [4014, 4014, 4014, 0]), false), "Knife of Hermes Triple");
+        // Different cards in slot order, each once; one with no word is skipped.
+        assert_eq!(name(&knife(0, 0, [4014, 4002, 4001, 4002]), true), "Double Fabre Lucky Knife of Hermes [3]");
+        assert_eq!(name(&knife(0, 0, [4003, 4003, 9999, 0]), false), "Knife");
+        // Forged: Star Crumbs, the maker, the element (fire 3; water 1), and no slots.
         let forged = |element: u32, crumbs: u32, maker: u32| knife(0, 0, [0x00FF, (crumbs * 5) << 8 | element, maker & 0xFFFF, maker >> 16]);
-        assert_eq!(name(&forged(3, 1, 150_004), false), "Very Strong LaneA1's Fire Knife");
-        assert_eq!(name(&forged(1, 2, 150_004), false), "Very Very Strong LaneA1's Ice Knife");
+        assert_eq!(name(&forged(3, 1, 150_004), true), "Very Strong LaneA1's Fire Knife");
+        assert_eq!(name(&forged(1, 2, 150_004), false), "Very Very Strong LaneA1's Water Knife");
         assert_eq!(name(&forged(0, 0, 999), false), "Nameless's Knife");
+        assert_eq!(name(&InventoryItem { refine: 5, ..forged(5, 0, 150_004) }, false), "+5 LaneA1Knife");
+        let (_, run) = full_name_maker(&items, &cards, &messages, &makers, &forged(0, 0, 999), false);
+        assert_eq!(run, Some((0..8, MAKER_COLOR)), "Nameless in the maker's colour");
         assert_eq!(maker(&forged(0, 0, 150_004).cards), Some(150_004));
+        // A wedding ring has its own words after the maker.
+        let ring = InventoryItem { id: 2634, kind: net::ITEM_ARMOR, ..forged(0, 0, 150_004) };
+        assert_eq!(name(&ring, false), "LaneA1 with Wedding Ring");
+        // Brewed: the maker's name on a potion too.
+        let potion = InventoryItem { id: 501, amount: 3, identified: true, kind: net::ITEM_HEALING, ..Default::default() };
+        let brewed = InventoryItem { cards: [0x00FE, 0, 150_004 & 0xFFFF, 150_004 >> 16], ..potion.clone() };
+        assert_eq!(name(&brewed, true), "LaneA1's Red Potion");
         // Unidentified: its own name only; not equipment: the name.
         assert_eq!(name(&InventoryItem { identified: false, ..knife(7, 0, [4001, 0, 0, 0]) }, true), "Dagger");
-        let potion = InventoryItem { id: 501, amount: 3, identified: true, kind: net::ITEM_HEALING, ..Default::default() };
         assert_eq!(name(&potion, true), "Red Potion");
+        // A pet's egg: its cards hold the pet's number, not cards; renamed, it's "Beloved".
+        let egg = |renamed| InventoryItem { id: 9001, identified: true, kind: net::ITEM_ARMOR, cards: [0x0100, 4001, 0, renamed], ..Default::default() };
+        assert_eq!([name(&egg(0), true), name(&egg(1), true)], ["Poring Egg", "Beloved Poring Egg"]);
+        // From the ID alone: unidentified shows no refine or slots.
+        assert_eq!([item_name(&items, 1201, true, 4), item_name(&items, 1201, false, 4)], ["+4 Knife [3]", "Dagger"]);
     }
 
     fn item(index: u16, kind: u8, amount: u16) -> InventoryItem {

@@ -87,6 +87,8 @@ pub struct ItemLink {
     pub refine: u8,
     pub cards: [u32; 4],
     pub grade: u8,
+    /// Equipment, as an `<ITEML>` says (the other forms don't).
+    pub equip: bool,
     /// Random options: id, parameter, value.
     pub options: Vec<[u32; 3]>,
 }
@@ -94,7 +96,8 @@ pub struct ItemLink {
 impl ItemLink {
     fn encode(&self) -> String {
         let options: Vec<String> = self.options.iter().map(|option| format!("{}.{}.{}", option[0], option[1], option[2])).collect();
-        format!("{} {} {} {} {} {} {} {}", self.id, self.refine, self.cards[0], self.cards[1], self.cards[2], self.cards[3], self.grade, options.join(","))
+        let [id, refine, grade, equip] = [self.id, u32::from(self.refine), u32::from(self.grade), u32::from(self.equip)];
+        format!("{id} {refine} {} {} {} {} {grade} {equip} {}", self.cards[0], self.cards[1], self.cards[2], self.cards[3], options.join(","))
     }
 
     fn decode(text: &str) -> Option<Self> {
@@ -104,6 +107,7 @@ impl ItemLink {
         let refine = number()? as u8;
         let cards = [number()?, number()?, number()?, number()?];
         let grade = number()? as u8;
+        let equip = number()? == 1;
         let options = fields
             .next()
             .unwrap_or_default()
@@ -114,7 +118,7 @@ impl ItemLink {
                 <[u32; 3]>::try_from(values).ok()
             })
             .collect();
-        Some(Self { id, refine, cards, grade, options })
+        Some(Self { id, refine, cards, grade, equip, options })
     }
 }
 
@@ -138,7 +142,7 @@ pub fn decode_iteml(body: &str) -> Option<ItemLink> {
     let rest = body.get(6..)?;
     let marks = ['%', '&', '\'', ')', '+', ',', '-'];
     let id_end = rest.find(marks).unwrap_or(rest.len());
-    let mut link = ItemLink { id: base62(&rest[..id_end])?, ..ItemLink::default() };
+    let mut link = ItemLink { id: base62(&rest[..id_end])?, equip: body.get(5..6) == Some("1"), ..ItemLink::default() };
     let mut cards = 0;
     let mut option = [0; 3];
     let mut rest = &rest[id_end..];
@@ -297,7 +301,7 @@ mod tests {
         let iteml = "<ITEML>000021jn%07&01'01)12x)00)00)00+01,00-0k</ITEML>";
         let (shown, runs) = split(&mark(&format!("look {iteml}!"), &named));
         assert_eq!(shown, "look Knife!");
-        let item = ItemLink { id: 1201, refine: 7, cards: [4001, 0, 0, 0], grade: 1, options: vec![[1, 0, 20]] };
+        let item = ItemLink { id: 1201, refine: 7, cards: [4001, 0, 0, 0], grade: 1, equip: true, options: vec![[1, 0, 20]] };
         assert_eq!(runs, vec![(5..10, Target::Item(item))]);
         // A navigation link: its words and its place.
         let (shown, runs) = split(&mark("go to <NAVI>[Tool Shop]<INFO>prontera,134,221,0,000,0</INFO></NAVI>.", &named));
@@ -305,7 +309,7 @@ mod tests {
         assert_eq!(runs, vec![(6..17, Target::Navi { map: "prontera".into(), cell: [134, 221] })]);
         assert_eq!(runs[0].1.color(), NAVI_COLOR);
         // A plain item with nothing after its id, and text that only looks like a tag.
-        assert_eq!(decode_iteml("0000000jn").map(|item| item.id), Some(1201));
+        assert_eq!(decode_iteml("0000000jn").map(|item| (item.id, item.equip)), Some((1201, false)));
         assert_eq!(split(&mark("a < b <ITEM>broken</ITEM>", &named)).0, "a < b <ITEM>broken</ITEM>");
     }
 

@@ -283,6 +283,7 @@ impl Setup {
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
+        naming: crate::inventory::Naming,
         inventory: &[InventoryItem],
         font: &Font,
         messages: &[String],
@@ -317,7 +318,7 @@ impl Setup {
             if picked.is_some() {
                 layer.sprites.push((&assets.picked, at([1.0, top]), [WIDTH - 2.0, ROW]));
             }
-            vend::draw_item(layer, icons, items, font, item, at([4.0, top + 4.0]));
+            vend::draw_item(layer, icons, items, naming, messages, font, item, at([4.0, top + 4.0]));
             if let Some(wanted) = picked {
                 let text = format!("{} x {} z", wanted.amount, group(u64::from(wanted.price)));
                 layer.texts.push((text.clone(), at([WIDTH - 6.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
@@ -409,6 +410,7 @@ impl MyStore {
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
+        naming: crate::inventory::Naming,
         font: &Font,
         messages: &[String],
         pointer: ([f32; 2], bool),
@@ -423,7 +425,7 @@ impl MyStore {
         for (place, wanted) in self.items.iter().enumerate().take(ROWS) {
             let top = TITLE_HEIGHT + LIMIT_FIELD + place as f32 * ROW;
             let display = InventoryItem { id: wanted.item_id, amount: wanted.amount, kind: wanted.kind, identified: true, ..Default::default() };
-            vend::draw_item(layer, icons, items, font, &display, at([4.0, top + 4.0]));
+            vend::draw_item(layer, icons, items, naming, messages, font, &display, at([4.0, top + 4.0]));
             let text = format!("{} z", group(u64::from(wanted.price)));
             layer.texts.push((text.clone(), at([WIDTH - 6.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
         }
