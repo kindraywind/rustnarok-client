@@ -2366,7 +2366,7 @@ impl App {
             if let Some((card, enchant)) = card {
                 game.show_card(card, enchant);
             }
-            // A right click on an item (inventory, storage, what's worn, a shop's row) describes it.
+            // A right click on an item (inventory, storage, what's worn, a shop's row, a hotkey) describes it.
             let shop_row = match game.shop.as_ref().and_then(|shop| shop.hit(self.cursor)) {
                 Some(shop::Hit::Row(window, row)) => game.shop.as_ref().and_then(|shop| shop.offer_at(window, row)),
                 _ => None,
@@ -2405,7 +2405,11 @@ impl App {
                     Some(equipment::Hit::Slot(index) | equipment::Hit::Name(index)) => game.inventory.get(index).cloned(),
                     _ => None,
                 },
-
+                // An item hotkey: the stack carried (a skill's description opens above).
+                Some(Panel::Hotkeys) => match game.hotkeys.hit(self.cursor) {
+                    Some(hotkeys::Hit::Slot(slot)) => game.hotkeys.carried(slot, &game.inventory.items).cloned(),
+                    _ => None,
+                },
                 _ => None,
             });
             if let Some(item) = described {
