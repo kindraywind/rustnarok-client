@@ -999,6 +999,8 @@ const ZC_PC_PURCHASE_RESULT: u16 = 0x00CA;
 const ZC_PC_SELL_RESULT: u16 = 0x00CB;
 const ZC_NOTIFY_EFFECT2: u16 = 0x01F3;
 const ZC_NOTIFY_EFFECT3: u16 = 0x0284;
+/// A unit's effect from ZC_NOTIFY_EFFECT2 ends (a script's `removespecialeffect`): AID.L, effect.L (10 bytes).
+const ZC_REMOVE_EFFECT: u16 = 0x0B0D;
 const ZC_MSG_STATE_CHANGE2: u16 = 0x043F;
 const ZC_MSG_STATE_CHANGE3: u16 = 0x0983;
 const ZC_NOTIFY_STOREITEM_COUNTINFO: u16 = 0x00F2;

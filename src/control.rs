@@ -1955,6 +1955,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     });
     // The special popup's id, or null.
     state["special_popup"] = json!(game.special_popup);
+    // The effects' live lists by size: one that only grows is a leak.
+    state["effects_alive"] = game.effects.counts();
     // The blind overlay's age in 16 ms ticks (0 while off). The fade holds at 255.
     state["blind"] = json!(game.blind.ticks(crate::control::now()));
     // The scene tint in thousandths, and whether dusk is on.
@@ -2302,6 +2304,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("map_effect_fired_ms_ago", Test),
         ("map_effect_timers", Test),
         ("map_effects_fired", Test),
+        ("effects_alive", Test),
         ("map_property", Test),
         ("map_type", Test),
         ("marks", Test),

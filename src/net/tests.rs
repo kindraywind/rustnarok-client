@@ -2810,6 +2810,15 @@ fn decodes_effect_with_and_without_number() {
     effect2.extend_from_slice(&312u32.to_le_bytes());
     let Some(MapEvent::Effect { id, effect, num }) = decode_map_packet(&effect2) else { panic!("effect2 not decoded") };
     assert_eq!((id, effect, num), (2000001, 312, None));
+
+    // 0x0b0d ZC_REMOVE_EFFECT: AID.L, effect.L (10 bytes) - a script's special effect ends
+    let mut gone = Vec::new();
+    gone.extend_from_slice(&ZC_REMOVE_EFFECT.to_le_bytes());
+    gone.extend_from_slice(&2000001u32.to_le_bytes());
+    gone.extend_from_slice(&254u32.to_le_bytes());
+    assert_eq!(packet_length(ZC_REMOVE_EFFECT), Some(10));
+    let Some(MapEvent::EffectGone { id, effect }) = decode_map_packet(&gone) else { panic!("remove effect not decoded") };
+    assert_eq!((id, effect), (2000001, 254));
 }
 
 #[test]
