@@ -4316,17 +4316,13 @@ impl App {
                     game.homunculus_window.name_text.get_or_insert_with(String::new).push_str(&typed);
                 }
             },
-            Scene::Game(game) if game.storage.typing => match key {
-                Key::Named(NamedKey::Enter) => game.storage.typing = false,
-                Key::Named(NamedKey::Escape) => {
-                    game.storage.search.clear();
-                    game.storage.typing = false;
+            // Enter searches as the button does: the Search window comes up in front.
+            Scene::Game(game) if game.storage.typing => {
+                if game.storage.key(key, event.text.as_deref().unwrap_or_default()) {
+                    game.raise(Panel::StorageSearch);
+                    game.sync_esc();
                 }
-                Key::Named(NamedKey::Backspace) => {
-                    game.storage.search.pop();
-                }
-                _ => game.storage.type_text(event.text.as_deref().unwrap_or_default()),
-            },
+            }
             Scene::Game(game) if game.catalog.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.close_catalog(),
             Scene::Game(game) if game.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) => {
                 let catalog = game.catalog.as_mut().unwrap();
