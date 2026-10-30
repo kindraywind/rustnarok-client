@@ -8,6 +8,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::ItemInfo;
 use rustnarok_client::net::InventoryItem;
 use rustnarok_client::text::Font;
+use winit::keyboard::{Key, NamedKey};
 
 use crate::inventory::{self, CardNames};
 use crate::render::{Gpu, Texture};
@@ -747,6 +748,19 @@ impl Storage {
         self.search.extend(text.chars().filter(|character| !character.is_control()));
     }
 
+    /// A key while the search field has the caret (Esc goes to the Esc order first): Enter is the search button and the
+    /// caret stays; Backspace takes a character; the rest type. Whether the Search window opened.
+    pub fn key(&mut self, key: &Key, text: &str) -> bool {
+        match key {
+            Key::Named(NamedKey::Enter) => return self.search(),
+            Key::Named(NamedKey::Backspace) => {
+                self.search.pop();
+            }
+            _ => self.type_text(text),
+        }
+        false
+    }
+
     pub fn icons(&self, info: &HashMap<u32, ItemInfo>) -> Vec<String> {
         if !self.frame.open {
             return Vec::new();
@@ -1105,6 +1119,31 @@ mod tests {
         // Its sizes and pointer box are the category windows'.
         assert_eq!(storage.list_window(List::Search).size, [140.0, 145.0]);
         assert_eq!(storage.search_window.row_at([20.0, 20.0]), Some(0));
+    }
+
+    #[test]
+    fn enter_in_the_box_searches() {
+        let info = named();
+        let (cards, makers) = (CardNames::default(), HashMap::new());
+        let names: Names = (&[], &cards, &makers);
+        let mut storage = Storage::default();
+        storage.open(String::new());
+        storage.extend(vec![stored(1, 501, 0), stored(2, 909, 3), stored(3, 502, 0)]);
+        storage.typing = true;
+        let enter = Key::Named(NamedKey::Enter);
+        // An empty box: nothing.
+        assert!(!storage.key(&enter, "\r"));
+        assert!(!storage.search_window.frame.open);
+        for letter in ["P", "o", "t", "x"] {
+            storage.key(&Key::Character(letter.into()), letter);
+        }
+        storage.key(&Key::Named(NamedKey::Backspace), "");
+        storage.key(&Key::Character("i".into()), "i");
+        assert_eq!(storage.search, "Poti");
+        // Enter is the search button; the caret stays for the next search.
+        assert!(storage.key(&enter, "\r"));
+        assert!(storage.search.is_empty() && storage.typing && storage.search_window.frame.open);
+        assert_eq!(storage.list(List::Search, &info, names).iter().map(|item| item.id).collect::<Vec<_>>(), [501, 502]);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 {
-  "about": "Storage search and sort (issue #511): typing Potion in the box leaves the list as it is; the search button opens the Search window at (510, 360) with every stored potion and empties the box; potion (lower case) finds none. A Jellopy let go over the Search window stays in the inventory. The sort box's ascending line orders the list Apple, Banana, Orange Potion, Red Potion, and descending reverses it; closing and opening the storage keeps the choice.",
+  "about": "Storage search and sort (issue #511): typing Potion in the box leaves the list as it is; the search button opens the Search window at (510, 360) with every stored potion and empties the box; potion (lower case) finds none. Enter in the box searches as the button does and keeps the caret: Red finds Red Potion, then Orange typed straight after finds Orange Potion. A Jellopy let go over the Search window stays in the inventory. The sort box's ascending line orders the list Apple, Banana, Orange Potion, Red Potion, and descending reverses it; closing and opening the storage keeps the choice.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -25,6 +25,15 @@
     {"type": "potion"}, {"wait": 200},
     {"click_on": {"button": "storage_find"}}, {"wait": 300},
     {"expect": {"state": {"storage_found": []}}},
+    {"click_on": {"button": "storage_search"}}, {"wait": 200},
+    {"type": "Red"}, {"wait": 200},
+    {"key": "Enter"}, {"wait": 300},
+    {"move": [1000, 750]},
+    {"shot": "storage-search-enter", "threshold": 5},
+    {"expect": {"windows_open": ["StorageSearch"], "state": {"storage_found": [501], "storage_box_text": ""}}},
+    {"type": "Orange"}, {"wait": 200},
+    {"key": "Enter"}, {"wait": 300},
+    {"expect": {"state": {"storage_found": [502], "storage_box_text": ""}}},
     {"key": "Alt+E"}, {"wait": 400},
     {"click_on": {"button": "tab:etc"}}, {"wait": 300},
     {"drag_on": [{"inventory_item": 909}, {"point": [580, 440]}]}, {"wait": 800},
