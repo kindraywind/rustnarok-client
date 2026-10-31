@@ -853,10 +853,14 @@ impl Storage {
         layer.sprites.push((left, at([0.0, footer_top]), left.size));
         layer.sprites.push((middle, at([left.size[0], footer_top]), [WIDTH - left.size[0] - right.size[0], FOOTER_HEIGHT]));
         layer.sprites.push((right, at([WIDTH - right.size[0], footer_top]), right.size));
-        // The category boxes along the footer's top row, on or off.
+        // The category boxes along the footer's top row, on or off; each names its category, 20 px above it.
         for (tab, images) in assets.boxes.iter().enumerate() {
             if let Some(image) = &images[usize::from(self.mask & 1 << tab == 0)] {
                 layer.sprites.push((image, at(self.box_at(tab)), [BOX_SIZE, BOX_SIZE]));
+            }
+            let name = messages.get(CATEGORY_TITLES[tab]).map_or("", String::as_str);
+            if contains(at(self.box_at(tab)), [BOX_SIZE, BOX_SIZE], pointer.0) && !name.is_empty() {
+                window::tooltip(tooltip, chrome, font, name, at(offset(self.box_at(tab), [0.0, -20.0])), [255; 3]);
             }
         }
         layer.sprites.push((&assets.count, at(self.footer_at(COUNT_ICON)), assets.count.size));

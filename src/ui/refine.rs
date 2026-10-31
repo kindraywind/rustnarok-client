@@ -734,7 +734,14 @@ impl Refine {
             && matches!(hit, Hit::Ore(_) | Hit::Blessing | Hit::AnvilOre | Hit::AnvilBlessing)
             && let Some(ItemAt::Plain(id)) = self.item_at(hit, carried)
         {
-            window::tooltip(tooltip, chrome, font, &inventory::item_name(items, id, true, 0), offset(pointer.0, [12.0, 12.0]), [255; 3]);
+            // 20 px above the slot's or icon's corner.
+            let corner = match hit {
+                Hit::Ore(slot) => [11.0 + SLOT_STEP * slot as f32, SLOT_Y],
+                Hit::Blessing => [BLESSING_X, SLOT_Y],
+                Hit::AnvilOre => ANVIL_ORE,
+                _ => ANVIL_BLESSING,
+            };
+            window::tooltip(tooltip, chrome, font, &inventory::item_name(items, id, true, 0), at(offset(corner, [0.0, -20.0])), [255; 3]);
         }
         let _ = zeny;
     }

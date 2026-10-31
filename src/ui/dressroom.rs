@@ -252,6 +252,7 @@ impl Room {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
         font: &Font,
@@ -285,7 +286,7 @@ impl Room {
         }
         if let Some(Hit::Turn(left)) = hit {
             let words = message(if left { TURN_LEFT } else { TURN_RIGHT });
-            layer.texts.push((words.to_owned(), offset(pointer.0, [12.0, 12.0]), TEXT));
+            crate::window::tooltip(tooltip, chrome, font, words, frame.at(offset(Self::turn_at(left), [0.0, -20.0])), [255; 3]);
         }
         for (row, picker) in PICKERS.into_iter().enumerate() {
             let top = Self::row_top(row);

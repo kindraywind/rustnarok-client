@@ -296,6 +296,13 @@ impl Shortcuts {
             .and_then(|binding| Some(chord(binding.key?, binding.modifier)))
     }
 
+    /// Every chord bound to `action`, ", " between them ("Alt+V, Ctrl+V"); none when nothing is bound.
+    pub fn keys_for(&self, action: Action) -> Option<String> {
+        let chords: Vec<String> =
+            self.bindings().iter().filter(|binding| binding.action == action).filter_map(|binding| Some(chord(binding.key?, binding.modifier))).collect();
+        (!chords.is_empty()).then(|| chords.join(", "))
+    }
+
     /// Action name to the chord, for the control socket. Unbound rows are left out.
     pub fn labels(&self) -> serde_json::Value {
         let mut map = serde_json::Map::new();

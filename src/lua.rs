@@ -978,6 +978,8 @@ pub struct SkillInfo {
     pub max_lv: Option<u16>,
     /// The level to use can be picked (`bSeperateLv`): the skill window's arrows, the wheel while aiming.
     pub separate_level: bool,
+    /// The SP each level costs (`SpAmount`), from level 1.
+    pub sp_amount: Vec<i32>,
     /// Its range in cells by level (`AttackRange`), from level 1.
     pub attack_range: Vec<u16>,
     /// The skills it needs first, each at a level (`_NeedSkillList`); some jobs have their own (`NeedSkillList`).
@@ -1154,6 +1156,7 @@ fn skill_infos(lua: &Lua) -> io::Result<HashMap<u16, SkillInfo>> {
             max_level: entry.get("MaxLv").unwrap_or(0),
             max_lv: entry.get::<Option<u16>>("MaxLv").ok().flatten(),
             separate_level: entry.get("bSeperateLv").unwrap_or(false),
+            sp_amount: entry.get::<mlua::Table>("SpAmount").map(|costs| costs.sequence_values::<i32>().flatten().collect()).unwrap_or_default(),
             attack_range: entry.get::<mlua::Table>("AttackRange").map(|ranges| ranges.sequence_values::<u16>().flatten().collect()).unwrap_or_default(),
             needs: entry.get::<mlua::Table>("_NeedSkillList").map(|list| skill_levels(&list)).unwrap_or_default(),
             job_needs: entry

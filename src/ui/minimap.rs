@@ -230,7 +230,12 @@ pub fn shown(view: View, indoor: bool) -> bool {
 
 /// The bottom row's button under the pointer.
 pub fn button_at(cursor: [f32; 2]) -> Option<&'static str> {
-    BUTTONS.into_iter().find(|(_, from_right)| contains([screen()[0] - from_right, ROW], [BUTTON, BUTTON], cursor)).map(|(name, _)| name)
+    button_corner_at(cursor).map(|(name, _)| name)
+}
+
+/// The bottom row's button under the pointer and its corner on screen.
+pub fn button_corner_at(cursor: [f32; 2]) -> Option<(&'static str, [f32; 2])> {
+    BUTTONS.into_iter().map(|(name, from_right)| (name, [screen()[0] - from_right, ROW])).find(|&(_, corner)| contains(corner, [BUTTON, BUTTON], cursor))
 }
 
 pub struct Assets {

@@ -62,8 +62,6 @@ const OVAL_X: [f32; 2] = [4.0, 248.0];
 const GRADE_AT: [f32; 2] = [0.0, 12.0];
 /// One enchant's name colour here; more take the inventory's tiers.
 const ONE_ENCHANT: [u8; 3] = [0x66, 0x99, 0x00];
-/// A stack's tooltip, "%s: %d ea." (the ammo).
-const STACK_MESSAGE: usize = 183;
 /// A name's lines, this far apart.
 const NAME_LINE: f32 = 12.0;
 /// Where the character stands: the shadow baked into equipwin_bg.bmp.
@@ -707,10 +705,12 @@ impl Equipment {
             layer.sprites.push((&chrome.white, at([x + 1.0, y + 1.0]), [width - 2.0, height - if open { 0.0 } else { 1.0 }]));
             let label = window::fit(font, message(TAB_LABELS[tab]), width - 4.0);
             let left = x + ((width - font.width(&label)) / 2.0).floor();
-            layer.texts.push((label, at([left, y + 2.0]), if open { [0, 0, 0] } else { GREY }));
-            if contains(at([x, y]), [width, height], cursor) {
-                window::tooltip(tooltip, chrome, font, message(TAB_TOOLTIPS[tab]), offset(cursor, [12.0, 12.0]), [255; 3]);
+            // A tab's tooltip shows only when it says more than the label does (a cut label), 20 px above the tab.
+            let tip = message(TAB_TOOLTIPS[tab]);
+            if contains(at([x, y]), [width, height], cursor) && !tip.is_empty() && tip != label {
+                window::tooltip(tooltip, chrome, font, tip, at([x - 1.0, y - 20.0]), [255; 3]);
             }
+            layer.texts.push((label, at([left, y + 2.0]), if open { [0, 0, 0] } else { GREY }));
         }
         let end = boxes.last().map_or(0.0, |[x, _, width, _]| x + width);
         layer.sprites.push((&assets.tab_line, at([end, TITLE_HEIGHT + TAB_HEIGHT]), [WIDTH - end, 1.0]));
@@ -776,17 +776,15 @@ impl Equipment {
                     layer.texts.push((window::fit(font, &name, AMMO_NAME_WIDTH), at(AMMO_NAME), slot_name_color(item, items)));
                 }
             }
-            // The tooltip at its fixed place: the name with its slots, or "name: n ea." for the ammo's stack.
+            // The tooltip at its fixed place: the name with its slots, or "name: n ea." for a stack of more than one;
+            // "[N Option]" with random options.
             if pointed == Some(item.index)
                 && let Some(local) = hovered
             {
-                let text = if place.is_none() {
-                    rustnarok_client::messages::fill(
-                        message(STACK_MESSAGE),
-                        &[&inventory::full_name(items, names.0, messages, names.1, item, false), &item.amount],
-                    )
+                let text = if item.amount > 1 {
+                    inventory::hover_text(messages, &inventory::full_name(items, names.0, messages, names.1, item, false), item)
                 } else {
-                    inventory::full_name(items, names.0, messages, names.1, item, true)
+                    inventory::option_text(messages, &inventory::full_name(items, names.0, messages, names.1, item, true), item)
                 };
                 window::tooltip(tooltip, chrome, font, &text, at(tooltip_at(local)), inventory::name_color(item, items));
             }
@@ -799,7 +797,7 @@ impl Equipment {
         }
         let name = |tooltip: &mut Layer<'a>, place: [f32; 2], size: [f32; 2], id: usize| {
             if contains(at(place), size, cursor) {
-                window::tooltip(tooltip, chrome, font, message(id), offset(cursor, [12.0, 12.0]), [255; 3]);
+                window::tooltip(tooltip, chrome, font, message(id), at(offset(place, [0.0, -20.0])), [255; 3]);
             }
         };
         let [swap, take_off] = &assets.buttons;

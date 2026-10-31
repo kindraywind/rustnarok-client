@@ -839,27 +839,31 @@ impl Shop {
                 layer.sprites.push((&assets.buttons[2][look(Hit::Cancel)], frame.at(cancel), BUTTON));
             }
         }
-        // A vendor's row under the pointer whose name is cut: the whole name over it, starting where it was.
+        // A vendor's row under the pointer: the whole name ("[N Option]" with options) in the item's colour, over the
+        // name, or over the icon's cell when the pointer is on it.
         if let (Some(Hit::Row(window, row)), Some(_)) = (hit, &self.vendor)
             && let Some(offer) = self.offer_at(window, row)
         {
-            let name = offer.name(items, naming, messages);
-            if window::fit(font, &name, price_text(offer.listed, offer.price).1) != name {
-                let top = TITLE_HEIGHT + (row - self.scroll[window]) as f32 * ROW;
-                window::whole_text(layer.window(), chrome, font, &name, self.frames[window].at([NAME[0], top + NAME[1]]));
-            }
+            let item = offer.described();
+            let text = inventory::option_text(messages, &offer.name(items, naming, messages), &item);
+            let frame = &self.frames[window];
+            let top = TITLE_HEIGHT + (row - self.scroll[window]) as f32 * ROW;
+            let on_icon = (TIP_STEP[0]..TIP_STEP[0] + TIP_STEP[1]).contains(&(pointer.0[0] - frame.position[0]));
+            let corner = if on_icon { [TIP_STEP[0], top - TIP_ABOVE] } else { [NAME[0] - 6.0, top + NAME[1] - 4.0] };
+            window::tooltip(layer.window(), chrome, font, &text, frame.at(corner), inventory::name_color(&item, items));
         }
-        // An NPC shop's row under the pointer: its name and price over it.
+        // An NPC shop's row with the pointer on its icon: its name and price over the icon's cell.
         if let (Some(Hit::Row(window, row)), true) = (hit, self.plain()) {
             let (Some(offer), frame) = (self.offer_at(window, row), &self.frames[window]) else { return };
+            if !(TIP_STEP[0]..TIP_STEP[0] + TIP_STEP[1]).contains(&(pointer.0[0] - frame.position[0])) {
+                return;
+            }
             let count = if window == 0 { self.left(row) } else { self.deal[row].1 };
             let item = offer.described();
             let text = tooltip_text(&offer.name(items, naming, messages), offer, count, self.selling);
-            let local = pointer.0[0] - frame.position[0];
-            let x = TIP_STEP[0] + TIP_STEP[1] * ((local - TIP_STEP[0]) / TIP_STEP[1]).floor();
             let place = if window == 0 { self.rows(0).iter().position(|&(offer, _)| offer == row).unwrap_or(row) } else { row };
             let top = TITLE_HEIGHT + place.saturating_sub(self.scroll[window]) as f32 * ROW - TIP_ABOVE;
-            window::tooltip(layer.window(), chrome, font, &text, frame.at([x, top]), inventory::name_color(&item, items));
+            window::tooltip(layer.window(), chrome, font, &text, frame.at([TIP_STEP[0], top]), inventory::name_color(&item, items));
         }
     }
 

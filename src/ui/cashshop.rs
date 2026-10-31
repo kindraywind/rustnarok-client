@@ -335,6 +335,7 @@ impl CashShop {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
@@ -385,6 +386,10 @@ impl CashShop {
                 layer.sprites.push((icon, at(offset(place, [4.0, 14.0])), icon.size));
             }
             let name = inventory::item_name(items, item, true, 0);
+            // The top 24 px of a cell show its whole name, 20 px above the cell.
+            if contains(at(place), [GOOD_SIZE[0], 24.0], pointer.0) {
+                crate::window::tooltip(tooltip, chrome, font, &name, at(offset(place, [0.0, -20.0])), [255; 3]);
+            }
             layer.texts.push((crate::window::fit(font, &name, GOOD_SIZE[0] - 38.0), at(offset(place, [36.0, 12.0])), [0, 0, 0]));
             layer.texts.push((format!("{}: {} C", message(COST_MESSAGE), group(u64::from(price))), at(offset(place, [36.0, 32.0])), [0x40, 0x40, 0x90]));
         }
@@ -393,6 +398,10 @@ impl CashShop {
         for (row, &(item, amount, _, price)) in self.cart.iter().skip(self.cart_scroll).take(CART_ROWS).enumerate() {
             let place = offset(CART, [5.0, 20.0 + row as f32 * CART_ROW]);
             let name = inventory::item_name(items, item, true, 0);
+            // The name strip shows the whole name, 10 px above the row.
+            if contains(at(place), [140.0, font.line_height()], pointer.0) {
+                crate::window::tooltip(tooltip, chrome, font, &name, at(offset(place, [0.0, -10.0])), [255; 3]);
+            }
             layer.texts.push((crate::window::fit(font, &name, 140.0), at(place), [0, 0, 0]));
             layer.texts.push((
                 format!("{}: {} C  {}: {amount}", message(COST_MESSAGE), group(u64::from(price)), message(QUANTITY_MESSAGE)),
