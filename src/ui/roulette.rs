@@ -275,7 +275,7 @@ impl Roulette {
             let over = self.hit(pointer.0) == Some(hit);
             layer.sprites.push((&images[usize::from(over && pointer.1)], at(corner), BUTTON));
             if over {
-                window::tooltip(tooltip, chrome, font, message(tip), offset(pointer.0, [12.0, 12.0]), [255; 3]);
+                window::tooltip(tooltip, chrome, font, message(tip), at(offset(corner, [0.0, -20.0])), [255; 3]);
             }
         }
     }
@@ -293,7 +293,7 @@ pub fn draw_icon<'a>(
 ) {
     layer.sprites.push((&assets.icon, ICON_AT, ICON_SIZE));
     if icon_hit(cursor) {
-        window::tooltip(tooltip, chrome, font, messages.get(TITLE).map_or("", String::as_str), offset(cursor, [12.0, 12.0]), [255; 3]);
+        window::tooltip(tooltip, chrome, font, messages.get(TITLE).map_or("", String::as_str), offset(ICON_AT, [0.0, -20.0]), [255; 3]);
     }
 }
 

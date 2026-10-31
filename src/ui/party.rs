@@ -254,8 +254,7 @@ impl Button {
             Self::Setup => 101,
             Self::Whisper => 99,
             Self::Delete => 351,
-            // ponytail: the same tooltip as the party setup button; the client's own words for this one aren't pinned down.
-            Self::FriendSetup => 101,
+            Self::FriendSetup => 355,
         }
     }
 
@@ -1115,8 +1114,9 @@ impl PartyWindow {
             };
             let name_at = [places.level[0] + font.width(&level) + 5.0, places.level[1]];
             layer.texts.push((name.clone(), at(name_at), color));
+            // A cut name shows whole ("Name(Map)", no level) over itself.
             if name != whole && hit == Some(Hit::Member(info.account)) {
-                window::tooltip(tooltip, chrome, font, &format!("{level} {whole}"), offset(pointer.0, [12.0, 12.0]), [255; 3]);
+                window::tooltip(tooltip, chrome, font, &whole, at(offset(name_at, [-4.0, -4.0])), [255; 3]);
             }
             let hp = if info.account == me { Some(our_hp) } else { member.hp };
             if shows_bar(info.account, me, info.online, on_screen(info.account))
@@ -1162,7 +1162,7 @@ impl PartyWindow {
             };
             layer.sprites.push((&assets.button(button)[look], at(self.button_at(place)), BUTTON));
             if look > 0 {
-                window::tooltip(tooltip, chrome, font, message(button.message()), offset(pointer.0, [12.0, 12.0]), [255; 3]);
+                window::tooltip(tooltip, chrome, font, message(button.message()), at(offset(self.button_at(place), [0.0, -20.0])), [255; 3]);
             }
         }
         // The footer: the two tabs (the open one in black), and the party's count in its box.
@@ -1446,7 +1446,7 @@ impl MemberWindows {
             let line = window::fit(font, &whole, MINI_TEXT_WIDTH);
             layer.texts.push((line.clone(), place(MINI_TEXT), if info.online { [255; 3] } else { OFFLINE }));
             if line != whole && contains(at, MINI_SIZE, pointer) {
-                window::tooltip(tooltip, chrome, font, &whole, offset(pointer, [12.0, 12.0]), [255; 3]);
+                window::tooltip(tooltip, chrome, font, &whole, offset(at, [15.0, -12.0]), [255; 3]);
             }
             let hp = if info.account == me { Some(our_hp) } else { member.hp };
             if shows_bar(info.account, me, info.online, on_screen(info.account))

@@ -11,7 +11,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{self, Chrome, Frame};
-use crate::{Layer, UI, contains, inventory, screen};
+use crate::{Layer, UI, contains, inventory, offset, screen};
 
 // The game's bar: 290 wide, a 34-high shortcut frame a row (33 apart, overlapping by one), slots 29 apart.
 const WIDTH: f32 = 290.0;
@@ -28,6 +28,8 @@ const QUICK_FROM_RIGHT: f32 = 124.0;
 const QUICK_FIRST: [f32; 2] = [5.0, 5.0];
 const QUICK_GRIP: f32 = 59.0;
 const SLOT: [f32; 2] = [24.0, 24.0];
+/// The page switch's tooltip, "Switch Hotkey Bar".
+const SWITCH_TIP: usize = 3596;
 const SLOT_STEP: f32 = 29.0;
 const FIRST_SLOT: [f32; 2] = [16.0, 4.0];
 /// The hover box sits a pixel lower than the icon.
@@ -269,8 +271,10 @@ impl Hotkeys {
         icons: &'a HashMap<String, Option<Texture>>,
         items: &HashMap<u32, ItemInfo>,
         skills: &HashMap<u16, SkillInfo>,
+        learnt: &[rustnarok_client::net::Skill],
         inventory: &[InventoryItem],
         font: &Font,
+        messages: &[String],
         cursor: [f32; 2],
         cooling: &crate::skills::Cooling<'a>,
         keys: &crate::shortcuts::Shortcuts,
@@ -283,6 +287,12 @@ impl Hotkeys {
                 layer.texts.push((number, self.frame.at([ROW_NUMBER[0], top + ROW_NUMBER[1]]), ROW_NUMBER_COLOR));
             }
             layer.sprites.push((&assets.switch[usize::from(self.tab)], self.frame.at(SWITCH), SWITCH_SIZE));
+            if contains(self.frame.at(SWITCH), SWITCH_SIZE, cursor) {
+                let text = messages.get(SWITCH_TIP).map_or("", String::as_str);
+                if !text.is_empty() {
+                    window::tooltip(tooltip, chrome, font, text, self.frame.at(offset(SWITCH, [0.0, -20.0])), [255; 3]);
+                }
+            }
             let [minus, plus] = self.step_buttons();
             layer.sprites.push((&assets.minus, self.frame.at(minus), STEP_BUTTON));
             layer.sprites.push((&assets.plus, self.frame.at(plus), STEP_BUTTON));
@@ -291,21 +301,30 @@ impl Hotkeys {
             layer.sprites.push((&assets.quick, self.quick_window.at([0.0, 0.0]), QUICK_SIZE));
         }
         let bar = if self.tab() == 0 { 1 } else { 2 };
-        // Each slot: its key, its icon's corner and its hover box's (the bar's a pixel lower).
-        let bar_slots =
-            self.shown().into_iter().filter(|_| self.frame.open).map(|(index, local)| (index, self.frame.at(local), self.frame.at(hover_corner(local))));
-        let quick_slots = self.quick_slots().into_iter().map(|(index, corner)| (index, corner, corner));
+        // Each slot: its key index, its icon's corner, its hover box's (the bar's a pixel lower), and its tooltip's corner:
+        // 17 px above the window at the slot's column. The bar's slots name their key; the quick slots don't.
+        let bar_slots = self.shown().into_iter().filter(|_| self.frame.open).map(|(index, local)| {
+            (index, self.frame.at(local), self.frame.at(hover_corner(local)), self.frame.at([local[0] - 1.0, -17.0]), true)
+        });
+        let quick_slots = self.quick_slots().into_iter().enumerate().map(|(column, (index, corner))| {
+            (index, corner, corner, self.quick_window.at([4.0 + column as f32 * SLOT_STEP, -17.0]), false)
+        });
         // The quick window is drawn over the bar, so its slots go last.
         // ponytail: one layer for both; where they overlap, the bar's icons and numbers show through the quick window.
-        for (index, corner, hover) in bar_slots.chain(quick_slots).collect::<Vec<_>>() {
+        for (index, corner, hover, tip_corner, keyed) in bar_slots.chain(quick_slots).collect::<Vec<_>>() {
             let key = self.keys.get(index).and_then(|key| *key);
-            // The key that uses the slot, after its name on hover.
-            let pressed = keys.hotbar_key(bar, index).map_or_else(String::new, |key| format!(" [{key}]"));
-            // The slot under the pointer: a box under its icon.
-            if contains(hover, SLOT, cursor) {
+            let pressed = keyed.then(|| keys.hotbar_key(bar, index).unwrap_or_default());
+            // The slot under the pointer: a box under its icon, and its tooltip.
+            let pointed = contains(hover, SLOT, cursor);
+            if pointed {
                 layer.sprites.push((&assets.hover, hover, SLOT));
             }
-            // A skill: its icon, the name on hover.
+            let mut tip = |skill: Option<(&str, u16, i32)>, item: Option<(&str, u32)>| {
+                if let Some(text) = slot_tip(messages, pressed.as_deref(), skill, item).filter(|_| pointed) {
+                    window::tooltip(tooltip, chrome, font, &text, tip_corner, [255; 3]);
+                }
+            };
+            // A skill: its icon; on hover its name, the level it's used at (no higher than learnt) and that level's SP.
             if let Some(Hotkey { skill: true, id, count }) = key.as_ref()
                 && let Some(info) = u16::try_from(*id).ok().and_then(|id| skills.get(&id))
             {
@@ -315,13 +334,19 @@ impl Hotkeys {
                 // The level it's used at, bottom right, as an item's amount; a clock while it's blocked.
                 count_text(layer, font, corner, &count.to_string());
                 cooling.draw(layer, *id as u16, corner, [24.0, 24.0]);
-                if contains(corner, SLOT, cursor) {
-                    window::tooltip(tooltip, chrome, font, &format!("{} Lv {count}{pressed}", info.name), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
-                }
+                let used = learnt.iter().find(|skill| u32::from(skill.id) == *id).map(|skill| u16::try_from(*count).unwrap_or(0).min(skill.level).max(1));
+                let sp = |level: u16| info.sp_amount.get(usize::from(level) - 1).copied().unwrap_or(0);
+                tip(used.map(|level| (info.name.as_str(), level, sp(level))), None);
                 continue;
             }
-            let Some(Hotkey { skill: false, id, .. }) = key else { continue };
-            let Some(info) = items.get(&id) else { continue };
+            let Some(Hotkey { skill: false, id, .. }) = key else {
+                tip(None, None);
+                continue;
+            };
+            let Some(info) = items.get(&id) else {
+                tip(None, None);
+                continue;
+            };
             if let Some(Some(icon)) = icons.get(&inventory::icon_path(info, true)) {
                 layer.sprites.push((icon, corner, icon.size));
             }
@@ -333,11 +358,26 @@ impl Hotkeys {
             // How many are carried, bottom right.
             let amount: u32 = inventory.iter().filter(|item| item.id == id && item.worn == 0).map(|item| u32::from(item.amount)).sum();
             count_text(layer, font, corner, &amount.to_string());
-            if contains(corner, SLOT, cursor) {
-                window::tooltip(tooltip, chrome, font, &format!("{}{pressed}", info.name(true)), [corner[0], corner[1] + SLOT[1] + 2.0], [255; 3]);
-            }
+            let name = info.name(true);
+            tip(None, (amount > 0).then_some((&*name, amount)));
         }
     }
+}
+
+/// A slot's tooltip: the key that uses it (the bar's slots; none on the quick slots), then a skill's
+/// "name Use Lv n (Sp : n)" or a carried item's "name: amount" (184; the quick slots "name: n ea.", 183). An empty slot,
+/// an item not carried or a skill not learnt shows the key alone.
+pub fn slot_tip(messages: &[String], key: Option<&str>, skill: Option<(&str, u16, i32)>, item: Option<(&str, u32)>) -> Option<String> {
+    let message = |id: usize| messages.get(id).map_or("", String::as_str);
+    let fill = rustnarok_client::messages::fill;
+    let text = match (skill, item, key) {
+        (Some((name, level, sp)), _, key) => format!("{} {name} Use Lv {level} (Sp : {sp})", key.unwrap_or_default()),
+        (None, Some((name, amount)), Some(key)) => fill(message(184), &[&key, &name, &amount]),
+        (None, Some((name, amount)), None) => fill(message(183), &[&name, &amount]),
+        (None, None, key) => key.unwrap_or_default().to_owned(),
+    };
+    let text = text.trim_start();
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 impl Hotkeys {
@@ -420,6 +460,22 @@ pub fn drop_on(keys: &[Option<Hotkey>], key: Hotkey, to: usize) -> Vec<(usize, O
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slot_tips_lead_with_the_key() {
+        let mut messages = vec![String::new(); 185];
+        messages[183] = "%s: %d ea.".into();
+        messages[184] = "%s %s: %d".into();
+        let heal = Some(("Heal", 10, 40));
+        assert_eq!(slot_tip(&messages, Some("F1"), heal, None).as_deref(), Some("F1 Heal Use Lv 10 (Sp : 40)"));
+        assert_eq!(slot_tip(&messages, Some("F2"), None, Some(("Red Potion", 30))).as_deref(), Some("F2 Red Potion: 30"));
+        // An empty slot, or an item not carried: the key alone; with no key, nothing.
+        assert_eq!(slot_tip(&messages, Some("F3"), None, None).as_deref(), Some("F3"));
+        assert_eq!(slot_tip(&messages, Some(""), None, None), None);
+        // The quick slots name no key and count items as "ea.".
+        assert_eq!(slot_tip(&messages, None, heal, None).as_deref(), Some("Heal Use Lv 10 (Sp : 40)"));
+        assert_eq!(slot_tip(&messages, None, None, Some(("Red Potion", 30))).as_deref(), Some("Red Potion: 30 ea."));
+    }
 
     #[test]
     fn puts_the_hover_box_under_the_slot() {

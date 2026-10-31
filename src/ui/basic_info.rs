@@ -9,6 +9,7 @@ use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame, TITLE_HEIGHT};
+use crate::shortcuts::{Action, Shortcuts};
 use crate::{Layer, UI, contains, offset};
 
 const WIDTH: f32 = 220.0;
@@ -168,6 +169,12 @@ pub fn zeny_text(zeny: i64) -> String {
         grouped.push(digit);
     }
     format!("Zeny : {}{grouped}", if zeny < 0 { "-" } else { "" })
+}
+
+/// The exp bar's hover text: "%.1f %%" to a tenth, rounded down; none at the top level (no next, or 99999999) or
+/// past the next.
+pub fn exp_tip(exp: i64, next: i64) -> Option<String> {
+    (next > 0 && next != 99_999_999 && exp <= next).then(|| format!("{:.1} %", (exp * 1000 / next) as f64 / 10.0))
 }
 
 /// The mini window's first line, and the shorter one when that's too wide: levels, job and base exp to a tenth.
@@ -336,6 +343,8 @@ pub struct Info<'a> {
     pub new_job_level: bool,
     /// The server's overweight point, in percent of the limit.
     pub overweight: u32,
+    /// The shortcuts, for the keys the menu buttons name.
+    pub keys: Option<&'a Shortcuts>,
 }
 
 impl BasicInfo {
@@ -507,7 +516,18 @@ impl BasicInfo {
             .collect()
     }
 
-    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, font: &Font, messages: &[String], info: &Info, cursor: [f32; 2]) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        font: &Font,
+        messages: &[String],
+        info: &Info,
+        cursor: [f32; 2],
+    ) {
         if !self.frame.open {
             return;
         }
@@ -558,7 +578,9 @@ impl BasicInfo {
                 text(layer, part, [x, 36.0], if low { RED } else { BLACK });
                 x += width;
             }
-            self.draw_menu(layer, assets, info);
+            if let Some((tip, corner)) = self.draw_menu(layer, assets, info, messages, cursor) {
+                crate::window::tooltip(tooltip, chrome, font, &tip, corner, [255; 3]);
+            }
             return;
         }
         let title = messages.get(BASIC_INFO_MESSAGE).cloned().unwrap_or_default();
@@ -606,6 +628,12 @@ impl BasicInfo {
                 layer.sprites.push((&chrome.white, at(offset(corner, [1.0, 1.0])), [EXP_INNER, EXP_SIZE[1] - 2.0]));
                 let filled = (EXP_INNER * value(exp).clamp(0, next) as f32 / next as f32).trunc();
                 layer.sprites.push((&assets.exp_fill, at(offset(corner, [1.0, 1.0])), [filled, EXP_SIZE[1] - 2.0]));
+                // Resting on the bar shows how far along it is, 16 px above its corner.
+                if contains(at(corner), EXP_SIZE, cursor)
+                    && let Some(tip) = exp_tip(value(exp), next)
+                {
+                    crate::window::tooltip(tooltip, chrome, font, &tip, at(offset(corner, [0.0, -16.0])), [255; 3]);
+                }
             }
         }
 
@@ -617,13 +645,22 @@ impl BasicInfo {
         text(layer, zeny, [zeny_x, layout.extra], BLACK);
         let weight_x = zeny_x - WEIGHT_GAP - font.width(&weight_text);
         text(layer, weight_text, [weight_x, layout.extra], if heavy(weight, limit, info.overweight) { RED } else { BLACK });
+        // The bottom left strip shows the weight in percent, 19 px above it.
+        let height = layout.height;
+        if limit > 0 && contains(at([0.0, height - 20.0]), [100.0, 20.0], cursor) {
+            crate::window::tooltip(tooltip, chrome, font, &format!("Weight {}%", weight * 100 / limit), at([0.0, height - 39.0]), [255; 3]);
+        }
 
-        self.draw_menu(layer, assets, info);
+        if let Some((tip, corner)) = self.draw_menu(layer, assets, info, messages, cursor) {
+            crate::window::tooltip(tooltip, chrome, font, &tip, corner, [255; 3]);
+        }
     }
 
     /// The menu under the window (also under the minimised one): its toggle bar, and the buttons when it's open.
-    fn draw_menu<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, info: &Info) {
+    /// Returns the tooltip of the button under the pointer and its corner.
+    fn draw_menu<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, info: &Info, messages: &[String], cursor: [f32; 2]) -> Option<(String, [f32; 2])> {
         let at = |local: [f32; 2]| self.frame.at(local);
+        let mut tip = None;
         // The menu toggle, and the menu when it's open.
         let marked = info.unread_mail || info.reward_waiting || info.new_items || info.new_level || info.new_job_level;
         let toggle = match &assets.toggle_new {
@@ -647,9 +684,50 @@ impl BasicInfo {
                 if let Some(icon) = icon {
                     layer.sprites.push((icon, at(self.button_corner(place)), icon.size));
                 }
+                // Its name and the key that opens its window, 20 px above it.
+                if contains(at(self.button_corner(place)), MENU_BUTTON_SIZE, cursor) {
+                    tip = menu_tip(name, messages, |action| info.keys.and_then(|keys| keys.keys_for(action)))
+                        .map(|text| (text, at(offset(self.button_corner(place), [0.0, -20.0]))));
+                }
             }
         }
+        tip
     }
+}
+
+/// A menu button's tooltip: "name (key)" with the key of the window it opens, the name alone without one; Option's key
+/// is always Esc.
+pub fn menu_tip(button: &str, messages: &[String], keys: impl Fn(Action) -> Option<String>) -> Option<String> {
+    let (message, action) = match button {
+        "status" => (105, Some(Action::Status)),
+        "equip" => (104, Some(Action::Equipment)),
+        "item" => (106, Some(Action::Inventory)),
+        "skill" => (283, Some(Action::Skills)),
+        "party" => (103, Some(Action::Party)),
+        "guild" => (3134, Some(Action::Guild)),
+        "quest" => (1317, Some(Action::Quests)),
+        "map" => (2859, Some(Action::WorldMap)),
+        "navigation" => (2353, None),
+        "option" => return messages.get(265).filter(|name| !name.is_empty()).map(|name| format!("{name} (Esc)")),
+        "bank" => (3135, Some(Action::Bank)),
+        "rec" => (2350, None),
+        "mail" => (3136, Some(Action::Mail)),
+        "achievement" => (2646, Some(Action::Achievements)),
+        "tip" => (3239, Some(Action::Tip)),
+        "shop" => (3137, None),
+        "keyboard" => (3128, None),
+        "attendance" => (3473, None),
+        "adventurerAgency" => (3514, Some(Action::PartyBoard)),
+        "repute" => (3827, Some(Action::Reputation)),
+        "adventureguide" => (4053, None),
+        "probability" => (4119, None),
+        _ => return None,
+    };
+    let name = messages.get(message).filter(|name| !name.is_empty())?;
+    Some(match action.and_then(keys) {
+        Some(key) => format!("{name} ({key})"),
+        None => name.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -666,6 +744,29 @@ mod tests {
         window.frame.open = false;
         window.mini_full();
         assert!(window.frame.open && !window.frame.minimized);
+    }
+
+    #[test]
+    fn menu_buttons_name_their_window_and_its_key() {
+        let mut messages = vec![String::new(); 3200];
+        messages[106] = "Inventory".into();
+        messages[265] = "Option".into();
+        messages[2353] = "Navigation".into();
+        let keys = |action| (action == Action::Inventory).then(|| "Alt+E".to_owned());
+        assert_eq!(menu_tip("item", &messages, keys).as_deref(), Some("Inventory (Alt+E)"));
+        assert_eq!(menu_tip("option", &messages, keys).as_deref(), Some("Option (Esc)"));
+        assert_eq!(menu_tip("navigation", &messages, keys).as_deref(), Some("Navigation"));
+        // No words for it, no tooltip.
+        assert_eq!(menu_tip("bank", &messages, keys), None);
+    }
+
+    #[test]
+    fn exp_bar_tip_is_a_tenth_of_a_percent_rounded_down() {
+        assert_eq!(exp_tip(4235, 10_000).as_deref(), Some("42.3 %"));
+        assert_eq!(exp_tip(0, 500).as_deref(), Some("0.0 %"));
+        assert_eq!(exp_tip(500, 500).as_deref(), Some("100.0 %"));
+        // None at the top level or past the next.
+        assert_eq!([exp_tip(5, 0), exp_tip(5, 99_999_999), exp_tip(600, 500)], [None, None, None]);
     }
 
     #[test]

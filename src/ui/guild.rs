@@ -33,8 +33,6 @@ const LINE: f32 = 20.0;
 const ROWS: usize = 11;
 /// Where it first opens, on Guild Info, and again when its last place isn't all on the screen.
 const POSITION: [f32; 2] = [0.0, 34.0];
-/// The close button's name.
-const CLOSE_TIP: &str = "Alt+G";
 /// The tabs a guild's menu flag must have (ZC_ACK_GUILD_MENUINTERFACE): Guild Info and Guild Skill always open.
 const TAB_RIGHTS: [u32; 6] = [0, 0x01, 0x02, 0, 0x10, 0x80];
 /// The menu flag until the server says it: every tab.
@@ -1274,7 +1272,6 @@ impl GuildWindow {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
-        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
@@ -1290,12 +1287,9 @@ impl GuildWindow {
         }
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let at = |local: [f32; 2]| self.frame.at(local);
-        // The title bar with no title, the close button alone, named "Alt+G".
+        // The title bar with no title, the close button alone (its key's tooltip is drawn with the other windows').
         self.frame.draw_bar(layer, chrome);
         self.frame.draw_bare_title(layer, chrome, "", pointer.0);
-        if contains(at(self.frame.close_button()), window::BUTTON_SIZE, pointer.0) {
-            window::tooltip(tooltip, chrome, font, CLOSE_TIP, offset(pointer.0, [12.0, 12.0]), [255; 3]);
-        }
         let hit = self.hit(pointer.0, guild);
         // The tab strip: grey, its cells white for the open tab, light grey for the others; the labels left in them.
         // ponytail: each label left-aligned in its box.

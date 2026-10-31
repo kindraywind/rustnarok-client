@@ -1880,11 +1880,11 @@ impl App {
         }
         if !game.minimap_window.covers(pointer.0)
             && game.window_at(pointer.0).is_none()
-            && let Some(name) = minimap::button_at(pointer.0)
+            && let Some((name, corner)) = minimap::button_corner_at(pointer.0)
         {
             let text = messages.get(minimap::tooltip_id(name)).map(String::as_str).unwrap_or("");
             if !text.is_empty() {
-                window::tooltip(&mut tooltip, &assets.chrome, font, text, offset(pointer.0, [12.0, 12.0]), [255; 3]);
+                window::tooltip(&mut tooltip, &assets.chrome, font, text, offset(corner, [0.0, -20.0]), [255; 3]);
             }
         }
         // Status icons down the right, each with the clock of its time (orange in the last minute).
@@ -1984,8 +1984,10 @@ impl App {
                     icons,
                     items,
                     skill_info,
+                    &game.skills,
                     &game.inventory.items,
                     font,
+                    messages,
                     pointer.0,
                     &cooling,
                     &self.keybinds,
@@ -2004,8 +2006,9 @@ impl App {
                         new_level: game.level_ups.base,
                         new_job_level: game.level_ups.job,
                         overweight: game.overweight,
+                        keys: Some(&self.keybinds),
                     };
-                    game.basic_info.draw(&mut layer, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
+                    game.basic_info.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }
                 Panel::Inventory => game.inventory.draw(
                     &mut layer,
@@ -2054,7 +2057,7 @@ impl App {
                 Panel::Homunculus => {
                     if let Some(homunculus) = &game.homunculus {
                         let blink = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-                        game.homunculus_window.draw(&mut layer, &assets.chrome, &assets.homunculus, font, messages, homunculus, pointer, blink);
+                        game.homunculus_window.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.homunculus, font, messages, homunculus, pointer, blink);
                     }
                 }
                 Panel::HomunculusSkills => {
@@ -2091,7 +2094,6 @@ impl App {
                         let emblem = game.emblems.get(&guild.id).and_then(|(_, emblem)| emblem.as_ref());
                         game.guild_window.draw(
                             &mut layer,
-                            &mut tooltip,
                             &assets.chrome,
                             &assets.guild,
                             icons,
@@ -2156,6 +2158,19 @@ impl App {
             }
             layer.faded = game.panel_faded(id);
             layers.push(layer);
+        }
+        // A window's close button names the key that opens and closes it, 20 px above the button; Basic Info's minimize
+        // button names its own.
+        if let Some(panel) = game.window_at(pointer.0) {
+            let button = match panel {
+                Panel::BasicInfo => Some(game.basic_info.frame.at(game.basic_info.minimize_button())),
+                _ => game.titled_frame(panel).map(|frame| frame.at(frame.close_button())),
+            };
+            if let Some(corner) = button.filter(|&corner| contains(corner, window::BUTTON_SIZE, pointer.0))
+                && let Some(keys) = panel_action(panel).and_then(|action| self.keybinds.keys_for(action))
+            {
+                window::tooltip(&mut tooltip, &assets.chrome, font, &keys, offset(corner, [0.0, -20.0]), [255; 3]);
+            }
         }
         // Party members dragged out of the list, over the other windows.
         let mut member_layer = Layer::default();
@@ -2398,10 +2413,10 @@ impl App {
         }
         if let Some(bank) = &game.bank {
             let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
-            bank.draw(shop_layer.window(), &assets.chrome, &assets.bank, messages, font, pointer, caret, carried);
+            bank.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.bank, messages, font, pointer, caret, carried);
         }
         if let Some(shop) = &game.cashshop {
-            shop.draw(shop_layer.window(), &assets.chrome, &assets.cashshop, icons, items, messages, font, pointer, caret);
+            shop.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.cashshop, icons, items, messages, font, pointer, caret);
         }
         if let Some(viewed) = &game.viewing {
             let window = &viewed.window;
@@ -2757,7 +2772,7 @@ impl App {
                 Some(sprites) => dress_placements.iter().map(|(key, position, size, _)| (sprites.texture(*key), offset(feet, *position), *size)).collect(),
                 None => Vec::new(),
             };
-            room.draw(shop_layer.window(), &assets.chrome, &assets.dressroom, font, messages, &game.dress_lists, figure, pointer);
+            room.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.dressroom, font, messages, &game.dress_lists, figure, pointer);
         }
         if let Some(window) = &game.settings_window {
             window.draw(shop_layer.window(), &assets.chrome, &assets.game_settings, &assets.options, font, messages, (sound, &self.graphics), pointer);
@@ -3098,4 +3113,24 @@ impl App {
             _ => gpu.draw(Some(&frame), &sprites, &alphas),
         }
     }
+}
+
+/// The shortcut that opens and closes a window, which its close button names.
+fn panel_action(panel: Panel) -> Option<shortcuts::Action> {
+    use shortcuts::Action;
+    Some(match panel {
+        Panel::BasicInfo => Action::BasicInfo,
+        Panel::Inventory => Action::Inventory,
+        Panel::Equipment => Action::Equipment,
+        Panel::Skills => Action::Skills,
+        Panel::Party => Action::Party,
+        Panel::Status => Action::Status,
+        Panel::Guild => Action::Guild,
+        Panel::Clan => Action::Clan,
+        Panel::Cart => Action::Cart,
+        Panel::Pet => Action::Pet,
+        Panel::Mercenary => Action::Mercenary,
+        Panel::Homunculus => Action::Homunculus,
+        _ => return None,
+    })
 }

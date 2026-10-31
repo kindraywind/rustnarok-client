@@ -43,6 +43,12 @@ const OVER_MOST: usize = 2768;
 const NO_ZENY: usize = 2770;
 const TOO_MUCH: usize = 2780;
 const BALANCE_SHORT: usize = 2455;
+/// The buttons' tooltips: Deposit, Withdraw, "+ 1z", "- 1z", Max.
+const DEPOSIT_TIP: usize = 2774;
+const WITHDRAW_TIP: usize = 2775;
+const UP_TIP: usize = 2776;
+const DOWN_TIP: usize = 2777;
+const MAX_TIP: usize = 2778;
 
 pub struct Assets {
     background: Texture,
@@ -159,6 +165,7 @@ impl Bank {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
         messages: &[String],
@@ -196,6 +203,21 @@ impl Bank {
         }
         layer.sprites.push((&assets.buttons[0][look(Hit::Deposit)], at(DEPOSIT), BUTTON));
         layer.sprites.push((&assets.buttons[1][look(Hit::Withdraw)], at(WITHDRAW), BUTTON));
+        // Each button names itself, 20 px above it.
+        let quick = |place: usize| offset(QUICK, [place as f32 * (QUICK_SIZE[0] + 2.0), 0.0]);
+        let tip = match self.hit(pointer.0) {
+            Some(Hit::Deposit) => Some((message(DEPOSIT_TIP).to_owned(), DEPOSIT)),
+            Some(Hit::Withdraw) => Some((message(WITHDRAW_TIP).to_owned(), WITHDRAW)),
+            Some(Hit::Arrow(place)) => Some((message(if place == 0 { UP_TIP } else { DOWN_TIP }).to_owned(), ARROWS[place.min(1)])),
+            Some(Hit::Quick(place)) => {
+                let text = QUICK_AMOUNTS.get(place).map_or_else(|| message(MAX_TIP).to_owned(), |&amount| format!("+ {}", crate::shop::group(amount)));
+                Some((text, quick(place)))
+            }
+            _ => None,
+        };
+        if let Some((text, corner)) = tip.filter(|(text, _)| !text.is_empty()) {
+            crate::window::tooltip(tooltip, chrome, font, &text, at(offset(corner, [0.0, -20.0])), [255; 3]);
+        }
     }
 }
 

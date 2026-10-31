@@ -41,6 +41,11 @@ const SEARCH_BY: [[f32; 2]; 2] = [[19.0, 69.0], [72.0, 69.0]];
 const CHECKBOX: [f32; 2] = [10.0, 10.0];
 const PAGE_BUTTON: [f32; 2] = [24.0, 24.0];
 const PREV: [f32; 2] = [110.0, 389.0];
+/// The list's button tooltips: Refresh, Write, Previous, Next.
+const REFRESH_TIP: usize = 2849;
+const WRITE_TIP: usize = 1026;
+const PREV_TIP: usize = 1297;
+const NEXT_TIP: usize = 1298;
 const NEXT: [f32; 2] = [175.0, 389.0];
 /// A letter: its text's box, its item slots (centers), the zeny box and the buttons.
 const TEXT_BOX: [f32; 4] = [9.0, 71.0, 282.0, 220.0];
@@ -804,7 +809,7 @@ impl Mail {
             layer.sprites.push((&assets.notice, notice(), assets.notice.size));
         }
         if self.list.frame.open {
-            self.draw_list(layer, chrome, assets, font, messages, hit, pointer, caret);
+            self.draw_list(layer, tooltip, chrome, assets, font, messages, hit, pointer, caret);
         }
         // Items on a letter (or in one being written): icon, how many, and the name when pointed at.
         let draw_items = |layer: &mut Layer<'a>, tooltip: &mut Layer<'a>, frame: &Frame, attached: &[InventoryItem], hovered: Option<usize>| {
@@ -821,9 +826,10 @@ impl Mail {
                 layer.texts.push((amount.clone(), offset(place, [-1.0, -1.0]), [255; 3]));
                 layer.texts.push((amount, place, TEXT));
                 if hovered == Some(slot) {
-                    // ponytail: the balloon's colour and place in the game's mail window aren't known; the whole name in white.
-                    let name = inventory::full_name(items, cards, messages, makers, item, true);
-                    window::tooltip(tooltip, chrome, font, &name, offset(pointer.0, [12.0, 12.0]), [255; 3]);
+                    // The name ("[N Option]" with options) in the item's colour, 19 px above the slot's row.
+                    let name = inventory::option_text(messages, &inventory::full_name(items, cards, messages, makers, item, true), item);
+                    let color = inventory::name_color(item, items);
+                    window::tooltip(tooltip, chrome, font, &name, frame.at([30.0 + 34.0 * slot as f32, 290.0]), color);
                 }
             }
         };
@@ -915,6 +921,7 @@ impl Mail {
     fn draw_list<'a>(
         &self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
         font: &Font,
@@ -927,6 +934,19 @@ impl Mail {
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let at = |local: [f32; 2]| list.frame.at(local);
         let hovered = |target: ListHit| hit == Some(Hit::List(target));
+        // Refresh, Write and the page arrows name themselves 20 px above.
+        let button_tip = |tooltip: &mut Layer<'a>, target: ListHit, place: [f32; 2]| {
+            let tip = match target {
+                ListHit::Refresh => REFRESH_TIP,
+                ListHit::Write => WRITE_TIP,
+                ListHit::Prev => PREV_TIP,
+                ListHit::Next => NEXT_TIP,
+                _ => return,
+            };
+            if hovered(target) && !message(tip).is_empty() {
+                window::tooltip(tooltip, chrome, font, message(tip), at(offset(place, [0.0, -20.0])), [255; 3]);
+            }
+        };
         layer.sprites.push((&assets.list, list.frame.position, assets.list.size));
         list.frame.draw_bare_title(layer, chrome, message(LIST_TITLE), pointer.0);
         for (images, place, target) in
@@ -934,6 +954,7 @@ impl Mail {
         {
             let image = &images[look(hovered(target), pointer.1)];
             layer.sprites.push((image, at(place), image.size));
+            button_tip(tooltip, target, place);
         }
         // What the search looks at, and what's typed for it.
         for (by_sender, (place, label)) in [false, true].into_iter().zip(SEARCH_BY.into_iter().zip([TITLE_LABEL, SENDER_LABEL])) {
@@ -973,6 +994,7 @@ impl Mail {
         for (images, place, target) in [(&assets.prev, PREV, ListHit::Prev), (&assets.next, NEXT, ListHit::Next)] {
             let image = &images[look(hovered(target), pointer.1)];
             layer.sprites.push((image, at(place), image.size));
+            button_tip(tooltip, target, place);
         }
         let page = format!("{} / {}", list.page + 1, list.pages());
         layer.texts.push((page.clone(), at([(PREV[0] + PAGE_BUTTON[0] + NEXT[0]) / 2.0 - (font.width(&page) / 2.0).floor(), PREV[1] + 5.0]), TEXT));

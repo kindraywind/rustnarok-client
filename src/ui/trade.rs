@@ -323,7 +323,7 @@ impl Trade {
                 layer.texts.push((window::fit(font, &name, 190.0), at(offset(top, [34.0, 9.0])), [0, 0, 0]));
                 if hit == Some(Hit::Item(side, row)) {
                     let text = inventory::option_text(messages, &name, item);
-                    window::tooltip(tooltip, chrome, font, &text, offset(pointer.0, [12.0, 12.0]), inventory::name_color(item, items));
+                    window::tooltip(tooltip, chrome, font, &text, offset(pointer.0, [0.0, -20.0]), inventory::name_color(item, items));
                 }
             }
         }

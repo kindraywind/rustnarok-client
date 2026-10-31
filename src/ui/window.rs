@@ -13,7 +13,7 @@ pub const BUTTON_SIZE: [f32; 2] = [11.0, 11.0];
 const BASE_BUTTON: [f32; 2] = [3.0, 3.0];
 const TITLE_TEXT: [f32; 2] = [17.0, 1.0];
 const BORDER: [u8; 4] = [0xCC, 0xCC, 0xCC, 0xFF];
-const TOOLTIP: [u8; 4] = [0, 0, 0, 0xB3];
+const TOOLTIP: [u8; 4] = [0, 0, 0, 0x88];
 
 /// Bitmaps every window uses, all from data.grf.
 pub struct Chrome {
@@ -286,9 +286,16 @@ pub fn whole_text<'a>(layer: &mut Layer<'a>, chrome: &'a Chrome, font: &Font, te
     layer.texts.push((text.to_owned(), place, [255; 3]));
 }
 
+/// A tooltip's corner kept on screen: up to 3 px past each edge.
+pub fn tooltip_corner([x, y]: [f32; 2], [width, height]: [f32; 2], [screen_width, screen_height]: [f32; 2]) -> [f32; 2] {
+    [x.min(screen_width - width + 3.0).max(-3.0), y.min(screen_height - height + 3.0).max(-3.0)]
+}
+
 /// The client's tooltip: white text with a black shadow on a translucent black box.
 pub fn tooltip<'a>(layer: &mut Layer<'a>, chrome: &'a Chrome, font: &Font, text: &str, corner: [f32; 2], color: [u8; 3]) {
-    layer.sprites.push((&chrome.tooltip, corner, [font.width(text).ceil() + 8.0, 23.0]));
+    let size = [font.width(text).ceil() + 8.0, 23.0];
+    let corner = tooltip_corner(corner, size, screen());
+    layer.sprites.push((&chrome.tooltip, corner, size));
     layer.texts.push((text.to_owned(), offset(corner, [5.0, 5.0]), [0, 0, 0]));
     layer.texts.push((text.to_owned(), offset(corner, [4.0, 4.0]), color));
 }
@@ -296,7 +303,9 @@ pub fn tooltip<'a>(layer: &mut Layer<'a>, chrome: &'a Chrome, font: &Font, text:
 /// The tooltip box with lines of coloured pieces, each line a line height under the last.
 pub fn tooltip_lines<'a>(layer: &mut Layer<'a>, chrome: &'a Chrome, font: &Font, lines: &[Vec<([u8; 3], String)>], corner: [f32; 2]) {
     let width = lines.iter().map(|line| line.iter().map(|(_, piece)| font.width(piece)).sum::<f32>()).fold(0.0, f32::max);
-    layer.sprites.push((&chrome.tooltip, corner, [width.ceil() + 8.0, 8.0 + lines.len() as f32 * font.line_height()]));
+    let size = [width.ceil() + 8.0, 8.0 + lines.len() as f32 * font.line_height()];
+    let corner = tooltip_corner(corner, size, screen());
+    layer.sprites.push((&chrome.tooltip, corner, size));
     for (row, line) in lines.iter().enumerate() {
         let mut x = 4.0;
         for (color, piece) in line {
@@ -502,6 +511,14 @@ impl<T> Amount<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tooltips_stay_on_screen_but_for_3_px() {
+        let screen = [1024.0, 768.0];
+        assert_eq!(tooltip_corner([100.0, 50.0], [80.0, 23.0], screen), [100.0, 50.0]);
+        assert_eq!(tooltip_corner([1000.0, 760.0], [80.0, 23.0], screen), [947.0, 748.0]);
+        assert_eq!(tooltip_corner([-20.0, -16.0], [80.0, 23.0], screen), [-3.0, -3.0]);
+    }
 
     #[test]
     fn grips_follow_the_pointer_from_the_press() {

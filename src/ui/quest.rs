@@ -37,6 +37,7 @@ const TABS: [&str; 4] = ["process", "recommended", "hold", "wait"];
 const TAB_TOPS: [f32; 4] = [17.0, 118.0, 219.0, 320.0];
 const TAB_SIZE: [f32; 2] = [30.0, 100.0];
 const WAITING: usize = 3;
+const RECOMMENDED: usize = 1;
 /// The list: rows 330 × 46 from (38, 17), 8 whole ones shown; its scrollbar at x 374.
 const LIST: [f32; 2] = [38.0, 17.0];
 const LIST_HEIGHT: f32 = 394.0;
@@ -61,6 +62,8 @@ const LOCK: [f32; 2] = [306.0, 22.0];
 const LOCK_SIZE: [f32; 2] = [20.0, 17.0];
 const CHECK_TIP: usize = 3409;
 const LOCK_TIP: usize = 3407;
+/// The eye's tooltip on the Recommended tab, "Hide".
+const HIDE_TIP: usize = 3408;
 /// The search strip: six 26×22 filter buttons from (35, 414), 31 apart; the box (at most 20 characters) and its button.
 const FILTER_NAMES: [&str; 6] = ["all", "normal", "sub", "daily", "event", "etc"];
 const FILTER_AT: [f32; 2] = [35.0, 414.0];
@@ -830,7 +833,7 @@ impl QuestWindow {
             layer.sprites.push((image, at(filter_at(filter)), FILTER_SIZE));
             let tip = &self.filters.tooltips[filter];
             if hit == Some(Hit::Filter(filter)) && !tip.is_empty() {
-                window::tooltip(tooltip, chrome, font, tip, offset(pointer.0, [12.0, 12.0]), [255; 3]);
+                window::tooltip(tooltip, chrome, font, tip, at(offset(filter_at(filter), [0.0, -20.0])), [255; 3]);
             }
         }
         let [x, y, w, h] = SEARCH_BOX;
@@ -878,13 +881,14 @@ impl QuestWindow {
             layer.sprites.push((check, at(offset(corner, CHECK)), CHECK_SIZE));
             let lock = &assets.lock[usize::from(quest.active)];
             layer.sprites.push((lock, at(offset(corner, LOCK)), LOCK_SIZE));
+            // On the Recommended tab the eye only hides (3408).
             let tip = match hit {
-                Some(Hit::Check(at)) if at == place => Some(CHECK_TIP),
-                Some(Hit::Lock(at)) if at == place => Some(LOCK_TIP),
+                Some(Hit::Check(at)) if at == place => Some((CHECK_TIP, CHECK)),
+                Some(Hit::Lock(at)) if at == place => Some((if self.tab == RECOMMENDED { HIDE_TIP } else { LOCK_TIP }, LOCK)),
                 _ => None,
             };
-            if let Some(tip) = tip {
-                window::tooltip(tooltip, chrome, font, message(tip), offset(pointer.0, [12.0, 12.0]), [255; 3]);
+            if let Some((tip, control)) = tip {
+                window::tooltip(tooltip, chrome, font, message(tip), at(offset(offset(corner, control), [0.0, -20.0])), [255; 3]);
             }
         }
         // The scrollbar: its arrows, and a thumb for the rows shown.

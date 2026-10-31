@@ -438,7 +438,8 @@ impl Window {
         }
         let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
         let cursor = pointer.0;
-        let mut tip: Option<usize> = None;
+        // A tooltip and the local corner of what it names: 20 px above it.
+        let mut tip: Option<(usize, [f32; 2])> = None;
         let hovered = |corner: [f32; 2], size: [f32; 2]| contains(self.frame.at(corner), size, cursor);
         if !self.frame.minimized {
             layer.sprites.push((&chrome.white, self.frame.position, [WIDTH, HEIGHT]));
@@ -474,7 +475,7 @@ impl Window {
                     if let Some((icon, corner)) = self.quest_icon(cell, effect, color, map_size) {
                         layer.sprites.push((icon, self.frame.at(corner).map(f32::round), icon.size));
                         if hovered(corner, icon.size) {
-                            tip = Some(QUEST_TIP);
+                            tip = Some((QUEST_TIP, corner));
                         }
                     }
                 }
@@ -487,7 +488,7 @@ impl Window {
                     layer.sprites.push((image, self.frame.at(corner).map(f32::round), [BOSS; 2]));
                 }
                 if over {
-                    tip = Some(BOSS_TIP);
+                    tip = Some((BOSS_TIP, corner));
                 }
             }
             // The player: their own head.
@@ -496,7 +497,7 @@ impl Window {
                 let middle = self.frame.at(offset(corner, [HEAD / 2.0, HEAD / 2.0]));
                 layer.sprites.push((head, [(middle[0] - head.size[0] / 2.0).round(), (middle[1] - head.size[1] / 2.0).round()], head.size));
                 if hovered(corner, [HEAD; 2]) {
-                    tip = Some(PLAYER_TIP);
+                    tip = Some((PLAYER_TIP, corner));
                 }
             }
             // The bottom row.
@@ -514,7 +515,7 @@ impl Window {
                     }
                     layer.texts.push((message(CHECK_LABELS[index]), self.frame.at(offset(place, [14.0, -1.0])), [0, 0, 0]));
                     if hovered(place, CHECK) {
-                        tip = Some(CHECK_TIPS[index]);
+                        tip = Some((CHECK_TIPS[index], place));
                     }
                 }
                 let over = hovered(RECORD_AT, RECORD_SIZE);
@@ -522,13 +523,13 @@ impl Window {
                     layer.sprites.push((image, self.frame.at(RECORD_AT), RECORD_SIZE));
                 }
                 if over {
-                    tip = Some(RECORD);
+                    tip = Some((RECORD, RECORD_AT));
                 }
             }
         }
         self.frame.draw_title(layer, chrome, title, cursor);
-        if let Some(tip) = tip {
-            window::tooltip(tooltip, chrome, font, &message(tip), offset(cursor, [12.0, 12.0]), [255; 3]);
+        if let Some((tip, corner)) = tip {
+            window::tooltip(tooltip, chrome, font, &message(tip), self.frame.at(offset(corner, [0.0, -20.0])), [255; 3]);
         }
     }
 }

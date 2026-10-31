@@ -115,12 +115,15 @@ pub const BOUND: [u8; 3] = [0xFF, 0xFF, 0x00];
 /// An item's name by how many enchants it has, 1 to 4.
 pub const ENCHANTED: [[u8; 3]; 4] = [[0xAD, 0xFF, 0x2F], [0x00, 0xBF, 0xFF], [0xFF, 0xA5, 0x00], [0x94, 0x00, 0xD3]];
 
+/// The cart's word after an amount, "ea".
+const CART_EA: usize = 588;
+
 /// What names the items: the card names, the makers' names, and the random options' texts when the Extras show them.
 pub type Names<'a> = (&'a CardNames, &'a HashMap<u32, Option<String>>, Option<&'a HashMap<u16, String>>);
 
 /// The hover name box's text: the name and how many (183); an identified item with random options also says how many
 /// options (2551).
-fn hover_text(messages: &[String], name: &str, item: &InventoryItem) -> String {
+pub fn hover_text(messages: &[String], name: &str, item: &InventoryItem) -> String {
     let message = |id: usize| messages.get(id).map_or("", String::as_str);
     match item.options.len() {
         options if item.identified && options > 0 => messages::fill(message(messages::ITEM_OPTIONS_AMOUNT), &[&name, &options, &item.amount]),
@@ -996,8 +999,13 @@ impl Inventory {
             }
             if contains(place, [CELL, CELL], cursor) {
                 let name = full_name(items, cards, messages, makers, item, true);
-                let text = hover_text(messages, &name, item);
-                let corner = if self.is_cart { offset(place, [35.0, 0.0]) } else { offset(place, [0.0, -NAME_BOX_ABOVE]) };
+                // The cart counts as "name n ea" (588) where the inventory says "name: n ea." (183); both "[N Option]" (2551).
+                let text = if self.is_cart && !(item.identified && !item.options.is_empty()) {
+                    format!("{name} {} {}", item.amount, messages.get(CART_EA).map_or("", String::as_str))
+                } else {
+                    hover_text(messages, &name, item)
+                };
+                let corner = offset(place, [0.0, -NAME_BOX_ABOVE]);
                 // The Extras' item options (`option_texts` given): a row each under the name, the box growing upward.
                 let options: Vec<String> = option_texts
                     .filter(|_| item.identified)
