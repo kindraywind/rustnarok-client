@@ -272,11 +272,22 @@ pub struct MailBox {
     pub search: String,
     pub typing: bool,
     by_sender: bool,
+    /// Just opened: the list that comes next shows the first tab with unread mail.
+    opened: bool,
 }
 
 impl Default for MailBox {
     fn default() -> Self {
-        Self { frame: Frame::new(LIST_POSITION, LIST_SIZE[0]), mails: Vec::new(), tab: 1, page: 0, search: String::new(), typing: false, by_sender: false }
+        Self {
+            frame: Frame::new(LIST_POSITION, LIST_SIZE[0]),
+            mails: Vec::new(),
+            tab: 1,
+            page: 0,
+            search: String::new(),
+            typing: false,
+            by_sender: false,
+            opened: false,
+        }
     }
 }
 
@@ -498,6 +509,7 @@ impl Mail {
     pub fn toggle(&mut self) -> Action {
         self.list.frame.toggle();
         if self.list.frame.open {
+            self.list.opened = true;
             Action::Open
         } else {
             self.letter = None;
@@ -647,6 +659,13 @@ impl Mail {
             MapEvent::MailUnread(unread) => self.unread = unread,
             MapEvent::MailList(mails) => {
                 self.list.mails = mails;
+                // ponytail: which tab the game opens on isn't known; the first with unread mail (notices, mail,
+                // returns) keeps the menu's "new" mark from leading to an empty tab.
+                if std::mem::take(&mut self.list.opened)
+                    && let Some(tab) = (0..TAB_SEARCH).find(|&tab| self.list.mails.iter().any(|mail| !mail.read && tab_of(mail) == tab))
+                {
+                    (self.list.tab, self.list.page) = (tab, 0);
+                }
                 self.list.page = self.list.page.min(self.list.pages() - 1);
             }
             MapEvent::MailRead { id, text, zeny, items, .. } => {
@@ -1001,6 +1020,28 @@ mod tests {
         list.by_sender = true;
         list.search = "tester".to_owned();
         assert_eq!(list.shown().len(), 3);
+    }
+
+    #[test]
+    fn opens_on_the_tab_with_unread_mail() {
+        let read = |mut header: MailHeader| {
+            header.read = true;
+            header
+        };
+        let mut mail = Mail::default();
+        // Only a notice is unread: the box opens on the notices.
+        mail.toggle();
+        mail.event(MapEvent::MailList(vec![read(self::mail(1, 0, 0, "Old")), self::mail(2, 0, MAIL_NPC, "Reward")]));
+        assert_eq!(mail.list.tab, 0);
+        // A refresh while it's open keeps the tab the player picked.
+        mail.list.tab = 1;
+        mail.event(MapEvent::MailList(vec![self::mail(2, 0, MAIL_NPC, "Reward")]));
+        assert_eq!(mail.list.tab, 1);
+        // Nothing unread: it opens where it was left.
+        mail.toggle();
+        mail.toggle();
+        mail.event(MapEvent::MailList(vec![read(self::mail(2, 0, MAIL_NPC, "Reward"))]));
+        assert_eq!(mail.list.tab, 1);
     }
 
     #[test]
