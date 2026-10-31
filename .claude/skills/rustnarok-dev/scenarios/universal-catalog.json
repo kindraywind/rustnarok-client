@@ -1,5 +1,5 @@
 {
-  "about": "Universal Catalog (issue #99): the first player opens a buying store 'Buying Jellopy' at prt_fild08 170 360; the second, 30 cells away, uses a Universal Catalog Silver, searches buying stores for 'Jellopy', sees the store in the results and double-clicks it to get its place marked (170 360); closes; then a Gold catalog's search and double click open the store's window from afar.",
+  "about": "Universal Catalog (issue #99): the first player opens a buying store 'Buying Jellopy' at prt_fild08 170 360; the second, 30 cells away, uses a Universal Catalog Silver (the window as it opens), searches buying stores for exactly 'Jellopy' (similar items off: the data has a newer item holding the word that the server doesn't know, and any unknown item fails the whole search), sees the store in the results and double-clicks its name to get its place marked (170 360); closes; then a Gold catalog: a card box naming no card says so under the list, and a search and a double click on the store's name ask to open it, then open its window from afar.",
   "account": "",
   "slot": 0,
   "second": {
@@ -269,6 +269,17 @@
     },
     {
       "as": "second",
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "as": "second",
+      "shot": "catalog-open"
+    },
+    {
+      "as": "second",
       "click_on": {
         "button": "catalog_buy"
       }
@@ -290,6 +301,16 @@
     {
       "as": "second",
       "type": "Jellopy"
+    },
+    {
+      "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "catalog_similar"
+      }
     },
     {
       "as": "second",
@@ -459,6 +480,73 @@
     },
     {
       "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "catalog_similar"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "catalog_card"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 200
+    },
+    {
+      "as": "second",
+      "type": "Zzz"
+    },
+    {
+      "as": "second",
+      "key": "Enter"
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "as": "second",
+      "expect": {
+        "state": {
+          "catalog.status": 1812
+        }
+      }
+    },
+    {
+      "as": "second",
+      "shot": "catalog-card-status"
+    },
+    {
+      "as": "second",
+      "key": "Backspace"
+    },
+    {
+      "as": "second",
+      "key": "Backspace"
+    },
+    {
+      "as": "second",
+      "key": "Backspace"
+    },
+    {
+      "as": "second",
       "key": "Enter"
     },
     {
@@ -478,6 +566,16 @@
         "pick_item": 909
       },
       "count": 2
+    },
+    {
+      "as": "second",
+      "wait": 300
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "ok"
+      }
     },
     {
       "as": "second",

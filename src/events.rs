@@ -3359,8 +3359,14 @@ impl App {
                     catalog.page(first, more, uses, rows);
                 }
             }
+            // A failed search: a line in the window, or a message box (no information also clears the store mark).
             MapEvent::CatalogFailed(reason) => {
-                game.chat_line(self.messages.get(catalog::failure_message(reason)).cloned().unwrap_or_default(), CHAT_ERROR);
+                if let Some(message) = game.catalog.as_mut().and_then(|catalog| catalog.failed(reason)) {
+                    game.question_box = Some(BoxQuestion::Notice(message));
+                }
+                if reason == 4 {
+                    game.store_mark = None;
+                }
             }
             // Where the store picked stands: the store mark on the minimap (none: it's gone).
             MapEvent::CatalogMark(cell) => {

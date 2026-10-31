@@ -2250,7 +2250,8 @@ impl App {
         // The store search under the shops it opens from afar.
         let mut catalog_layer = Layer::default();
         if let Some(catalog) = &game.catalog {
-            catalog.draw(&mut catalog_layer, &assets.chrome, &assets.catalog, icons, items, font, messages, (pointer.0, pointer.1, caret));
+            let names = (&messages[..], card_names, &game.char_names);
+            catalog.draw(&mut catalog_layer, &mut tooltip, &assets.chrome, &assets.catalog, icons, items, font, names, (pointer.0, pointer.1, caret));
         }
         // A shop's windows over the others; its question in a message box.
         let mut shop_layer = Layer::default();

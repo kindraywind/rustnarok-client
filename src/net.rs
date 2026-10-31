@@ -1746,6 +1746,7 @@ pub struct CatalogRow {
     pub cards: [u32; 4],
     pub options: Vec<ItemOption>,
     pub refine: u8,
+    pub grade: u8,
 }
 
 /// The player's mercenary as ZC_MER_INIT has it.

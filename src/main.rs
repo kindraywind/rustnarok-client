@@ -2568,6 +2568,8 @@ enum BoxQuestion {
     ResetSettings,
     /// Shortcut Settings: the key is this row's already; bind it here instead? (1489).
     RebindKey(String),
+    /// A Gold catalog's result: open this store from afar? (1785).
+    OpenStall { account: u32, store: u32, item: u32 },
 }
 
 impl BoxQuestion {
@@ -2584,6 +2586,7 @@ impl BoxQuestion {
             Self::FreeGoods => vend::FREE_ASKS,
             Self::ResetSettings => game_settings::RESET_ASKS,
             Self::RebindKey(_) => shortcut_window::ASKS_REBIND,
+            Self::OpenStall { .. } => catalog::OPEN_STALL_ASKS,
         }
     }
 

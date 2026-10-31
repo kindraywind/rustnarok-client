@@ -1231,7 +1231,7 @@ fn decodes_the_map_property() {
 fn decodes_store_searches() {
     assert!(matches!(decode_map_packet(&[0x3A, 0x08, 1, 0, 10]), Some(MapEvent::CatalogOpen { remote: true, uses: 10 })));
     assert!(matches!(decode_map_packet(&[0x37, 0x08, 3]), Some(MapEvent::CatalogFailed(3))));
-    // Two results, the second with cards and a refine.
+    // Two results, the second with cards, a refine and a grade.
     let mut results = ZC_SEARCH_STORE_INFO_ACK.to_le_bytes().to_vec();
     results.extend_from_slice(&[0, 0, 1, 1, 9]);
     for (store, item, refine, card) in [(11u32, 909u32, 0u8, 0u32), (12, 1201, 7, 4035)] {
@@ -1244,6 +1244,7 @@ fn decodes_store_searches() {
         row[97..99].copy_from_slice(&10u16.to_le_bytes());
         row[99..103].copy_from_slice(&card.to_le_bytes());
         row[140] = refine;
+        row[141] = refine / 3;
         results.extend_from_slice(&row);
     }
     let length = results.len() as u16;
@@ -1253,7 +1254,7 @@ fn decodes_store_searches() {
         (rows[0].store, rows[0].account, rows[0].shop.as_str(), rows[0].item, rows[0].price, rows[0].amount),
         (11, 2_000_001, "Catalog test", 909, 1500, 10)
     );
-    assert_eq!((rows[1].item, rows[1].refine, rows[1].cards), (1201, 7, [4035, 0, 0, 0]));
+    assert_eq!((rows[1].item, rows[1].refine, rows[1].grade, rows[1].cards), (1201, 7, 2, [4035, 0, 0, 0]));
     let empty = [&ZC_SEARCH_STORE_INFO_ACK.to_le_bytes()[..], &7u16.to_le_bytes(), &[1, 0, 8]].concat();
     assert!(matches!(decode_map_packet(&empty), Some(MapEvent::CatalogResults { rows, uses: 8, .. }) if rows.is_empty()));
     let mark = |x: i16, y: i16| [&ZC_SSILIST_ITEM_CLICK_ACK.to_le_bytes()[..], &x.to_le_bytes(), &y.to_le_bytes()].concat();

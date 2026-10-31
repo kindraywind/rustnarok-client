@@ -821,7 +821,7 @@ impl App {
             // A store it opened stands over it.
             Scene::Game(game) if on(Esc(W::Catalog)) => {
                 let hit = game.catalog.as_ref().and_then(|catalog| catalog.hit(cursor));
-                game.click_catalog(hit.unwrap(), &self.items, &self.messages);
+                game.click_catalog(hit.unwrap(), &self.items, &self.card_names);
             }
             // The ranking board: another ranking, or closing it.
             Scene::Game(game) if on(Esc(W::Ranking)) => match game.ranking.as_ref().and_then(|board| board.hit(cursor)) {
@@ -4327,14 +4327,8 @@ impl App {
             Scene::Game(game) if game.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) => {
                 let catalog = game.catalog.as_mut().unwrap();
                 match key {
-                    Key::Named(NamedKey::Enter) => game.click_catalog(catalog::Hit::Search, &self.items, &self.messages),
-                    Key::Named(NamedKey::Tab) => {
-                        catalog.focus = Some(match catalog.focus {
-                            Some(catalog::Field::Name) => catalog::Field::Min,
-                            Some(catalog::Field::Min) => catalog::Field::Max,
-                            _ => catalog::Field::Name,
-                        })
-                    }
+                    Key::Named(NamedKey::Enter) => game.click_catalog(catalog::Hit::Search, &self.items, &self.card_names),
+                    Key::Named(NamedKey::Tab) => catalog.tab(),
                     Key::Named(NamedKey::Backspace) => catalog.backspace(),
                     _ => catalog.type_text(event.text.as_deref().unwrap_or_default()),
                 }
