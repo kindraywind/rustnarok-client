@@ -853,7 +853,7 @@ impl SkillWindow {
         }
 
         if self.simple {
-            self.draw_rows(layer, assets, icons, font, messages, sheet, hit, pointer.1, cooling);
+            self.draw_rows(layer, tooltip, chrome, pointer.0, assets, icons, font, messages, sheet, hit, pointer.1, cooling);
         } else {
             // Every cell's empty box, under the skills.
             for cell in 0..COLUMNS * ROWS {
@@ -983,6 +983,9 @@ impl SkillWindow {
     fn draw_rows<'a>(
         &self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        cursor: [f32; 2],
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
         font: &Font,
@@ -1021,6 +1024,10 @@ impl SkillWindow {
                 layer.sprites.push((&assets.up[state], place(LIST_UP), UP_SIZE));
             }
             let name = skill_info.map_or_else(|| id.to_string(), |info| info.name.clone());
+            // The skill's name, while the pointer is on its left part (up to x 96).
+            if hovered == Some(id) && cursor[0] - self.frame.position[0] <= 96.0 {
+                window::tooltip(tooltip, chrome, font, &name, offset(cursor, [-10.0, -20.0]), [255; 3]);
+            }
             let name = window::fit(font, &name, LIST_WIDTH - 20.0 - LIST_ICON_X - LIST_NAME[0]);
             layer.texts.push((name, place(LIST_NAME), if learned > 0 { [0, 0, 0] } else { UNLEARNED_NAME }));
             // "Lv :" and the level; with the arrows, the level to use over the learned one.

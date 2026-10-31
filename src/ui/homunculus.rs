@@ -259,6 +259,7 @@ impl Window {
     pub fn draw<'a>(
         &'a self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
         font: &Font,
@@ -340,6 +341,13 @@ impl Window {
         right(layer, format!("{} / 100", h.hunger), HUNGER_RIGHT, HUNGER_TOP - 1.0);
         if let Some(fill) = hunger_fill(h.hunger) {
             self.small_bar(layer, assets, chrome, HUNGER_BAR, Some(fill));
+        }
+        // Resting on the exp or hunger bar shows how full it is, 16 px above its corner.
+        let tips = [(EXP_BAR, crate::basic_info::exp_tip(h.exp, h.next_exp)), (HUNGER_BAR, crate::basic_info::exp_tip(i64::from(h.hunger), 100))];
+        for ([x, y, width, height], tip) in tips {
+            if let Some(tip) = tip.filter(|_| contains(at([x, y]), [width, height], pointer.0)) {
+                crate::window::tooltip(tooltip, chrome, font, &tip, at([x, y - 16.0]), [255; 3]);
+            }
         }
         // Automatic feeding.
         let check = &assets.check[usize::from(self.auto_feed)];

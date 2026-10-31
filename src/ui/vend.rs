@@ -767,12 +767,19 @@ impl MyShop {
         layer.texts.push((message(NOTIFY_MESSAGE).to_owned(), at([NOTIFY_TEXT[0], place[1]]), [0, 0, 0]));
         let look = if self.hit(pointer.0) == Some(ShopHit::Close) { 1 + usize::from(pointer.1) } else { 0 };
         layer.sprites.push((&assets.close[look], at(self.close_button()), BUTTON));
-        // The one under the pointer: "%s [%d ea.] %s Zeny" (2757) beside it, in the item's colour.
+        // The one under the pointer: "name price Zeny", or with random options "%s [%d Option] %s Zeny" (2757), in the
+        // item's colour, 16 px above its cell.
         if let Some((cell, good)) = shown.clone().find(|&(cell, _)| contains(at(self.size.cell(cell)), [CELL, CELL], pointer.0)) {
             let name = inventory::full_name(items, cards, messages, makers, &good.item, true);
-            let text = rustnarok_client::messages::fill(message(MY_SHOP_HOVER), &[&name, &good.item.amount, &group(u64::from(good.price))]);
+            let price = group(u64::from(good.price));
+            let options = good.item.options.len();
+            let text = if good.item.identified && options > 0 {
+                rustnarok_client::messages::fill(message(MY_SHOP_HOVER), &[&name, &options, &price])
+            } else {
+                format!("{name} {price} Zeny")
+            };
             let [x, y] = self.size.cell(cell);
-            window::tooltip(layer, chrome, font, &text, at([x + 35.0, y]), inventory::name_color(&good.item, items));
+            window::tooltip(layer, chrome, font, &text, at([x, y - 16.0]), inventory::name_color(&good.item, items));
         }
     }
 }

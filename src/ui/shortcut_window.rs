@@ -8,7 +8,7 @@ use rustnarok_client::text::Font;
 use crate::render::{Gpu, Texture};
 use crate::shortcuts::{self, Action, Modifier, ShortcutKey, Shortcuts};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT};
-use crate::{Layer, UI, contains};
+use crate::{Layer, UI, contains, offset};
 
 // ponytail: the game's size comes from GetWindowInfo(0x9c), which this data lacks; 436 fits the layout.
 const SIZE: [f32; 2] = [436.0, 432.0];
@@ -39,6 +39,9 @@ const NOT_ASSIGNED: (usize, &str) = (1518, "Not Assigned");
 pub const SAVED: usize = 3572;
 const BATTLE: (usize, &str) = (1775, "Enable Battle Mode");
 /// The page arrows at (w − 80, 25) and (w − 20, 25); the page in #FF3C7F, " / n" in #666666.
+/// The page arrows' tooltips, "Previous" and "Next".
+const PREV_TIP: usize = 1053;
+const NEXT_TIP: usize = 1054;
 const PREV: [f32; 2] = [SIZE[0] - 80.0, 25.0];
 const NEXT: [f32; 2] = [SIZE[0] - 20.0, 25.0];
 const PAGE_COLOR: [u8; 3] = [0xFF, 0x3C, 0x7F];
@@ -323,6 +326,7 @@ impl ShortcutWindow {
         // The rows: the name centred left of the key box, the key in it, a line under.
         let rows = self.rows();
         let mut notice_at = None;
+        let mut tip = None;
         for (place, &pos) in rows.iter().skip(self.page * PER_PAGE).take(PER_PAGE).enumerate() {
             let binding = &self.draft.bindings()[pos];
             let ([x, y], cell_width) = Self::cell(place);
@@ -336,8 +340,13 @@ impl ShortcutWindow {
             }
             layer.sprites.push((&assets.line, at([box_x, y]), [1.0, ROW]));
             layer.sprites.push((&assets.line, at([x, y + ROW - 1.0]), [cell_width, 1.0]));
-            let name = window::fit(font, &row_name(binding, messages), label_width.min(130.0));
+            let whole = row_name(binding, messages);
+            let name = window::fit(font, &whole, label_width.min(130.0));
             layer.texts.push((name.clone(), at([x + ((label_width - font.width(&name)) / 2.0).floor(), y + 5.0]), black));
+            // The row's whole name, a row above it.
+            if contains(at([x, y]), [cell_width, ROW], pointer.0) && !whole.is_empty() {
+                tip = Some((whole, at([x + 20.0, y - 20.0])));
+            }
             let key = binding.key.map_or_else(|| worded(NOT_ASSIGNED), |key| shortcuts::chord(key, binding.modifier));
             let key = window::fit(font, &key, KEY_BOX[0] - 4.0);
             layer.texts.push((key.clone(), at([box_x + ((KEY_BOX[0] - font.width(&key)) / 2.0).floor(), y + 5.0]), black));
@@ -351,6 +360,13 @@ impl ShortcutWindow {
             let x = PREV[0] + 18.0;
             layer.texts.push((page.clone(), at([x, PREV[1]]), PAGE_COLOR));
             layer.texts.push((of, at([x + font.width(&page), PREV[1]]), PAGES_COLOR));
+            // Previous and Next name themselves, 20 px above.
+            for (corner, size, id) in [(PREV, left.size, PREV_TIP), (NEXT, right.size, NEXT_TIP)] {
+                let text = messages.get(id).map_or("", String::as_str);
+                if contains(at(corner), size, pointer.0) && !text.is_empty() {
+                    tip = Some((text.to_owned(), at(offset(corner, [0.0, -20.0]))));
+                }
+            }
         }
         // The battle-mode box and the buttons.
         let box_image = &check[usize::from(battle_on)];
@@ -366,6 +382,9 @@ impl ShortcutWindow {
             let (id, refused) = self.notice;
             let color = if refused { [0xFF, 0xFF, 0x00] } else { [0xFF; 3] };
             window::tooltip(layer, chrome, font, messages.get(id).map_or("", String::as_str), at(corner), color);
+        }
+        if let Some((text, corner)) = tip {
+            window::tooltip(layer, chrome, font, &text, corner, [255; 3]);
         }
     }
 }
