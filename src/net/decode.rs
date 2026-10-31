@@ -392,6 +392,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                         cards: std::array::from_fn(|card| at(99 + 4 * card)),
                         options: options_at(row, 115),
                         refine: row[140],
+                        grade: row[141],
                     }
                 })
                 .collect(),

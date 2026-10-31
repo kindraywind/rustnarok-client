@@ -25,7 +25,9 @@ impl App {
             .chain(game.my_shop.iter().flat_map(|shop| shop.goods.iter().map(|good| &good.item)))
             .chain(game.shop.iter().flat_map(|shop| shop.offers.iter().filter_map(|offer| offer.whole.as_ref())))
             .chain(game.mail.letter.iter().flat_map(|letter| &letter.items));
-        let makers: Vec<u32> = shown.filter_map(|item| inventory::maker(&item.cards)).filter(|maker| !game.char_names.contains_key(maker)).collect();
+        let found = game.catalog.iter().flat_map(|catalog| catalog.rows.iter().map(|row| &row.cards));
+        let makers: Vec<u32> =
+            shown.map(|item| &item.cards).chain(found).filter_map(inventory::maker).filter(|maker| !game.char_names.contains_key(maker)).collect();
         for maker in makers {
             if game.names_asked.insert(maker) {
                 let _ = game.session.ask_char_name(maker);

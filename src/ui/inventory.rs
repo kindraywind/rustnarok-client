@@ -434,6 +434,11 @@ impl CardNames {
         }
     }
 
+    /// A card's word in item names, if it has one.
+    pub fn word(&self, card: u32) -> Option<&str> {
+        self.words.get(&card).map(String::as_str).filter(|word| !word.is_empty())
+    }
+
     /// The words that go before the name (or `after` it), in slot order: each card that has one, once, with how many
     /// slots hold it.
     fn of(&self, cards: &[u32; 4], after: bool) -> Vec<(&str, usize)> {

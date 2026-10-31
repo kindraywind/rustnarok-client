@@ -219,26 +219,43 @@ impl Game {
     }
 
     /// A click in the store search window.
-    pub(crate) fn click_catalog(&mut self, hit: catalog::Hit, items: &HashMap<u32, ItemInfo>, messages: &[String]) {
+    pub(crate) fn click_catalog(&mut self, hit: catalog::Hit, items: &HashMap<u32, ItemInfo>, cards: &inventory::CardNames) {
         let Some(catalog) = &mut self.catalog else { return };
         match hit {
-            catalog::Hit::Title(TitleHit::Close) | catalog::Hit::Close => self.close_catalog(),
+            catalog::Hit::Title(TitleHit::Close) => self.close_catalog(),
             catalog::Hit::Title(title) => catalog.frame.click_title(title),
             catalog::Hit::Kind(buying) => catalog.buying = buying,
-            catalog::Hit::Field(field) => catalog.focus = Some(field),
-            catalog::Hit::Search => match catalog::search(&catalog.name, &catalog.min, &catalog.max, items) {
-                Ok((ids, max, min)) => {
-                    let _ = self.session.search_stores(catalog.buying, max, min, &ids, &[]);
+            catalog::Hit::Field(field) => {
+                if catalog.enabled(field) {
+                    catalog.focus = Some(field);
                 }
-                Err(id) => self.chat_line(messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
-            },
-            catalog::Hit::Next => {
-                let _ = self.session.next_store_page();
             }
-            catalog::Hit::Row(index) => {
-                if catalog.click_row(index) {
+            catalog::Hit::Similar => catalog.similar = !catalog.similar,
+            // A search names its items and cards, or says in the window why it can't.
+            catalog::Hit::Search if catalog.can_search() => match catalog.query(items, cards) {
+                Ok(query) => {
+                    catalog.sent();
+                    let _ = self.session.search_stores(catalog.buying, query.max, query.min, &query.items, &query.cards);
+                }
+                Err(message) => catalog.status = Some(message),
+            },
+            catalog::Hit::Search => {}
+            catalog::Hit::Prev => catalog.prev(),
+            catalog::Hit::Next => {
+                if catalog.next() {
+                    let _ = self.session.next_store_page();
+                }
+            }
+            // A double click on a shop's name finds it; a Gold catalog asks before opening it.
+            catalog::Hit::Row(index, column) => {
+                if catalog.click_row(index) && column == catalog::Column::Shop {
                     let row = &catalog.rows[index];
-                    let _ = self.session.pick_store(row.account, row.store, row.item);
+                    let (account, store, item) = (row.account, row.store, row.item);
+                    if catalog.remote {
+                        self.question_box = Some(BoxQuestion::OpenStall { account, store, item });
+                    } else {
+                        let _ = self.session.pick_store(account, store, item);
+                    }
                 }
             }
             catalog::Hit::Window => catalog.focus = None,
@@ -827,7 +844,7 @@ impl Game {
         }
         let catalog = self.catalog.as_ref()?;
         match catalog.hit(cursor) {
-            Some(catalog::Hit::Row(index)) => catalog.rows.get(index).map(catalog::item),
+            Some(catalog::Hit::Row(index, catalog::Column::Item)) => catalog.rows.get(index).map(catalog::item),
             _ => None,
         }
     }
@@ -1244,6 +1261,9 @@ impl Game {
                 let _ = self.session.move_members(&[(account, character, 0)]);
             }
             BoxQuestion::FreeGoods => self.open_vending(),
+            BoxQuestion::OpenStall { account, store, item } => {
+                let _ = self.session.pick_store(account, store, item);
+            }
             BoxQuestion::ResetSettings => self.reset_settings = true,
             BoxQuestion::RebindKey(_) | BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) | BoxQuestion::Said(_) => {}
         }
