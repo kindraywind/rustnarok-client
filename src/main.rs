@@ -705,7 +705,8 @@ const SAVE_ID_LABEL: usize = 3411;
 const OPENING_LABEL: usize = 3431;
 const SIGN_UP_LABEL: usize = 3414;
 const SAVE_ID_COLOR: [u8; 3] = [0x33, 0x33, 0x33];
-const LOGIN_BUTTON_COLOR: [u8; 3] = [0x31, 0x31, 0x31];
+/// A switched-off button's label.
+const DIMMED_LABEL_COLOR: [u8; 3] = [0x99, 0x99, 0x99];
 /// An ID under 4 bytes and a password under 6 aren't sent: "%d or more" lines.
 const ID_TOO_SHORT: (usize, usize) = (3029, 4);
 const PASSWORD_TOO_SHORT: (usize, usize) = (3030, 6);

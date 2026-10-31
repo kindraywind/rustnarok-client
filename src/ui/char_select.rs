@@ -772,9 +772,9 @@ mod tests {
         assert_eq!(local_date(unix, 19 * 3600), [2026, 10, 20, 3, 30, 5]);
         assert_eq!(local_date(951_782_400, 0)[..3], [2000, 2, 29], "a leap day");
         let mut messages = vec![String::new(); TIME_MESSAGE + 1];
-        messages[DATE_MESSAGE] = "%d/%d".into();
-        messages[TIME_MESSAGE] = "%d:%d:%d".into();
-        assert_eq!(date_lines(&messages, unix, 39_600), ["10/19".to_owned(), "19:30:5".to_owned()]);
+        messages[DATE_MESSAGE] = "Deletable on: %02d/%02d".into();
+        messages[TIME_MESSAGE] = "%02d:%02d:%02d".into();
+        assert_eq!(date_lines(&messages, unix, 39_600), ["Deletable on: 10/19".to_owned(), "19:30:05".to_owned()]);
     }
 
     #[test]

@@ -13,18 +13,19 @@ player's own game data at runtime. As good as the original, and better where it 
 <img alt="100% Rust" src="https://img.shields.io/badge/100%25-Rust-b7410e?style=flat-square&logo=rust">
 <img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-native-2f7bf5?style=flat-square">
 <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-3a3a3a?style=flat-square">
-<img alt="Status: early alpha" src="https://img.shields.io/badge/status-early%20alpha-d69e2e?style=flat-square">
+<img alt="Status: beta" src="https://img.shields.io/badge/status-beta-d69e2e?style=flat-square">
 
-[Quick start](#-quick-start) · [What works](#-what-works) · [An AI plays it](#-an-ai-plays-it) · [Server](#-server) · [Development](#-development) · [Not done yet](#-not-done-yet)
+[Install](#-install-a-release) · [Quick start](#-quick-start) · [What works](#-what-works) · [An AI plays it](#-an-ai-plays-it) · [Server](#-server) · [Development](#-development) · [Not done yet](#-not-done-yet)
 
 </div>
 
 ## 🧭 Status
 
 > [!WARNING]
-> **Alpha, in early development.** Expect bugs, and features that don't yet behave like the official client's; there
-> is more to fix and align. Contributions are welcome: open an [issue](https://github.com/kindraywind/rustnarok-client/issues)
-> or a pull request, following the [conventions](#-conventions).
+> **Beta.** The everyday game works, but expect bugs, and features that don't yet behave like the official client's;
+> there is more to fix and align. Contributions are welcome: open an [issue](https://github.com/kindraywind/rustnarok-client/issues)
+> (with your OS and, if it crashed, its [`crash.log`](#-install-a-release)) or a pull request, following the
+> [conventions](#-conventions).
 >
 > This is a learning project: a study of how a game client is built, not a product.
 
@@ -104,7 +105,7 @@ against `main`.
 | 🧪 **Homunculus** | Its sprite, the window (Alt+R) with its values, bars and words, the skill list with level up, feeding, renaming, following the player (Alt+T) and Alt + right click orders. |
 | 👥 **Together** | Parties, guilds (info with the emblem, members, positions, skills, expel list, notice), clans, friends, chat rooms, RODEX mail, server announcements and item news. |
 | 🔊 **Sound** | Each map's music, NPC scripts' sounds and music, sprites' own sounds (attacks, flinches, deaths), effect sounds, volume settings. |
-| 🍎 **macOS** | Retina-sharp text, a resizable window, fullscreen (Ctrl+Cmd+F; Alt+Enter on Linux and Windows), an `.app` bundle. |
+| 🍎 **macOS** | Retina-sharp text, a resizable window, fullscreen (Ctrl+Cmd+F, or the screen mode on Game Settings' Graphics page), an `.app` bundle. |
 | 🌐 **English** | Through a translation pack's loose files placed over data.grf, as the official client does. |
 
 Window places are measured over the client's own bitmaps where they show them. Where they don't, they are estimates
@@ -160,6 +161,47 @@ than fights beside you. Use it on your own server: a bot on someone else's break
 
 Setting it up: [Driving the client](#-driving-the-client).
 
+## 📥 Install a release
+
+The [releases](https://github.com/kindraywind/rustnarok-client/releases) have ready builds:
+`Ragnarok-<version>-macos-arm64.zip` (macOS 13 or later, Apple Silicon), `rustnarok-client-<version>-linux-x86_64.tar.gz`
+and `rustnarok-client-<version>-windows-x86_64.zip`. They hold no game data: you bring your own.
+
+1. **A folder with the game data**: an official kRO `data.grf` (2024 data is what's tested). Beside it, optionally, a
+   translation pack's `data` and `System` folders for English, and the `BGM` folder for music.
+2. **The client goes in that folder**, next to data.grf: `Ragnarok.app` on macOS, or the program from the archive
+   (`rustnarok-client.exe`, `rustnarok-client`).
+
+   ```text
+   Ragnarok/
+     data.grf
+     data/          translation pack (optional), and clientinfo.xml
+     System/        translation pack (optional)
+     BGM/           music (optional)
+     Ragnarok.app   or rustnarok-client.exe, or rustnarok-client
+   ```
+
+3. **The first start.** The builds aren't signed, so each system asks for a step:
+   - **macOS**: in Terminal, in that folder, run `xattr -dr com.apple.quarantine Ragnarok.app`, then open the app.
+     Without it, macOS may call the app damaged, or run it from a temporary copy that can't see data.grf.
+   - **Windows**: on "Windows protected your PC", More info, then Run anyway. A console window opens beside the
+     game; closing it closes the game.
+   - **Linux**: start it from that folder (`cd` there, then `./rustnarok-client`). It needs ALSA (`libasound2`),
+     fontconfig (`fc-match`) with a Korean font for Hangul, and Vulkan or OpenGL drivers.
+4. **The server** comes from `data/clientinfo.xml`; see [Server](#-server). Without that file the client logs into
+   `127.0.0.1:6900`, a server on the same computer.
+
+If it closes as soon as it starts, data.grf is usually missing from its folder, or it comes from another version of the
+game. Settings and `crash.log`, where every crash is written, are in the settings folder:
+
+| OS | Settings and `crash.log` |
+|---|---|
+| macOS | `~/Library/Application Support/rustnarok-client` |
+| Windows | `%APPDATA%\rustnarok-client` |
+| Linux | `~/.config/rustnarok-client` (or under `$XDG_CONFIG_HOME`) |
+
+A bug report helps most with your OS, the release you downloaded, and that `crash.log`.
+
 ## 🚀 Quick start
 
 ### 🤖 With an AI agent
@@ -182,15 +224,15 @@ Set up https://github.com/kindraywind/rustnarok-client for me and get it running
 
 1. **Rust**: install rustup; `rust-toolchain.toml` pins the nightly the code builds with. Also, by OS:
    - **macOS**: the Xcode command line tools (`xcode-select --install`). Text is Tahoma, with AppleGothic for Hangul.
-   - **Linux**: a C compiler, ALSA headers and pkg-config (`sudo apt install build-essential libasound2-dev
-     pkg-config`; `alsa-lib-devel` on Fedora), and Vulkan or OpenGL drivers. Text is fontconfig's pick for Tahoma and
+   - **Linux**: a C compiler, ALSA headers, pkg-config and fontconfig (`sudo apt install build-essential
+     libasound2-dev pkg-config fontconfig`; `alsa-lib-devel` on Fedora), and Vulkan or OpenGL drivers. Text is fontconfig's pick for Tahoma and
      for Korean (`fonts-nanum`, say).
    - **Windows**: Visual Studio's C++ build tools (MSVC) and DirectX 12 or Vulkan. Text is Tahoma, with Malgun Gothic
      for Hangul.
 
-   Settings (saved ID, sound, chat macros) are kept in `~/Library/Application Support/rustnarok-client` on macOS,
-   `%APPDATA%\rustnarok-client` on Windows and `~/.config/rustnarok-client` (or `$XDG_CONFIG_HOME`) on Linux. CI
-   builds, tests and lints on Linux; Windows was last checked by CI in PR #128.
+   Settings (saved ID, sound, chat macros) and `crash.log` are kept in the settings folder listed under
+   [Install a release](#-install-a-release). CI builds, tests and lints on Linux; Windows was last checked by CI in
+   PR #128.
 2. **Game data**: put an official kRO `data.grf` (2024 data is what's tested) in the repository folder, or point
    `RUSTNAROK_CLIENT_GRF` at one.
 3. **English** (optional): a translation pack's `data` and `System` folders next to data.grf. Their loose files go
@@ -218,7 +260,19 @@ comes before the login window, and each connection's `<version>` and `<loading>`
 it logs into `127.0.0.1:6900`; `RUSTNAROK_CLIENT_SERVER=host:port` overrides both. To join a server on another
 machine, put its address in clientinfo.xml; the server must announce an address the player can reach.
 
-The server must run PACKETVER 20220406 without packet obfuscation. The rathena this client is developed against is a
+```xml
+<?xml version="1.0" encoding="euc-kr" ?>
+<clientinfo>
+  <connection>
+    <display>My server</display>
+    <address>192.168.1.20</address>
+    <port>6900</port>
+  </connection>
+</clientinfo>
+```
+
+The server must run PACKETVER 20220406 (or 20250402, with `RUSTNAROK_CLIENT_PACKETVER=20250402` set for the client)
+without packet obfuscation. The rathena this client is developed against is a
 fork with those settings and a setup guide for macOS: [kindraywind/rathena](https://github.com/kindraywind/rathena)
 (branch `rustnarok`, see its RUSTNAROK.md). Its changes from upstream:
 

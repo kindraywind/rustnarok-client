@@ -67,7 +67,7 @@ fn base64(text: &str) -> Option<Vec<u8>> {
     )
 }
 
-/// Fills a message's printf-style placeholders (`%s`, `%d`, `%3d`, ...) with `args` in order.
+/// Fills a message's printf-style placeholders (`%s`, `%d`, `%3d`, `%02d`, ...) with `args` in order.
 pub fn fill(template: &str, args: &[&dyn Display]) -> String {
     let mut filled = String::new();
     let mut args = args.iter();
@@ -81,10 +81,17 @@ pub fn fill(template: &str, args: &[&dyn Display]) -> String {
         while let Some(digit) = chars.next_if(char::is_ascii_digit) {
             width.push(digit);
         }
+        let pad: usize = width.parse().unwrap_or(0);
         match chars.next() {
+            // "%02d": a number padded with zeros after its sign, as printf does.
+            Some('d' | 'u' | 'i') if width.starts_with('0') => {
+                let value = args.next().map(ToString::to_string).unwrap_or_default();
+                let (sign, digits) = value.split_at(usize::from(value.starts_with('-')));
+                filled.push_str(&format!("{sign}{digits:0>zeros$}", zeros = pad.saturating_sub(sign.len())));
+            }
             Some('s' | 'd' | 'u' | 'i') => {
                 let value = args.next().map(ToString::to_string).unwrap_or_default();
-                filled.push_str(&format!("{value:>width$}", width = width.parse().unwrap_or(0)));
+                filled.push_str(&format!("{value:>pad$}"));
             }
             Some('%') => filled.push('%'),
             other => {
@@ -113,6 +120,10 @@ mod tests {
         assert_eq!(fill("%s : %d 개", &[&"젤로피", &3]), "젤로피 : 3 개");
         assert_eq!(fill("Weight : %3d / %3d", &[&7, &1200]), "Weight :   7 / 1200");
         assert_eq!(fill("100%%", &[]), "100%");
+        // A leading 0 pads numbers with zeros (after a minus); a plain width pads with spaces.
+        assert_eq!(fill("Deletable on: %02d/%02d", &[&11, &1]), "Deletable on: 11/01");
+        assert_eq!(fill("%02d:%02d:%02d", &[&17, &22, &4]), "17:22:04");
+        assert_eq!(fill("%04d|%02d|%2d/%2d", &[&-5, &123, &3, &1]), "-005|123| 3/ 1");
     }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
