@@ -132,12 +132,14 @@ impl App {
                 base.sprites.push((save, offset(login, LOGIN_SAVE.0), save.size));
                 let label_top = |(corner, size): ([f32; 2], [f32; 2])| corner[1] + ((size[1] - font.line_height()) / 2.0).floor();
                 base.texts.push((message(SAVE_ID_LABEL).to_owned(), [login[0] + LOGIN_SAVE_LABEL.0[0], login[1] + LOGIN_SAVE_LABEL.0[1]], SAVE_ID_COLOR));
-                // Opening and Sign Up, their labels centred.
+                // Opening and Sign Up, their labels centred. A rathena server has no page for them, so they show dimmed.
                 for ((corner, size), images, label) in [(LOGIN_OPENING, &assets.opening, OPENING_LABEL), (LOGIN_SIGN_UP, &assets.sign_up, SIGN_UP_LABEL)] {
-                    base.sprites.push(button_sprite(base_pointer, offset(login, corner), images));
+                    let at = offset(login, corner);
+                    base.sprites.push((&images[0], at, images[0].size));
+                    base.sprites.push((&assets.chrome.dimmed, at, images[0].size));
                     let text = message(label);
                     let left = corner[0] + ((size[0] - font.width(text)) / 2.0).floor();
-                    base.texts.push((text.to_owned(), offset(login, [left, label_top((corner, size))]), LOGIN_BUTTON_COLOR));
+                    base.texts.push((text.to_owned(), offset(login, [left, label_top((corner, size))]), DIMMED_LABEL_COLOR));
                 }
                 // The account drop-down shows its pick; open, its two accounts under it.
                 let (corner, size) = LOGIN_DROP;

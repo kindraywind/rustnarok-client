@@ -234,6 +234,10 @@ pub fn visible() -> Vec<&'static str> {
     ORDER.into_iter().filter(|&name| name != "battle" && name != "booking").collect()
 }
 
+/// ponytail: the buttons whose windows the client doesn't have yet. They keep their place on the grid but show dimmed,
+/// and a click does nothing; take a name out when its window lands.
+pub const UNAVAILABLE: [&str; 6] = ["rec", "tip", "attendance", "adventurerAgency", "adventureguide", "probability"];
+
 /// Doram have their own status button.
 pub fn doram(job: u16) -> bool {
     matches!(job, 4218 | 4220 | 4308)
@@ -558,7 +562,7 @@ impl BasicInfo {
                 text(layer, part, [x, 36.0], if low { RED } else { BLACK });
                 x += width;
             }
-            self.draw_menu(layer, assets, info);
+            self.draw_menu(layer, chrome, assets, info);
             return;
         }
         let title = messages.get(BASIC_INFO_MESSAGE).cloned().unwrap_or_default();
@@ -618,11 +622,11 @@ impl BasicInfo {
         let weight_x = zeny_x - WEIGHT_GAP - font.width(&weight_text);
         text(layer, weight_text, [weight_x, layout.extra], if heavy(weight, limit, info.overweight) { RED } else { BLACK });
 
-        self.draw_menu(layer, assets, info);
+        self.draw_menu(layer, chrome, assets, info);
     }
 
     /// The menu under the window (also under the minimised one): its toggle bar, and the buttons when it's open.
-    fn draw_menu<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, info: &Info) {
+    fn draw_menu<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, info: &Info) {
         let at = |local: [f32; 2]| self.frame.at(local);
         // The menu toggle, and the menu when it's open.
         let marked = info.unread_mail || info.reward_waiting || info.new_items || info.new_level || info.new_job_level;
@@ -646,6 +650,9 @@ impl BasicInfo {
                 };
                 if let Some(icon) = icon {
                     layer.sprites.push((icon, at(self.button_corner(place)), icon.size));
+                    if UNAVAILABLE.contains(&name) {
+                        layer.sprites.push((&chrome.dimmed, at(self.button_corner(place)), icon.size));
+                    }
                 }
             }
         }
@@ -720,6 +727,8 @@ mod tests {
                 "probability",
             ]
         );
+        // The ones without a window yet are on the grid, dimmed.
+        assert!(UNAVAILABLE.iter().all(|name| visible().contains(name)));
         // Five a row, 42 and 43 apart, from (9, 19) under the window.
         let mut window = BasicInfo::default();
         let first = window.button_corner(0);
