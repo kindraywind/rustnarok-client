@@ -1000,7 +1000,7 @@ impl Inventory {
             if contains(place, [CELL, CELL], cursor) {
                 let name = full_name(items, cards, messages, makers, item, true);
                 // The cart counts as "name n ea" (588) where the inventory says "name: n ea." (183); both "[N Option]" (2551).
-                let text = if self.is_cart && !(item.identified && !item.options.is_empty()) {
+                let text = if self.is_cart && (!item.identified || item.options.is_empty()) {
                     format!("{name} {} {}", item.amount, messages.get(CART_EA).map_or("", String::as_str))
                 } else {
                     hover_text(messages, &name, item)

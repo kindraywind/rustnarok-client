@@ -8,8 +8,8 @@ use rustnarok_client::net;
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
-use crate::window::{Chrome, Frame, TITLE_HEIGHT};
 use crate::shortcuts::{Action, Shortcuts};
+use crate::window::{Chrome, Frame, TITLE_HEIGHT};
 use crate::{Layer, UI, contains, offset};
 
 const WIDTH: f32 = 220.0;

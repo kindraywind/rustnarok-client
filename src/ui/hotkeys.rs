@@ -303,12 +303,16 @@ impl Hotkeys {
         let bar = if self.tab() == 0 { 1 } else { 2 };
         // Each slot: its key index, its icon's corner, its hover box's (the bar's a pixel lower), and its tooltip's corner:
         // 17 px above the window at the slot's column. The bar's slots name their key; the quick slots don't.
-        let bar_slots = self.shown().into_iter().filter(|_| self.frame.open).map(|(index, local)| {
-            (index, self.frame.at(local), self.frame.at(hover_corner(local)), self.frame.at([local[0] - 1.0, -17.0]), true)
-        });
-        let quick_slots = self.quick_slots().into_iter().enumerate().map(|(column, (index, corner))| {
-            (index, corner, corner, self.quick_window.at([4.0 + column as f32 * SLOT_STEP, -17.0]), false)
-        });
+        let bar_slots = self
+            .shown()
+            .into_iter()
+            .filter(|_| self.frame.open)
+            .map(|(index, local)| (index, self.frame.at(local), self.frame.at(hover_corner(local)), self.frame.at([local[0] - 1.0, -17.0]), true));
+        let quick_slots = self
+            .quick_slots()
+            .into_iter()
+            .enumerate()
+            .map(|(column, (index, corner))| (index, corner, corner, self.quick_window.at([4.0 + column as f32 * SLOT_STEP, -17.0]), false));
         // The quick window is drawn over the bar, so its slots go last.
         // ponytail: one layer for both; where they overlap, the bar's icons and numbers show through the quick window.
         for (index, corner, hover, tip_corner, keyed) in bar_slots.chain(quick_slots).collect::<Vec<_>>() {
@@ -359,7 +363,7 @@ impl Hotkeys {
             let amount: u32 = inventory.iter().filter(|item| item.id == id && item.worn == 0).map(|item| u32::from(item.amount)).sum();
             count_text(layer, font, corner, &amount.to_string());
             let name = info.name(true);
-            tip(None, (amount > 0).then_some((&*name, amount)));
+            tip(None, (amount > 0).then_some((name, amount)));
         }
     }
 }

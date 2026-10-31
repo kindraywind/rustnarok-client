@@ -343,7 +343,10 @@ impl Window {
             self.small_bar(layer, assets, chrome, HUNGER_BAR, Some(fill));
         }
         // Resting on the exp or hunger bar shows how full it is, 16 px above its corner.
-        let tips = [(EXP_BAR, crate::basic_info::exp_tip(i64::from(h.exp), i64::from(h.next_exp))), (HUNGER_BAR, crate::basic_info::exp_tip(i64::from(h.hunger), 100))];
+        let tips = [
+            (EXP_BAR, crate::basic_info::exp_tip(h.exp, h.next_exp)),
+            (HUNGER_BAR, crate::basic_info::exp_tip(i64::from(h.hunger), 100)),
+        ];
         for ([x, y, width, height], tip) in tips {
             if let Some(tip) = tip.filter(|_| contains(at([x, y]), [width, height], pointer.0)) {
                 crate::window::tooltip(tooltip, chrome, font, &tip, at([x, y - 16.0]), [255; 3]);
