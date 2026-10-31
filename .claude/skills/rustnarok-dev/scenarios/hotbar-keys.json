@@ -1,5 +1,5 @@
 {
-  "about": "A hotbar slot's tooltip says the key that uses it: an Acolyte's Heal on the first slot reads \"Heal Lv 10 [F1]\" with the pointer on it; on the tenth slot, which the data binds to no key, it is the name alone. The scenario takes the hotkeys off again and goes back to Novice.",
+  "about": "A hotbar slot's tooltip starts with the key that uses it: an Acolyte's Heal on the first slot reads \"F1 Heal Use Lv 10 (Sp : 40)\" with the pointer on it, above the bar; on the tenth slot, which the data binds to no key, it is \"Heal Use Lv 10 (Sp : 40)\". The scenario takes the hotkeys off again and goes back to Novice.",
   "account": "",
   "slot": 0,
   "steps": [
