@@ -1946,16 +1946,22 @@ impl App {
                     homunculus.set(kind, value);
                 }
             }
-            MapEvent::HomunculusSkills(list) => game.homunculus_skills = list,
-            MapEvent::HomunculusSkill(update) => match game.homunculus_skills.iter_mut().find(|skill| skill.id == update.id) {
-                Some(skill) => {
-                    skill.level = update.level;
-                    skill.sp = update.sp;
-                    skill.range = update.range;
-                    skill.upgradable = update.upgradable;
+            MapEvent::HomunculusSkills(list) => {
+                game.homunculus_skills = list;
+                game.hotkeys_follow_learnt();
+            }
+            MapEvent::HomunculusSkill(update) => {
+                match game.homunculus_skills.iter_mut().find(|skill| skill.id == update.id) {
+                    Some(skill) => {
+                        skill.level = update.level;
+                        skill.sp = update.sp;
+                        skill.range = update.range;
+                        skill.upgradable = update.upgradable;
+                    }
+                    None => game.homunculus_skills.push(update),
                 }
-                None => game.homunculus_skills.push(update),
-            },
+                game.hotkeys_follow_learnt();
+            }
             // Fed: the food and how many are left (rathena takes it before it answers); not fed: what it eats.
             MapEvent::HomunculusFed { ok, food } => {
                 let name = inventory::item_name(&self.items, food, true, 0);
@@ -1981,7 +1987,10 @@ impl App {
                     *slot = value;
                 }
             }
-            MapEvent::MercenarySkills(list) => game.mercenary_skills = list,
+            MapEvent::MercenarySkills(list) => {
+                game.mercenary_skills = list;
+                game.hotkeys_follow_learnt();
+            }
             MapEvent::MercenaryChanged { kind, value } => {
                 if let Some(hired) = &mut game.mercenary {
                     hired.set(kind, value);
@@ -3392,13 +3401,23 @@ impl App {
                 }
             }
             MapEvent::InventoryExpansion(slots) => game.inventory.expansion = slots,
-            MapEvent::Hotkeys { tab, rotate, keys } => game.hotkeys.set_tab(tab, rotate, keys),
-            MapEvent::Skills(skills) => game.skills = skills,
-            MapEvent::SkillChanged(changed) => match game.skills.iter_mut().find(|skill| skill.id == changed.id) {
-                // ZC_SKILLINFO_UPDATE doesn't say the kind.
-                Some(skill) => *skill = net::Skill { kind: if changed.kind == u32::MAX { skill.kind } else { changed.kind }, ..changed },
-                None => game.skills.push(net::Skill { kind: if changed.kind == u32::MAX { 0 } else { changed.kind }, ..changed }),
-            },
+            // Hotbar skills without a level choice follow the level learnt (`hotkeys_follow_learnt`) after each of these.
+            MapEvent::Hotkeys { tab, rotate, keys } => {
+                game.hotkeys.set_tab(tab, rotate, keys);
+                game.hotkeys_follow_learnt();
+            }
+            MapEvent::Skills(skills) => {
+                game.skills = skills;
+                game.hotkeys_follow_learnt();
+            }
+            MapEvent::SkillChanged(changed) => {
+                match game.skills.iter_mut().find(|skill| skill.id == changed.id) {
+                    // ZC_SKILLINFO_UPDATE doesn't say the kind.
+                    Some(skill) => *skill = net::Skill { kind: if changed.kind == u32::MAX { skill.kind } else { changed.kind }, ..changed },
+                    None => game.skills.push(net::Skill { kind: if changed.kind == u32::MAX { 0 } else { changed.kind }, ..changed }),
+                }
+                game.hotkeys_follow_learnt();
+            }
             MapEvent::SkillRemoved(id) => game.skills.retain(|skill| skill.id != id),
             MapEvent::Casting { source, target, cell, skill, element, cast_ms } => {
                 crate::autohunt::cast(game, source, target, cell, skill, cast_ms);

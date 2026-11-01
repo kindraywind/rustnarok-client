@@ -512,6 +512,16 @@ impl Game {
         self.shop = Some(shop);
     }
 
+    /// After the hotkeys or any skill list changes: hotbar skills without a level choice show and use the level learnt.
+    pub(crate) fn hotkeys_follow_learnt(&mut self) {
+        let learnt = |id: u32| {
+            let mut all = self.skills.iter().chain(&self.homunculus_skills).chain(&self.mercenary_skills);
+            all.find(|skill| u32::from(skill.id) == id).map(|skill| skill.level)
+        };
+        let pickable = |id: u32| u16::try_from(id).ok().and_then(|id| self.skill_info.get(&id)).is_some_and(|info| info.separate_level);
+        self.hotkeys.follow_learnt(learnt, pickable);
+    }
+
     pub(crate) fn store_open(&self) -> bool {
         self.my_shop.is_some() || self.my_buying_store.is_some()
     }
