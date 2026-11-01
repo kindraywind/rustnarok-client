@@ -1,0 +1,26 @@
+{
+  "about": "Units past the window's edges stay out of an assist play mode's state: the second client plays in assist mode beside the first on open ground in alberta (npc/offscreen-units.txt). Dummy 10, two cells east, is drawn and listed; Dummy 50, twelve cells south, is in the server's sight, so the client has it and a box for it (the first client, in play mode all, lists it), but the box is below the window and nothing of it shows. Ends with the NPC unloaded and the dummies gone.",
+  "account": "",
+  "slot": 0,
+  "second": {"account": "2", "slot": 0, "env": {"RUSTNAROK_CLIENT_PLAY": "assist"}},
+  "steps": [
+    {"say": "@warp alberta 123 140"},
+    {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/offscreen-units.txt"},
+    {"wait": 300},
+    {"say": "@killmonster2"},
+    {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/offscreen-units.txt"},
+    {"wait": 1500},
+    {"say": "@recall {second}"},
+    {"as": "second", "settle": 2500},
+    {"as": "second", "move": [1000, 600]},
+    {"expect": {"unit": {"name": "Dummy 50", "cell": [123, 128]}, "unit_at_least": {"name": "Dummy 50", "screen.1": 768}}},
+    {"as": "second", "expect": {"state": {"play": "assist", "player.cell": [123, 140]}, "unit": {"name": "Dummy 10", "cell": [125, 140]}, "no_unit": "Dummy 50"}},
+    {"as": "second", "shot": "offscreen-units"},
+    {"say": "@killmonster2"},
+    {"wait": 500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/offscreen-units.txt"},
+    {"wait": 300}
+  ]
+}
