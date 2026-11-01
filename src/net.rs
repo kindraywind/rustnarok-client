@@ -551,7 +551,7 @@ impl CharSession {
                 }
             })()
             .unwrap_err();
-            if std::env::var_os("RUSTNAROK_CLIENT_TRACE").is_some() {
+            if crate::play::trace().is_some() {
                 eprintln!("char connection dropped: {error}");
             }
             on_event(CharEvent::Disconnected(error));
@@ -768,9 +768,9 @@ fn read_packet(reader: &mut impl Read) -> io::Result<Vec<u8>> {
     let received = packet.len();
     packet.resize(size.max(received), 0);
     reader.read_exact(&mut packet[received..])?;
-    if std::env::var_os("RUSTNAROK_CLIENT_TRACE").is_some() {
+    if let Some(full) = crate::play::trace() {
         let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() % 100_000;
-        let shown = if std::env::var("RUSTNAROK_CLIENT_TRACE").is_ok_and(|trace| trace == "full") { packet.len() } else { packet.len().min(32) };
+        let shown = if full { packet.len() } else { packet.len().min(32) };
         eprintln!("{ms:05} <- {id:#06x} {} {:02x?}", packet.len(), &packet[..shown]);
     }
     if let Some(hook) = PACKET_HOOK.get() {

@@ -38,11 +38,12 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_
               "characters": {"1": "Name"} (at character select), "weather": [162, 162] (one id per copy; [] for none),
               "state": {"pet.intimacy": 950, "pet": null, "scene": "char_select", "pin": "ask"},
               "achievements": {"200005": "completed"}, "title": 1000, "state_at_least": {"cooldowns.8": 9000},
-              "no_sound": "se_prtchbell_03.wav"}}
+              "no_sound": "se_prtchbell_03.wav", "log": "char connection", "no_log": "<- 0x"}}
     (state: values at dotted paths of the game state (a number picks a list's element: "head_emblems.0.name"), or of the whole control state when the game state has no such
     field — e.g. "pin" ("ask"/"new"/"change"/"none") at character select; state_at_least: numbers there at least the
     ones given; achievements: each one "completed" or "rewarded"; title: the one worn; no_sound: that wav didn't play in
-    the last 5 seconds; unit: {"name": ..., field: value, ...} the first unit of that name has those
+    the last 5 seconds; log / no_log: the client's own output (its log under docs/personal) has a line with that text,
+    or none; unit: {"name": ..., field: value, ...} the first unit of that name has those
     fields, null for one it doesn't have; unit_at_least: numbers there at least the ones given; button: {"name": ...,
     field: value, ...} the window button of that name in `targets` has those fields, e.g. a navi_result_<n>'s "text";
     no_target: a target like click_on's, e.g. {"skill": 20}, isn't listed: nothing there takes the click)
@@ -272,6 +273,11 @@ def expect(wanted, state):
             failures.append(f"chat has {value!r}")
         elif key == "no_sound" and value in game.get("sounds_recent", []):
             failures.append(f"{value} played in the last 5 s")
+        elif key in ("log", "no_log"):
+            with open(drive.LOG, errors="replace") as f:
+                found = any(value in line for line in f)
+            if found != (key == "log"):
+                failures.append(f"the client's log {'has no' if key == 'log' else 'has a'} line with {value!r}")
         elif key in ("unit", "unit_at_least"):
             # The first unit with that name: each other field as given (null: absent), or a number at least the one given.
             fields = dict(value)
@@ -377,7 +383,7 @@ def expect(wanted, state):
                     failures.append(f"achievement {achievement} is not {want}: {have}")
         elif key == "title" and game.get("title") != value:
             failures.append(f"title {game.get('title')} != {value}")
-        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "no_sound", "unit", "unit_at_least", "button", "no_target", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
+        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "no_sound", "log", "no_log", "unit", "unit_at_least", "button", "no_target", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
             failures.append(f"unknown expectation {key}")
     return failures
 

@@ -356,7 +356,8 @@ before/after/diff sheets of every screenshot.
   client (`claude mcp add rustnarok-client-dev -- <repo>/target/release/rustnarok-client-mcp`).
 - `RUSTNAROK_CLIENT_SCREENSHOT=out.png` renders headlessly, saves a settled frame and quits; in the game after
   `RUSTNAROK_CLIENT_SHOT_DELAY` seconds.
-- `RUSTNAROK_CLIENT_TRACE=1` prints received packets; `=full` dumps them whole.
+- `RUSTNAROK_CLIENT_TRACE=1` prints received packets; `=full` dumps them whole. Only in play mode `all`: a trace shows
+  more than the screen.
 
 <details>
 <summary><b>More dev switches and tools</b></summary>

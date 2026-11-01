@@ -26,7 +26,7 @@ impl MapSession {
                     Err(error) => break error,
                 }
             };
-            if std::env::var_os("RUSTNAROK_CLIENT_TRACE").is_some() {
+            if crate::play::trace().is_some() {
                 eprintln!("map connection dropped: {error}");
             }
             on_event(MapEvent::Disconnected(error));
