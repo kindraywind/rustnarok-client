@@ -2478,8 +2478,13 @@ struct Loading {
 /// An action waiting for the player to arrive.
 #[derive(Clone, Copy, PartialEq)]
 enum Pending {
-    PickUp(u32),
-    Skill { id: u16, level: u16, target: SkillTarget },
+    /// An item, and how many times its walk was asked for again (`PickStep::Retry`).
+    PickUp(u32, u8),
+    Skill {
+        id: u16,
+        level: u16,
+        target: SkillTarget,
+    },
 }
 
 /// What a skill was aimed at.
@@ -3818,6 +3823,13 @@ fn pickup_spot(player: [i32; 2], item: [i32; 2], walkable: impl Fn([i32; 2]) -> 
     AROUND.iter().map(|step| [item[0] + step[0], item[1] + step[1]]).find(|&cell| walkable(cell)).unwrap_or(toward)
 }
 
+/// How long the player may stand out of reach with the walk cell beside the item, after the last walk went out, before
+/// that walk is asked for again: the server refused it silently (rathena's walk delay after a hit or a skill), or the
+/// player never left the cell.
+const PICKUP_RETRY_MS: u64 = 1000;
+/// How many times a pickup's walk is asked for again before the pickup is dropped (the spot can't be reached).
+const PICKUP_RETRIES: u8 = 3;
+
 /// What a pending pickup does this frame.
 #[derive(Debug, PartialEq)]
 enum PickStep {
@@ -3825,24 +3837,40 @@ enum PickStep {
     Wait,
     /// Within a cell: turn toward it (CZ_CHANGE_DIRECTION), then CZ_ITEM_PICKUP.
     PickUp,
-    /// Within a cell but already asked for: dropped, nothing sent.
+    /// Within a cell but already asked for, or its walk retried PICKUP_RETRIES times: dropped, nothing sent.
     Drop,
     /// Farther: a walk beside it (`spot`), unless the walk cell is already there.
     Walk,
+    /// Standing out of reach on no walk: the walk cell is cleared so the next frame walks again.
+    Retry,
 }
 
 /// A pending pickup, worked on only while the player stands: within a cell, asked for once per item; farther, a walk
 /// to `spot` beside it when the walk cell isn't already there (standing clears the walk cell, so each stop short of
-/// the item asks again; nothing cancels the pickup).
-fn pickup_step(motion: PlayerMotion, player: [i32; 2], item: [i32; 2], asked: bool, walk_cell: Option<[i32; 2]>, spot: [i32; 2]) -> PickStep {
+/// the item asks again). A walk that never happened (`since_walk`: ms since the last walk went out) is asked for again
+/// after PICKUP_RETRY_MS, PICKUP_RETRIES times (`retries` so far), then the pickup is dropped.
+fn pickup_step(
+    motion: PlayerMotion,
+    player: [i32; 2],
+    item: [i32; 2],
+    asked: bool,
+    walk_cell: Option<[i32; 2]>,
+    spot: [i32; 2],
+    since_walk: Option<u64>,
+    retries: u8,
+) -> PickStep {
     if motion != PlayerMotion::Stand {
         PickStep::Wait
     } else if within_pickup(player, item) {
         if asked { PickStep::Drop } else { PickStep::PickUp }
     } else if walk_cell != Some(spot) {
         PickStep::Walk
-    } else {
+    } else if since_walk.is_some_and(|ms| ms <= PICKUP_RETRY_MS) {
         PickStep::Wait
+    } else if retries < PICKUP_RETRIES {
+        PickStep::Retry
+    } else {
+        PickStep::Drop
     }
 }
 
@@ -6900,7 +6928,7 @@ mod tests {
     #[test]
     fn picks_up_on_the_way() {
         // Nothing while walking (the walk goes on), in a swing, the pickup motion, a flinch or a cast.
-        let step = |motion, player, asked, walk_cell| pickup_step(motion, player, [14, 10], asked, walk_cell, [13, 10]);
+        let step = |motion, player, asked, walk_cell| pickup_step(motion, player, [14, 10], asked, walk_cell, [13, 10], Some(0), 0);
         for motion in [PlayerMotion::Walk, PlayerMotion::Other, PlayerMotion::Flinch, PlayerMotion::Cast] {
             assert_eq!(step(motion, [13, 10], false, None), PickStep::Wait);
         }
@@ -6912,6 +6940,15 @@ mod tests {
         assert_eq!(step(PlayerMotion::Stand, [10, 10], false, None), PickStep::Walk);
         assert_eq!(step(PlayerMotion::Stand, [10, 10], false, Some([13, 10])), PickStep::Wait);
         assert_eq!(step(PlayerMotion::Stand, [11, 10], false, None), PickStep::Walk);
+        // A walk that never happened (refused, or the player never left the cell): standing on the walk cell's pickup,
+        // asked again after PICKUP_RETRY_MS, PICKUP_RETRIES times, then dropped so nothing stays pending for good.
+        let stuck = |since_walk, retries| pickup_step(PlayerMotion::Stand, [12, 12], [14, 10], false, Some([13, 11]), [13, 11], since_walk, retries);
+        assert_eq!(stuck(Some(PICKUP_RETRY_MS), 0), PickStep::Wait);
+        assert_eq!(stuck(Some(PICKUP_RETRY_MS + 1), 0), PickStep::Retry);
+        assert_eq!(stuck(None, 0), PickStep::Retry);
+        assert_eq!(stuck(Some(PICKUP_RETRY_MS + 1), PICKUP_RETRIES - 1), PickStep::Retry);
+        assert_eq!(stuck(Some(PICKUP_RETRY_MS + 1), PICKUP_RETRIES), PickStep::Drop);
+        assert_eq!(stuck(Some(0), PICKUP_RETRIES), PickStep::Wait, "a walk just sent finishes first");
         // The held button follows the pointer only once nothing is pending, more than MOVE_GAP_MS after its last try.
         assert!(!follows_pointer(true, true, None, 0));
         assert!(follows_pointer(true, false, None, 0));

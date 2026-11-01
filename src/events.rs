@@ -1671,7 +1671,7 @@ impl App {
                 game.effects.item_gone(id);
                 game.ground.remove(&id);
                 game.pickups_asked.remove(&id);
-                if game.pending.is_some_and(|(pending, _)| pending == Pending::PickUp(id)) {
+                if game.pending.is_some_and(|(pending, _)| matches!(pending, Pending::PickUp(item, _) if item == id)) {
                     game.pending = None;
                 }
             }

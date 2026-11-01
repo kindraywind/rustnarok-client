@@ -625,21 +625,23 @@ impl Game {
         if self.store_open() || self.player.sitting || self.player.hidden || !self.ground.contains_key(&id) {
             return;
         }
-        self.pending = Some((Pending::PickUp(id), None));
+        self.pending = Some((Pending::PickUp(id, 0), None));
     }
 
     /// A pickup or skill waiting on a walk, each frame. A pickup goes out as soon as the player's cell is next to the
     /// item, still walking; a walk the move limit held back is asked for again.
     pub(crate) fn pending_step(&mut self, now: Instant) {
         match self.pending {
-            Some((Pending::PickUp(id), _)) => {
+            Some((Pending::PickUp(id, retries), _)) => {
                 let Some(at) = self.ground.get(&id).map(|item| item.at) else {
                     self.pending = None;
                     return;
                 };
                 let spot = pickup_spot(self.player.cell, at, |cell| self.world.gat.walkable(cell));
                 let motion = self.player_motion(control::now());
-                match pickup_step(motion, self.player.cell, at, self.pickups_asked.contains(&id), self.walk_cell, spot) {
+                let since_walk = self.last_move.map(|last| whole_ms(now).saturating_sub(last));
+                let asked = self.pickups_asked.contains(&id);
+                match pickup_step(motion, self.player.cell, at, asked, self.walk_cell, spot, since_walk, retries) {
                     PickStep::Wait => {}
                     // Turned toward it first; one request per item, until an answer or the next map.
                     PickStep::PickUp => {
@@ -649,10 +651,16 @@ impl Game {
                         let _ = self.session.pick_up(id);
                     }
                     PickStep::Drop => self.pending = None,
-                    // The walk cell is set even when the move limit holds the packet back.
+                    PickStep::Retry => {
+                        self.walk_cell = None;
+                        if let Some((Pending::PickUp(_, count), _)) = &mut self.pending {
+                            *count += 1;
+                        }
+                    }
+                    // The walk cell is set only when the walk goes out: one the move limit holds back is asked again.
                     PickStep::Walk => {
-                        self.walk_cell = Some(spot);
                         if may_move(self.last_move, whole_ms(now)) {
+                            self.walk_cell = Some(spot);
                             self.last_move = Some(whole_ms(Instant::now()));
                             let _ = self.session.walk(spot.map(|value| value as u16));
                         }
