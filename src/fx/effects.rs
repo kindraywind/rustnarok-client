@@ -2111,18 +2111,32 @@ fn glint_color(effect: u32) -> [u8; 3] {
 
 /// A glint `age` ticks in: its alpha (0–255), and which round it's on (each round a new place, height and texture).
 /// It starts at its set's alpha with a counter of 10; each tick the counter goes up, and the alpha +25 while it's under
-/// 10, −12 from there; under 12 it starts a new round at 0.
+/// 10, −12 from there; under 12 it starts a new round at 0. From a new round the same `GLINT_CYCLE` ticks repeat, so whole
+/// cycles are skipped: walking every tick since the start, each frame, took a glint that had been on for an hour a
+/// hundred thousand steps, and a few such glints a whole core.
 fn glint_at(first_alpha: i32, age: u32) -> (i32, u32) {
-    let (mut counter, mut alpha, mut round) = (10, first_alpha, 0);
-    for _ in 0..age {
-        counter += 1;
-        alpha += if counter < 10 { 25 } else { -12 };
-        if alpha < 12 {
-            (counter, alpha, round) = (0, 0, round + 1);
-        }
+    let tick = |(counter, alpha, round): (i32, i32, u32)| {
+        let (counter, alpha) = (counter + 1, alpha + if counter + 1 < 10 { 25 } else { -12 });
+        if alpha < 12 { (0, 0, round + 1) } else { (counter, alpha, round) }
+    };
+    let (mut state, mut left) = ((10, first_alpha, 0), age);
+    // The first round, from the set's own alpha, ends at a new round's start.
+    while left > 0 && state.0 != 0 {
+        state = tick(state);
+        left -= 1;
     }
-    (alpha.max(0), round)
+    if state.0 == 0 {
+        state.2 += left / GLINT_CYCLE;
+        left %= GLINT_CYCLE;
+    }
+    for _ in 0..left {
+        state = tick(state);
+    }
+    (state.1.max(0), state.2)
 }
+
+/// A round of a glint from its start at 0: 9 ticks up 25 (to 225), 18 down 12 (to 9, under 12).
+const GLINT_CYCLE: u32 = 27;
 
 /// A bouncing Stapo (EF_STONERING, 797) on a target's feet.
 struct Stapo {
@@ -3136,6 +3150,25 @@ fn between(ends: [f32; 2], steps: f32, smooth: bool) -> f32 {
 }
 
 impl Effects {
+    /// How many of each live thing it holds, for the control state: a list that only grows shows as a climbing count.
+    pub fn counts(&self) -> serde_json::Value {
+        serde_json::json!({
+            "playing": self.playing.len(), "floating": self.floating.len(), "rings": self.rings.len(),
+            "animations": self.animations.len(), "standing": self.standing.len(), "hits": self.hits.len(),
+            "auras": self.auras.len(), "areas": self.areas.len(), "unit_starts": self.unit_starts.len(),
+            "area_queue": self.area_queue.len(), "kept": self.kept.len(), "blessings": self.blessings.len(),
+            "status_prims": self.status_prims.len(), "stapos": self.stapos.len(), "shafts": self.shafts.len(),
+            "sounds": self.sounds.len(), "quakes": self.quakes.len(), "unit_kinds": self.unit_kinds.len(),
+            "unit_worlds": self.unit_worlds.len(), "afterimages": self.afterimages.len(), "loaded": self.loaded.len(),
+            "textures": self.textures.len(), "sprites": self.sprites.len(), "models": self.models.len(),
+            "status_prims_by": tally(self.status_prims.iter().map(|prim| format!("{}/{}", prim.effect, anchor_kind(prim.anchor)))),
+            "animations_by": tally(self.animations.iter().map(|animation| {
+                format!("{}/{}/{}{}", animation.sprite, anchor_kind(animation.anchor), if animation.repeat { "repeat" } else { "once" },
+                    if animation.end.is_some() { "/ends" } else { "" })
+            })),
+        })
+    }
+
     /// Starts the STR world effect `id` on `owner` (`Some(None)` = the player; None = the cell `point`), the launchers' entry.
     /// A `single` row or a `unique` launch returns the copy already running for the owner; `life` > 0 (ticks) makes a timed,
     /// looping copy. Returns its handle, for `world_copy`.
@@ -6056,6 +6089,19 @@ impl Effects {
         self.playing.retain(|p| !(p.anchor.unit() == Some(unit) && p.effect == effect));
     }
 
+    /// Stops every part of the effect `effect` on its unit (None = the player): the server's ZC_REMOVE_EFFECT, sent when
+    /// a script's special effect ends. The repeating parts (Steel Body's glints, a looping sprite) would run on for good
+    /// (#1229).
+    pub fn forget_unit_effect(&mut self, unit: Option<u32>, effect: u32) {
+        let on = |anchor: Anchor, id: u32| id == effect && anchor.unit() == Some(unit);
+        self.playing.retain(|playing| !on(playing.anchor, playing.effect));
+        self.floating.retain(|floating| !on(floating.anchor, floating.effect));
+        self.rings.retain(|ring| !on(ring.anchor, ring.effect));
+        self.animations.retain(|animation| !on(animation.anchor, animation.effect));
+        self.status_prims.retain(|prim| !on(prim.anchor, prim.effect));
+        self.auras.retain(|aura| !on(aura.anchor, aura.effect));
+    }
+
     pub fn forget(&mut self, unit: u32) {
         self.areas.retain(|area| area.id != unit);
         self.unit_starts.retain(|start| start.id != unit);
@@ -7139,6 +7185,27 @@ pub fn blind_offsets(piece: &BlindPiece) -> [[f32; 2]; 4] {
     piece.corners.map(|[x, y]| [x * scale, y * scale])
 }
 
+/// What an effect hangs on, for the control state's tallies: me, a unit, a spot, a ground unit, or a status on either.
+fn anchor_kind(anchor: Anchor) -> String {
+    match anchor {
+        Anchor::Unit(None) => "me".to_owned(),
+        Anchor::Unit(Some(_)) => "unit".to_owned(),
+        Anchor::At(_) => "at".to_owned(),
+        Anchor::Lasting(..) => "lasting".to_owned(),
+        Anchor::Status(None, status) => format!("my-status-{status}"),
+        Anchor::Status(Some(_), status) => format!("unit-status-{status}"),
+    }
+}
+
+/// How many of each key.
+fn tally(keys: impl Iterator<Item = String>) -> serde_json::Value {
+    let mut counts = std::collections::BTreeMap::<String, u32>::new();
+    for key in keys {
+        *counts.entry(key).or_default() += 1;
+    }
+    serde_json::json!(counts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7903,9 +7970,42 @@ mod tests {
         assert_eq!([861, 865, 877, 868].map(song_variant), [Some(2), Some(3), Some(8), None]);
         // A glint: from its set's alpha down 12 a tick, a new round under 12, then 9 ticks up 25 to 225.
         assert_eq!([glint_at(70, 0), glint_at(70, 1), glint_at(70, 5), glint_at(70, 14), glint_at(70, 15)], [(70, 0), (58, 0), (0, 1), (225, 1), (213, 1)]);
+        // The same as walking every tick, past a round's 27 too, and over an hour's ticks.
+        let walked = |first: i32, age: u32| {
+            let (mut counter, mut alpha, mut round) = (10, first, 0);
+            for _ in 0..age {
+                counter += 1;
+                alpha += if counter < 10 { 25 } else { -12 };
+                if alpha < 12 {
+                    (counter, alpha, round) = (0, 0, round + 1);
+                }
+            }
+            (alpha.max(0), round)
+        };
+        for first in GLINT_ALPHAS.iter().chain(&WARMTH_ALPHAS).copied().chain([-40, 0, 11, 12, 13, 100, 250]) {
+            for age in (0..400).chain([4_000, 54_321, 108_000]) {
+                assert_eq!(glint_at(first, age), walked(first, age), "first alpha {first}, age {age}");
+            }
+        }
         // Aura Blade's bloom: 60 ticks of the cast aura's bands, light blue and added on.
         assert!(is_banded(367) && banded_ticks(367) == 60);
         assert_eq!(aura_look(367).1, [0xA4, 0xCD, 0xFE]);
+    }
+
+    #[test]
+    fn forgets_a_units_effect_when_the_server_ends_it() {
+        // ZC_REMOVE_EFFECT for Steel Body's glints on the player: theirs go, another unit's and another effect's stay.
+        let glints = |effect: u32, anchor: Anchor| StatusPrim { kind: PrimKind::Glints, effect, start: Instant::now(), anchor, seed: 1 };
+        let mut effects = Effects::default();
+        effects.status_prims.extend([
+            glints(254, Anchor::Unit(None)),
+            glints(254, Anchor::Unit(None)),
+            glints(254, Anchor::Unit(Some(7))),
+            glints(GUMGANG, Anchor::Unit(None)),
+        ]);
+        effects.forget_unit_effect(None, 254);
+        let left: Vec<_> = effects.status_prims.iter().map(|prim| (prim.effect, prim.anchor.unit())).collect();
+        assert_eq!(left, [(254, Some(Some(7))), (GUMGANG, Some(None))]);
     }
 
     #[test]

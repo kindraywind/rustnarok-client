@@ -1,0 +1,16 @@
+// A script's special effect that the server ends (scenarios/effects-leak.json), on open ground in alberta. Walking onto
+// 125,140 gives the player Steel Body's glints (specialeffect2); walking onto 127,140 ends them (removespecialeffect2,
+// which sends ZC_REMOVE_EFFECT). Each NPC stands three cells south of the cell it watches (its touch area reaches it),
+// since rathena moves a player off a cell an NPC stands on.
+alberta,125,137,0	script	RustnarokGlintsOn	-1,0,3,{
+	end;
+OnTouch:
+	specialeffect2 EF_STEELBODY;
+	end;
+}
+alberta,127,137,0	script	RustnarokGlintsOff	-1,0,3,{
+	end;
+OnTouch:
+	removespecialeffect2 EF_STEELBODY;
+	end;
+}

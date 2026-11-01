@@ -200,6 +200,11 @@ pub enum MapEvent {
         effect: u32,
         num: Option<i32>,
     },
+    /// A unit's effect started by ZC_NOTIFY_EFFECT2 ends (ZC_REMOVE_EFFECT, a script's `removespecialeffect`).
+    EffectGone {
+        id: u32,
+        effect: u32,
+    },
     /// A unit's hat effects turn on or off (ZC_EQUIPMENT_EFFECT): the hat effects' numbers.
     HatEffects {
         id: u32,

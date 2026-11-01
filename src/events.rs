@@ -4112,6 +4112,10 @@ impl App {
                 let at = game.world.cell_position(game.player.cell.map(|cell| cell as f32));
                 game.weather.start(effect, control::now(), at);
             }
+            // A script's special effect ends: what repeats of it (Steel Body's glints, a looping sprite) stops with it.
+            MapEvent::EffectGone { id, effect } => {
+                game.effects.forget_unit_effect((id != game.account_id).then_some(id), effect);
+            }
             MapEvent::Effect { id, effect, num } => {
                 let is_player = id == game.account_id;
                 if !is_player && !game.units.contains_key(&id) {

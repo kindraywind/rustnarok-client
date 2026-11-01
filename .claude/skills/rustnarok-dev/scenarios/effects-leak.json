@@ -1,0 +1,24 @@
+{
+  "about": "A script's special effect that the server ends stops (ZC_REMOVE_EFFECT), on open ground in alberta (npc/effects-leak.txt). A walk onto 125,140 gives the player Steel Body's glints, which repeat while they last; a walk onto 127,140 ends them: the glints stop, and nothing of them is left in the effects' lists (effects_alive). Ends with the NPCs unloaded.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp alberta 123 140"},
+    {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/effects-leak.txt"},
+    {"wait": 300},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/effects-leak.txt"},
+    {"wait": 1500},
+    {"move": [1000, 600]},
+    {"click_on": {"cell": [125, 140]}},
+    {"wait": 2000},
+    {"expect": {"state": {"player.cell": [125, 140]}, "state_at_least": {"effects_alive.status_prims_by.254/me": 1}}},
+    {"shot": "glints-on", "crop": [312, 184, 400, 400], "threshold": 30},
+    {"click_on": {"cell": [127, 140]}},
+    {"wait": 2500},
+    {"expect": {"state": {"player.cell": [127, 140], "effects_alive.status_prims_by.254/me": null}}},
+    {"shot": "glints-off", "crop": [312, 184, 400, 400], "threshold": 30},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/effects-leak.txt"},
+    {"wait": 300}
+  ]
+}
