@@ -1643,6 +1643,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             // The head against the body: 0 straight, 1 and 2 turned to either side.
             "head_direction": game.player.head_direction,
             "moving": game.player.moving(),
+            // On a mount: the mounted body (Peco Peco, dragon, warg, Madogear) or the all-jobs mount.
+            "riding": crate::actor::rides(game.player.option) || game.riding,
             // The falcon (25 above the ground) and the warg (on the ground), or null. Riding leaves the warg null.
             "falcon": companion_state(game.player.falcon.as_ref(), game.player.falcon.as_ref().map_or(0.0, |falcon| falcon.lift)),
             // Copies left behind while a status blurs the player (the quickens).
@@ -1697,6 +1699,8 @@ fn game_state(app: &App, game: &Game) -> Value {
             "status_points": status(net::STATUS_POINTS),
             "skill_points": game.skill_points(),
             "stats": stats_state(&game.status),
+            // Atk to ASPD as the status window shows them.
+            "substats": substats_state(&game.status),
             // A 4th job's traits, trait points and AP.
             "traits": json!({
                 "pow": status(219), "sta": status(220), "wis": status(221), "spl": status(222), "con": status(223), "crt": status(224),
@@ -2500,6 +2504,22 @@ fn stats_state(status: &HashMap<u16, i64>) -> Value {
     Value::Object(stats.collect())
 }
 
+/// Atk to ASPD as the status window shows them: a pair is its two numbers in the window's order ("atk + atk2"), and ASPD
+/// is the window's number.
+fn substats_state(status: &HashMap<u16, i64>) -> Value {
+    let value = |place: u16| status.get(&(net::STATUS_ATK + place)).copied().unwrap_or(0);
+    json!({
+        "atk": [value(0), value(1)],
+        "matk": [value(3), value(2)],
+        "hit": value(8),
+        "critical": value(11),
+        "def": [value(4), value(5)],
+        "mdef": [value(6), value(7)],
+        "flee": [value(9), value(10)],
+        "aspd": crate::status::shown_aspd(value(12)),
+    })
+}
+
 /// The player's skills as the server lists them (level 0: not learned yet), with their names and top levels.
 fn skills_state(skills: &[net::Skill], info: &HashMap<u16, SkillInfo>) -> Value {
     skills
@@ -2816,6 +2836,12 @@ mod tests {
         assert_eq!(stats["int"], json!({"value": 9, "bonus": 2, "cost": 2}));
         assert_eq!(stats["str"], json!({"value": 1, "bonus": 0, "cost": 0}));
         assert_eq!(stats["luk"]["cost"], 3);
+        // SP_ATK1 to SP_ASPD: 41 to 53.
+        let status: HashMap<u16, i64> = (net::STATUS_ATK..).zip([30, 12, 90, 70, 5, 8, 2, 4, 120, 60, 3, 9, 1356]).collect();
+        assert_eq!(
+            substats_state(&status),
+            json!({"atk": [30, 12], "matk": [70, 90], "hit": 120, "critical": 9, "def": [5, 8], "mdef": [2, 4], "flee": [60, 3], "aspd": 64})
+        );
         let info = HashMap::from([(19, SkillInfo { resource: "MG_FIREBOLT".into(), name: "Fire Bolt".into(), max_level: 10, ..Default::default() })]);
         let skills = [
             net::Skill { id: 19, kind: net::Skill::ENEMY, level: 3, sp: 16, range: 9, upgradable: true },

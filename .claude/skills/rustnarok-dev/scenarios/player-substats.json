@@ -1,0 +1,47 @@
+{
+  "about": "Atk to ASPD and the mount in the control state (issue #1223): a Knight with its stats reset opens the status window (Alt+A) and player.substats holds the numbers it draws; @mount puts it on a Peco Peco (player.riding) and 9 more Agi raise the Flee and ASPD both show. Ends a Novice with its stats reset, nothing carried and no mount.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp morocc 160 100"},
+    {"settle": 1500},
+    {"say": "@itemreset"},
+    {"wait": 800},
+    {"say": "@job 7"},
+    {"wait": 800},
+    {"say": "@reset"},
+    {"wait": 800},
+    {"say": "@allskill"},
+    {"wait": 800},
+    {"key": "Alt+A"},
+    {"wait": 500},
+    {"move": [700, 600]},
+    {
+      "expect": {
+        "windows_open": ["Status"],
+        "state": {"player.riding": false},
+        "state_at_least": {"player.substats.atk.0": 1, "player.substats.hit": 1, "player.substats.flee.0": 1, "player.substats.critical": 1, "player.substats.aspd": 100}
+      }
+    },
+    {"shot": "substats-knight", "crop": [185, 300, 280, 141]},
+    {"say": "@mount"},
+    {"wait": 1000},
+    {"expect": {"state": {"player.riding": true}}},
+    {"shot": "substats-peco", "crop": [440, 250, 160, 200], "threshold": 3},
+    {"say": "@agi 9"},
+    {"wait": 800},
+    {"expect": {"state": {"player.stats.agi.value": 10}}},
+    {"shot": "substats-agi", "crop": [185, 300, 280, 141]},
+    {"say": "@mount"},
+    {"wait": 800},
+    {"expect": {"state": {"player.riding": false}}},
+    {"say": "@itemreset"},
+    {"wait": 800},
+    {"say": "@reset"},
+    {"wait": 500},
+    {"say": "@skreset"},
+    {"wait": 500},
+    {"say": "@job 0"},
+    {"wait": 800}
+  ]
+}
