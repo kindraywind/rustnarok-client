@@ -1,0 +1,298 @@
+{
+  "about": "Hotbar slots follow the game after a skill-up and an empty stack: an Archer learns Double Strafe (46, no level choice) to 1, puts it on the first slot, then raises it to 3 and the slot reads 3 (raised); a Red Potion on the second slot used up leaves the slot looking empty but still holding the potion (used-up), and two new ones show there again (back). The scenario takes Double Strafe off (an item can't be dragged off the bar), drinks the two potions and goes back to a Novice with no skill points.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@job 3"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@reset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@skpoint -9999"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@skpoint 5"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@item 501 1"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "skill": 46
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "button": "skill_apply"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "player.skill_points": 4
+        }
+      }
+    },
+    {
+      "drag_on": [
+        {
+          "skill": 46
+        },
+        {
+          "hotkey": 0
+        }
+      ]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "state": {
+          "hotkeys.0.count": 1
+        }
+      }
+    },
+    {
+      "click_on": {
+        "skill": 46
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "skill": 46
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "click_on": {
+        "button": "skill_apply"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "state": {
+          "player.skill_points": 2,
+          "hotkeys.0.count": 3
+        }
+      }
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "drag_on": [
+        {
+          "inventory_item": 501
+        },
+        {
+          "hotkey": 1
+        }
+      ]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        700,
+        500
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hotbar-levels-raised",
+      "crop": [
+        225,
+        0,
+        320,
+        80
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "F2"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "expect": {
+        "hotkeys": {
+          "0": 46,
+          "1": 501
+        }
+      }
+    },
+    {
+      "shot": "hotbar-levels-used-up",
+      "crop": [
+        225,
+        0,
+        320,
+        80
+      ],
+      "threshold": 5
+    },
+    {
+      "say": "@item 501 2"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "shot": "hotbar-levels-back",
+      "crop": [
+        225,
+        0,
+        320,
+        80
+      ],
+      "threshold": 5
+    },
+    {
+      "drag_on": [
+        {
+          "hotkey": 0
+        },
+        {
+          "point": [
+            700,
+            500
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "hotkeys": {
+          "0": null,
+          "1": 501
+        }
+      }
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "inventory_item": 501
+      },
+      "count": 2
+    },
+    {
+      "wait": 800
+    },
+    {
+      "click_on": {
+        "inventory_item": 501
+      },
+      "count": 2
+    },
+    {
+      "wait": 800
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@reset"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@skpoint -9999"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

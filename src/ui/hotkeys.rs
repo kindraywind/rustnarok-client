@@ -228,6 +228,17 @@ impl Hotkeys {
         }
     }
 
+    /// After a skill list or update: every skill whose level can't be picked goes to the level learnt now, on both
+    /// bars and the quick slots, as the game does (only on the client; the server keeps the old level). A pickable one
+    /// keeps its slot's level.
+    pub fn follow_learnt(&mut self, learnt: impl Fn(u32) -> Option<u16>, pickable: impl Fn(u32) -> bool) {
+        for key in self.keys.iter_mut().chain(self.other.iter_mut()).flatten() {
+            if let Some(level) = learnt(key.id).filter(|&level| key.skill && level > 0 && !pickable(key.id)) {
+                key.count = i16::try_from(level).unwrap_or(i16::MAX);
+            }
+        }
+    }
+
     /// Ctrl+F12: the next row of the four is the one the showing bar draws first. The bar's tab and its rotation, to
     /// keep on the server.
     pub fn rotate(&mut self) -> (u16, u8) {
@@ -347,7 +358,9 @@ impl Hotkeys {
                 tip(None, None);
                 continue;
             };
-            let Some(info) = items.get(&id) else {
+            // An item none of is carried (worn ones don't count) is drawn as an empty slot but stays on it.
+            let amount: u32 = inventory.iter().filter(|item| item.id == id && item.worn == 0).map(|item| u32::from(item.amount)).sum();
+            let Some(info) = items.get(&id).filter(|_| amount > 0) else {
                 tip(None, None);
                 continue;
             };
@@ -360,10 +373,8 @@ impl Hotkeys {
                 layer.sprites.push((mark, [corner[0], corner[1] + 12.0], mark.size));
             }
             // How many are carried, bottom right.
-            let amount: u32 = inventory.iter().filter(|item| item.id == id && item.worn == 0).map(|item| u32::from(item.amount)).sum();
             count_text(layer, font, corner, &amount.to_string());
-            let name = info.name(true);
-            tip(None, (amount > 0).then_some((name, amount)));
+            tip(None, Some((info.name(true), amount)));
         }
     }
 }
@@ -570,6 +581,25 @@ mod tests {
         assert_eq!(bar.keys[0], key(3));
         bar.switch();
         assert_eq!((bar.tab(), bar.keys[0], bar.keys.len()), (0, key(1), SLOTS));
+    }
+
+    #[test]
+    fn skills_without_a_level_choice_follow_the_learnt_level() {
+        let key = |skill: bool, id: u32, count: i16| Some(Hotkey { skill, id, count });
+        let mut bar = Hotkeys::default();
+        // Double Strafe (46) learnt to 7 and Heal (28, level picked) to 10 on hotbar 1; Double Strafe on hotbar 2 and a
+        // quick slot too.
+        bar.set_tab(1, 0, vec![key(true, 46, 3)]);
+        let mut keys = vec![key(true, 46, 3), key(true, 28, 4), key(false, 501, 0), key(true, 6, 2)];
+        keys.resize(SLOTS, None);
+        keys[37] = key(true, 46, 1);
+        bar.set_tab(0, 0, keys);
+        bar.follow_learnt(|id| [(46, 7), (28, 10)].into_iter().find(|&(skill, _)| skill == id).map(|(_, level)| level), |id| id == 28);
+        // Double Strafe follows everywhere; Heal keeps its level; the potion is untouched; skill 6, not learnt, keeps its own.
+        assert_eq!(bar.keys[..4], [key(true, 46, 7), key(true, 28, 4), key(false, 501, 0), key(true, 6, 2)]);
+        assert_eq!(bar.keys[37], key(true, 46, 7));
+        bar.switch();
+        assert_eq!(bar.keys[0], key(true, 46, 7));
     }
 
     #[test]
