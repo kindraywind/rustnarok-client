@@ -3518,12 +3518,26 @@ impl App {
         }
     }
 
-    /// Sends what's on the chat's input line, as Enter does: the client's sound commands (/bgm, /sound, /bv, /v),
-    /// else `Game::send_chat` (party with `party`, guild with `guild`).
+    /// Sends what's on the chat's input line, as Enter does: the client's sound commands (/bgm, /sound, /bv, /v), a
+    /// typed navigation (`/navi prontera 150 150`), else `Game::send_chat` (party with `party`, guild with `guild`).
     pub(crate) fn send_chat_input(&mut self, party: bool, guild: bool) {
         let Scene::Game(game) = &mut self.scene else { return };
         let music_was_on = self.sound.on[0];
-        if let Some(shown) = self.sound.command(game.chat.input.trim()) {
+        if let Some((map, cell, services)) = navigation::typed(game.chat.input.trim(), NAVI_SERVICES) {
+            let typed = std::mem::take(&mut game.chat.input);
+            game.chat.sent(&typed);
+            // As the server starts one: to the cell, or to the map, with the window open.
+            let map = navigation::navi_map(&self.navi_tables, &map);
+            if let Some(name) = self.navi_tables.maps.get(&map).cloned() {
+                game.navigation = Some(navigation::Active::new(navigation::Target { map, cell, monster: None, name }, services));
+                if game.navi_window.is_none() {
+                    game.toggle_navigation();
+                    game.sync_esc();
+                }
+            } else {
+                game.chat_line(self.messages.get(NAVI_UNKNOWN_MAP).cloned().unwrap_or_default(), CHAT_ERROR);
+            }
+        } else if let Some(shown) = self.sound.command(game.chat.input.trim()) {
             game.chat.input.clear();
             if let Some(audio) = &mut self.audio {
                 audio.set(&self.sound);

@@ -1,6 +1,7 @@
 //! Navigation: a route to a map, a cell, an NPC or a monster across maps, by the client's navigation tables
-//! (lua::NaviTables). It starts from the server (ZC_NAVIGATION_ACTIVE), a `<NAVI>` link or the navigation window, and
-//! shows as an arrow over the player's head and a trail on the minimap to the next warp or the target.
+//! (lua::NaviTables). It starts from the server (ZC_NAVIGATION_ACTIVE), a `<NAVI>` link, the navigation window or a typed
+//! `/navi prontera 150 150`, and shows as an arrow over the player's head and a trail on the minimap to the next warp or
+//! the target.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -149,6 +150,36 @@ pub fn search(tables: &NaviTables, text: &str, most: usize) -> Vec<Target> {
         name: format!("{} ({})", monster.name, monster.map),
     });
     maps.chain(npcs).chain(monsters).take(most).collect()
+}
+
+/// A typed navigation, as the game's help on navigation writes it: `/navi <map> [<x> <y>]` (or `/navigation`), and
+/// `/navi2 <map> <x> <y> [<scroll><zeny><plane>]` (or `/navigation2`), each of those three 1 or 0; `x/y` works too. The
+/// map, the cell, and the services the route may use (`all` unless /navi2 says). None for any other line, the bare
+/// `/navi` (which opens the window) among them (#1230).
+// ponytail: the help's /navi2 line names its flags "Scroll | Zeny | Plane"; zeny is read as the Kafra's, plane as the
+// airship's.
+pub fn typed(text: &str, all: u8) -> Option<(String, Option<[u16; 2]>, u8)> {
+    let mut words = text.split_whitespace();
+    let second = match words.next()? {
+        "/navi" | "/navigation" => false,
+        "/navi2" | "/navigation2" => true,
+        _ => return None,
+    };
+    let map = map_key(words.next()?);
+    let rest: Vec<&str> = words.flat_map(|word| word.split('/')).filter(|word| !word.is_empty()).collect();
+    let cell = |x: &str, y: &str| Some([x.parse().ok()?, y.parse().ok()?]);
+    match (second, rest.as_slice()) {
+        (false, []) => Some((map, None, all)),
+        (_, [x, y]) => Some((map, Some(cell(x, y)?), all)),
+        (true, [x, y, flags]) => {
+            let [scroll, zeny, plane] = <[u8; 3]>::try_from(flags.as_bytes()).ok()?.map(|flag| flag.wrapping_sub(b'0'));
+            if [scroll, zeny, plane].iter().any(|&flag| flag > 1) {
+                return None;
+            }
+            Some((map, Some(cell(x, y)?), zeny * 100 + scroll * 10 + plane))
+        }
+        _ => None,
+    }
 }
 
 /// A navigation under way: its target, the services it may use, and the trail on this map to where it heads next.
@@ -369,6 +400,29 @@ mod tests {
         assert_eq!(route(&tables, "prontera", "izlude", 100).unwrap().len(), 1);
         assert_eq!(route(&tables, "prontera", "izlude", 0).unwrap().iter().map(|link| link.map.as_str()).collect::<Vec<_>>(), ["prontera", "prt_fild08"]);
         assert_eq!(route(&tables, "prt_in", "izlude", 111), None);
+    }
+
+    #[test]
+    fn reads_a_typed_navigation() {
+        assert_eq!(typed("/navi prontera 100 100", 111), Some(("prontera".into(), Some([100, 100]), 111)));
+        assert_eq!(typed("/navigation Prontera.gat 150/180", 111), Some(("prontera".into(), Some([150, 180]), 111)));
+        assert_eq!(typed("/navi izlude", 111), Some(("izlude".into(), None, 111)));
+        // /navi2's flags: Scroll, Zeny (the Kafra's: hundreds) and Plane (the airship: ones).
+        assert_eq!(typed("/navi2 prontera 100 90 010", 111), Some(("prontera".into(), Some([100, 90]), 100)));
+        assert_eq!(typed("/navi2 prontera 100 90 100", 111), Some(("prontera".into(), Some([100, 90]), 10)));
+        assert_eq!(typed("/navi2 prontera 100 90", 111), Some(("prontera".into(), Some([100, 90]), 111)));
+        // The bare command opens the window; anything it can't read is left to it too.
+        for text in [
+            "/navi",
+            "/navi prontera 100",
+            "/navi prontera x 100",
+            "/navi2 prontera",
+            "/navi2 prontera 1 2 12",
+            "/navi2 prontera 1 2 0101",
+            "/navx prontera 1 2",
+        ] {
+            assert_eq!(typed(text, 111), None, "{text}");
+        }
     }
 
     #[test]
