@@ -20,6 +20,11 @@
 //! - `click_unit` `{id, button?, mods?, count?}`: a `click` on unit `id` where it's drawn now, at a point inside its
 //!   area that picks it (the middle when nothing covers it), as `{"point": [x, y]}`. Refused for our own id, a unit
 //!   not known, hidden, off screen or covered (by a window or a unit that wins the click).
+//! - `click_item` `{id, button?, mods?, count?}`: the same for item `id` on the ground, so a monster standing on it
+//!   doesn't take the click.
+//! - `click_cell` `{x, y, button?, mods?, count?}`: a `click` on map cell `[x, y]` at a point of it where the click
+//!   reaches the ground (the middle when nothing covers it), as `{"point": [x, y]}`. Refused for a cell off screen
+//!   or covered (by a window, a unit, an item or a skill unit that would take the click).
 //! - `key` `{key, repeat?, hold?}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End",
 //!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen", "ScrollLock" or one
 //!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; a shortcut fires again only
@@ -110,6 +115,25 @@ pub enum Command {
     /// A click on a unit where it's drawn now: `{"point": [x, y]}`.
     ClickUnit {
         id: u32,
+        #[serde(default)]
+        button: Button,
+        #[serde(default)]
+        mods: String,
+        count: Option<u8>,
+    },
+    /// A click on an item on the ground where it's drawn now: `{"point": [x, y]}`.
+    ClickItem {
+        id: u32,
+        #[serde(default)]
+        button: Button,
+        #[serde(default)]
+        mods: String,
+        count: Option<u8>,
+    },
+    /// A click on the ground at a map cell, where nothing else takes it: `{"point": [x, y]}`.
+    ClickCell {
+        x: i32,
+        y: i32,
         #[serde(default)]
         button: Button,
         #[serde(default)]
@@ -610,6 +634,29 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             click(app, event_loop, at, button, held, count);
             Ok(json!({"ok": true, "point": at}))
         }
+        Command::ClickItem { id, button, mods, count } => {
+            let held = modifiers(&mods)?;
+            let (Scene::Game(game), Some(assets)) = (&app.scene, &app.assets) else { return Err("not in the game".into()) };
+            if !game.ground.contains_key(&id) {
+                return Err(format!("no item {id}"));
+            }
+            let at = owner_point(&game.hit_boxes, Owner::Item(id), &format!("item {id}"), held.shift_key(), crate::screen(), |at| {
+                game.on_ui(at, assets.message.size)
+            })?;
+            click(app, event_loop, at, button, held, count);
+            Ok(json!({"ok": true, "point": at}))
+        }
+        Command::ClickCell { x, y, button, mods, count } => {
+            let held = modifiers(&mods)?;
+            let (Scene::Game(game), Some(assets)) = (&app.scene, &app.assets) else { return Err("not in the game".into()) };
+            let screen = crate::screen();
+            let view = game.camera.view(screen[0] / screen[1]);
+            let project =
+                |[dx, dy]: [f32; 2]| view.project(game.world.cell_position([x as f32 + dx, y as f32 + dy])).map(|[px, py]| [px * screen[0], py * screen[1]]);
+            let at = cell_click_point([x, y], project, screen, |at| ground_click(game, at, assets.message.size, held.shift_key()))?;
+            click(app, event_loop, at, button, held, count);
+            Ok(json!({"ok": true, "point": at}))
+        }
         Command::Drag { from, to, button, mods, held: keep_down } => {
             let held = modifiers(&mods)?;
             hold(app, held, |app| {
@@ -758,9 +805,8 @@ fn cell_point(projected: Option<[f32; 2]>, screen: [f32; 2], mode: Grade) -> Res
     Ok(point)
 }
 
-/// Where a click picks unit `id` among the last drawn frame's `hit_boxes`: the middle of its area, else the point of a
-/// 5 x 5 grid in it nearest the middle, on the screen, not on a window (`on_ui`) and picked as `hovered` picks with
-/// `shift`. `unit` is whether the unit is seen, or None for one not known; `me` is our own id.
+/// Where a click picks unit `id` (`owner_point`). `unit` is whether the unit is seen, or None for one not known; `me` is
+/// our own id.
 fn unit_point(
     hit_boxes: &[crate::picking::Target<Owner>],
     id: u32,
@@ -778,7 +824,21 @@ fn unit_point(
         Some(false) => return Err(format!("unit {id} is hidden")),
         Some(true) => {}
     }
-    let target = hit_boxes.iter().find(|target| target.owner == Owner::Unit(id)).ok_or_else(|| format!("unit {id} isn't drawn on the screen"))?;
+    owner_point(hit_boxes, Owner::Unit(id), &format!("unit {id}"), shift, screen, on_ui)
+}
+
+/// Where a click picks `owner` (named `what` in errors) among the last drawn frame's `hit_boxes`: the middle of its
+/// area, else the point of a 5 x 5 grid in it nearest the middle, on the screen, not on a window (`on_ui`) and picked as
+/// `hovered` picks with `shift`.
+fn owner_point(
+    hit_boxes: &[crate::picking::Target<Owner>],
+    owner: Owner,
+    what: &str,
+    shift: bool,
+    screen: [f32; 2],
+    on_ui: impl Fn([f32; 2]) -> bool,
+) -> Result<[f32; 2], String> {
+    let target = hit_boxes.iter().find(|target| target.owner == owner).ok_or_else(|| format!("{what} isn't drawn on the screen"))?;
     let [left, top, right, bottom] = target.area;
     let middle = [(left + right) / 2.0, (top + bottom) / 2.0];
     let mut points: Vec<[f32; 2]> = (0..25)
@@ -787,13 +847,44 @@ fn unit_point(
     points.sort_by(|a, b| (a[0] - middle[0]).hypot(a[1] - middle[1]).total_cmp(&(b[0] - middle[0]).hypot(b[1] - middle[1])));
     let on_screen: Vec<_> = std::iter::once(middle).chain(points).filter(|at| at[0] >= 0.0 && at[1] >= 0.0 && at[0] < screen[0] && at[1] < screen[1]).collect();
     if on_screen.is_empty() {
-        return Err(format!("unit {id} is off the screen"));
+        return Err(format!("{what} is off the screen"));
     }
     let picks = |at: [f32; 2]| {
         let others = hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player);
-        !on_ui(at) && crate::picking::pick(others, at, shift, [screen[0] / 2.0, screen[1] / 2.0]) == Some(Owner::Unit(id))
+        !on_ui(at) && crate::picking::pick(others, at, shift, [screen[0] / 2.0, screen[1] / 2.0]) == Some(owner)
     };
-    on_screen.into_iter().find(|&at| picks(at)).ok_or_else(|| format!("unit {id} is covered"))
+    on_screen.into_iter().find(|&at| picks(at)).ok_or_else(|| format!("{what} is covered"))
+}
+
+/// Where a click walks to `cell`: of a 5 x 5 grid of points in it, the one nearest its middle that's on the screen and
+/// where the click reaches the ground at that cell. `project` puts a point of the cell (an offset from its middle, in
+/// cells) on the screen, None behind the camera; `ground` is the cell a click at a point walks to, None when something
+/// else takes the click.
+fn cell_click_point(
+    cell: [i32; 2],
+    project: impl Fn([f32; 2]) -> Option<[f32; 2]>,
+    screen: [f32; 2],
+    ground: impl Fn([f32; 2]) -> Option<[i32; 2]>,
+) -> Result<[f32; 2], String> {
+    let mut offsets: Vec<[f32; 2]> = (0..25).map(|n| [(n % 5) as f32 * 0.2 - 0.4, (n / 5) as f32 * 0.2 - 0.4]).collect();
+    offsets.sort_by(|a, b| a[0].hypot(a[1]).total_cmp(&b[0].hypot(b[1])));
+    let on_screen: Vec<_> =
+        offsets.into_iter().filter_map(project).filter(|at| at[0] >= 0.0 && at[1] >= 0.0 && at[0] < screen[0] && at[1] < screen[1]).collect();
+    if on_screen.is_empty() {
+        return Err(format!("cell {cell:?} is off the screen"));
+    }
+    on_screen.into_iter().find(|&at| ground(at) == Some(cell)).ok_or_else(|| format!("cell {cell:?} is covered"))
+}
+
+/// The cell a click at `at` walks to: None when a window, a unit, an item or a skill unit takes the click (as
+/// `clicked_on` finds them), or past the map's edge.
+fn ground_click(game: &Game, at: [f32; 2], message: [f32; 2], shift: bool) -> Option<[i32; 2]> {
+    let screen = crate::screen();
+    let others = game.hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player);
+    if game.on_ui(at, message) || crate::picking::pick(others, at, shift, [screen[0] / 2.0, screen[1] / 2.0]).is_some() {
+        return None;
+    }
+    game.camera.view(screen[0] / screen[1]).pick_ground([at[0].floor() / screen[0], at[1].floor() / screen[1]], &game.world.gat)
 }
 
 /// What a click at `at` lands on, as the cursor shows it (#1093): a window, a unit, item or skill unit the click picks
@@ -1111,6 +1202,9 @@ fn game_state(app: &App, game: &Game) -> Value {
     let area = |owner: Owner| target(owner).map(|target| target.area.map(|side| side.round() as i32));
     let me = game.player.cell;
     let distance = |cell: [i32; 2]| (cell[0] - me[0]).abs().max((cell[1] - me[1]).abs());
+    // Where a cell's middle is on the screen, null off it.
+    let view = game.camera.view(crate::screen()[0] / crate::screen()[1]);
+    let cell_on_screen = |cell: [u16; 2]| cell_point(view.project(game.world.cell_position(cell.map(f32::from))), crate::screen(), Grade::Fair).ok();
     let status = |id: u16| game.status.get(&id).copied();
     // What circles a unit: spheres (or coins), shields, charms and their element ("water", "earth", "fire", "wind"
     // or null), souls.
@@ -1223,6 +1317,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             }
             if actor.sitting {
                 unit["sitting"] = true.into();
+            }
+            // A cast bar fills over its head.
+            if game.casts.contains_key(&Some(id)) {
+                unit["casting"] = true.into();
             }
             // What a player sees of it coming for them: turned their way, walking to a cell, hitting them lately.
             if crate::actor::faces(actor.rot, actor.cell, game.player.cell) {
@@ -1931,8 +2029,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),
         // The item information window's item, if it's open.
         "item_window": game.item_window.as_ref().map(|window| window.shown.item),
-        // The magic squares under ground casts: the target cell and the width in cells.
-        "cast_squares": game.cast_squares.values().map(|square| json!({"cell": square.cell, "width": square.width})).collect::<Vec<_>>(),
+        // The magic squares under ground casts: the target cell, the width in cells and where the cell is on the screen.
+        "cast_squares": game.cast_squares.values().map(|square| json!({"cell": square.cell, "width": square.width, "point": cell_on_screen(square.cell)})).collect::<Vec<_>>(),
         // How many units show each status mark (the player too).
         "marks": std::iter::once(&game.player).chain(game.units.values()).flat_map(|actor| crate::head_marks::marks(actor.body_state, actor.health_state)).fold(
             serde_json::Map::new(),
@@ -2027,6 +2125,15 @@ fn game_state(app: &App, game: &Game) -> Value {
     kinds.sort_unstable();
     kinds.dedup();
     state["ground_unit_kinds"] = kinds.into();
+    // Skills' units on the ground, nearest first (a Fire Wall's cells, a trap): rathena's UNT_ kind, the cell, the unit's
+    // own range (cells around it that it covers) and where the cell is on the screen.
+    let mut ground_skills: Vec<_> = game.skill_units.iter().collect();
+    ground_skills.sort_by_key(|&(&id, &(_, cell, _))| (distance(cell.map(i32::from)), id));
+    state["ground_skills"] = ground_skills
+        .into_iter()
+        .map(|(id, &(kind, cell, range))| json!({"id": id, "kind": kind, "cell": cell, "range": range, "point": cell_on_screen(cell)}))
+        .collect::<Vec<_>>()
+        .into();
     // What skills' ground units play: [kind, effect, starts again] once each, and by kind the milliseconds since the
     // youngest of its STRs started (small while it starts again, growing when it plays once).
     let unit_strs = game.effects.unit_strs(self::now());
@@ -2244,7 +2351,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("capturing", Fair),
         ("card_view", Fair),
         ("card_window_box", Fair),
-        ("cast_squares", Test),
+        ("cast_squares", Assist),
         ("catalog", Fair),
         ("chat", Fair),
         ("chat_corner", Fair),
@@ -2281,6 +2388,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("first_place_seconds", Fair),
         ("ground_cursor", Assist),
         ("ground_items", Fair),
+        ("ground_skills", Assist),
         ("ground_unit_kinds", Test),
         ("guild", Fair),
         ("guild_window", Fair),
@@ -2395,10 +2503,14 @@ fn dying(vanish: Option<u8>) -> &'static str {
     if vanish == Some(1) { "died" } else { "left_sight" }
 }
 
+/// rathena's UNT_DUMMYSKILL, a skill unit the client draws nothing for: it stands for a hidden trap, and for the cells of a
+/// skill that draws its own effect over them (Storm Gust).
+const INVISIBLE_UNIT: u32 = 0x86;
+
 /// Leaves out of the game's `state` what the play mode doesn't allow (#1095). Test: units and ground items off the
-/// `window` (the canvas's size), the invisible script NPCs, where a walk ends, the animation internals, a monster's HP as
-/// numbers (it shows as a bar). Assist, under fair: cells, a monster's HP bar, the aggro cues, and the quests while the
-/// quest window is closed.
+/// `window` (the canvas's size), ground skills and magic squares off screen, the invisible script NPCs and skill units,
+/// where a walk ends, the animation internals, a monster's HP as numbers (it shows as a bar). Assist, under fair: cells,
+/// a monster's HP bar, the aggro cues, and the quests while the quest window is closed.
 fn grade(state: &mut Value, mode: Grade, quests_open: bool, window: [f32; 2]) {
     if mode == Grade::Test {
         return;
@@ -2443,6 +2555,11 @@ fn grade(state: &mut Value, mode: Grade, quests_open: bool, window: [f32; 2]) {
         items.retain(drawn);
         if mode == Grade::Fair {
             items.iter_mut().filter_map(Value::as_object_mut).for_each(|item| _ = item.remove("cell"));
+        }
+    }
+    for key in ["cast_squares", "ground_skills"] {
+        if let Some(list) = state[key].as_array_mut() {
+            list.retain(|thing| !thing["point"].is_null() && thing["kind"] != INVISIBLE_UNIT);
         }
     }
     if mode == Grade::Fair {
@@ -2606,6 +2723,60 @@ mod tests {
 
     /// The canvas's size `grade` gets in the tests.
     const WINDOW: [f32; 2] = [1024.0, 768.0];
+
+    #[test]
+    fn a_play_mode_keeps_ground_skills_and_magic_squares_on_the_screen() {
+        let scene = || {
+            json!({
+                "ground_skills": [
+                    {"id": 1, "kind": 0x7f, "cell": [10, 10], "range": 0, "point": [300.0, 200.0]},
+                    {"id": 2, "kind": 0x7f, "cell": [40, 40], "range": 0, "point": null},
+                    {"id": 3, "kind": INVISIBLE_UNIT, "cell": [11, 10], "range": 0, "point": [330.0, 200.0]},
+                ],
+                "cast_squares": [{"cell": [12, 12], "width": 5.0, "point": [400.0, 300.0]}, {"cell": [50, 50], "width": 5.0, "point": null}],
+            })
+        };
+        let mut all = scene();
+        grade(&mut all, Grade::Test, false, WINDOW);
+        assert_eq!(all, scene());
+        let mut assist = scene();
+        grade(&mut assist, Grade::Assist, false, WINDOW);
+        let ids: Vec<_> = assist["ground_skills"].as_array().unwrap().iter().map(|skill| skill["id"].clone()).collect();
+        assert_eq!(ids, [json!(1)], "on the screen and not the hidden trap's unit");
+        assert_eq!(assist["cast_squares"], json!([{"cell": [12, 12], "width": 5.0, "point": [400.0, 300.0]}]));
+        let mut fair = scene();
+        grade(&mut fair, Grade::Fair, false, WINDOW);
+        assert!(fair.get("ground_skills").is_none() && fair.get("cast_squares").is_none());
+    }
+
+    #[test]
+    fn clicks_a_cell_where_the_ground_takes_the_click() {
+        let screen = [1024.0, 768.0];
+        // A cell 20 pixels wide round (500, 400); a click at a point walks to the cell under it.
+        let project = |[dx, dy]: [f32; 2]| Some([500.0 + dx * 20.0, 400.0 + dy * 20.0]);
+        let under = |at: [f32; 2]| Some([(at[0] / 20.0).round() as i32, (at[1] / 20.0).round() as i32]);
+        assert_eq!(cell_click_point([25, 20], project, screen, under), Ok([500.0, 400.0]));
+        // A monster over the middle and the left of it: the nearest point clear of it.
+        let monster = |at: [f32; 2]| at[0] < 503.0;
+        assert_eq!(cell_click_point([25, 20], project, screen, |at| if monster(at) { None } else { under(at) }), Ok([504.0, 400.0]));
+        assert_eq!(cell_click_point([25, 20], project, screen, |_| None), Err("cell [25, 20] is covered".into()));
+        assert_eq!(cell_click_point([25, 20], |_| None, screen, under), Err("cell [25, 20] is off the screen".into()));
+        assert_eq!(cell_click_point([25, 20], |_| Some([-5.0, 400.0]), screen, under), Err("cell [25, 20] is off the screen".into()));
+    }
+
+    #[test]
+    fn clicks_an_item_where_a_monster_over_it_doesnt_take_the_click() {
+        use crate::picking::{Kind, Target};
+        let item = Target { owner: Owner::Item(7), kind: Kind::Item, sprite: [480.0, 380.0, 520.0, 420.0], area: [480.0, 380.0, 520.0, 420.0], depth: 10.0 };
+        let monster =
+            Target { owner: Owner::Unit(9), kind: Kind::Monster, sprite: [470.0, 300.0, 505.0, 415.0], area: [470.0, 300.0, 505.0, 415.0], depth: 9.0 };
+        let screen = [1024.0, 768.0];
+        let at = owner_point(&[item, monster], Owner::Item(7), "item 7", false, screen, |_| false).unwrap();
+        assert!(at[0] >= 505.0 || at[1] >= 415.0, "{at:?} is under the monster");
+        assert_eq!(owner_point(&[item], Owner::Item(7), "item 7", false, screen, |_| false), Ok([500.0, 400.0]));
+        assert_eq!(owner_point(&[item], Owner::Item(7), "item 7", false, screen, |_| true), Err("item 7 is covered".into()));
+        assert_eq!(owner_point(&[monster], Owner::Item(7), "item 7", false, screen, |_| false), Err("item 7 isn't drawn on the screen".into()));
+    }
 
     #[test]
     fn a_play_mode_leaves_out_what_is_above_it() {
@@ -2810,6 +2981,14 @@ mod tests {
         assert_eq!(parse(r#"{"cmd":"state"}"#).unwrap(), Command::State { only: None });
         assert_eq!(parse(r#"{"cmd":"state","only":["player","units"]}"#).unwrap(), Command::State { only: Some(vec!["player".into(), "units".into()]) });
         assert_eq!(parse(r#"{"cmd":"cell_point","x":3,"y":4}"#).unwrap(), Command::CellPoint { x: Some(3), y: Some(4), cells: None });
+        assert_eq!(
+            parse(r#"{"cmd":"click_cell","x":3,"y":4}"#).unwrap(),
+            Command::ClickCell { x: 3, y: 4, button: Button::Left, mods: String::new(), count: None }
+        );
+        assert_eq!(
+            parse(r#"{"cmd":"click_item","id":7,"count":2}"#).unwrap(),
+            Command::ClickItem { id: 7, button: Button::Left, mods: String::new(), count: Some(2) }
+        );
         assert_eq!(parse(r#"{"cmd":"cell_point","cells":[[1,2],[3,4]]}"#).unwrap(), Command::CellPoint { x: None, y: None, cells: Some(vec![[1, 2], [3, 4]]) });
         // A missing coordinate, a misspelt field, an unknown command, a bad packet ID.
         for wrong in [r#"{"cmd":"click","x":1}"#, r#"{"cmd":"click","x":1,"y":2,"buton":"left"}"#, r#"{"cmd":"fly"}"#, r#"{"cmd":"wait","packet":"zz"}"#] {
