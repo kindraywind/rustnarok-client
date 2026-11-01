@@ -751,6 +751,8 @@ const GROUND_CURSOR_TINT: [f32; 4] = [0.0, 1.0, 170.0 / 255.0, 102.0 / 255.0];
 // ponytail: the client's arrow height and its services for a route picked by hand are estimates.
 const NAVI_ARROW_RISE: f32 = 12.0;
 const NAVI_SERVICES: u8 = 111;
+/// "That does not support the navigation area": a typed navigation to a map the navigation tables don't have.
+const NAVI_UNKNOWN_MAP: usize = 2293;
 /// How many cells toward where it heads the arrow looks.
 const NAVI_ARROW_LOOK: f32 = 3.0;
 /// The room owner's menu: "Give Master Authority", "Kick Character Out".

@@ -1,0 +1,23 @@
+{
+  "about": "A navigation typed in the chat, as the game's help on navigation writes it (\"/navi prontera 100 100\"): /navi prontera 150 150 in Prontera starts a navigation to that cell (the arrow over the player, the trail on the minimap) with the Navigation window open; /navi2 with a cell and flags does the same; a map the navigation tables don't have gets the client's \"That does not support the navigation area\"; a bare /navi still just opens or closes the window.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"},
+    {"settle": 1500},
+    {"move": [1000, 600]},
+    {"say": "/navi prontera 150 150"},
+    {"wait": 1500},
+    {"expect": {"state": {"navigation.map": "prontera", "navigation.cell": [150, 150]}, "state_at_least": {"navigation.trail": 1}, "windows_open": ["Navigation"]}},
+    {"shot": "navi-typed"},
+    {"say": "/navi"},
+    {"wait": 500},
+    {"expect": {"windows_closed": ["Navigation"], "state": {"navigation.cell": [150, 150]}}},
+    {"say": "/navi2 prontera 160/170 100"},
+    {"wait": 1000},
+    {"expect": {"state": {"navigation.map": "prontera", "navigation.cell": [160, 170]}, "windows_open": ["Navigation"]}},
+    {"say": "/navi nosuchmap 10 10"},
+    {"wait": 500},
+    {"expect": {"chat": "That does not support the navigation area", "state": {"navigation.cell": [160, 170]}}}
+  ]
+}
