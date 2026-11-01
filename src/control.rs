@@ -2211,7 +2211,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The status icon tooltip's lines while one shows.
     state["status_tip"] = json!(game.status_tip);
     orbs(&mut state["player"], None);
-    grade(&mut state, play::mode(), game.quest_window.frame.open);
+    grade(&mut state, play::mode(), game.quest_window.frame.open, crate::screen());
     state
 }
 
@@ -2392,14 +2392,20 @@ fn dying(vanish: Option<u8>) -> &'static str {
     if vanish == Some(1) { "died" } else { "left_sight" }
 }
 
-/// Leaves out of the game's `state` what the play mode doesn't allow (#1095). Test: units and ground items off screen,
-/// the invisible script NPCs, where a walk ends, the animation internals, a monster's HP as numbers (it shows as a bar).
-/// Assist, under fair: cells, a monster's HP bar, the aggro cues, and the quests while the quest window is closed.
-fn grade(state: &mut Value, mode: Grade, quests_open: bool) {
+/// Leaves out of the game's `state` what the play mode doesn't allow (#1095). Test: units and ground items off the
+/// `window` (the canvas's size), the invisible script NPCs, where a walk ends, the animation internals, a monster's HP as
+/// numbers (it shows as a bar). Assist, under fair: cells, a monster's HP bar, the aggro cues, and the quests while the
+/// quest window is closed.
+fn grade(state: &mut Value, mode: Grade, quests_open: bool, window: [f32; 2]) {
     if mode == Grade::Test {
         return;
     }
-    let drawn = |thing: &Value| !thing["screen"].is_null();
+    // A sprite's box reaches into the window. Anything in front of the camera has a box, even far past the window's
+    // edges, so a box alone isn't being on the screen (#1228).
+    let drawn = |thing: &Value| {
+        serde_json::from_value::<[f32; 4]>(thing["screen"].clone())
+            .is_ok_and(|[left, top, right, bottom]| right > 0.0 && bottom > 0.0 && left < window[0] && top < window[1])
+    };
     if let Some(units) = state["units"].as_array_mut() {
         units.retain(|unit| drawn(unit) && !unit["job"].as_u64().is_some_and(|job| crate::HIDDEN_JOBS.iter().any(|&hidden| u64::from(hidden) == job)));
         for unit in units {
@@ -2595,6 +2601,9 @@ mod tests {
         assert_eq!(named(true, None).as_deref(), Some("GameMenu"));
     }
 
+    /// The canvas's size `grade` gets in the tests.
+    const WINDOW: [f32; 2] = [1024.0, 768.0];
+
     #[test]
     fn a_play_mode_leaves_out_what_is_above_it() {
         let scene = || {
@@ -2603,28 +2612,38 @@ mod tests {
                     {"id": 1, "kind": "monster", "job": 1002, "cell": [10, 10], "position": [10.0, 10.0], "screen": [1, 2, 3, 4], "hp": [30, 120], "moving_to": [12, 10], "rot": 90, "facing_me": true},
                     {"id": 2, "kind": "monster", "job": 1002, "cell": [30, 30], "position": [30.0, 30.0]},
                     {"id": 3, "kind": "npc", "job": 139, "name": "#warp_2_pass_2_2", "cell": [47, 38], "screen": [5, 6, 7, 8]},
+                    // In front of the camera but past the window's edges: below it, and left of it.
+                    {"id": 6, "kind": "monster", "job": 1015, "cell": [23, 169], "screen": [599, 818, 675, 939]},
+                    {"id": 7, "kind": "monster", "job": 1002, "cell": [2, 12], "screen": [-82, 45, -36, 83]},
+                    // Half in the window's bottom right corner.
+                    {"id": 8, "kind": "monster", "job": 1002, "cell": [19, 3], "screen": [1000, 740, 1060, 800]},
                 ],
-                "ground_items": [{"id": 4, "cell": [11, 10], "screen": [1, 1, 2, 2]}, {"id": 5, "cell": [40, 40], "screen": null}],
+                "ground_items": [
+                    {"id": 4, "cell": [11, 10], "screen": [1, 1, 2, 2]},
+                    {"id": 5, "cell": [40, 40], "screen": null},
+                    {"id": 9, "cell": [26, 11], "screen": [1100, 10, 1120, 30]},
+                ],
                 "player": {"cell": [10, 11], "hits_taken": [{"amount": 5}]},
                 "quests": [{"id": 1}],
             })
         };
         let mut all = scene();
-        grade(&mut all, Grade::Test, false);
+        grade(&mut all, Grade::Test, false, WINDOW);
         assert_eq!(all, scene());
 
         let mut assist = scene();
-        grade(&mut assist, Grade::Assist, false);
+        grade(&mut assist, Grade::Assist, false, WINDOW);
         let units = assist["units"].as_array().unwrap();
-        assert_eq!(units.len(), 1, "the off-screen monster and the hidden warp are left out");
+        assert_eq!(units.iter().map(|unit| unit["id"].clone()).collect::<Vec<_>>(), [1, 8], "the off-screen monsters and the hidden warp are left out");
         assert_eq!(units[0]["hp"], json!(0.25));
         assert!(units[0].get("moving_to").is_none() && units[0].get("rot").is_none());
         assert_eq!((&units[0]["cell"], &units[0]["facing_me"]), (&json!([10, 10]), &json!(true)));
-        assert_eq!(assist["ground_items"].as_array().unwrap().len(), 1);
+        assert_eq!(assist["ground_items"].as_array().unwrap().iter().map(|item| item["id"].clone()).collect::<Vec<_>>(), [4]);
         assert_eq!(assist["quests"], json!([{"id": 1}]));
 
         let mut fair = scene();
-        grade(&mut fair, Grade::Fair, false);
+        grade(&mut fair, Grade::Fair, false, WINDOW);
+        assert_eq!(fair["units"].as_array().unwrap().len(), 2);
         let unit = &fair["units"][0];
         assert!(["cell", "position", "hp", "facing_me"].iter().all(|key| unit.get(key).is_none()));
         assert_eq!(unit["id"], 1);
@@ -2632,7 +2651,7 @@ mod tests {
         assert_eq!(fair["player"]["cell"], json!([10, 11]));
         assert_eq!(fair["quests"], json!([]));
         let mut open = scene();
-        grade(&mut open, Grade::Fair, true);
+        grade(&mut open, Grade::Fair, true, WINDOW);
         assert_eq!(open["quests"], json!([{"id": 1}]));
     }
 
@@ -2642,7 +2661,7 @@ mod tests {
         let scene = || json!({"units": [{"id": 1, "kind": "monster", "job": 1002, "screen": [1, 2, 3, 4], "area": null, "dying": "died"}, {"id": 2, "kind": "monster", "job": 1002, "dying": "left_sight"}]});
         for mode in [Grade::Assist, Grade::Fair] {
             let mut shown = scene();
-            grade(&mut shown, mode, false);
+            grade(&mut shown, mode, false, WINDOW);
             assert_eq!(
                 shown["units"].as_array().map(|units| units.iter().map(|unit| (unit["id"].clone(), unit["dying"].clone())).collect::<Vec<_>>()),
                 Some(vec![(json!(1), json!("died"))])
@@ -2654,11 +2673,11 @@ mod tests {
     fn a_play_mode_names_units_as_drawn() {
         let scene = || json!({"units": [{"id": 1, "kind": "npc", "job": 53, "name": "Guide#01prontera", "screen": [1, 2, 3, 4]}], "minimap": {"quest_heads": ["Kriemhild#15"]}});
         let mut all = scene();
-        grade(&mut all, Grade::Test, false);
+        grade(&mut all, Grade::Test, false, WINDOW);
         assert_eq!((all["units"][0]["name"].as_str(), all["minimap"]["quest_heads"][0].as_str()), (Some("Guide#01prontera"), Some("Kriemhild#15")));
         for mode in [Grade::Assist, Grade::Fair] {
             let mut shown = scene();
-            grade(&mut shown, mode, false);
+            grade(&mut shown, mode, false, WINDOW);
             assert_eq!(shown["units"][0]["name"], "Guide");
             assert_eq!(shown["minimap"]["quest_heads"][0], "Kriemhild");
         }
@@ -2682,9 +2701,9 @@ mod tests {
         assert!(ungraded.is_empty(), "state fields without a grade in FIELD_GRADES: {ungraded:?}");
         let mut scene = json!({"map": "prontera.gat", "enemies": ["Someone"], "targets": [], "boss": null, "made_up": 1});
         let has = |scene: &Value, key: &str| scene.get(key).is_some();
-        grade(&mut scene, Grade::Assist, false);
+        grade(&mut scene, Grade::Assist, false, WINDOW);
         assert!(has(&scene, "map") && has(&scene, "targets") && !["enemies", "boss", "made_up"].iter().any(|key| has(&scene, key)));
-        grade(&mut scene, Grade::Fair, false);
+        grade(&mut scene, Grade::Fair, false, WINDOW);
         assert!(has(&scene, "map") && !has(&scene, "targets"));
     }
 

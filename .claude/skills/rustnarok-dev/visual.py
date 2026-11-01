@@ -44,7 +44,8 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_
     ones given; achievements: each one "completed" or "rewarded"; title: the one worn; no_sound: that wav didn't play in
     the last 5 seconds; log / no_log: the client's own output (its log under docs/personal) has a line with that text,
     or none; unit: {"name": ..., field: value, ...} the first unit of that name has those
-    fields, null for one it doesn't have; unit_at_least: numbers there at least the ones given; button: {"name": ...,
+    fields (dotted paths too: "screen.1"), null for one it doesn't have; unit_at_least: numbers there at least the
+    ones given; no_unit: no unit of that name is listed; button: {"name": ...,
     field: value, ...} the window button of that name in `targets` has those fields, e.g. a navi_result_<n>'s "text";
     no_target: a target like click_on's, e.g. {"skill": 20}, isn't listed: nothing there takes the click)
 A failed `expect` or `wait_for` fails the scenario (the run goes on, so its shots still come out); `run`, `check`
@@ -262,6 +263,18 @@ def locate(target):
     return None
 
 
+def dig(have, path):
+    """The value at a dotted path, e.g. "pet.intimacy"; a number on a list picks that element ("head_emblems.0.name")."""
+    for part in path.split("."):
+        if isinstance(have, dict):
+            have = have.get(part)
+        elif isinstance(have, list) and part.isdigit():
+            have = have[int(part)] if int(part) < len(have) else None
+        else:
+            have = None
+    return have
+
+
 def expect(wanted, state):
     """What in `state` doesn't match `wanted`, as messages; empty when everything does."""
     game, failures = state.get("game", {}), []
@@ -286,7 +299,7 @@ def expect(wanted, state):
             if found is None:
                 failures.append(f"no unit named {name!r}")
             for field, want in fields.items() if found else []:
-                have = found.get(field)
+                have = dig(found, field)
                 if key == "unit" and have != want:
                     failures.append(f"unit {name!r} {field} is {have!r}, not {want!r}")
                 elif key == "unit_at_least" and not (isinstance(have, (int, float)) and have >= want):
@@ -303,6 +316,8 @@ def expect(wanted, state):
                     failures.append(f"button {name!r} {field} is {found.get(field)!r}, not {want!r}")
         elif key == "no_target" and locate(value) is not None:
             failures.append(f"target {value} is listed")
+        elif key == "no_unit" and any(unit.get("name") == value for unit in game.get("units", [])):
+            failures.append(f"a unit named {value!r} is listed")
         elif key == "inventory_items" and game.get("inventory_items") != value:
             failures.append(f"inventory_items {game.get('inventory_items')} != {value}")
         elif key == "hp_at_least" and game.get("player", {}).get("hp", 0) < value:
@@ -363,15 +378,7 @@ def expect(wanted, state):
             # doesn't start with is read from the whole control state (e.g. "scene", "pin", or "selected" at character select).
             # state_at_least: each a number at least the one given.
             for path, want in value.items():
-                have = game if path.split(".")[0] in game else state
-                for part in path.split("."):
-                    if isinstance(have, dict):
-                        have = have.get(part)
-                    elif isinstance(have, list) and part.isdigit():
-                        # A number on a list: that element, e.g. "head_emblems.0.name".
-                        have = have[int(part)] if int(part) < len(have) else None
-                    else:
-                        have = None
+                have = dig(game if path.split(".")[0] in game else state, path)
                 if key == "state" and have != want:
                     failures.append(f"state {path} is {have!r}, not {want!r}")
                 elif key == "state_at_least" and not (isinstance(have, (int, float)) and have >= want):
@@ -383,7 +390,7 @@ def expect(wanted, state):
                     failures.append(f"achievement {achievement} is not {want}: {have}")
         elif key == "title" and game.get("title") != value:
             failures.append(f"title {game.get('title')} != {value}")
-        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "no_sound", "log", "no_log", "unit", "unit_at_least", "button", "no_target", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
+        elif key not in ("achievements", "title", "state", "state_at_least", "chat", "no_chat", "no_sound", "log", "no_log", "unit", "unit_at_least", "no_unit", "button", "no_target", "inventory_items", "hp_at_least", "map", "windows_open", "windows_closed", "units_at_least", "ground_items_at_least", "hotkeys", "identified", "unidentified", "inventory_has", "spirits", "zeny", "characters", "weather"):
             failures.append(f"unknown expectation {key}")
     return failures
 

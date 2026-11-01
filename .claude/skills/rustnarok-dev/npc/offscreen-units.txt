@@ -1,0 +1,10 @@
+// Units past the window's edges (scenarios/offscreen-units.json), on open ground in alberta with no monsters of its own:
+// a training dummy (Dummy 10) two cells east of 123,140, on the screen, and another (Dummy 50) twelve cells south of it,
+// in the server's sight but below the window. Dummies neither move nor fight back.
+alberta,1,1,0	script	RustnarokOffscreen	-1,{
+	end;
+OnInit:
+	monster "alberta", 125, 140, "--ja--", 2408, 1;
+	monster "alberta", 123, 128, "--ja--", 2409, 1;
+	end;
+}
