@@ -170,6 +170,12 @@ fn arrow_corner(row: u16) -> [f32; 2] {
     [ARROW, STAT_TOP + 1.0 + f32::from(row) * ROW]
 }
 
+/// ASPD as the window writes it: 200 less the server's delay between attacks (in tenths of a ms), cut down to a whole
+/// number.
+pub fn shown_aspd(delay: i64) -> i64 {
+    (200.0 - delay as f32 / 10.0).floor() as i64
+}
+
 /// A value with its bonus the way the window writes it: "12 + 3".
 fn pair(base: i64, bonus: i64) -> String {
     format!("{base} + {bonus}")
@@ -342,7 +348,7 @@ impl StatusWindow {
         for (row, text) in [pair(atk, atk2), pair(matk2, matk1), hit_rate.to_string(), critical.to_string()].into_iter().enumerate() {
             right(layer, text, [LEFT_COLUMN_RIGHT, derived(row)]);
         }
-        let aspd = (200.0 - aspd as f32 / 10.0).floor();
+        let aspd = shown_aspd(aspd);
         let right_column = [pair(def, def2), pair(mdef, mdef2), pair(flee, flee2), aspd.to_string(), value(STATUS_POINTS).to_string(), guild.to_owned()];
         for (row, text) in right_column.into_iter().enumerate() {
             right(layer, text, [RIGHT_COLUMN_RIGHT, derived(row)]);
