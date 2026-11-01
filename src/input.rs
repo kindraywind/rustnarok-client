@@ -1131,11 +1131,10 @@ impl App {
                 let action = {
                     let carried = &game.inventory.items;
                     let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
-                    let index = game.enchant.as_ref().and_then(|window| window.item);
-                    let item = index.and_then(|index| carried.iter().find(|item| item.index == index)).cloned();
+                    let slots = |id: u32| self.items.get(&id).map(|info| info.slots).unwrap_or(0);
                     let window = game.enchant.as_mut().unwrap();
                     let hit = window.hit(cursor).unwrap();
-                    window.click(hit, item.as_ref(), count, zeny)
+                    window.click(hit, carried, slots, count, zeny)
                 };
                 match action {
                     Some(enchant::Action::Send(request)) => {
@@ -2477,9 +2476,7 @@ impl App {
                     game.say.scroll_by(rows as f32 * npc_say::SCROLL_STEP);
                 }
                 _ if game.enchant.as_ref().is_some_and(|window| window.hit(self.cursor).is_some()) => {
-                    let index = game.enchant.as_ref().and_then(|window| window.item);
-                    let item = index.and_then(|index| game.inventory.items.iter().find(|item| item.index == index)).cloned();
-                    game.enchant.as_mut().unwrap().scroll_by(rows, item.as_ref());
+                    game.enchant.as_mut().unwrap().wheel(self.cursor, rows, &game.inventory.items);
                 }
                 _ if on_cashshop => game.cashshop.as_mut().unwrap().scroll_at(self.cursor, rows),
                 _ if on_reform => game.reform.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
