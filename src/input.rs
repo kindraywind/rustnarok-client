@@ -59,7 +59,7 @@ impl App {
                         self.focus = field;
                         self.blink_start = Instant::now();
                     }
-                    // ponytail: a rathena server has no page for Opening or Sign Up to open.
+                    // ponytail: a rathena server has no page for Opening or Sign Up to open; they show dimmed.
                     Some(LoginPart::Opening | LoginPart::SignUp) | None => {}
                 }
             }
@@ -1422,8 +1422,6 @@ impl App {
                             Some("shop") => {
                                 let _ = game.session.open_cashshop(0);
                             }
-                            // ponytail: rec, tip, attendance, adventurerAgency, adventureguide and probability have no window in the client yet.
-                            Some("rec" | "tip" | "attendance" | "adventurerAgency" | "adventureguide" | "probability") => {}
                             _ => {}
                         }
                     }

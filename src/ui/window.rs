@@ -26,6 +26,8 @@ pub struct Chrome {
     /// A cut text's whole-words balloon: the speech balloon's border, a darker fill.
     whole_fill: Texture,
     balloon_border: Texture,
+    /// Laid over a button the client can't do yet, so it reads as switched off.
+    pub dimmed: Texture,
 }
 
 impl Chrome {
@@ -48,6 +50,7 @@ impl Chrome {
             tooltip: gpu.solid(TOOLTIP),
             whole_fill: gpu.solid([0, 0, 0, 0x88]),
             balloon_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
+            dimmed: gpu.solid([0x90, 0x90, 0x90, 0xB0]),
         }
     }
 }

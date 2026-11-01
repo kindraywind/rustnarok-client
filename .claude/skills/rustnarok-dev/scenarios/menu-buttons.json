@@ -1,5 +1,5 @@
 {
-  "about": "Menu buttons (issue #211, #708): the menu under the basic info shows the game's buttons five to a row on its 42 x 43 grid (22 buttons, all but battle and booking; shop opens the cash shop); quest opens the quest window, option the game menu Esc opens (issue #546), keyboard the shortcut settings, each closing again on a second click. Minimised (issue #313), the menu stays under the 55-tall window: its toggle opens the 22 buttons and quest still opens the quest window.",
+  "about": "Menu buttons (issue #211, #708): the menu under the basic info shows the game's buttons five to a row on its 42 x 43 grid (22 buttons, all but battle and booking; shop opens the cash shop; rec, tip, attendance, adventurer agency, adventure guide and probability, which have no window yet, show dimmed); quest opens the quest window, option the game menu Esc opens (issue #546), keyboard the shortcut settings, each closing again on a second click. Minimised (issue #313), the menu stays under the 55-tall window: its toggle opens the 22 buttons and quest still opens the quest window.",
   "account": "",
   "slot": 0,
   "steps": [

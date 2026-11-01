@@ -241,6 +241,10 @@ pub fn visible() -> Vec<&'static str> {
     ORDER.into_iter().filter(|&name| name != "battle" && name != "booking").collect()
 }
 
+/// ponytail: the buttons whose windows the client doesn't have yet. They keep their place on the grid but show dimmed,
+/// and a click does nothing; take a name out when its window lands.
+pub const UNAVAILABLE: [&str; 6] = ["rec", "tip", "attendance", "adventurerAgency", "adventureguide", "probability"];
+
 /// Doram have their own status button.
 pub fn doram(job: u16) -> bool {
     matches!(job, 4218 | 4220 | 4308)
@@ -578,7 +582,7 @@ impl BasicInfo {
                 text(layer, part, [x, 36.0], if low { RED } else { BLACK });
                 x += width;
             }
-            if let Some((tip, corner)) = self.draw_menu(layer, assets, info, messages, cursor) {
+            if let Some((tip, corner)) = self.draw_menu(layer, chrome, assets, info, messages, cursor) {
                 crate::window::tooltip(tooltip, chrome, font, &tip, corner, [255; 3]);
             }
             return;
@@ -651,14 +655,22 @@ impl BasicInfo {
             crate::window::tooltip(tooltip, chrome, font, &format!("Weight {}%", weight * 100 / limit), at([0.0, height - 39.0]), [255; 3]);
         }
 
-        if let Some((tip, corner)) = self.draw_menu(layer, assets, info, messages, cursor) {
+        if let Some((tip, corner)) = self.draw_menu(layer, chrome, assets, info, messages, cursor) {
             crate::window::tooltip(tooltip, chrome, font, &tip, corner, [255; 3]);
         }
     }
 
     /// The menu under the window (also under the minimised one): its toggle bar, and the buttons when it's open.
     /// Returns the tooltip of the button under the pointer and its corner.
-    fn draw_menu<'a>(&self, layer: &mut Layer<'a>, assets: &'a Assets, info: &Info, messages: &[String], cursor: [f32; 2]) -> Option<(String, [f32; 2])> {
+    fn draw_menu<'a>(
+        &self,
+        layer: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        info: &Info,
+        messages: &[String],
+        cursor: [f32; 2],
+    ) -> Option<(String, [f32; 2])> {
         let at = |local: [f32; 2]| self.frame.at(local);
         let mut tip = None;
         // The menu toggle, and the menu when it's open.
@@ -683,6 +695,9 @@ impl BasicInfo {
                 };
                 if let Some(icon) = icon {
                     layer.sprites.push((icon, at(self.button_corner(place)), icon.size));
+                    if UNAVAILABLE.contains(&name) {
+                        layer.sprites.push((&chrome.dimmed, at(self.button_corner(place)), icon.size));
+                    }
                 }
                 // Its name and the key that opens its window, 20 px above it.
                 if contains(at(self.button_corner(place)), MENU_BUTTON_SIZE, cursor) {
@@ -821,6 +836,8 @@ mod tests {
                 "probability",
             ]
         );
+        // The ones without a window yet are on the grid, dimmed.
+        assert!(UNAVAILABLE.iter().all(|name| visible().contains(name)));
         // Five a row, 42 and 43 apart, from (9, 19) under the window.
         let mut window = BasicInfo::default();
         let first = window.button_corner(0);

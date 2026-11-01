@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking. rustnarok-client is an alpha, and issues and pull requests are welcome.
+Thanks for looking. rustnarok-client is in beta, and issues and pull requests are welcome.
 
 ## Before you start
 
