@@ -8,33 +8,54 @@ use rustnarok_client::lua::{EnchantSlot, EnchantTable, ItemInfo};
 use rustnarok_client::net::InventoryItem;
 use rustnarok_client::text::Font;
 
-use crate::inventory;
 use crate::render::{Gpu, Texture};
 use crate::shop::group;
-use crate::window::{self, Chrome, Frame, TITLE_HEIGHT, TitleHit};
+use crate::window::{self, Chrome, Frame, TitleHit};
 use crate::{Layer, UI, contains, offset};
+use crate::{inventory, iteminfo};
 
-// ponytail: which tab image is which, and every place over the enchantui pictures, is an estimate.
+// The places are the game's own; `page` turns a place on the 470×377 page under the tabs into one in the window.
 const WIDTH: f32 = 690.0;
-pub const HEIGHT: f32 = TITLE_HEIGHT + 470.0;
-const POSITION: [f32; 2] = [300.0, 40.0];
-const TAB_TOP: f32 = TITLE_HEIGHT + 12.0;
-const TAB_LEFT: f32 = 16.0;
+pub const HEIGHT: f32 = 470.0;
+const POSITION: [f32; 2] = [167.0, 60.0];
+/// The carried items it takes, down the left: 200×50 rows from under the title, 8 shown.
+const TARGET_TOP: f32 = 17.0;
+const TARGET_SIZE: [f32; 2] = [200.0, 50.0];
+const TARGETS_SHOWN: usize = 8;
+/// Normal, Upgrade and Reset.
+const TABS_AT: [f32; 2] = [273.0, 18.0];
 const TAB_SIZE: [f32; 2] = [65.0, 22.0];
-const TAB_GAP: f32 = 4.0;
-const ITEM_AT: [f32; 2] = [16.0, TITLE_HEIGHT + 44.0];
-const ITEM_SIZE: [f32; 2] = [150.0, 30.0];
-const SOCKET_AT: [f32; 2] = [16.0, TITLE_HEIGHT + 90.0];
-const SOCKET_SIZE: [f32; 2] = [106.0, 80.0];
-const SOCKET_STEP: [f32; 2] = [110.0, 84.0];
-const ROW_LEFT: f32 = 250.0;
-const ROW_TOP: f32 = TITLE_HEIGHT + 90.0;
-const ROW_STEP: f32 = 26.0;
-const ROW_SIZE: [f32; 2] = [260.0, 23.0];
-const VISIBLE: usize = 8;
-const ACTION_AT: [f32; 2] = [520.0, TITLE_HEIGHT + 400.0];
+/// Random and Perfect, on the Normal and Upgrade pages.
+const SUB_TABS_AT: [f32; 2] = [227.0, 41.0];
+const SUB_TAB_SIZE: [f32; 2] = [38.0, 20.0];
+const PAGE: [f32; 2] = [220.0, 40.0];
+const PAGE_SIZE: [f32; 2] = [470.0, 377.0];
+/// The item's picture in the middle of the four sockets.
+const PICTURE_AT: [f32; 2] = page(112.0, 5.0);
+const PICTURE_SIZE: [f32; 2] = [75.0, 100.0];
+/// Card slot 0 to 3: top left, bottom left, bottom right, top right; each a socket with its card's name under it.
+const SLOTS: [[f32; 2]; 4] = [page(6.0, 20.0), page(29.0, 105.0), page(164.0, 105.0), page(187.0, 20.0)];
+const SOCKET_SIZE: [f32; 2] = [44.0, 44.0];
+const SLOT_NAME_WIDTH: f32 = 96.0;
+/// Up to 8 materials, 4 to a row.
+const MATERIALS_AT: [f32; 2] = page(4.0, 200.0);
+const MATERIAL_STEP: [f32; 2] = [74.0, 52.0];
+const MATERIAL_SIZE: [f32; 2] = [70.0, 50.0];
+/// The zeny, right-aligned in the TAX box.
+const ZENY_AT: [f32; 2] = page(150.0, 309.0);
+const ZENY_WIDTH: f32 = 100.0;
+const ACTION_AT: [f32; 2] = page(80.0, 330.0);
 const ACTION_SIZE: [f32; 2] = [140.0, 40.0];
-const GREY: [u8; 3] = [0x90, 0x90, 0x90];
+/// The enchants down the right: 150×30 rows, 12 shown.
+const ROW_AT: [f32; 2] = page(300.0, 0.0);
+const ROW_SIZE: [f32; 2] = [150.0, 30.0];
+const VISIBLE: usize = 12;
+/// The box across the bottom.
+const NOTE_AT: [f32; 2] = [14.0, 425.0];
+
+const fn page(x: f32, y: f32) -> [f32; 2] {
+    [PAGE[0] + x, PAGE[1] + y]
+}
 
 /// "Enchantment successful!"
 pub const SUCCESS: usize = 3857;
@@ -49,10 +70,6 @@ pub const CONDITIONS: usize = 3860;
 pub const NO_ZENY: usize = 2968;
 /// "Insufficient amount of materials."
 pub const NO_MATERIALS: usize = 3709;
-const TAB_LABELS: [usize; 4] = [3833, 3834, 3835, 3836];
-const ENCHANT_LABEL: usize = 3838;
-const UPGRADE_LABEL: usize = 3840;
-const RESET_LABEL: usize = 3841;
 const TITLE: usize = 3838;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,10 +185,35 @@ enum Sent {
     Reset,
 }
 
+/// The three pages the tabs along the top open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Page {
+    Normal,
+    Upgrade,
+    Reset,
+}
+
+const PAGES: [Page; 3] = [Page::Normal, Page::Upgrade, Page::Reset];
+
+impl Tab {
+    fn page(self) -> Page {
+        match self {
+            Tab::Normal | Tab::Perfect => Page::Normal,
+            Tab::Upgrade => Page::Upgrade,
+            Tab::Reset => Page::Reset,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Hit {
     Title(TitleHit),
-    Tab(Tab),
+    Page(Page),
+    /// Random (false) or Perfect (true).
+    Sub(bool),
+    /// A row of the carried items on the left.
+    Target(usize),
+    /// A row of the enchants on the right.
     Row(usize),
     Action,
     Window,
@@ -192,39 +234,46 @@ struct Shown {
     result: Option<u32>,
     zeny: u32,
     materials: Vec<(u32, u32)>,
-    /// A random enchant's weight, out of 100000.
-    weight: Option<u32>,
 }
 
 pub struct Assets {
     background: Texture,
-    /// Normal, perfect, upgrade, reset; each out, pressed, disabled.
-    tabs: [[Texture; 3]; 4],
-    item: Texture,
-    row: Texture,
-    row_on: Texture,
-    sockets: [Texture; 4],
-    socket_on: Texture,
-    /// The action button, on and disabled.
-    action: [Texture; 2],
+    /// The page under the tabs: plain (Reset), blue (Random) and yellow (Perfect).
+    pages: [Texture; 3],
+    /// Normal, Upgrade and Reset; each out and chosen.
+    tabs: [[Texture; 2]; 3],
+    /// Random and Perfect; each out, chosen and off.
+    sub_tabs: [[Texture; 3]; 2],
+    /// A carried item's row: out, pointed at, chosen.
+    target: [Texture; 3],
+    /// An enchant's row: out, pointed at, chosen.
+    row: [Texture; 3],
+    /// A card slot's socket: out, pointed at, the one the enchant goes in.
+    socket: [Texture; 3],
+    /// A material's box: too few, enough.
+    material: [Texture; 2],
+    /// The enchant button: out, pointed at, held, off.
+    action: [Texture; 4],
+    grades: [Texture; 4],
 }
 
 impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
-        let folder = format!("{UI}enchantui\\");
         // Older data (2022 kRO) has no enchantui folder: blank pictures then, rather than no client at all.
-        let image = |name: &str| gpu.try_load_texture(grf, &format!("{folder}{name}.bmp"), false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
-        // ponytail: random / confirm / grow / reset guessed as the Normal / Perfect / Upgrade / Reset tabs.
-        let tab = |name: &str| [image(&format!("tab_enc_{name}_out")), image(&format!("tab_enc_{name}_pressed")), image(&format!("tab_enc_{name}_disable"))];
+        let load = |path: String| gpu.try_load_texture(grf, &path, false).unwrap_or_else(|_| gpu.solid([0, 0, 0, 0]));
+        let image = |name: &str| load(format!("{UI}enchantui\\{name}.bmp"));
+        let states = |name: &str, states: [&str; 3]| states.map(|state| image(&format!("{name}{state}")));
         Self {
             background: image("bg_enchantui"),
-            tabs: [tab("random"), tab("confirm"), tab("grow"), tab("reset")],
-            item: image("btn_enc_item"),
-            row: image("bg_enc_menu0"),
-            row_on: image("bg_enc_menu1"),
-            sockets: [image("btn_socket0"), image("btn_socket1"), image("btn_socket2"), image("btn_socket3")],
-            socket_on: image("btn_socket_select"),
-            action: [image("btn_enc"), image("btn_enc_dis")],
+            pages: [image("bg_subpage"), image("bg_subpageb"), image("bg_subpagey")],
+            tabs: ["common", "grow", "reset"].map(|name| [image(&format!("tab_enc_{name}_out")), image(&format!("tab_enc_{name}_select"))]),
+            sub_tabs: ["random", "confirm"].map(|name| states(&format!("tab_enc_{name}_"), ["out", "pressed", "disable"])),
+            target: states("bg_enc_gear", ["", "_over", "_press"]),
+            row: states("btn_enc_item", ["", "_over", "_press"]),
+            socket: states("btn_socket_", ["out", "over", "select"]),
+            material: [image("bg_enc_off"), image("bg_enc_on")],
+            action: [image("btn_enc"), image("btn_enc_over"), image("btn_enc_press"), image("btn_enc_dis")],
+            grades: [1, 2, 3, 4].map(|grade| load(format!("{UI}grade_enchant\\grade_icon{grade}.bmp"))),
         }
     }
 }
@@ -238,6 +287,7 @@ pub struct Enchant {
     tab: Tab,
     picked: Option<usize>,
     scroll: usize,
+    target_scroll: usize,
     sent: Option<Sent>,
 }
 
@@ -245,11 +295,11 @@ impl Enchant {
     pub fn open(table_id: u64, table: EnchantTable) -> Self {
         let mut frame = Frame::new(POSITION, WIDTH);
         frame.open = true;
-        Self { frame, table_id, table, item: None, item_slots: 0, tab: Tab::Normal, picked: None, scroll: 0, sent: None }
+        Self { frame, table_id, table, item: None, item_slots: 0, tab: Tab::Normal, picked: None, scroll: 0, target_scroll: 0, sent: None }
     }
 
-    /// Drops an item in. `Err(Some(id))` is a message; `Err(None)` means a request is still waiting, so the item
-    /// that's already in stays — the answer has to land on it.
+    /// Takes an item in (a row on the left, or one dropped on the window). `Err(Some(id))` is a message; `Err(None)`
+    /// means a request is still waiting, so the item that's already in stays — the answer has to land on it.
     pub fn try_item(&mut self, item: &InventoryItem, slots: u8) -> Result<(), Option<usize>> {
         if self.sent.is_some() {
             return Err(None);
@@ -271,9 +321,26 @@ impl Enchant {
         self.sent = None;
     }
 
-    pub fn scroll_by(&mut self, rows: i32, item: Option<&InventoryItem>) {
-        let max = self.rows(item).len().saturating_sub(VISIBLE) as i32;
-        self.scroll = (self.scroll as i32 + rows).clamp(0, max) as usize;
+    /// What the tabs offer for the item in; nothing before one is.
+    fn enabled(&self, item: Option<&InventoryItem>) -> TabSet {
+        item.map_or(TabSet { normal: false, perfect: false, upgrade: false, reset: false }, |item| tabs_for(&self.table, item.cards, self.item_slots))
+    }
+
+    fn chosen<'b>(&self, carried: &'b [InventoryItem]) -> Option<&'b InventoryItem> {
+        self.item.and_then(|index| carried.iter().find(|item| item.index == index))
+    }
+
+    /// The carried items it takes (none worn), in the inventory's order.
+    fn targets<'b>(&self, carried: &'b [InventoryItem]) -> Vec<&'b InventoryItem> {
+        carried.iter().filter(|item| item.worn == 0 && self.table.targets.contains(&item.id)).collect()
+    }
+
+    /// The wheel scrolls the list it's over.
+    pub fn wheel(&mut self, cursor: [f32; 2], rows: i32, carried: &[InventoryItem]) {
+        let on_targets = self.frame.local(cursor, HEIGHT).is_some_and(|local| local[0] < PAGE[0]);
+        let (count, shown) = if on_targets { (self.targets(carried).len(), TARGETS_SHOWN) } else { (self.rows(self.chosen(carried)).len(), VISIBLE) };
+        let scroll = if on_targets { &mut self.target_scroll } else { &mut self.scroll };
+        *scroll = (*scroll as i32 + rows).clamp(0, count.saturating_sub(shown) as i32) as usize;
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
@@ -281,35 +348,45 @@ impl Enchant {
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
         }
-        let tab = (0..4).find(|&index| contains(tab_at(index), TAB_SIZE, local));
-        let row = (0..VISIBLE).find(|&row| contains(row_at(row), ROW_SIZE, local));
-        Some(match (tab, row) {
-            (Some(index), _) => Hit::Tab(TABS[index]),
-            (_, Some(row)) => Hit::Row(row),
-            _ if contains(ACTION_AT, ACTION_SIZE, local) => Hit::Action,
-            _ => Hit::Window,
-        })
+        let page = (0..3).find(|&index| contains(tab_at(index), TAB_SIZE, local)).map(|index| Hit::Page(PAGES[index]));
+        let sub = (0..2).find(|&index| self.tab.page() != Page::Reset && contains(sub_tab_at(index), SUB_TAB_SIZE, local)).map(|index| Hit::Sub(index == 1));
+        let target = (0..TARGETS_SHOWN).find(|&row| contains(target_at(row), TARGET_SIZE, local)).map(Hit::Target);
+        let row = (0..VISIBLE).find(|&row| contains(row_at(row), ROW_SIZE, local)).map(Hit::Row);
+        let action = contains(ACTION_AT, ACTION_SIZE, local).then_some(Hit::Action);
+        Some(page.or(sub).or(target).or(row).or(action).unwrap_or(Hit::Window))
     }
 
-    pub fn click(&mut self, hit: Hit, item: Option<&InventoryItem>, count: impl FnMut(u32) -> u32, zeny: u32) -> Option<Action> {
-        let cards = item.map(|item| item.cards).unwrap_or([0; 4]);
-        let enabled = tabs_for(&self.table, cards, self.item_slots);
-        match hit {
+    pub fn click(&mut self, hit: Hit, carried: &[InventoryItem], slots: impl Fn(u32) -> u8, count: impl FnMut(u32) -> u32, zeny: u32) -> Option<Action> {
+        let item = self.chosen(carried);
+        let enabled = self.enabled(item);
+        let tab = match hit {
             Hit::Title(TitleHit::Close) => return Some(Action::Close),
-            Hit::Title(title) => self.frame.click_title(title),
-            Hit::Tab(tab) if enabled.has(tab) => {
-                self.tab = tab;
-                self.picked = Some(0);
-                self.scroll = 0;
+            // It has no minimize button.
+            Hit::Title(_) | Hit::Window => return None,
+            Hit::Page(Page::Normal) => [Tab::Normal, Tab::Perfect].into_iter().find(|tab| enabled.has(*tab)),
+            Hit::Page(Page::Upgrade) => Some(Tab::Upgrade).filter(|tab| enabled.has(*tab)),
+            Hit::Page(Page::Reset) => Some(Tab::Reset).filter(|tab| enabled.has(*tab)),
+            Hit::Sub(perfect) => Some(if perfect { Tab::Perfect } else { Tab::Normal }).filter(|tab| self.tab.page() == Page::Normal && enabled.has(*tab)),
+            Hit::Target(row) => {
+                let target = *self.targets(carried).get(self.target_scroll + row)?;
+                return match self.try_item(target, slots(target.id)) {
+                    Err(Some(message)) => Some(Action::Refuse(message)),
+                    _ => None,
+                };
             }
             Hit::Row(row) => {
                 let index = self.scroll + row;
                 if index < self.rows(item).len() {
                     self.picked = Some(index);
                 }
+                return None;
             }
             Hit::Action => return self.act(item, count, zeny),
-            Hit::Tab(_) | Hit::Window => {}
+        };
+        if let Some(tab) = tab {
+            self.tab = tab;
+            self.picked = Some(0);
+            self.scroll = 0;
         }
         None
     }
@@ -387,15 +464,7 @@ impl Enchant {
                 let Some(info) = self.table.slots[usize::from(slot)].as_ref() else { return Vec::new() };
                 info.rate_list(item.grade)
                     .iter()
-                    .map(|&(id, weight)| Shown {
-                        pick: id,
-                        slot,
-                        name: id,
-                        result: None,
-                        zeny: info.cost.zeny,
-                        materials: info.cost.materials.clone(),
-                        weight: Some(weight),
-                    })
+                    .map(|&(id, _)| Shown { pick: id, slot, name: id, result: None, zeny: info.cost.zeny, materials: info.cost.materials.clone() })
                     .collect()
             }
             Tab::Perfect => {
@@ -410,7 +479,6 @@ impl Enchant {
                         result: None,
                         zeny: perfect.cost.zeny,
                         materials: perfect.cost.materials.clone(),
-                        weight: None,
                     })
                     .collect()
             }
@@ -425,7 +493,6 @@ impl Enchant {
                         result: Some(upgrade.1.result),
                         zeny: upgrade.1.cost.zeny,
                         materials: upgrade.1.cost.materials.clone(),
-                        weight: None,
                     })
                 })
                 .collect(),
@@ -433,27 +500,63 @@ impl Enchant {
         }
     }
 
-    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
-        if !self.frame.open || self.frame.minimized {
+    /// The zeny and materials of what the button would do now.
+    fn cost(&self, item: Option<&InventoryItem>) -> Option<(u32, Vec<(u32, u32)>)> {
+        let item = item?;
+        match self.tab {
+            Tab::Normal => {
+                let slot = next_slot(&self.table.slot_order, item.cards, self.item_slots)?;
+                let info = self.table.slots[usize::from(slot)].as_ref()?;
+                Some((info.cost.zeny, info.cost.materials.clone()))
+            }
+            Tab::Reset => self.table.reset.as_ref().map(|reset| (reset.cost.zeny, reset.cost.materials.clone())),
+            Tab::Perfect | Tab::Upgrade => self.rows(Some(item)).into_iter().nth(self.picked?).map(|row| (row.zeny, row.materials)),
+        }
+    }
+
+    /// The slot the enchant goes in: the next free one, or the picked upgrade's.
+    fn aimed_slot(&self, item: Option<&InventoryItem>) -> Option<u8> {
+        let item = item?;
+        match self.tab {
+            Tab::Normal | Tab::Perfect => next_slot(&self.table.slot_order, item.cards, self.item_slots),
+            Tab::Upgrade => self.rows(Some(item)).get(self.picked?).map(|row| row.slot),
+            Tab::Reset => None,
+        }
+    }
+
+    fn ready(&self, item: Option<&InventoryItem>) -> bool {
+        let Some(item) = item.filter(|_| self.sent.is_none()) else { return false };
+        let enabled = self.enabled(Some(item));
+        match self.tab {
+            Tab::Normal => enabled.normal,
+            Tab::Reset => enabled.reset,
+            Tab::Perfect | Tab::Upgrade => self.picked.is_some_and(|index| index < self.rows(Some(item)).len()),
+        }
+    }
+
+    pub fn button_boxes(&self, carried: &[InventoryItem]) -> Vec<(String, [f32; 4])> {
+        if !self.frame.open {
             return Vec::new();
         }
-        let boxes = vec![
-            ("normal", self.place(tab_at(0), TAB_SIZE)),
-            ("perfect", self.place(tab_at(1), TAB_SIZE)),
-            ("upgrade", self.place(tab_at(2), TAB_SIZE)),
-            ("reset", self.place(tab_at(3), TAB_SIZE)),
-            ("action", self.place(ACTION_AT, ACTION_SIZE)),
-            ("item", self.place(ITEM_AT, ITEM_SIZE)),
-            ("close", self.place(self.frame.close_button(), window::BUTTON_SIZE)),
-        ];
+        let mut boxes: Vec<(String, [f32; 4])> =
+            ["normal", "upgrade", "reset"].into_iter().enumerate().map(|(index, name)| (name.to_owned(), self.place(tab_at(index), TAB_SIZE))).collect();
+        if self.tab.page() != Page::Reset {
+            boxes.extend(["random", "perfect"].into_iter().enumerate().map(|(index, name)| (name.to_owned(), self.place(sub_tab_at(index), SUB_TAB_SIZE))));
+        }
+        boxes.push(("action".to_owned(), self.place(ACTION_AT, ACTION_SIZE)));
+        // Where a dragged item goes in.
+        boxes.push(("item".to_owned(), self.place(PICTURE_AT, PICTURE_SIZE)));
+        boxes.push(("close".to_owned(), self.place(self.frame.close_button(), window::BUTTON_SIZE)));
+        let targets = self.targets(carried).into_iter().skip(self.target_scroll).take(TARGETS_SHOWN);
+        boxes.extend(targets.enumerate().map(|(row, item)| (format!("target_{}", item.id), self.place(target_at(row), TARGET_SIZE))));
         boxes
     }
 
-    pub fn row_boxes(&self, item: Option<&InventoryItem>) -> Vec<(u32, [f32; 4])> {
-        if !self.frame.open || self.frame.minimized {
+    pub fn row_boxes(&self, carried: &[InventoryItem]) -> Vec<(u32, [f32; 4])> {
+        if !self.frame.open {
             return Vec::new();
         }
-        self.rows(item)
+        self.rows(self.chosen(carried))
             .iter()
             .enumerate()
             .skip(self.scroll)
@@ -468,17 +571,19 @@ impl Enchant {
     }
 
     pub fn icons(&self, items: &HashMap<u32, ItemInfo>, carried: &[InventoryItem]) -> Vec<String> {
-        let item = self.item.and_then(|index| carried.iter().find(|item| item.index == index));
-        let mut ids: Vec<u32> = item.map(|item| item.id).into_iter().chain(item.into_iter().flat_map(|item| item.cards)).filter(|id| *id != 0).collect();
+        let item = self.chosen(carried);
+        let mut ids: Vec<u32> = item.into_iter().flat_map(|item| item.cards).collect();
+        ids.extend(self.targets(carried).iter().map(|item| item.id));
         for row in self.rows(item) {
             ids.push(row.name);
             ids.extend(row.result);
-            ids.extend(row.materials.iter().map(|(id, _)| *id));
         }
-        ids.retain(|id| items.contains_key(id));
+        ids.extend(self.cost(item).into_iter().flat_map(|(_, materials)| materials).map(|(id, _)| id));
         ids.sort();
         ids.dedup();
-        ids.into_iter().filter_map(|id| items.get(&id).map(|info| inventory::icon_path(info, true))).collect()
+        let mut paths: Vec<String> = ids.into_iter().filter_map(|id| items.get(&id).map(|info| inventory::icon_path(info, true))).collect();
+        paths.extend(item.and_then(|item| items.get(&item.id)).map(|info| iteminfo::picture_path(info, true)));
+        paths
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -494,128 +599,150 @@ impl Enchant {
         font: &Font,
         pointer: ([f32; 2], bool),
     ) {
-        let message = |id: usize| messages.get(id).map_or("", String::as_str);
+        const BLACK: [u8; 3] = [0, 0, 0];
         let at = |local: [f32; 2]| self.frame.at(local);
-        self.frame.draw_title(layer, chrome, message(TITLE), pointer.0);
-        if self.frame.minimized {
-            return;
-        }
+        let over = |local: [f32; 2], size: [f32; 2]| contains(at(local), size, pointer.0);
         let icon = |id: u32| items.get(&id).and_then(|info| icons.get(&inventory::icon_path(info, true))).and_then(Option::as_ref);
         let name_of = |id: u32| items.get(&id).map(|info| info.name.clone()).unwrap_or_else(|| id.to_string());
-        layer.sprites.push((&assets.background, at([0.0, TITLE_HEIGHT]), [WIDTH, 470.0]));
-        let carried_item = self.item.and_then(|index| carried.iter().find(|item| item.index == index));
-        let cards = carried_item.map(|item| item.cards).unwrap_or([0; 4]);
-        let enabled = tabs_for(&self.table, cards, self.item_slots);
-        for (index, tab) in TABS.into_iter().enumerate() {
-            let look = if !enabled.has(tab) {
-                2
-            } else if self.tab == tab {
-                1
-            } else {
-                0
-            };
-            layer.sprites.push((&assets.tabs[index][look], at(tab_at(index)), TAB_SIZE));
-            let label = message(TAB_LABELS[index]);
-            let color = if enabled.has(tab) { [0, 0, 0] } else { GREY };
-            layer.texts.push((label.to_owned(), at(offset(tab_at(index), [(TAB_SIZE[0] - font.width(label)) / 2.0, 4.0])), color));
+        // The background brings the bar's place; the bar, the close button and the title go over it.
+        layer.sprites.push((&assets.background, at([0.0, 0.0]), [WIDTH, HEIGHT]));
+        self.frame.draw_bar(layer, chrome);
+        self.frame.draw_bare_title(layer, chrome, messages.get(TITLE).map_or("", String::as_str), pointer.0);
+        let item = self.chosen(carried);
+        let cards = item.map_or([0; 4], |item| item.cards);
+        let enabled = self.enabled(item);
+
+        for (row, target) in self.targets(carried).into_iter().skip(self.target_scroll).take(TARGETS_SHOWN).enumerate() {
+            let place = target_at(row);
+            let look = if self.item == Some(target.index) { 2 } else { usize::from(over(place, TARGET_SIZE)) };
+            layer.sprites.push((&assets.target[look], at(place), TARGET_SIZE));
+            if let Some(texture) = icon(target.id) {
+                layer.sprites.push((texture, at(offset(place, [6.0, 13.0])), [24.0, 24.0]));
+            }
+            if (1..=4).contains(&target.grade) {
+                layer.sprites.push((&assets.grades[usize::from(target.grade) - 1], at(offset(place, [166.0, 7.0])), [12.0, 12.0]));
+            }
+            let name = window::fit(font, &inventory::item_name(items, target.id, target.identified, target.refine), 152.0);
+            layer.texts.push((name, at(offset(place, [38.0, 19.0])), BLACK));
         }
-        layer.sprites.push((&assets.item, at(ITEM_AT), ITEM_SIZE));
-        if let Some(item) = carried_item
-            && let Some(texture) = icon(item.id)
+
+        let page = self.tab.page();
+        for (index, tab) in PAGES.into_iter().enumerate() {
+            layer.sprites.push((&assets.tabs[index][usize::from(page == tab)], at(tab_at(index)), TAB_SIZE));
+        }
+        let background = match self.tab {
+            Tab::Reset => 0,
+            Tab::Normal => 1,
+            Tab::Perfect | Tab::Upgrade => 2,
+        };
+        layer.sprites.push((&assets.pages[background], at(PAGE), PAGE_SIZE));
+        // ponytail: an upgrade has one set result, so the Upgrade page's Random is off and its Perfect chosen.
+        let sub_tabs = match page {
+            Page::Normal => Some([(enabled.normal, self.tab == Tab::Normal), (enabled.perfect, self.tab == Tab::Perfect)]),
+            Page::Upgrade => Some([(false, false), (enabled.upgrade, true)]),
+            Page::Reset => None,
+        };
+        for (index, (on, chosen)) in sub_tabs.into_iter().flatten().enumerate() {
+            let look = if !on { 2 } else { usize::from(chosen) };
+            layer.sprites.push((&assets.sub_tabs[index][look], at(sub_tab_at(index)), SUB_TAB_SIZE));
+        }
+
+        if let Some(texture) =
+            item.and_then(|item| items.get(&item.id)).and_then(|info| icons.get(&iteminfo::picture_path(info, true))).and_then(Option::as_ref)
         {
-            layer.sprites.push((texture, at(offset(ITEM_AT, [4.0, 4.0])), [22.0, 22.0]));
-            let name = window::fit(font, &inventory::item_name(items, item.id, true, item.refine), 110.0);
-            layer.texts.push((name, at(offset(ITEM_AT, [30.0, 8.0])), [0, 0, 0]));
+            layer.sprites.push((texture, at(PICTURE_AT), PICTURE_SIZE));
         }
-        let next = carried_item.and_then(|_| next_slot(&self.table.slot_order, cards, self.item_slots));
-        for (slot, card) in cards.iter().enumerate() {
-            let column = slot % 2;
-            let row = slot / 2;
-            let place = offset(SOCKET_AT, [SOCKET_STEP[0] * column as f32, SOCKET_STEP[1] * row as f32]);
-            layer.sprites.push((&assets.sockets[slot], at(place), SOCKET_SIZE));
-            if next == Some(slot as u8) {
-                layer.sprites.push((&assets.socket_on, at(place), SOCKET_SIZE));
+        let aimed = self.aimed_slot(item);
+        for (slot, &card) in cards.iter().enumerate() {
+            // The two on the left have the socket on their right, the two on the right on their left.
+            let (socket_x, name_x) = if slot < 2 { (59.0, 0.0) } else { (3.0, 10.0) };
+            let socket = offset(SLOTS[slot], [socket_x, 1.0]);
+            let look = if aimed == Some(slot as u8) { 2 } else { usize::from(over(socket, SOCKET_SIZE)) };
+            layer.sprites.push((&assets.socket[look], at(socket), SOCKET_SIZE));
+            if card == 0 {
+                continue;
             }
-            if let Some(texture) = icon(*card) {
-                layer.sprites.push((texture, at(offset(place, [40.0, 28.0])), [24.0, 24.0]));
+            if let Some(texture) = icon(card) {
+                layer.sprites.push((texture, at(offset(socket, [10.0, 10.0])), [24.0, 24.0]));
             }
+            let name = window::fit(font, &name_of(card), SLOT_NAME_WIDTH);
+            let name_at = offset(SLOTS[slot], [name_x + (SLOT_NAME_WIDTH - font.width(&name)) / 2.0, 44.0]);
+            layer.texts.push((name, at(name_at), BLACK));
         }
-        let rows = self.rows(carried_item);
-        if let Some(header) = self.header(carried_item, items, font) {
-            layer.texts.push((header, at([ROW_LEFT, ROW_TOP - 18.0]), [0, 0, 0]));
+
+        if let Some((zeny, materials)) = self.cost(item) {
+            for (index, &(id, need)) in materials.iter().take(8).enumerate() {
+                let place = offset(MATERIALS_AT, [MATERIAL_STEP[0] * (index % 4) as f32, MATERIAL_STEP[1] * (index / 4) as f32]);
+                let have: u32 = carried.iter().filter(|carried| carried.id == id).map(|carried| u32::from(carried.amount)).sum();
+                layer.sprites.push((&assets.material[usize::from(have >= need)], at(place), MATERIAL_SIZE));
+                if let Some(texture) = icon(id) {
+                    layer.sprites.push((texture, at(offset(place, [6.0, 10.0])), [24.0, 24.0]));
+                }
+                // ponytail: the needed count over the carried one is an estimate; the game has two right-aligned lines.
+                for (line, number) in [need, have].into_iter().enumerate() {
+                    let text = number.to_string();
+                    layer.texts.push((text.clone(), at(offset(place, [70.0 - font.width(&text), 17.0 + 14.0 * line as f32])), BLACK));
+                }
+            }
+            let zeny = group(u64::from(zeny));
+            layer.texts.push((zeny.clone(), at([ZENY_AT[0] + ZENY_WIDTH - font.width(&zeny), ZENY_AT[1]]), BLACK));
         }
-        for (index, row) in rows.iter().enumerate().skip(self.scroll).take(VISIBLE) {
+        let look = if !self.ready(item) {
+            3
+        } else if over(ACTION_AT, ACTION_SIZE) {
+            1 + usize::from(pointer.1)
+        } else {
+            0
+        };
+        layer.sprites.push((&assets.action[look], at(ACTION_AT), ACTION_SIZE));
+
+        for (index, row) in self.rows(item).iter().enumerate().skip(self.scroll).take(VISIBLE) {
             let place = row_at(index - self.scroll);
-            let picked = self.picked == Some(index);
-            layer.sprites.push((if picked { &assets.row_on } else { &assets.row }, at(place), ROW_SIZE));
-            if let Some(texture) = icon(row.name) {
-                layer.sprites.push((texture, at(offset(place, [2.0, 2.0])), [18.0, 18.0]));
+            // A random enchant's rows only list what may come.
+            let look = if self.tab != Tab::Normal && self.picked == Some(index) { 2 } else { usize::from(over(place, ROW_SIZE)) };
+            layer.sprites.push((&assets.row[look], at(place), ROW_SIZE));
+            let shown = row.result.unwrap_or(row.name);
+            if let Some(texture) = icon(shown) {
+                layer.sprites.push((texture, at(offset(place, [2.0, 3.0])), [24.0, 24.0]));
             }
-            let mut text = name_of(row.name);
-            if let Some(result) = row.result {
-                text = format!("{text} > {}", name_of(result));
-            }
-            if let Some(weight) = row.weight {
-                text = format!("{text}  {}%", weight / 1000);
-            } else if self.tab != Tab::Normal {
-                text = format!("{text}  {} z{}", group(u64::from(row.zeny)), materials_text(&row.materials, items));
-            }
-            layer.texts.push((window::fit(font, &text, ROW_SIZE[0] - 28.0), at(offset(place, [24.0, 4.0])), [0, 0, 0]));
+            layer.texts.push((window::fit(font, &name_of(shown), 101.0), at(offset(place, [28.0, 9.0])), BLACK));
         }
-        let normal_ready = next_slot(&self.table.slot_order, cards, self.item_slots)
-            .and_then(|slot| self.table.slots[usize::from(slot)].as_ref())
-            .is_some_and(EnchantSlot::random);
-        let ready = self.sent.is_none()
-            && carried_item.is_some()
-            && match self.tab {
-                Tab::Reset => enabled.reset,
-                Tab::Normal => normal_ready,
-                _ => self.picked.and_then(|index| rows.get(index)).is_some(),
-            };
-        layer.sprites.push((&assets.action[usize::from(!ready)], at(ACTION_AT), ACTION_SIZE));
-        let label = message(match self.tab {
-            Tab::Upgrade => UPGRADE_LABEL,
-            Tab::Reset => RESET_LABEL,
-            _ => ENCHANT_LABEL,
-        });
-        layer.texts.push((label.to_owned(), at([ACTION_AT[0] + (ACTION_SIZE[0] - font.width(label)) / 2.0, ACTION_AT[1] + 12.0]), [0, 0, 0]));
+        if let Some(note) = self.note(item) {
+            layer.texts.push((note, at(NOTE_AT), BLACK));
+        }
     }
 
-    fn header(&self, item: Option<&InventoryItem>, items: &HashMap<u32, ItemInfo>, font: &Font) -> Option<String> {
+    /// The box across the bottom: the chance of a random enchant or a reset.
+    // ponytail: what the game writes there wasn't read; the chance is what this window had nowhere else to show.
+    fn note(&self, item: Option<&InventoryItem>) -> Option<String> {
         let item = item?;
-        let text = match self.tab {
+        let chance = match self.tab {
             Tab::Normal => {
                 let slot = next_slot(&self.table.slot_order, item.cards, self.item_slots)?;
                 let info = self.table.slots[usize::from(slot)].as_ref()?;
-                let chance = info.success_rate.saturating_add(info.bonus(item.grade)) / 1000;
-                format!("{chance}%  {} z{}", group(u64::from(info.cost.zeny)), materials_text(&info.cost.materials, items))
+                info.success_rate.saturating_add(info.bonus(item.grade))
             }
-            Tab::Reset => {
-                let reset = self.table.reset.as_ref()?;
-                let chance = reset.rate / 1000;
-                format!("{chance}%  {} z{}", group(u64::from(reset.cost.zeny)), materials_text(&reset.cost.materials, items))
-            }
-            _ => return None,
+            Tab::Reset => self.table.reset.as_ref()?.rate,
+            Tab::Perfect | Tab::Upgrade => return None,
         };
-        Some(window::fit(font, &text, 420.0))
+        Some(format!("{}%", chance / 1000))
     }
-}
-
-fn materials_text(materials: &[(u32, u32)], items: &HashMap<u32, ItemInfo>) -> String {
-    let mut text = String::new();
-    for &(id, amount) in materials {
-        let name = items.get(&id).map(|info| info.name.as_str()).unwrap_or("");
-        text.push_str(&format!(", {name} x{amount}"));
-    }
-    text
 }
 
 fn tab_at(index: usize) -> [f32; 2] {
-    [TAB_LEFT + index as f32 * (TAB_SIZE[0] + TAB_GAP), TAB_TOP]
+    [TABS_AT[0] + index as f32 * TAB_SIZE[0], TABS_AT[1]]
 }
 
-fn row_at(index: usize) -> [f32; 2] {
-    [ROW_LEFT, ROW_TOP + index as f32 * ROW_STEP]
+fn sub_tab_at(index: usize) -> [f32; 2] {
+    [SUB_TABS_AT[0] + index as f32 * SUB_TAB_SIZE[0], SUB_TABS_AT[1]]
+}
+
+fn target_at(row: usize) -> [f32; 2] {
+    [0.0, TARGET_TOP + row as f32 * TARGET_SIZE[1]]
+}
+
+fn row_at(row: usize) -> [f32; 2] {
+    [ROW_AT[0], ROW_AT[1] + row as f32 * ROW_SIZE[1]]
 }
 
 #[cfg(test)]
@@ -711,9 +838,9 @@ mod tests {
         window.try_item(&item, 2).unwrap();
         assert_eq!(window.tab, Tab::Perfect);
         let count = |id: u32| if id == 25669 { 20 } else { 0 };
-        assert_eq!(window.click(Hit::Action, Some(&item), count, 50_000), Some(Action::Refuse(NO_ZENY)));
+        assert_eq!(window.click(Hit::Action, std::slice::from_ref(&item), |_| 2, count, 50_000), Some(Action::Refuse(NO_ZENY)));
         assert!(window.sent.is_none());
-        let sent = window.click(Hit::Action, Some(&item), count, 100_000);
+        let sent = window.click(Hit::Action, std::slice::from_ref(&item), |_| 2, count, 100_000);
         assert_eq!(sent, Some(Action::Send(Request::Perfect { table: 33, index: 4, item: 4818 })));
         // Another drop while that request is out would forget the slot, so it's refused and the item stays.
         let other = InventoryItem { index: 9, ..item };
@@ -724,5 +851,26 @@ mod tests {
         window.forget_request();
         window.try_item(&other, 2).unwrap();
         assert_eq!(window.item, Some(9));
+    }
+
+    #[test]
+    fn the_left_list_holds_the_carried_items_it_takes() {
+        let mut window = Enchant::open(33, table());
+        let low = InventoryItem { index: 2, refine: 6, ..item([0; 4]) };
+        let worn = InventoryItem { index: 3, worn: 2, ..item([0; 4]) };
+        let other = InventoryItem { index: 5, id: 1201, ..item([0; 4]) };
+        let carried = [low, worn, other, item([0; 4])];
+        // Neither the worn one nor one the table doesn't name is listed.
+        assert_eq!(window.targets(&carried).iter().map(|item| item.index).collect::<Vec<_>>(), [2, 4]);
+        let none = |_| 0;
+        assert_eq!(window.click(Hit::Target(0), &carried, |_| 2, none, 0), Some(Action::Refuse(CONDITIONS)));
+        assert_eq!(window.item, None);
+        assert_eq!(window.click(Hit::Target(1), &carried, |_| 2, none, 0), None);
+        assert_eq!((window.item, window.tab), (Some(4), Tab::Perfect));
+        // The Normal tab opens the page on the kind that can be done: Random has nothing for this item.
+        window.click(Hit::Sub(false), &carried, |_| 2, none, 0);
+        assert_eq!(window.tab, Tab::Perfect);
+        window.click(Hit::Page(Page::Upgrade), &carried, |_| 2, none, 0);
+        assert_eq!(window.tab, Tab::Perfect);
     }
 }
