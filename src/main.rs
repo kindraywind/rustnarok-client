@@ -5114,6 +5114,7 @@ impl ApplicationHandler<NetEvent> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => gpu.resize(),
+            WindowEvent::Moved(_) => gpu.moved(),
             // Driven over the control socket: the real mouse and keyboard would stray into the commands.
             WindowEvent::CursorMoved { .. } | WindowEvent::CursorLeft { .. } | WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. }
                 if control::driven() => {}
@@ -5174,6 +5175,9 @@ impl ApplicationHandler<NetEvent> for App {
             }
             // Shown again after being covered or minimised: draw now, not when the slow covered pace comes round.
             WindowEvent::Occluded(false) => gpu.window.request_redraw(),
+            // A game frame asked for too soon after the last waits for `request_frame`, which asks again once it's due. A
+            // command that draws (`state`, a screenshot) calls `redraw` itself.
+            WindowEvent::RedrawRequested if self.loading.is_none() && matches!(self.scene, Scene::Game(_)) && gpu.too_soon() => {}
             WindowEvent::RedrawRequested => self.redraw(event_loop),
             _ => {}
         }
@@ -5384,10 +5388,8 @@ impl ApplicationHandler<NetEvent> for App {
                         }
                     }
                 }
-                if let Some(gpu) = &self.gpu {
-                    gpu.request_frame();
-                }
-                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_TIME));
+                let next = self.gpu.as_ref().map_or_else(|| Instant::now() + FRAME_TIME, Gpu::request_frame);
+                event_loop.set_control_flow(ControlFlow::WaitUntil(next));
             }
             Scene::Login => {
                 let phase = self.blink_phase();
@@ -5401,10 +5403,8 @@ impl ApplicationHandler<NetEvent> for App {
             }
             // The select and creation screens animate (the selected card, the characters, the caret).
             scene if matches!(scene.base(), Scene::CharSelect(_) | Scene::CharMake(..)) => {
-                if let Some(gpu) = &self.gpu {
-                    gpu.request_frame();
-                }
-                event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_TIME));
+                let next = self.gpu.as_ref().map_or_else(|| Instant::now() + FRAME_TIME, Gpu::request_frame);
+                event_loop.set_control_flow(ControlFlow::WaitUntil(next));
             }
             _ => event_loop.set_control_flow(ControlFlow::Wait),
         }

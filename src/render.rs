@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use image::RgbaImage;
 use rustnarok_client::grf::Grf;
@@ -75,6 +75,8 @@ pub struct Gpu {
     /// when that draw began. `request_frame` paces frames by them.
     occluded: bool,
     drawn_at: Instant,
+    /// How close two presented frames may come (`frame_floor`).
+    frame_floor: Duration,
     /// Lines of text as textures, with the frame each was last drawn in; and the frame count.
     texts: RefCell<TextCache>,
     frame: Cell<u64>,
@@ -205,6 +207,7 @@ impl Gpu {
             ..Default::default()
         });
 
+        let frame_floor = frame_floor(&window);
         Self {
             window,
             surface,
@@ -219,6 +222,7 @@ impl Gpu {
             smooth_sampler,
             occluded: false,
             drawn_at: Instant::now(),
+            frame_floor,
             texts: RefCell::new(HashMap::new()),
             frame: Cell::new(0),
         }
@@ -305,12 +309,29 @@ impl Gpu {
         self.texts.borrow_mut().clear();
     }
 
-    /// Asks for the next frame. Presenting waits for the display, which paces frames; a covered window presents
-    /// nothing, so its frames are kept `COVERED_FRAME_TIME` apart instead of running flat out.
-    pub fn request_frame(&self) {
-        if frame_due(self.occluded, crate::control::driven(), self.drawn_at.elapsed()) {
-            self.window.request_redraw();
+    /// Asks for the next frame once it's due, and says when to look again: when it's due, or a `FRAME_TIME` away.
+    /// Presenting usually waits for the display, but a display gone to sleep waits for nothing, so presented frames are
+    /// kept `frame_floor` apart too; a covered window presents nothing, and its frames are kept `COVERED_FRAME_TIME` apart.
+    pub fn request_frame(&self) -> Instant {
+        let due = self.drawn_at + frame_gap(self.occluded, crate::control::driven(), self.frame_floor);
+        let now = Instant::now();
+        if now < due {
+            return due.min(now + crate::FRAME_TIME);
         }
+        // The frame asked for wakes the loop itself; a wait already over would spin it until the frame is drawn.
+        self.window.request_redraw();
+        now + crate::FRAME_TIME
+    }
+
+    /// Whether a frame now would come too close to the last presented one. A packet, the pointer or a command asks for
+    /// a frame of its own; a covered window still draws it (it presents nothing), else `request_frame` does.
+    pub fn too_soon(&self) -> bool {
+        !self.occluded && self.drawn_at.elapsed() < self.frame_floor
+    }
+
+    /// The window moved, maybe onto a display with another refresh rate.
+    pub fn moved(&mut self) {
+        self.frame_floor = frame_floor(&self.window);
     }
 
     /// Draws the world and then `sprites` in order, each at its `alphas` opacity (1 past the list's end).
@@ -487,13 +508,31 @@ pub fn key_out(mut image: RgbaImage) -> RgbaImage {
 }
 /// How often a covered or minimised window draws while nothing happens. Packets, input and control commands each ask
 /// for a frame of their own, so they aren't held back; this only slows the idle animation no one can see.
-const COVERED_FRAME_TIME: std::time::Duration = std::time::Duration::from_millis(250);
+const COVERED_FRAME_TIME: Duration = Duration::from_millis(250);
 
-/// Whether the next frame may be drawn now: always while frames are presented (the display paces them), else once
-/// `COVERED_FRAME_TIME` has gone by since the last. A client driven over the control socket, often launched behind
-/// other windows, keeps a frame time: its scenarios' shots follow the camera's easing frame by frame.
-fn frame_due(occluded: bool, driven: bool, since_drawn: std::time::Duration) -> bool {
-    !occluded || since_drawn >= if driven { crate::FRAME_TIME } else { COVERED_FRAME_TIME }
+/// How long after a frame began the next may: `frame_floor` while frames are presented, else `COVERED_FRAME_TIME`. A
+/// client driven over the control socket, often launched behind other windows, keeps a frame time: its scenarios' shots
+/// follow the camera's easing frame by frame.
+fn frame_gap(occluded: bool, driven: bool, floor: Duration) -> Duration {
+    if !occluded {
+        floor
+    } else if driven {
+        crate::FRAME_TIME
+    } else {
+        COVERED_FRAME_TIME
+    }
+}
+
+/// How close presented frames may come: three quarters of a refresh of the window's display (6.25 ms at 120 Hz), or zero
+/// when the system doesn't say. A display awake paces them itself; a whole refresh would let each frame begin a little
+/// later than the last until one misses its refresh (108 of 120 fps). A display asleep paces nothing: about 150 fps
+/// then, not as many as the GPU can draw.
+fn frame_floor(window: &Window) -> Duration {
+    window
+        .current_monitor()
+        .and_then(|monitor| monitor.refresh_rate_millihertz())
+        .filter(|&millihertz| millihertz > 0)
+        .map_or(Duration::ZERO, |millihertz| Duration::from_nanos(750_000_000_000 / u64::from(millihertz)))
 }
 
 #[cfg(test)]
@@ -501,13 +540,14 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn a_covered_window_keeps_frames_apart() {
-        // Presenting: always (the display waits). Covered: only once `COVERED_FRAME_TIME` has gone by.
-        assert!(super::frame_due(false, false, Duration::ZERO));
-        assert!(!super::frame_due(true, false, crate::FRAME_TIME));
-        assert!(super::frame_due(true, false, super::COVERED_FRAME_TIME));
-        // Driven over the control socket: a frame time, as before.
-        assert!(!super::frame_due(true, true, Duration::from_millis(2)));
-        assert!(super::frame_due(true, true, crate::FRAME_TIME));
+    fn presented_frames_keep_a_floor_apart() {
+        let floor = Duration::from_micros(6250);
+        // Presenting: the floor, even while the display sleeps and waits for nothing; none known, none.
+        assert_eq!(super::frame_gap(false, false, floor), floor);
+        assert_eq!(super::frame_gap(false, true, floor), floor);
+        assert_eq!(super::frame_gap(false, false, Duration::ZERO), Duration::ZERO);
+        // Covered: `COVERED_FRAME_TIME`; driven over the control socket, a frame time, as before.
+        assert_eq!(super::frame_gap(true, false, floor), super::COVERED_FRAME_TIME);
+        assert_eq!(super::frame_gap(true, true, floor), crate::FRAME_TIME);
     }
 }
