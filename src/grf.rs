@@ -38,6 +38,9 @@ pub struct Grf {
     /// Loose files read before the archive (the client's data folder), by client path.
     overlay: HashMap<String, PathBuf>,
     decrypt: Option<Decrypt>,
+    /// `data\resnametable.txt`: files stored under another name (`lhz_airport.rsw` → `airport.rsw`), by path under
+    /// `data\` (maps) or `data\texture\` (minimaps).
+    aliases: HashMap<String, String>,
 }
 
 impl Grf {
@@ -55,8 +58,9 @@ impl Grf {
     }
 
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
-        let mut grf = Self { archives: Vec::new(), entries: HashMap::new(), overlay: HashMap::new(), decrypt: None };
+        let mut grf = Self { archives: Vec::new(), entries: HashMap::new(), overlay: HashMap::new(), decrypt: None, aliases: HashMap::new() };
         grf.add_archive(path.as_ref())?;
+        grf.load_aliases();
         Ok(grf)
     }
 
@@ -74,7 +78,7 @@ impl Grf {
             .collect();
         listed.sort();
         let folder = ini.parent().unwrap_or(Path::new("."));
-        let mut grf = Self { archives: Vec::new(), entries: HashMap::new(), overlay: HashMap::new(), decrypt };
+        let mut grf = Self { archives: Vec::new(), entries: HashMap::new(), overlay: HashMap::new(), decrypt, aliases: HashMap::new() };
         for (_, name) in listed {
             if let Err(error) = grf.add_archive(&folder.join(&name)) {
                 eprintln!("{name}: {error}");
@@ -83,6 +87,7 @@ impl Grf {
         if grf.archives.is_empty() {
             return Err(invalid("no archive DATA.INI lists opens"));
         }
+        grf.load_aliases();
         Ok(grf)
     }
 
@@ -148,7 +153,36 @@ impl Grf {
         for (folder, prefix) in [("data", "data"), ("System", "system"), ("SystemEN", "system")] {
             walk(&root.join(folder), prefix, &mut self.overlay);
         }
+        self.load_aliases();
         self.overlay.len() - before
+    }
+
+    /// Reads `data\resnametable.txt` (EUC-KR, `from#to#` a line, `//` comments), as the official client does.
+    fn load_aliases(&mut self) {
+        let Ok(text) = self.read("data\\resnametable.txt") else { return };
+        let (text, _) = encoding_rs::EUC_KR.decode_without_bom_handling(&text);
+        self.aliases = text
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split('#');
+                let (from, to) = (fields.next()?.trim(), fields.next()?.trim());
+                (!from.is_empty() && !to.is_empty() && !from.starts_with("//")).then(|| (normalize(from), normalize(to)))
+            })
+            .collect();
+    }
+
+    /// A path as stored: itself when it's there, else what resnametable.txt names for it.
+    fn real_path(&self, path: &str) -> String {
+        let path = normalize(path);
+        if self.overlay.contains_key(&path) || self.entries.contains_key(&path) {
+            return path;
+        }
+        for base in ["data\\texture\\", "data\\"] {
+            if let Some(alias) = path.strip_prefix(base).and_then(|rest| self.aliases.get(rest)) {
+                return format!("{base}{alias}");
+            }
+        }
+        path
     }
 
     /// Every file's path, lowercase with backslashes.
@@ -165,16 +199,17 @@ impl Grf {
 
     /// Whether a file is there (in the archive or the data folder), by its client path.
     pub fn contains(&self, path: &str) -> bool {
-        let path = normalize(path);
+        let path = self.real_path(path);
         self.overlay.contains_key(&path) || self.entries.contains_key(&path)
     }
 
     /// Reads a file by its client path, e.g. `data\texture\...`; case and slash direction don't matter.
     pub fn read(&self, path: &str) -> io::Result<Vec<u8>> {
-        if let Some(file) = self.overlay.get(&normalize(path)) {
+        let real = self.real_path(path);
+        if let Some(file) = self.overlay.get(&real) {
             return std::fs::read(file);
         }
-        let entry = self.entries.get(&normalize(path)).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, path.to_owned()))?;
+        let entry = self.entries.get(&real).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, path.to_owned()))?;
 
         let (file, encrypted) = &self.archives[entry.archive];
         let mut data = vec![0; entry.aligned_size as usize];
@@ -274,11 +309,11 @@ mod tests {
         encoder.finish().unwrap()
     }
 
-    /// A hand-built archive of `version` 0x200 or 0x300: each file's name, stored bytes and uncompressed size.
+    /// A hand-built archive of `version` 0x200 or 0x300: each file's name (stored EUC-KR), stored bytes and uncompressed size.
     fn archive(version: u32, files: &[(&str, Vec<u8>, u32)]) -> Vec<u8> {
         let (mut body, mut table) = (Vec::new(), Vec::new());
         for (name, stored, size) in files {
-            table.extend(name.as_bytes());
+            table.extend(&*encoding_rs::EUC_KR.encode(name).0);
             table.push(0);
             table.extend((stored.len() as u32).to_le_bytes());
             table.extend((stored.len() as u32).to_le_bytes());
@@ -403,6 +438,24 @@ mod tests {
         }
         eprintln!("{} files, read {sprites} sprites and {maps} ground files", paths.len());
         assert!(paths.len() > 200_000 && sprites > 20);
+    }
+
+    /// resnametable.txt's names (EUC-KR, under `data\` or `data\texture\`) read the file stored under the other name.
+    #[test]
+    fn reads_files_under_their_resnametable_names() {
+        let folder = folder("resname");
+        let (table, _, _) = encoding_rs::EUC_KR
+            .encode("// comment#x#\r\nlhz_airport.rsw#airport.rsw#\r\n\r\n유저인터페이스\\map\\lhz_airport.bmp#유저인터페이스\\map\\airport.bmp#\r\n");
+        let files =
+            [plain("data\\resnametable.txt", &table), plain("data\\airport.rsw", b"rsw"), plain("data\\texture\\유저인터페이스\\map\\airport.bmp", b"bmp")];
+        write(&folder, "data.grf", 0x200, &files);
+        let grf = super::Grf::open(folder.join("data.grf")).unwrap();
+        std::fs::remove_dir_all(&folder).unwrap();
+        assert_eq!(grf.read("data\\LHZ_airport.rsw").unwrap(), b"rsw");
+        assert!(grf.contains("data/lhz_airport.rsw"));
+        assert_eq!(grf.read("data\\texture\\유저인터페이스\\map\\lhz_airport.bmp").unwrap(), b"bmp");
+        assert!(grf.read("data\\lhz_airport.gat").is_err());
+        assert!(!grf.aliases.contains_key("// comment"));
     }
 
     #[test]
