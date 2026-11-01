@@ -28,6 +28,8 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_
   {"click_unit_id": {"kind": "monster", "name": "Chonchon", "walking": true}, "attack": true}  (the client's own
     click_unit by the id of the nearest such unit, which clicks it where it's drawn then; "walking": first wait up to 5 s
     for one that's moving; "attack": then the player's attack target must be it within 3 s; also button/mods/count)
+  {"click_item_id": 909}  (the client's own click_item on the nearest ground item of that item id, where a click picks
+    it, not a monster over it; also button/mods/count)
   {"shot": "name", "crop": [x, y, w, h], "mask": [[x, y, w, h], ...], "threshold": 1.0}  {"cmd": {...}}
   {"wait_for": {"event": "ItemUsed", "ms": 5000}}  (or "packet": "0x01c8": seen since the previous command; or "sent":
     "0x0447": a packet the client sent the map server; {"wait_for": {...}, "none": true} passes only if nothing came)
@@ -503,6 +505,20 @@ def step_on_client(action, shots_dir, name):
                     return None
                 time.sleep(0.1)
             return [f"click_unit_id {want}: no attack on {found[0]['id']}"]
+        return None
+    if "click_item_id" in action:
+        items = drive.send({"cmd": "state"}).get("game", {}).get("ground_items", [])
+        found = [item for item in items if item.get("item") == action["click_item_id"]]
+        if not found:
+            return [f"click_item_id {action['click_item_id']}: no such item on the ground"]
+        command = {"cmd": "click_item", "id": found[0]["id"]}
+        for key in ("button", "count", "mods"):
+            if key in action:
+                command[key] = action[key]
+        reply = drive.send(command)
+        if not reply.get("ok"):
+            return [f"click_item_id {action['click_item_id']}: {reply.get('error')}"]
+        print(f"  click_item {found[0]['id']} at {reply.get('point')}")
         return None
     if "drag_on" in action:
         start, end = (locate(target) for target in action["drag_on"])

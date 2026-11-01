@@ -71,6 +71,20 @@ fn tools() -> Value {
         ),
         tool(
             Grade::Assist,
+            "click_item",
+            "Click an item on the ground where it is drawn now, at a point that picks it, so a monster standing on it doesn't take the click (answers {\"point\": [x, y]}). Use the item's id from state's ground_items. Refused for an item off the screen or covered.",
+            json!({"id": {"type": "integer", "description": "the item's id from state's ground_items"}, "button": button, "mods": mods, "count": {"type": "integer", "description": "2 for a double click"}}),
+            &["id"],
+        ),
+        tool(
+            Grade::Assist,
+            "click_cell",
+            "Click the ground at map cell (x, y), at a point of the cell where the click reaches the ground (answers {\"point\": [x, y]}): a walk there, or a ground skill being aimed. Refused, without clicking, for a cell off the screen or covered by a window, a unit, an item or a skill unit that would take the click.",
+            json!({"x": {"type": "integer"}, "y": {"type": "integer"}, "button": button, "mods": mods, "count": {"type": "integer", "description": "2 for a double click"}}),
+            &["x", "y"],
+        ),
+        tool(
+            Grade::Assist,
             "cell_point",
             "Where map cell (x, y)'s middle is on the screen, as {\"point\": [x, y]} in the same 1024x768 pixels as click. Use it to click the ground at a cell. Errors outside the game and for a cell behind the camera. With `cells` instead of x and y, many cells in one call: {\"points\": [...]} in their order, null for a cell a single call would refuse.",
             json!({
@@ -126,7 +140,7 @@ fn tools() -> Value {
         tool(
             Grade::Fair,
             "state",
-            "The scene; in the game the map, the player (cell, HP/SP, levels, zeny, screen box), open windows, `escape` (the Esc or death menu's buttons while it is open, null otherwise; `windows` lists it as GameMenu, and it takes every click until it is closed: a click's hit then says GameMenu), the NPC dialog, the aimed skill, units and ground items nearest first (id, kind, name, cell, screen box [left, top, right, bottom]), counts, status icons and the last chat lines. cell_point turns player.cell or a unit's cell into a point to click. Under a play mode, what is above it is left out (src/play.rs), and so are units and ground items outside the window.",
+            "The scene; in the game the map, the player (cell, HP/SP, levels, zeny, screen box), open windows, `escape` (the Esc or death menu's buttons while it is open, null otherwise; `windows` lists it as GameMenu, and it takes every click until it is closed: a click's hit then says GameMenu), the NPC dialog, the aimed skill, units and ground items nearest first (id, kind, name, cell, screen box [left, top, right, bottom]), counts, status icons and the last chat lines. A unit has casting while its cast bar fills; assist adds ground_skills (skills' units on the ground, e.g. a Fire Wall's cells: kind, cell, range, point on the screen) and cast_squares (the magic squares under ground casts). cell_point turns player.cell or a unit's cell into a point to click; click_cell and click_item click the ground or an item where nothing else takes the click. Under a play mode, what is above it is left out (src/play.rs), and so are units and ground items outside the window.",
             json!({"only": {"type": "array", "items": {"type": "string"}, "description": "just these fields of the game's state, e.g. [\"player\", \"units\", \"dialog\"]: a smaller, faster answer"}}),
             &[],
         ),
@@ -379,7 +393,8 @@ fn grades_every_tool() {
     let listed = |mode| listed(mode).iter().filter_map(|tool| tool["name"].as_str().map(str::to_owned)).collect::<Vec<_>>();
     assert_eq!(listed(Grade::Test).len(), names.len());
     assert!(listed(Grade::Assist).contains(&"click_unit".to_owned()) && !listed(Grade::Assist).contains(&"trace".to_owned()));
-    assert!(!listed(Grade::Fair).iter().any(|name| ["click_unit", "cell_point", "clock", "trace"].contains(&name.as_str())));
+    assert!(listed(Grade::Assist).contains(&"click_item".to_owned()) && listed(Grade::Assist).contains(&"click_cell".to_owned()));
+    assert!(!listed(Grade::Fair).iter().any(|name| ["click_unit", "click_item", "click_cell", "cell_point", "clock", "trace"].contains(&name.as_str())));
     assert!(listed(Grade::Fair).contains(&"click".to_owned()));
 }
 

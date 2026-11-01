@@ -1,0 +1,11 @@
+// Safe clicks (issue #1224), on open ground in alberta with no monsters of its own: training dummies (they neither move
+// nor fight back) on 123,136 and 123,134, and a Jellopy made at 123,136 (rathena puts it on a cell next to that one).
+// Loaded and unloaded by scenarios/safe-clicks.json.
+alberta,1,1,0	script	RustnarokSafeClicks	-1,{
+	end;
+OnInit:
+	monster "alberta", 123, 136, "--ja--", 2408, 1;
+	monster "alberta", 123, 134, "--ja--", 2408, 1;
+	makeitem 909, 1, "alberta", 123, 136;
+	end;
+}
