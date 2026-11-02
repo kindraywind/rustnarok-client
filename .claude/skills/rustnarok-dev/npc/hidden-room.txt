@@ -1,0 +1,10 @@
+// A hidden NPC hosting a chat room (issue #1240), as the Knight and Assassin job tests' arenas do: `hideonnpc`, then
+// `waitingroom`, with no event, so joining starts nothing. On open ground in alberta, two cells east and four south of
+// 123,140. Loaded and unloaded by scenarios/hidden-room.json.
+alberta,125,136,4	script	Hidden Room#1240	733,{
+	end;
+OnInit:
+	hideonnpc "Hidden Room#1240";
+	waitingroom "Hidden Room",20;
+	end;
+}
