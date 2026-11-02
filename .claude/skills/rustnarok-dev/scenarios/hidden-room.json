@@ -1,0 +1,30 @@
+{
+  "about": "Chat rooms on hidden NPCs (issue #1240): the Knight job test's 'Waiting Room' at job_knt 89,106 hangs on an NPC that hides itself (hideonnpc), and its board must still show and take clicks. Looked at only (joining starts the arena). Then npc/hidden-room.txt puts a hidden NPC with a plain room in alberta: the board is clicked, the room opens, Esc leaves it. Ends with the NPC unloaded.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp job_knt 89 101"},
+    {"settle": 2000},
+    {"move": [1000, 750]},
+    {"expect": {"button": {"name": "room_sign"}}},
+    {"shot": "knight-arena-room", "crop": [312, 40, 400, 300]},
+    {"say": "@warp alberta 123 140"},
+    {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/hidden-room.txt"},
+    {"wait": 300},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/hidden-room.txt"},
+    {"wait": 1500},
+    {"move": [1000, 750]},
+    {"expect": {"button": {"name": "room_sign"}}},
+    {"shot": "hidden-room-board", "crop": [400, 230, 450, 260]},
+    {"click_on": {"button": "room_sign"}},
+    {"wait": 1500},
+    {"expect": {"windows_open": ["ChatRoom"]}},
+    {"shot": "hidden-room-joined"},
+    {"key": "Escape"},
+    {"wait": 800},
+    {"expect": {"windows_closed": ["ChatRoom"], "button": {"name": "room_sign"}}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/hidden-room.txt"},
+    {"wait": 300}
+  ]
+}

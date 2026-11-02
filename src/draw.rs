@@ -501,6 +501,9 @@ impl App {
         let our_summons = [game.pet_id, game.homunculus_id, game.mercenary.as_ref().map(|mercenary| mercenary.id)];
         // Talkie Boxes saying their words stand where their traps were.
         let mut feet_of = game.talkie_spots.clone();
+        // Hidden NPCs aren't drawn, but a chat room one hosts still has its board over its cell (`hideonnpc` then
+        // `waitingroom`: the Knight and Assassin job tests' arenas).
+        let mut hidden_npc_feet = HashMap::new();
         let mut prop_units: Vec<(u32, u16, world::Vector, f32)> = Vec::new();
         let mut rises = HashMap::from([(None, actor::glint_rise(true, game.player.job, game.player.option))]);
         let mut facings = HashMap::from([(None, game.player.rot)]);
@@ -511,6 +514,9 @@ impl App {
             // Hidden units aren't drawn, except as black silhouettes while we have Clairvoyance. GM hide stays hidden.
             let show = actor::seen(actor.hide_option, false, clairvoyance);
             if show == actor::Seen::Nothing {
+                if actor.kind == NPC {
+                    hidden_npc_feet.insert(id, game.world.cell_position(cell));
+                }
                 continue;
             }
             let silhouette = show == actor::Seen::Silhouette;
@@ -1585,7 +1591,7 @@ impl App {
             let unit = (*owner != game.account_id).then_some(*owner);
             let feet = match unit {
                 None => player_feet,
-                Some(id) => match feet_of.get(&id) {
+                Some(id) => match feet_of.get(&id).or_else(|| hidden_npc_feet.get(&id)) {
                     Some(&feet) => feet,
                     None => continue,
                 },
