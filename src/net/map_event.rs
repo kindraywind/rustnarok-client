@@ -1406,6 +1406,14 @@ pub enum MapEvent {
         element: u32,
         cast_ms: u32,
     },
+    /// The area a unit's cast will hit, around `cell` (the caster's cell) for `cast_ms` (ZC_SKILL_SCALE).
+    SkillScale {
+        source: u32,
+        skill: u16,
+        level: u16,
+        cell: [u16; 2],
+        cast_ms: u32,
+    },
     /// A skill hit (ZC_NOTIFY_SKILL); `act.kind` 8 splits the damage into hits.
     SkillHit {
         skill: u16,

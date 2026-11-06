@@ -1,0 +1,20 @@
+{
+  "about": "The red cells a monster's cast will hit (ZC_SKILL_SCALE). A test NPC (skill-area.txt) makes a Poring 4 cells east of the player cast NPC_WIDESILENCE level 1 on itself with a 6 s longer cast; rathena flags that skill ShowScale, so the server also sends the cast's area, 5x5 (SkillScale) around the Poring. The client draws each of those cells as a soft red tile, pulsing (brightest 2.4 s in, where the shot is), for the cast time, then drops them.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp alberta 123 140"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@unloadnpcfile {scenarios}/skill-area.txt"}, {"wait": 500},
+    {"say": "@loadnpc {scenarios}/skill-area.txt"}, {"wait": 800},
+    {"key": "Tab"}, {"type": "npc:RustnarokSkillArea"}, {"key": "Tab"}, {"type": "cast"}, {"key": "Enter"},
+    {"wait_for": {"packet": "0x0a41", "ms": 5000}}, {"wait": 2400},
+    {"expect": {"state": {"skill_areas.0.cell": [127, 140], "skill_areas.0.size": [5, 5]}}},
+    {"shot": "skill-area-cells", "crop": [400, 170, 460, 330], "threshold": 30},
+    {"wait": 8000},
+    {"expect": {"state": {"skill_areas": []}}},
+    {"shot": "skill-area-gone", "crop": [400, 170, 460, 330], "threshold": 30},
+    {"say": "@killmonster2"}, {"wait": 300},
+    {"say": "@unloadnpcfile {scenarios}/skill-area.txt"}, {"wait": 500}
+  ]
+}

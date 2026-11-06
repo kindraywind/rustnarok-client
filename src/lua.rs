@@ -985,6 +985,9 @@ pub struct SkillInfo {
     /// The skills it needs first, each at a level (`_NeedSkillList`); some jobs have their own (`NeedSkillList`).
     pub needs: Vec<(u16, u16)>,
     pub job_needs: HashMap<u16, Vec<(u16, u16)>>,
+    /// The cells a cast's area covers around the caster by level (`SkillScale`: x by y), where the data gives one.
+    /// The data skips levels, so it's by level, not a list.
+    pub scale: HashMap<u16, [u16; 2]>,
 }
 
 impl SkillInfo {
@@ -1163,6 +1166,12 @@ fn skill_infos(lua: &Lua) -> io::Result<HashMap<u16, SkillInfo>> {
                 .get::<mlua::Table>("NeedSkillList")
                 .map(|jobs| {
                     jobs.pairs::<i64, mlua::Table>().flatten().filter_map(|(job, list)| Some((u16::try_from(job).ok()?, skill_levels(&list)))).collect()
+                })
+                .unwrap_or_default(),
+            scale: entry
+                .get::<mlua::Table>("SkillScale")
+                .map(|levels| {
+                    levels.pairs::<u16, mlua::Table>().flatten().filter_map(|(level, size)| Some((level, [size.get("x").ok()?, size.get("y").ok()?]))).collect()
                 })
                 .unwrap_or_default(),
         };
@@ -2603,6 +2612,7 @@ mod tests {
             SKILL_INFO_LIST = {
                 [28] = { "AL_HEAL", _NeedSkillList = { { 22, 1 } }, NeedSkillList = { [14] = { { 248, 10 }, { 23, 5 } } } },
                 [395] = { "CG_MOONLIT", NeedSkillList = { [4068] = { { 315, 7 } } } },
+                [3207] = { "NPC_SCALED", SkillScale = { [1] = { x = 3, y = 3 }, [5] = { x = 11, y = 9 } } },
             }"#,
         )
         .exec()
@@ -2614,6 +2624,9 @@ mod tests {
         assert_eq!(heal.needs_for(&[0, 4, 8]), [(22, 1)]);
         assert_eq!(skills[&395].needs_for(&[0, 3, 19, 4020, 4075]), [(315, 7)]);
         assert!(skills[&395].needs_for(&[0, 3, 19, 4020]).is_empty());
+        // The area by level, with the levels the data skips left out.
+        assert_eq!(skills[&3207].scale, std::collections::HashMap::from([(1, [3, 3]), (5, [11, 9])]));
+        assert!(heal.scale.is_empty());
     }
 
     #[test]

@@ -6,6 +6,7 @@ pub(crate) mod cast_square;
 pub(crate) mod effects;
 pub(crate) mod map_effects;
 pub(crate) mod prims;
+pub(crate) mod skill_area;
 pub(crate) mod sky;
 pub(crate) mod weather;
 pub(crate) mod world_fx;

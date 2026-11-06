@@ -127,6 +127,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             element: u32_at(16),
             cast_ms: u32_at(20),
         },
+        ZC_SKILL_SCALE => MapEvent::SkillScale { source: u32_at(2), skill: u16_at(6), level: u16_at(8), cell: [u16_at(10), u16_at(12)], cast_ms: u32_at(14) },
         ZC_NOTIFY_SKILL => MapEvent::SkillHit {
             skill: u16_at(2),
             level: u16_at(28),
