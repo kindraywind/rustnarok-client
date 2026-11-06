@@ -974,6 +974,8 @@ const ZC_USESKILL_ACK: u16 = 0x0B1A;
 const ZC_USESKILL_ACK2: u16 = 0x07FB;
 /// A unit's cast was cut off (rathena's clif_skillcastcancel).
 const ZC_DISPEL: u16 = 0x01B9;
+/// The area a unit's cast will hit, around the caster (rathena's clif_skill_scale, for skills flagged ShowScale).
+const ZC_SKILL_SCALE: u16 = 0x0A41;
 /// The server starts a navigation (rathena's clif_navigateTo).
 const ZC_NAVIGATION_ACTIVE: u16 = 0x08E2;
 /// Reputation points by reputation type, and the server opening the reputation window (rathena's clif_reputation_*).

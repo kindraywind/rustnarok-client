@@ -382,6 +382,7 @@ impl App {
                     progress: ProgressBar::default(),
                     opened_page: None,
                     cast_squares: HashMap::new(),
+                    skill_areas: Vec::new(),
                     skill_lands: HashMap::new(),
                     // ponytail: on at the start by the user's choice; the game starts it off.
                     ground_cursor: true,
@@ -3881,6 +3882,15 @@ impl App {
                 game.effects.fourth_job_cast_cancelled(caster);
                 game.casts.remove(&caster);
                 game.cast_squares.remove(&caster);
+            }
+            // The cells a cast will hit, around the caster as it starts: for a caster in sight and a skill whose
+            // `SkillScale` has that level. They stay for the cast time, cut off or not.
+            MapEvent::SkillScale { source, skill, level, cell, cast_ms } => {
+                let size = self.skill_info.get(&skill).and_then(|info| info.scale.get(&level)).copied();
+                if let Some(size) = size.filter(|_| source == game.account_id || game.units.contains_key(&source)) {
+                    let length = Duration::from_millis(u64::from(cast_ms));
+                    game.skill_areas.push(skill_area::Area { cell, size, start: Instant::now(), length });
+                }
             }
             // Why the server refused a skill, in red. The cast bar and the cast square stay.
             MapEvent::SkillFailed { skill, detail, item, cause, .. } => {

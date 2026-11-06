@@ -3070,6 +3070,26 @@ impl App {
                 effect_meshes.push((texture, vertices, true));
             }
         }
+        // The red cells casts will hit: a tile on each cell at the ground's corner heights, added on, pulsing.
+        game.skill_areas.retain(|area| area.alive(now));
+        if let Some(texture) = &assets.warning_plane {
+            for area in &game.skill_areas {
+                let tint = [1.0, 0.0, 0.0, area.alpha(now)];
+                let vertices = area
+                    .cells()
+                    .filter_map(|cell| game.world.cell_quad(cell))
+                    .flat_map(|corners| {
+                        let vertex = |corner: usize, uv| {
+                            let [x, y, z] = corners[corner];
+                            world::MeshVertex { position: [x, y + CAST_SQUARE_LIFT, z], uv, tint }
+                        };
+                        let [a, b, c, d] = [vertex(0, [0.0, 1.0]), vertex(1, [1.0, 1.0]), vertex(2, [0.0, 0.0]), vertex(3, [1.0, 0.0])];
+                        [a, b, d, a, d, c]
+                    })
+                    .collect();
+                effect_meshes.push((texture, vertices, true));
+            }
+        }
         // The ground cursor: its square over the cell, at the corner heights of the ground tile it's part of.
         if let (Some(texture), Some(corners)) = (&assets.ground_grid, game.ground_mark.and_then(|cell| game.world.cell_quad(cell))) {
             let vertex = |corner: usize, uv| {

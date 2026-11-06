@@ -1249,6 +1249,8 @@ struct Game {
     progress: ProgressBar,
     /// The magic squares under ground skills being cast, by caster (None = the player); each goes with its cast.
     cast_squares: HashMap<Option<u32>, cast_square::Square>,
+    /// The red cells casts will hit, as the server shows them; each goes when its cast time is up.
+    skill_areas: Vec<skill_area::Area>,
     /// When each caster's last skill hit lands, for its splash's other targets.
     skill_lands: HashMap<u32, Instant>,
     /// The ground cursor (Alt+Home, on at the start): whether it's on, and the cell it shows.
@@ -2999,6 +3001,8 @@ struct Assets {
     link_line: Texture,
     /// The magic square under a ground cast.
     magic_target: Option<Texture>,
+    /// A skill area's cell (`skill_area`): white, soft-edged, tinted red.
+    warning_plane: Option<Texture>,
     /// The ground cursor's square.
     ground_grid: Option<Texture>,
     /// fullb.tga and white02.bmp for the blind overlay. A missing file leaves that part unseen.
@@ -3128,6 +3132,7 @@ impl Assets {
             url_line: gpu.solid([links::URL_COLOR[0], links::URL_COLOR[1], links::URL_COLOR[2], 0xFF]),
             link_line: gpu.solid([links::NPC_COLOR[0], links::NPC_COLOR[1], links::NPC_COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),
+            warning_plane: gpu.try_load_texture(grf, "data\\texture\\warning_plane.tga", false).ok(),
             ground_grid: gpu.try_load_texture(grf, "data\\texture\\grid.tga", false).ok(),
             blind_textures: [
                 gpu.try_load_texture(grf, "data\\texture\\effect\\fullb.tga", true).ok(),

@@ -1,0 +1,14 @@
+// A test NPC for the skill-area scenario: whisper npc:RustnarokSkillArea "cast" and a Poring appears 4 cells east of the
+// player and casts NPC_WIDESILENCE level 1 on itself, 6 s longer than its own cast time. rathena flags that skill
+// ShowScale, so the cast also sends ZC_SKILL_SCALE: its 5x5 area (the data's SkillScale) around the Poring.
+// Load it with @loadnpc <absolute path>, take it out with @unloadnpcfile <absolute path>.
+-	script	RustnarokSkillArea	-1,{
+	end;
+OnWhisperGlobal:
+	if (@whispervar0$ != "cast")
+		end;
+	getmapxy(.@map$, .@x, .@y, BL_PC);
+	monster .@map$, .@x + 4, .@y, "--ja--", 1002, 1;
+	unitskilluseid $@mobid[0], 663, 1, $@mobid[0], 6;
+	end;
+}

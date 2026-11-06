@@ -2032,6 +2032,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "item_window": game.item_window.as_ref().map(|window| window.shown.item),
         // The magic squares under ground casts: the target cell, the width in cells and where the cell is on the screen.
         "cast_squares": game.cast_squares.values().map(|square| json!({"cell": square.cell, "width": square.width, "point": cell_on_screen(square.cell)})).collect::<Vec<_>>(),
+        // The red cells casts will hit: the caster's cell in the middle, the cells across and down, and that cell on the screen.
+        "skill_areas": game.skill_areas.iter().map(|area| json!({"cell": area.cell, "size": area.size, "point": cell_on_screen(area.cell)})).collect::<Vec<_>>(),
         // How many units show each status mark (the player too).
         "marks": std::iter::once(&game.player).chain(game.units.values()).flat_map(|actor| crate::head_marks::marks(actor.body_state, actor.health_state)).fold(
             serde_json::Map::new(),
@@ -2459,6 +2461,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("shortcuts", Fair),
         ("show_emblems", Fair),
         ("signs", Assist),
+        ("skill_areas", Assist),
         ("skill_description", Fair),
         ("skill_list_rows", Fair),
         ("skills", Fair),
@@ -2558,7 +2561,7 @@ fn grade(state: &mut Value, mode: Grade, quests_open: bool, window: [f32; 2]) {
             items.iter_mut().filter_map(Value::as_object_mut).for_each(|item| _ = item.remove("cell"));
         }
     }
-    for key in ["cast_squares", "ground_skills"] {
+    for key in ["cast_squares", "ground_skills", "skill_areas"] {
         if let Some(list) = state[key].as_array_mut() {
             list.retain(|thing| !thing["point"].is_null() && thing["kind"] != INVISIBLE_UNIT);
         }

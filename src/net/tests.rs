@@ -2882,6 +2882,19 @@ fn decodes_old_cast() {
 }
 
 #[test]
+fn decodes_skill_scale() {
+    // 0a41: source.L, skill.W, level.W, x.W, y.W, cast ms.L.
+    let mut packet = vec![0x41, 0x0A];
+    packet.extend_from_slice(&110_000_123u32.to_le_bytes());
+    for value in [173u16, 1, 120, 86] {
+        packet.extend_from_slice(&value.to_le_bytes());
+    }
+    packet.extend_from_slice(&5_000u32.to_le_bytes());
+    let Some(MapEvent::SkillScale { source, skill, level, cell, cast_ms }) = decode_map_packet(&packet) else { panic!("skill scale not decoded") };
+    assert_eq!((source, skill, level, cell, cast_ms), (110_000_123, 173, 1, [120, 86], 5_000));
+}
+
+#[test]
 fn decodes_old_act() {
     // 008a: source.L, target.L, tick.L, source speed.L, target speed.L, damage.W, hits.W, type.B, left damage.W.
     let mut packet = vec![0x8A, 0x00];
