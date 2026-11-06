@@ -250,7 +250,10 @@ pub fn perform(game: &mut Game, actions: Vec<Action>) -> Value {
                 true
             }
             Action::StopAttack => {
+                // The server's continuous attack too: it swung on, and the hunt's walk out of a Constant's self-destruct
+                // waited behind the swings (rathena clif_parse_StopAttack).
                 game.attack = None;
+                let _ = game.session.stop_attack();
                 true
             }
             Action::ClearPending => {
