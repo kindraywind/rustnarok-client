@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant};
 
@@ -751,6 +752,18 @@ pub static PACKET_HOOK: std::sync::OnceLock<fn(&[u8])> = std::sync::OnceLock::ne
 /// Dev hook (the control socket): sees every packet written to the map server.
 pub static SENT_HOOK: std::sync::OnceLock<fn(&[u8])> = std::sync::OnceLock::new();
 
+/// When the trace last printed a packet line and a `# t` line: wall-clock milliseconds, 0 for not yet.
+static TRACED_AT: AtomicU64 = AtomicU64::new(0);
+static MARKED_AT: AtomicU64 = AtomicU64::new(0);
+
+/// Whether a `# t <epoch ms>` line goes before a packet traced at `now`, the last packet line having gone at `traced`
+/// and the last `# t` line at `marked` (wall-clock milliseconds, 0 for none yet): first of all, once a minute, and after
+/// more than 50 s with nothing traced. A line's own time column is only the last five digits, which wrap every 100 s
+/// (#1251): across a longer gap their wraps can't be counted, and from a `# t` line on they can again.
+fn trace_marks(now: u64, traced: u64, marked: u64) -> bool {
+    traced == 0 || now.saturating_sub(marked) >= 60_000 || now.saturating_sub(traced) > 50_000
+}
+
 /// Reads one packet: fixed lengths come from the table, variable ones carry their length at offset 2.
 fn read_packet(reader: &mut impl Read) -> io::Result<Vec<u8>> {
     let mut packet = vec![0u8; 2];
@@ -769,7 +782,12 @@ fn read_packet(reader: &mut impl Read) -> io::Result<Vec<u8>> {
     packet.resize(size.max(received), 0);
     reader.read_exact(&mut packet[received..])?;
     if let Some(full) = crate::play::trace() {
-        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() % 100_000;
+        let now = u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(0);
+        if trace_marks(now, TRACED_AT.swap(now, Ordering::Relaxed), MARKED_AT.load(Ordering::Relaxed)) {
+            MARKED_AT.store(now, Ordering::Relaxed);
+            eprintln!("# t {now}");
+        }
+        let ms = now % 100_000;
         let shown = if full { packet.len() } else { packet.len().min(32) };
         eprintln!("{ms:05} <- {id:#06x} {} {:02x?}", packet.len(), &packet[..shown]);
     }

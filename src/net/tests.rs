@@ -2983,3 +2983,20 @@ fn keeps_random_options() {
     let Some(MapEvent::CatalogResults { rows, .. }) = decode_map_packet(&results) else { panic!() };
     assert_eq!((&rows[0].options, rows[0].refine), (&expected, 7));
 }
+
+#[test]
+fn trace_marks_the_full_time_first_each_minute_and_after_a_gap() {
+    let t = 1_794_016_087_321;
+    // The first traced packet: nothing to count wraps from yet.
+    assert!(trace_marks(t, 0, 0));
+    // Packets close together, the last mark under a minute ago: none.
+    assert!(!trace_marks(t + 1_000, t, t));
+    assert!(!trace_marks(t + 59_999, t + 59_000, t));
+    // A minute after the last mark: one, though packets kept coming.
+    assert!(trace_marks(t + 60_000, t + 59_900, t));
+    // More than 50 s with nothing traced: one, so a gap of 100 s or more never leaves a wrap uncounted.
+    assert!(!trace_marks(t + 50_000, t, t + 30_000));
+    assert!(trace_marks(t + 50_001, t, t + 30_000));
+    // A clock that went back marks nothing by itself.
+    assert!(!trace_marks(t, t + 5_000, t + 1_000));
+}

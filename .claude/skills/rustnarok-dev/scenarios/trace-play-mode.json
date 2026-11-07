@@ -1,5 +1,5 @@
 {
-  "about": "The packet trace (RUSTNAROK_CLIENT_TRACE) shows more than the screen, so it is for play mode all: under assist the client prints no packets and says why, under all it still prints them.",
+  "about": "The packet trace (RUSTNAROK_CLIENT_TRACE) shows more than the screen, so it is for play mode all: under assist the client prints no packets and says why, under all it still prints them, and starts with a `# t <epoch ms>` line, the full time its five-digit time column wraps from (#1251).",
   "account": "",
   "slot": 0,
   "start": "char_select",
@@ -8,6 +8,8 @@
   "steps": [
     {"wait": 2000},
     {"expect": {"state": {"scene": "char_select"}, "no_log": "<- 0x", "log": "RUSTNAROK_CLIENT_TRACE is off"}},
-    {"expect": {"state": {"scene": "char_select"}, "log": "<- 0x", "no_log": "RUSTNAROK_CLIENT_TRACE is off"}, "as": "second"}
+    {"expect": {"state": {"scene": "char_select"}, "log": "<- 0x", "no_log": "RUSTNAROK_CLIENT_TRACE is off"}, "as": "second"},
+    {"expect": {"no_log": "# t "}},
+    {"expect": {"log": "# t 1"}, "as": "second"}
   ]
 }
