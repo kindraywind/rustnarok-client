@@ -44,10 +44,14 @@ const POSITIONS: [[f32; 2]; 2] = [[0.0, 120.0], [280.0, 280.0]];
 const MARKET_ICON: f32 = 34.0;
 const MARKET_NAME: f32 = 70.0;
 const MARKET_NAME_WIDTH: f32 = 120.0;
+/// A barter's row: the name cut to 120 px (100 in the deal), the cost item's icon this far from the right edge, and
+/// how many it costs (in the deal, times how many) right-aligned this far from it.
+const BARTER_NAME_WIDTHS: [f32; 2] = [120.0, 100.0];
+const COST_ICON_FROM_RIGHT: f32 = 70.0;
+const COST_FROM_RIGHT: f32 = 25.0;
 /// Where prices end, from the right edge.
 const PRICE_RIGHT: f32 = 18.0;
 const PADDING: f32 = 5.0;
-const LEFT: f32 = 16.0;
 /// In a row (from its top, 17 + 32 per row): the icon, the name, and the selected row's box (28 high, to 17 short of
 /// the right edge).
 const ICON: [f32; 2] = [44.0, 4.0];
@@ -117,7 +121,10 @@ pub const NOT_ENOUGH_ZENY: usize = 55;
 pub const OVER_STOCK: usize = 1706;
 
 pub struct Assets {
-    strip: Texture,
+    /// The list's left and right edges, repeated every 8 px.
+    side: [Texture; 2],
+    /// The empty cell behind each row's icon.
+    cell: Texture,
     bar: Texture,
     /// Buy, sell, cancel and exchange: normal, hovered, pressed.
     buttons: [[Texture; 3]; 4],
@@ -137,7 +144,8 @@ impl Assets {
         let image = |path: String| gpu.load_texture(grf, &path, false);
         let button = |name: &str| ["", "_a", "_b"].map(|suffix| image(format!("{UI}btn_{name}{suffix}.bmp")));
         Self {
-            strip: image(format!("{UI}basic_interface\\itemwin_left.bmp")),
+            side: ["left", "right"].map(|part| image(format!("{UI}basic_interface\\itemwin_{part}.bmp"))),
+            cell: image(format!("{UI}basic_interface\\itemwin_mid.bmp")),
             bar: image(format!("{UI}basic_interface\\btnbar_mid2.bmp")),
             buttons: [button("buy"), button("sell"), button("cancel"), button("exchange")],
             selected: gpu.solid(SELECTED),
@@ -731,7 +739,13 @@ impl Shop {
     }
 
     pub fn icons(&self, items: &HashMap<u32, ItemInfo>) -> Vec<String> {
-        self.offers.iter().filter_map(|offer| items.get(&offer.item).map(|info| inventory::icon_path(info, offer.identified))).collect()
+        let costs = self.offers.iter().flat_map(|offer| offer.costs.iter().map(|&(item, _)| (item, true)));
+        self.offers
+            .iter()
+            .map(|offer| (offer.item, offer.identified))
+            .chain(costs)
+            .filter_map(|(item, identified)| items.get(&item).map(|info| inventory::icon_path(info, identified)))
+            .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -772,9 +786,20 @@ impl Shop {
             let height = self.height(window);
             let width = self.window_width(window);
             let list_height = height - TITLE_HEIGHT - FOOTER;
+            // A market's goods sit further left, the name wider.
+            let market_goods = window == 0 && self.market == Some(MarketKind::Market);
+            let (icon_x, name_x) = if market_goods { (MARKET_ICON, MARKET_NAME) } else { (ICON[0], NAME[0]) };
+            // White, the edges every 8 px, and an empty cell behind each row's icon.
             layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [width, list_height]));
-            layer.sprites.push((&assets.strip, frame.at([0.0, TITLE_HEIGHT]), [assets.strip.size[0], list_height]));
-            layer.sprites.push((&chrome.border, frame.at([width - 1.0, TITLE_HEIGHT]), [1.0, list_height]));
+            let [left, right] = &assets.side;
+            for step in 0..(list_height / 8.0).ceil() as usize {
+                let y = TITLE_HEIGHT + step as f32 * 8.0;
+                layer.sprites.push((left, frame.at([0.0, y]), left.size));
+                layer.sprites.push((right, frame.at([width - right.size[0], y]), right.size));
+            }
+            for row in 0..self.rows[window] {
+                layer.sprites.push((&assets.cell, frame.at([icon_x - 4.0, TITLE_HEIGHT + row as f32 * ROW]), assets.cell.size));
+            }
             for (place, (offer_index, amount)) in self.rows(window).into_iter().enumerate().skip(self.scroll[window]).take(self.rows[window]) {
                 let top = TITLE_HEIGHT + (place - self.scroll[window]) as f32 * ROW;
                 let offer = &self.offers[offer_index];
@@ -782,9 +807,6 @@ impl Shop {
                     let [x, y] = SELECTED_BOX;
                     layer.sprites.push((&assets.selected, frame.at([x, top + y]), [width - x - 17.0, SELECTED_HEIGHT]));
                 }
-                // A market's goods sit further left, the name wider.
-                let market_goods = window == 0 && self.market == Some(MarketKind::Market);
-                let (icon_x, name_x) = if market_goods { (MARKET_ICON, MARKET_NAME) } else { (ICON[0], NAME[0]) };
                 let icon = items.get(&offer.item).and_then(|info| icons.get(&inventory::icon_path(info, offer.identified))).and_then(Option::as_ref);
                 if let Some(icon) = icon {
                     layer.sprites.push((icon, frame.at([icon_x, top + ICON[1]]), icon.size));
@@ -797,11 +819,24 @@ impl Shop {
                     layer.texts.push((text, place, [0, 0, 0]));
                 }
                 let name = offer.name(items, naming, messages);
-                // ponytail: a barter's costs go on a second line, in grey; where the real client shows them isn't known.
+                // A barter: what it costs on the right, its icon and how many.
+                if let (Some(MarketKind::Barter), Some(&(cost, each))) = (self.market, offer.costs.first()) {
+                    layer.texts.push((window::fit(font, &name, BARTER_NAME_WIDTHS[window]), frame.at([name_x, top + NAME[1]]), [0, 0, 0]));
+                    let cost_icon = items.get(&cost).and_then(|info| icons.get(&inventory::icon_path(info, true))).and_then(Option::as_ref);
+                    if let Some(cost_icon) = cost_icon {
+                        layer.sprites.push((cost_icon, frame.at([width - COST_ICON_FROM_RIGHT, top + ICON[1]]), cost_icon.size));
+                    }
+                    if each > 0 {
+                        let text = (u64::from(each) * u64::from(amount.unwrap_or(1))).to_string();
+                        layer.texts.push((text.clone(), frame.at([width - COST_FROM_RIGHT - font.width(&text), top + NAME[1]]), [0, 0, 0]));
+                    }
+                    continue;
+                }
+                // ponytail: an expanded barter's costs go on a second line, in grey; its own 64 px rows aren't done.
                 if barter {
-                    layer.texts.push((window::fit(font, &name, width - LEFT - 40.0), frame.at([LEFT + 32.0, top + 3.0]), [0, 0, 0]));
+                    layer.texts.push((window::fit(font, &name, width - name_x - 20.0), frame.at([name_x, top + 3.0]), [0, 0, 0]));
                     let costs = self.costs_text(items, messages, &[(offer_index, amount.unwrap_or(1))]);
-                    layer.texts.push((window::fit(font, &costs, width - LEFT - 40.0), frame.at([LEFT + 32.0, top + 17.0]), GREY));
+                    layer.texts.push((window::fit(font, &costs, width - name_x - 20.0), frame.at([name_x, top + 17.0]), GREY));
                     continue;
                 }
                 let (price, name_width) = price_text(offer.listed, offer.price);
@@ -867,13 +902,13 @@ impl Shop {
         }
     }
 
-    /// The number on a row's icon: how many are in the deal, carried (selling, a vendor's shop) or left (a market or
-    /// buying store); none for 0.
+    /// The number on a row's icon: how many are in the deal, carried (selling, a vendor's shop) or left (a market, a
+    /// barter with an end, or a buying store); none for 0.
     fn icon_count(&self, window: usize, offer_index: usize, amount: Option<u32>) -> Option<u32> {
         let offer = &self.offers[offer_index];
         let count = amount.or(if window != 0 {
             None
-        } else if self.buying_store.is_some() || self.market == Some(MarketKind::Market) {
+        } else if self.buying_store.is_some() || matches!(self.market, Some(MarketKind::Market | MarketKind::Barter)) {
             offer.stock
         } else if self.moves_rows() {
             Some(self.left(offer_index))
@@ -1159,6 +1194,12 @@ mod tests {
         assert_eq!((market.icon_count(0, 0, None), market.icon_count(1, 0, Some(1))), (Some(1), Some(1)));
         market.offers[0].stock = Some(0);
         assert_eq!(market.icon_count(0, 0, None), None);
+        // A barter shows what's left only when there's an end to it.
+        let costs = vec![(6691, 50)];
+        let mut barter =
+            Shop::new(false, vec![Offer { stock: Some(4), costs: costs.clone(), ..offer(12345, 0, 0, 2) }, Offer { costs, ..offer(12346, 0, 0, 2) }]);
+        barter.market = Some(MarketKind::Barter);
+        assert_eq!((barter.icon_count(0, 0, None), barter.icon_count(0, 1, None)), (Some(4), None));
     }
 
     #[test]
