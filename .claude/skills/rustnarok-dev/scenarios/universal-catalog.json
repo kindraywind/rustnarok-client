@@ -1,5 +1,5 @@
 {
-  "about": "Universal Catalog (issue #99): the first player opens a buying store 'Buying Jellopy' at prt_fild08 170 360; the second, 30 cells away, uses a Universal Catalog Silver (the window as it opens), searches buying stores for exactly 'Jellopy' (similar items off: the data has a newer item holding the word that the server doesn't know, and any unknown item fails the whole search), sees the store in the results and double-clicks its name to get its place marked (170 360); closes; then a Gold catalog: a card box naming no card says so under the list, and a search and a double click on the store's name ask to open it, then open its window from afar.",
+  "about": "Universal Catalog (issue #99): the first player opens a buying store 'Buying Jellopy' at prt_fild08 170 360; the second, 30 cells away, uses a Universal Catalog Silver (the window as it opens), searches buying stores for exactly 'jellopy', in any letter case (similar items off: the data has a newer item holding the word that the server doesn't know, and any unknown item fails the whole search), sees the store in the results and double-clicks its name to get its place marked (170 360); closes; then a Gold catalog: a card box naming no card says so under the list, and a search and a double click on the store's name ask to open it, then open its window from afar.",
   "account": "",
   "slot": 0,
   "second": {
@@ -300,7 +300,7 @@
     },
     {
       "as": "second",
-      "type": "Jellopy"
+      "type": "jellopy"
     },
     {
       "as": "second",
