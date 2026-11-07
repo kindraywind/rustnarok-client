@@ -10,6 +10,8 @@ impl App {
         let (grf, messages, audio) = (&self.grf, &self.messages, &mut self.audio);
         // The quick slot window shows while the Control tab's Quick Slots switch is on.
         game.hotkeys.quick_window.open = self.graphics.quick_slot;
+        // A window that opened goes to the front of the Esc order the frame it shows, as the game puts it there when made.
+        game.sync_esc();
         // A player's name block is asked for each time the pointer comes onto them; the last frame found what it's on.
         if game.pointed != game.last_pointed {
             game.last_pointed = game.pointed;

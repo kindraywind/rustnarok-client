@@ -314,6 +314,7 @@ impl App {
     }
 
     pub(crate) fn redraw_game(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
+        use escape::WindowId as W;
         let (Some(gpu), Some(assets), Scene::Game(game)) = (&mut self.gpu, &self.assets, &mut self.scene) else { return };
         // ponytail: the client's own line for a saved screenshot isn't in the data; a plain one.
         if let Some(name) = self.shot_saved.take() {
@@ -1625,8 +1626,8 @@ impl App {
             }
         }
 
-        // NPC windows on top.
-        let mut overlay = Layer::default();
+        // NPC windows: a window like the others (`front`).
+        let mut overlay = Layer::of(Top::NpcDialog);
         let mut dialog_links = Vec::new();
         if let Some(dialog) = &game.dialog {
             // A warp list is the menu alone.
@@ -1764,7 +1765,7 @@ impl App {
                 });
             }
         }
-        let mut tooltip = Layer::default();
+        let mut tooltip = Layer::over();
         // A sign's cut words show whole while the pointer is on its text: a darker speech balloon over the text, the
         // words starting where they were (the topmost sign, as a press takes it); not through a window over it.
         if !game.on_window(pointer.0, assets.message.size)
@@ -1778,7 +1779,7 @@ impl App {
         }
         let mut chat_layer = Layer::default();
         // The chat window on a layer of its own, to go half see-through while it's held.
-        let mut chat_window = Layer { faded: game.chat.faded(), ..Layer::default() };
+        let mut chat_window = Layer { faded: game.chat.faded(), ..Layer::of(Top::Chat) };
         let open = game.chat_mode.chat_line_open();
         let caret = open && (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
         let name_of = |item: &links::ItemLink| inventory::item_name(items, item.id, true, item.refine);
@@ -1798,7 +1799,7 @@ impl App {
         let caret_blink = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
         let mut torn_layers = Vec::new();
         for (index, window) in game.chat.torn.iter().enumerate() {
-            let mut layer = Layer { faded: window.faded(), ..Layer::default() };
+            let mut layer = Layer { faded: window.faded(), ..Layer::of(Top::Chat) };
             let links = game.chat.draw_torn(index, &mut layer, &assets.chat, font, messages, caret_blink, &name_of);
             game.chat_links.extend(links);
             torn_layers.push(layer);
@@ -1989,7 +1990,7 @@ impl App {
             _ => None,
         };
         for &id in &game.windows {
-            let mut layer = Layer::default();
+            let mut layer = Layer::of(Top::Panel(id));
             match id {
                 Panel::Hotkeys => game.hotkeys.draw(
                     &mut layer,
@@ -2188,8 +2189,8 @@ impl App {
             }
         }
         // Party members dragged out of the list, over the other windows.
-        let mut member_layer = Layer::default();
-        let mut member_tooltip = Layer::default();
+        let mut member_layer = Layer::of(Top::PartyHp(0));
+        let mut member_tooltip = Layer::over();
         {
             let stem = |map: &str| self.map_names.get(map.trim_end_matches(".gat")).cloned().unwrap_or_else(|| map.trim_end_matches(".gat").to_owned());
             let our_hp = [net::STATUS_HP, net::STATUS_MAX_HP].map(|id| game.status.get(&id).copied().unwrap_or(0) as i32);
@@ -2278,25 +2279,25 @@ impl App {
             tooltip.texts.push((text, place, AIM_TEXT));
         }
         // The store search under the shops it opens from afar.
-        let mut catalog_layer = Layer::default();
+        let mut catalog_layer = Layer::of(Top::Esc(W::Catalog));
         if let Some(catalog) = &game.catalog {
             let names = (&messages[..], card_names, &game.char_names);
             catalog.draw(&mut catalog_layer, &mut tooltip, &assets.chrome, &assets.catalog, icons, items, font, names, (pointer.0, pointer.1, caret));
         }
         // A shop's windows over the others; its question in a message box.
-        let mut shop_layer = Layer::default();
+        let mut shop_layer = Layer::over();
         if let Some(settings) = &game.chat.settings
             && let Some(tab) = game.chat.settings_tab()
         {
-            settings.draw(shop_layer.window(), &assets.chrome, &assets.chat, messages, tab, pointer.0);
+            settings.draw(shop_layer.window_of(Top::ChatSettings), &assets.chrome, &assets.chat, messages, tab, pointer.0);
         }
         // A skill's description, over the windows.
         if let Some(window) = &game.skill_description {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.skill_descript, font, pointer.0, &cooling, skill_info);
+            window.draw(shop_layer.esc(W::SkillDescription), &assets.chrome, &assets.skill_descript, font, pointer.0, &cooling, skill_info);
         }
         if let Some((list, _)) = &game.pick {
             list.draw(
-                shop_layer.window(),
+                shop_layer.esc(W::PickList),
                 &assets.chrome,
                 &assets.pick_list,
                 &assets.npc_menu,
@@ -2310,28 +2311,28 @@ impl App {
             );
         }
         if let Some(forge) = &game.forge {
-            forge.draw(shop_layer.window(), &assets.chrome, &assets.forge, icons, items, messages, font, pointer);
+            forge.draw(shop_layer.window_of(Top::MakingMaterial), &assets.chrome, &assets.forge, icons, items, messages, font, pointer);
         }
         if let Some(shop) = &game.shop {
-            shop.draw(shop_layer.window(), &assets.chrome, &assets.shop, icons, items, (card_names, &game.char_names), messages, font, pointer);
+            shop.draw(shop_layer.esc(W::Shop), &assets.chrome, &assets.shop, icons, items, (card_names, &game.char_names), messages, font, pointer);
         }
         if let Some(confirm) = &game.deal_confirm {
-            confirm.draw(shop_layer.window(), &assets.chrome, &assets.shop, messages, pointer);
+            confirm.draw(shop_layer.window_of(Top::ConfirmDeal), &assets.chrome, &assets.shop, messages, pointer);
         }
         if game.deal_choice.is_some() {
             let dialog = game.deal_frame.position;
-            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.esc(W::DealChoice).sprites.push((&assets.message, dialog, assets.message.size));
             for (images, place) in assets.shop_buttons().into_iter().zip(DEAL_BUTTONS) {
                 shop_layer.sprites.push(button_sprite(pointer, offset(dialog, place), images));
             }
             shop_layer.texts.push((message(DEAL_MESSAGE).to_owned(), offset(dialog, MESSAGE_TEXT), TEXT_COLOR));
         }
         if let Some(room) = &game.room {
-            room.draw(shop_layer.window(), &assets.chrome, font, messages, &game.me.name, pointer.0, caret);
+            room.draw(shop_layer.esc(W::ChatRoom), &assets.chrome, font, messages, &game.me.name, pointer.0, caret);
         }
         if let Some(setup) = &game.vend_setup {
             setup.draw(
-                shop_layer.window(),
+                shop_layer.esc(W::VendSetup),
                 &assets.chrome,
                 &assets.vend,
                 icons,
@@ -2345,14 +2346,14 @@ impl App {
             );
         }
         if let Some(shop) = &game.my_shop {
-            shop.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, (card_names, &game.char_names), font, messages, pointer);
+            shop.draw(shop_layer.esc(W::MyShop), &assets.chrome, &assets.vend, icons, items, (card_names, &game.char_names), font, messages, pointer);
         }
         if let Some(history) = &game.sell_history {
-            history.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, (card_names, &game.char_names), font, messages, pointer);
+            history.draw(shop_layer.esc(W::SellHistory), &assets.chrome, &assets.vend, icons, items, (card_names, &game.char_names), font, messages, pointer);
         }
         if let Some(setup) = &game.buying_setup {
             setup.draw(
-                shop_layer.window(),
+                shop_layer.esc(W::BuyingStoreSetup),
                 &assets.chrome,
                 &assets.vend,
                 icons,
@@ -2366,10 +2367,10 @@ impl App {
             );
         }
         if let Some(store) = &game.my_buying_store {
-            store.draw(shop_layer.window(), &assets.chrome, &assets.vend, icons, items, (card_names, &game.char_names), font, messages, pointer);
+            store.draw(shop_layer.esc(W::MyBuyingStore), &assets.chrome, &assets.vend, icons, items, (card_names, &game.char_names), font, messages, pointer);
         }
         game.quest_window.draw(
-            shop_layer.window(),
+            shop_layer.esc(W::Quests),
             &mut tooltip,
             &assets.chrome,
             &assets.quest,
@@ -2382,7 +2383,7 @@ impl App {
             pointer,
         );
         game.achievement_window.draw(
-            shop_layer.window(),
+            shop_layer.esc(W::Achievements),
             &assets.chrome,
             &assets.achievement,
             icons,
@@ -2396,21 +2397,21 @@ impl App {
             pointer,
         );
         // ponytail: the roulette's icon stands left of the minimap; where the real client puts it isn't known.
-        roulette::draw_icon(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.roulette, font, messages, pointer.0);
+        roulette::draw_icon(shop_layer.window_of(Top::RouletteIcon), &mut tooltip, &assets.chrome, &assets.roulette, font, messages, pointer.0);
         if let Some(window) = &game.monster_window {
-            window.draw(shop_layer.window(), &assets.chrome, font, messages, pointer.0);
+            window.draw(shop_layer.esc(W::MonsterInfo), &assets.chrome, font, messages, pointer.0);
         }
         if let Some(window) = &game.roulette {
-            window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.roulette, icons, items, font, messages, control::now(), pointer);
+            window.draw(shop_layer.esc(W::Roulette), &mut tooltip, &assets.chrome, &assets.roulette, icons, items, font, messages, control::now(), pointer);
         }
         if let Some(list) = &game.emotion_list {
-            list.draw(shop_layer.window(), &assets.chrome, font, messages, game.emotion_sprite.as_ref(), &emotion_icons, pointer.0);
+            list.draw(shop_layer.esc(W::EmotionList), &assets.chrome, font, messages, game.emotion_sprite.as_ref(), &emotion_icons, pointer.0);
         }
         if let Some(window) = &game.macro_window {
-            window.draw(shop_layer.window(), &assets.chrome, font, messages, &game.macro_lines, pointer.0, caret);
+            window.draw(shop_layer.esc(W::Macros), &assets.chrome, font, messages, &game.macro_lines, pointer.0, caret);
         }
         game.mail.draw(
-            shop_layer.window(),
+            shop_layer.esc(W::Mailbox),
             &mut tooltip,
             &assets.chrome,
             &assets.mail,
@@ -2424,19 +2425,19 @@ impl App {
             caret,
         );
         if let Some(make) = &game.room_make {
-            make.draw(shop_layer.window(), &assets.chrome, &assets.chatroom, messages, pointer, caret);
+            make.draw(shop_layer.esc(W::RoomMake), &assets.chrome, &assets.chatroom, messages, pointer, caret);
         }
         if let Some(bank) = &game.bank {
             let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
-            bank.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.bank, messages, font, pointer, caret, carried);
+            bank.draw(shop_layer.esc(W::Bank), &mut tooltip, &assets.chrome, &assets.bank, messages, font, pointer, caret, carried);
         }
         if let Some(shop) = &game.cashshop {
-            shop.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.cashshop, icons, items, messages, font, pointer, caret);
+            shop.draw(shop_layer.esc(W::CashShop), &mut tooltip, &assets.chrome, &assets.cashshop, icons, items, messages, font, pointer, caret);
         }
         if let Some(viewed) = &game.viewing {
             let window = &viewed.window;
             window.draw(
-                shop_layer.window(),
+                shop_layer.esc(W::OtherEquipment),
                 &mut tooltip,
                 &assets.chrome,
                 &assets.equipment,
@@ -2455,7 +2456,7 @@ impl App {
             let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
             let names = (card_names, &game.char_names);
             window.draw(
-                shop_layer.window(),
+                shop_layer.window_of(Top::Refine),
                 &mut tooltip,
                 &assets.chrome,
                 &assets.refine,
@@ -2471,30 +2472,41 @@ impl App {
             );
         }
         if let Some(window) = &game.reform {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.reform, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.esc(W::ItemReform), &assets.chrome, &assets.reform, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.grade {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.grade, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.esc(W::GradeEnchant), &assets.chrome, &assets.grade, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.enchant {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.enchant, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.esc(W::Enchant), &assets.chrome, &assets.enchant, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.stylist {
             let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
-            window.draw(shop_layer.window(), &assets.chrome, &assets.stylist, items, &self.styling_shop, job, messages, font, pointer, &stylist_placements);
+            window.draw(
+                shop_layer.esc(W::Stylist),
+                &assets.chrome,
+                &assets.stylist,
+                items,
+                &self.styling_shop,
+                job,
+                messages,
+                font,
+                pointer,
+                &stylist_placements,
+            );
         }
         if let Some(window) = &game.materials {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.pick_list, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.esc(W::Materials), &assets.chrome, &assets.pick_list, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.synthesis {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.esc(W::LaphineSynthesis), &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.upgrade {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(shop_layer.esc(W::LaphineUpgrade), &assets.chrome, &assets.laphine, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(trade) = &game.trade {
             trade.draw(
-                shop_layer.window(),
+                shop_layer.esc(W::Trade),
                 &mut tooltip,
                 &assets.chrome,
                 &assets.trade,
@@ -2610,16 +2622,16 @@ impl App {
             }
         }
         if game.memorial.frame.open {
-            game.memorial.draw(shop_layer.window(), &assets.chrome, font, messages, pointer.0, memorial::unix_now());
+            game.memorial.draw(shop_layer.esc(W::Memorial), &assets.chrome, font, messages, pointer.0, memorial::unix_now());
         }
         if let Some(log) = &game.storage_log {
             let names = (&messages[..], card_names, &game.char_names);
-            log.draw(shop_layer.window(), &assets.chrome, &assets.storage_log, items, names, font, pointer);
+            log.draw(shop_layer.window_of(Top::GuildStorageLog), &assets.chrome, &assets.storage_log, items, names, font, pointer);
         }
         // The battleground queue, and its question: applying, leaving, or entering with the time left.
         if game.queue_window.frame.open {
             game.queue_window.draw(
-                shop_layer.window(),
+                shop_layer.esc(W::BattleQueue),
                 &assets.chrome,
                 &assets.battle_queue,
                 font,
@@ -2667,7 +2679,7 @@ impl App {
         // The Guild Companion and its windows.
         {
             let caret = (now.saturating_duration_since(game.entered).as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-            game.guild_companion.draw(shop_layer.window(), &assets.chrome, &assets.guild_companion, font, messages, caret, pointer);
+            game.guild_companion.draw(shop_layer.esc(W::GuildCompanion), &assets.chrome, &assets.guild_companion, font, messages, caret, pointer);
         }
         // The guild's reason box.
         if let Some(reason) = &game.reason_box {
@@ -2701,21 +2713,21 @@ impl App {
                 iteminfo::pair(window, beside);
             }
             let names = (card_names, &messages[..], &game.char_names);
-            window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, &options, pointer.0);
+            window.draw(shop_layer.esc(W::ItemInfo), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, &options, pointer.0);
         }
         if let Some((window, lines, options)) = compared {
             let names = (card_names, &messages[..], &game.char_names);
-            window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, &options, pointer.0);
+            window.draw(shop_layer.esc(W::ItemInfo), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, &options, pointer.0);
         }
         if let Some(window) = &mut game.card_window {
             let lines = window.lines(items, messages, unix_now);
             window.fit(lines.len());
             game.card_lines = lines.len();
             let names = (card_names, &messages[..], &game.char_names);
-            window.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, &[], pointer.0);
+            window.draw(shop_layer.esc(W::CardInfo), &mut tooltip, &assets.chrome, &assets.item_window, icons, items, names, font, &lines, &[], pointer.0);
         }
         if let Some(view) = &game.card_view {
-            view.draw(shop_layer.window(), &assets.chrome, &assets.item_window, icons, pointer.0);
+            view.draw(shop_layer.esc(W::CardPicture), &assets.chrome, &assets.item_window, icons, pointer.0);
         }
         if game.apply_asked {
             let dialog = dialog_position(&assets.message);
@@ -2749,37 +2761,46 @@ impl App {
             }
         }
         if let Some(menu) = &game.escape {
-            menu.draw(shop_layer.window(), &assets.chrome, &assets.escape, messages, game.me.id, pointer, game.can_resurrect());
+            menu.draw(shop_layer.window_of(Top::GameMenu), &assets.chrome, &assets.escape, messages, game.me.id, pointer, game.can_resurrect());
         }
         // The party's docked window, half see-through while the party window is dragged.
         if let Some(dialog) = &game.party_dialog {
-            let mut docked = Layer { faded: game.party_window.frame.faded(), ..Layer::default() };
+            let mut docked = Layer { faded: game.party_window.frame.faded(), ..Layer::of(Top::Esc(W::PartySetup)) };
             dialog.draw(&mut docked, &assets.chrome, &assets.party, (&assets.ok, &assets.cancel), font, messages, caret, pointer);
             layers.push(docked);
         }
-        game.talks.draw(shop_layer.window(), &assets.chrome, font, messages, pointer);
+        game.talks.draw(shop_layer.esc(W::Whisper), &assets.chrome, font, messages, pointer);
         if let Some(setup) = &game.friend_setup {
-            setup.draw(shop_layer.window(), &assets.chrome, messages, pointer.0);
+            setup.draw(shop_layer.esc(W::FriendSetup), &assets.chrome, messages, pointer.0);
         }
         if let Some(list) = &game.block_list {
-            list.draw(shop_layer.window(), &assets.chrome, pointer.0);
+            list.draw(shop_layer.esc(W::BlockList), &assets.chrome, pointer.0);
         }
         if let Some(prompt) = &game.away_prompt {
-            prompt.draw(shop_layer.window(), &assets.chrome, messages, pointer);
+            prompt.draw(shop_layer.esc(W::AwayMessage), &assets.chrome, messages, pointer);
         }
         if let Some(board) = &game.ranking {
-            board.draw(shop_layer.window(), &assets.chrome, font, messages, &game.char_names, pointer.0);
+            board.draw(shop_layer.esc(W::Ranking), &assets.chrome, font, messages, &game.char_names, pointer.0);
         }
         if let Some(window) = &game.booking {
             let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-            window.draw(shop_layer.window(), &assets.chrome, font, pointer.0, caret);
+            window.draw(shop_layer.window_of(Top::PartyBooking), &assets.chrome, font, pointer.0, caret);
         }
         if let Some(window) = &game.navi_window {
             let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-            window.draw(shop_layer.window(), &assets.chrome, font, messages, game.navigation.as_ref().map(|active| &active.target), pointer.0, caret);
+            window.draw(shop_layer.esc(W::Navigation), &assets.chrome, font, messages, game.navigation.as_ref().map(|active| &active.target), pointer.0, caret);
         }
         if let Some(window) = &game.reputation_window {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.reputation, font, messages, &self.reputation_tables, &game.reputation, pointer.0);
+            window.draw(
+                shop_layer.esc(W::Reputation),
+                &assets.chrome,
+                &assets.reputation,
+                font,
+                messages,
+                &self.reputation_tables,
+                &game.reputation,
+                pointer.0,
+            );
         }
         if let Some(room) = &game.dressroom {
             let feet = room.feet();
@@ -2787,13 +2808,31 @@ impl App {
                 Some(sprites) => dress_placements.iter().map(|(key, position, size, _)| (sprites.texture(*key), offset(feet, *position), *size)).collect(),
                 None => Vec::new(),
             };
-            room.draw(shop_layer.window(), &mut tooltip, &assets.chrome, &assets.dressroom, font, messages, &game.dress_lists, figure, pointer);
+            room.draw(shop_layer.esc(W::DressRoom), &mut tooltip, &assets.chrome, &assets.dressroom, font, messages, &game.dress_lists, figure, pointer);
         }
         if let Some(window) = &game.settings_window {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.game_settings, &assets.options, font, messages, (sound, &self.graphics), pointer);
+            window.draw(
+                shop_layer.esc(W::GameSettings),
+                &assets.chrome,
+                &assets.game_settings,
+                &assets.options,
+                font,
+                messages,
+                (sound, &self.graphics),
+                pointer,
+            );
         }
         if let Some(window) = &game.shortcuts_window {
-            window.draw(shop_layer.window(), &assets.chrome, &assets.shortcut_window, &assets.options.check, font, messages, game.chat_mode.enabled(), pointer);
+            window.draw(
+                shop_layer.esc(W::ShortcutSettings),
+                &assets.chrome,
+                &assets.shortcut_window,
+                &assets.options.check,
+                font,
+                messages,
+                game.chat_mode.enabled(),
+                pointer,
+            );
         }
         // The message box over every window: its words, OK and Cancel (OK alone when it only tells).
         if let Some(asked) = &game.question_box {
@@ -2806,17 +2845,17 @@ impl App {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }
-        let mut menu_layer = Layer::default();
+        let mut menu_layer = Layer::over();
         if let Some(menu) = &game.menu {
             menu.draw(&mut menu_layer, &assets.context_menu, font, pointer.0);
         }
-        let mut world_layer = Layer::default();
+        let mut world_layer = Layer::over();
         if let Some(world_map) = &game.world_map {
             world_map.draw(&mut world_layer, &assets.chrome, font, &worlds.0, map_names, &map_key(&game.map), pointer.0);
         }
         game.dialog_links = dialog_links;
-        let mut minimap_layer = Layer::default();
-        let mut minimap_tooltip = Layer::default();
+        let mut minimap_layer = Layer::of(Top::Esc(W::Minimap));
+        let mut minimap_tooltip = Layer::over();
         {
             minimap_layer.faded = game.minimap_window.frame.faded();
             let map = map_key(&game.map);
@@ -2827,13 +2866,14 @@ impl App {
             let pins = minimap_window::Pins { player: game.player.cell, party: &party_cells, guild: &guild, boss, quests: &quests };
             game.minimap_window.draw(&mut minimap_layer, &mut minimap_tooltip, &assets.chrome, font, messages, &title, size, &pins, pointer, naming_caret);
         }
-        let mut popup_layer = Layer::default();
+        let mut popup_layer = Layer::over();
         if let Some(id) = game.special_popup {
             special_popup::draw(&mut popup_layer, &assets.chrome, &assets.pickup, id);
         }
         // Bottom to top. `Game::top_at` lists the windows in this order, top first: presses and clicks go by it.
         layers.extend([catalog_layer, shop_layer, popup_layer, minimap_layer, overlay, menu_layer, tooltip, minimap_tooltip, world_layer]);
-        let composed = compose(gpu, font, layers);
+        let mut composed = compose(gpu, font, layers);
+        order_windows(&mut composed, &mut game.front);
         let (mut sprites, alphas) = flatten(&composed);
 
         // The cursor shows what a click would do.

@@ -716,9 +716,9 @@ impl Game {
         }
     }
 
-    /// What a press or click at `cursor` reaches: the window drawn on top there. They're listed top first, the reverse
-    /// of the order `redraw_game` draws them in, each by the area its click takes. Questions in the message box are
-    /// `message` in size.
+    /// What a press or click at `cursor` reaches: the window drawn on top there. They're listed top first as
+    /// `redraw_game` draws them before the windows are put in `front`'s order, each by the area its click takes;
+    /// `Front::pick` then picks as the drawing does. Questions in the message box are `message` in size.
     pub(crate) fn top_at(&self, cursor: [f32; 2], message: [f32; 2]) -> Option<Top> {
         use escape::WindowId::*;
         let esc = |id: escape::WindowId, here: bool| here.then_some(Top::Esc(id));
@@ -735,7 +735,7 @@ impl Game {
             party::DialogKind::Create => PartyCreate,
             party::DialogKind::Invite => PartyInviteName,
         });
-        [
+        let hits = [
             // Drawn after every layer.
             (self.slot.is_some() && contains(taming::place(screen()), taming::SIZE, cursor)).then_some(Top::Slot),
             esc(WorldMap, self.world_map.is_some()),
@@ -828,10 +828,8 @@ impl Game {
             (self.chat.on_list(cursor) || self.chat.blocks(cursor)).then_some(Top::Chat),
             (self.quest_icon && quest_notice::on_icon(cursor)).then_some(Top::QuestIcon),
             self.level_ups.hit(cursor).is_some().then_some(Top::LevelUp),
-        ]
-        .into_iter()
-        .flatten()
-        .next()
+        ];
+        self.front.pick(hits.into_iter().flatten())
     }
 
     /// The topmost window under the pointer.
@@ -867,8 +865,9 @@ impl Game {
         }
     }
 
+    /// The highest panel under `cursor` (`front`'s order, then `windows`').
     pub(crate) fn window_at(&self, cursor: [f32; 2]) -> Option<Panel> {
-        self.windows.iter().rev().copied().find(|&id| match id {
+        let hit = |id: &Panel| match *id {
             Panel::Hotkeys => self.hotkeys.hit(cursor).is_some(),
             Panel::BasicInfo => self.basic_info.hit(cursor).is_some(),
             Panel::Inventory => self.inventory.hit(cursor).is_some(),
@@ -876,7 +875,7 @@ impl Game {
             Panel::Skills => self.skill_window.frame.local(cursor, self.skill_window.height()).is_some(),
             Panel::Storage => self.storage.frame.open && self.storage.frame.local(cursor, self.storage.height()).is_some(),
             Panel::StorageCategory(_) | Panel::StorageSearch => {
-                let window = storage_list(id).map(|which| self.storage.list_window(which));
+                let window = storage_list(*id).map(|which| self.storage.list_window(which));
                 window.is_some_and(|window| window.frame.open && window.frame.local(cursor, window.height()).is_some())
             }
             Panel::Party => self.party_window.frame.open && self.party_window.hit(cursor, self.party.as_ref(), &self.friends).is_some(),
@@ -893,6 +892,10 @@ impl Game {
                 .as_ref()
                 .is_some_and(|homunculus| self.homunculus_skill_list.hit(cursor, &self.homunculus_skills, homunculus.skill_points).is_some()),
             Panel::Cutin => self.cutin.as_ref().is_some_and(|cutin| cutin.contains(cursor)),
+        };
+        self.windows.iter().rev().copied().filter(hit).fold(None, |best: Option<Panel>, id| match best {
+            Some(top) if self.front.rank(Top::Panel(top)) >= self.front.rank(Top::Panel(id)) => Some(top),
+            _ => Some(id),
         })
     }
 
@@ -3287,6 +3290,7 @@ impl Game {
     pub(crate) fn raise(&mut self, id: Panel) {
         self.windows.retain(|&window| window != id);
         self.windows.push(id);
+        self.front.raise(Top::Panel(id));
         if let Some(esc) = esc_panel(id) {
             if self.panel_open(id) {
                 escape::touch(&mut self.esc_order, esc);
@@ -3883,9 +3887,12 @@ impl Game {
         }
     }
 
-    /// The window a press reached (`top_at`) goes to the front of the Esc order, so Esc closes the one the player just
-    /// touched. One Esc doesn't close (an NPC shop, the deal) stays out of it.
+    /// The window a press reached (`top_at`) goes on top of the others, and to the front of the Esc order, so Esc closes
+    /// the one the player just touched. One Esc doesn't close (an NPC shop, the deal) stays out of the Esc order.
     pub(crate) fn press_esc(&mut self, top: Option<Top>) {
+        if let Some(top) = top {
+            self.front.raise(top);
+        }
         self.sync_esc();
         if let Some(id) = esc_reached(top, self.menu.is_some()).filter(|id| self.esc_order.contains(id)) {
             escape::touch(&mut self.esc_order, id);

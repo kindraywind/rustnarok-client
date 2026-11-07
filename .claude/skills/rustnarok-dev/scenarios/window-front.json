@@ -1,0 +1,27 @@
+{
+  "about": "Every window in one order, as the game keeps it: one that opens goes on top, one that's pressed goes on top, and Esc closes the last opened or pressed first. The inventory is dragged half over where the quest list opens; the quest list opens over it; a press on the inventory's free half puts it over the quest list (on main the quest list always stayed over every panel); Esc closes the inventory first; the inventory opens again over the quest list; a press on the quest list's free part puts that back on top, and Esc closes the quest list, then the inventory.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"drag": [[150, 128], [300, 300]]}, {"wait": 300},
+    {"key": "Alt+U"}, {"wait": 300},
+    {"expect": {"windows_open": ["Inventory", "Quests"], "state": {"front": ["Chat", "Hotkeys", "BasicInfo", "Inventory", "Quests"], "esc_order": ["Quests", "Inventory"]}}},
+    {"move": [1000, 750]}, {"shot": "quests-opened-on-top", "crop": [140, 140, 580, 480]},
+    {"click": [200, 450], "hit": "Inventory"}, {"wait": 300},
+    {"expect": {"state": {"front": ["Chat", "Hotkeys", "BasicInfo", "Quests", "Inventory"], "esc_order": ["Inventory", "Quests"]}}},
+    {"move": [1000, 750]}, {"shot": "inventory-pressed-on-top", "crop": [140, 140, 580, 480]},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"windows_open": ["Quests"], "windows_closed": ["Inventory"]}},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"expect": {"state": {"front": ["Chat", "Hotkeys", "BasicInfo", "Quests", "Inventory"], "esc_order": ["Inventory", "Quests"]}}},
+    {"move": [1000, 750]}, {"shot": "inventory-opened-on-top", "crop": [140, 140, 580, 480]},
+    {"click": [600, 400], "hit": "Quests"}, {"wait": 300},
+    {"expect": {"state": {"front": ["Chat", "Hotkeys", "BasicInfo", "Inventory", "Quests"], "esc_order": ["Quests", "Inventory"]}}},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"windows_open": ["Inventory"], "windows_closed": ["Quests"]}},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"windows_closed": ["Inventory", "Quests"]}}
+  ]
+}
