@@ -890,6 +890,12 @@ impl Shop {
         self.rows(0).into_iter().map(|(offer, _)| (self.offers[offer].item, self.icon_count(0, offer, None).unwrap_or(0))).collect()
     }
 
+    /// Every offer's item and the price of one, as its row shows it: what the shop charges, or pays, with a discount or
+    /// Overcharge applied (#1253). Also for offers all moved into the deal, which the first window no longer lists.
+    pub fn prices(&self) -> Vec<(u32, u32)> {
+        self.offers.iter().map(|offer| (offer.item, offer.price)).collect()
+    }
+
     pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
         let (deal, cancel) = self.deal_button(1);
         let [deal, cancel] = [self.frames[1].at(deal), self.frames[1].at(cancel)];
@@ -1099,6 +1105,18 @@ mod tests {
 
     fn offer(item: u32, price: u32, have: u16, kind: u8) -> Offer {
         Offer { item, price, index: 2, have, kind, identified: true, ..Offer::default() }
+    }
+
+    #[test]
+    fn prices_are_what_the_rows_show_also_once_all_are_in_the_deal() {
+        // Selling with Overcharge: the shop lists 3 and 5 Zeny and pays 3 and 6.
+        let overcharged = Offer { listed: 5, ..offer(501, 6, 3, 0) };
+        let mut shop = Shop::new(true, vec![offer(909, 3, 10, 3), overcharged]);
+        assert_eq!(shop.prices(), [(909, 3), (501, 6)]);
+        // Every Red Potion into the deal: the first window no longer lists it, its price is still there.
+        shop.add(1, 3);
+        assert_eq!(shop.goods(), [(909, 10)]);
+        assert_eq!(shop.prices(), [(909, 3), (501, 6)]);
     }
 
     #[test]
