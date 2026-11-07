@@ -24,7 +24,8 @@
 //!   doesn't take the click.
 //! - `click_cell` `{x, y, button?, mods?, count?}`: a `click` on map cell `[x, y]` at a point of it where the click
 //!   reaches the ground (the middle when nothing covers it), as `{"point": [x, y]}`. Refused for a cell off screen
-//!   or covered (by a window, a unit, an item or a skill unit that would take the click).
+//!   or covered (by a window, or a unit, an item or a skill unit the click would talk to, attack or pick up). A warp
+//!   portal doesn't cover: a click on one walks to the ground under it, as in the game.
 //! - `key` `{key, repeat?, hold?}`: "Enter", "Escape", "Tab", "Backspace", "Space", "Insert", "Delete", "Home", "End",
 //!   "PageUp", "PageDown", "Up"/"Down"/"Left"/"Right", "F1"–"F12", "PrintScreen", "ScrollLock" or one
 //!   character, after modifiers like "Alt+" or "Ctrl+". `repeat` is an auto-repeat; a shortcut fires again only
@@ -876,15 +877,14 @@ fn cell_click_point(
     on_screen.into_iter().find(|&at| ground(at) == Some(cell)).ok_or_else(|| format!("cell {cell:?} is covered"))
 }
 
-/// The cell a click at `at` walks to: None when a window, a unit, an item or a skill unit takes the click (as
-/// `clicked_on` finds them), or past the map's edge.
+/// The cell a click at `at` walks to, as a real click (`Game::world_click`) walks: the ground under it, through a warp
+/// portal too (#1252) and through anyone a click walks past. None when a window takes the click, when the click would
+/// talk, attack, swing or pick up instead, or past the map's edge.
 fn ground_click(game: &Game, at: [f32; 2], message: [f32; 2], shift: bool) -> Option<[i32; 2]> {
-    let screen = crate::screen();
-    let others = game.hit_boxes.iter().copied().filter(|target| target.owner != Owner::Player);
-    if game.on_ui(at, message) || crate::picking::pick(others, at, shift, [screen[0] / 2.0, screen[1] / 2.0]).is_some() {
+    if game.on_ui(at, message) || !matches!(game.world_click(at, shift), crate::WorldClick::Warp | crate::WorldClick::Ground) {
         return None;
     }
-    game.camera.view(screen[0] / screen[1]).pick_ground([at[0].floor() / screen[0], at[1].floor() / screen[1]], &game.world.gat)
+    game.ground_cell(at)
 }
 
 /// What a click at `at` lands on, as the cursor shows it (#1093): a window, a unit, item or skill unit the click picks
