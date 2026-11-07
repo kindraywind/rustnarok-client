@@ -1,0 +1,16 @@
+{
+  "about": "click_cell on a warp portal's cell (issue #1252): Geffen's tower door (geffen 120,114, a 3 x 2 portal on flat ground) seen from five cells south. A real click on a portal walks to the ground under the pointer, so click_cell on the portal's own cell and on one beside it walks there and the warp takes the player into gef_tower. Main refuses both cells with \"is covered\" (the portal's hit box), the player stays in Geffen and the second expect fails. The shots: the door before, the tower after.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp geffen 120 109"}, {"settle": 1500},
+    {"expect": {"map": "geffen.gat"}},
+    {"shot": "click-cell-warp-door", "threshold": 100},
+    {"cmd": {"cmd": "click_cell", "x": 120, "y": 114}}, {"settle": 3000},
+    {"expect": {"map": "gef_tower.gat"}},
+    {"shot": "click-cell-warp-tower", "threshold": 100},
+    {"say": "@warp geffen 120 109"}, {"settle": 1500},
+    {"cmd": {"cmd": "click_cell", "x": 119, "y": 113}}, {"settle": 3000},
+    {"expect": {"map": "gef_tower.gat"}}
+  ]
+}
