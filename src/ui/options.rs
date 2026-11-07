@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use rustnarok_client::grf::Grf;
+use rustnarok_client::text::DEFAULT as DEFAULT_FONT;
 
 use crate::UI;
 use crate::render::{Gpu, Texture};
@@ -10,7 +11,7 @@ use crate::render::{Gpu, Texture};
 /// The Game Settings tabs' and pages' edge.
 const OUTLINE: [u8; 4] = [0xCE, 0xCE, 0xCE, 0xFF];
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GraphicsSettings {
     pub effects_on: bool,
     /// The max-level aura in full (`/aura`), else simplified; and none at all (`/aura2`).
@@ -38,6 +39,8 @@ pub struct GraphicsSettings {
     pub far_zoom: bool,
     pub item_options: bool,
     pub cooldown_numbers: bool,
+    /// The font the text is drawn in (Extras; `text::choices`), Tahoma at first.
+    pub font: String,
 }
 
 impl Default for GraphicsSettings {
@@ -58,6 +61,7 @@ impl Default for GraphicsSettings {
             far_zoom: false,
             item_options: false,
             cooldown_numbers: false,
+            font: DEFAULT_FONT.into(),
         }
     }
 }
@@ -81,7 +85,9 @@ impl GraphicsSettings {
 
     pub fn load_from(path: &Path) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
-        let mut words = text.split_whitespace();
+        // The switches, then the font's name on a line of its own.
+        let (switches, font) = text.split_once('\n').unwrap_or((&text, ""));
+        let mut words = switches.split_whitespace();
         let mut next = |default: bool| words.next().map_or(default, |value| value != "0");
         Self {
             effects_on: next(true),
@@ -99,6 +105,7 @@ impl GraphicsSettings {
             cooldown_numbers: next(false),
             extended_damage: next(true),
             quick_slot: next(true),
+            font: Some(font.trim()).filter(|font| !font.is_empty()).unwrap_or(DEFAULT_FONT).to_owned(),
         }
     }
 
@@ -121,7 +128,9 @@ impl GraphicsSettings {
             self.quick_slot,
         ]
         .map(|on| if on { "1" } else { "0" })
-        .join(" ");
+        .join(" ")
+            + "\n"
+            + &self.font;
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, text));
     }
 }
@@ -177,12 +186,16 @@ mod tests {
             cooldown_numbers: true,
             extended_damage: false,
             quick_slot: false,
+            font: "MS Gothic (Japan)".into(),
         };
         settings.save_to(&path);
         assert_eq!(GraphicsSettings::load_from(&path), settings);
         // An older file with only the effects switch keeps the aura's and quake's defaults.
         std::fs::write(&path, "0").unwrap();
         assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { effects_on: false, ..GraphicsSettings::default() });
+        // A file from before the font choice draws in Tahoma.
+        std::fs::write(&path, "1 1 0 1 0 0 1 1 1 0 0 0 0 1 1").unwrap();
+        assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { monster_hp: true, ..GraphicsSettings::default() });
         let _ = std::fs::remove_file(path);
     }
 }

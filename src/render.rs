@@ -250,6 +250,11 @@ impl Gpu {
         texture
     }
 
+    /// Drops the lines of text rasterized so far (another font).
+    pub fn forget_texts(&self) {
+        self.texts.borrow_mut().clear();
+    }
+
     /// Decodes an image from the GRF; magenta (the client's color key) becomes transparent.
     pub fn load_texture(&self, grf: &Grf, path: &str, smooth: bool) -> Texture {
         self.try_load_texture(grf, path, smooth).unwrap_or_else(|error| panic!("{path}: {error}"))

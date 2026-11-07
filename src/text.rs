@@ -8,11 +8,109 @@ pub const SIZE: f32 = 12.0;
 /// Set to false (thresholded coverage) once a hinted bitmap-friendly font like Gulim is in use.
 const ANTIALIAS: bool = true;
 
-/// The font (`RUSTNAROK_CLIENT_FONT`, Tahoma by default), then the fallbacks. A fallback is read the first time a
-/// character needs it: fontdue builds every glyph's outline up front, and AppleGothic's Hangul alone is ~185 MB.
+/// The font (`RUSTNAROK_CLIENT_FONT`, else the one picked in Game Settings, Tahoma by default), then the fallbacks. A
+/// fallback is read the first time a character needs it: fontdue builds every glyph's outline up front, and
+/// AppleGothic's Hangul alone is ~185 MB.
 pub struct Font {
     first: fontdue::Font,
     fallbacks: Vec<Fallback>,
+    /// The choice it was loaded for (`choices`).
+    name: String,
+}
+
+/// The font a player can pick by name: Tahoma, the default (no path: `system_fonts`), or a font file.
+#[derive(Debug, PartialEq)]
+pub struct Choice {
+    pub name: String,
+    path: Option<String>,
+}
+
+pub const DEFAULT: &str = "Tahoma";
+
+/// The font each region's version of the game draws its text in (Thailand's Tahoma is the default), and the file it
+/// comes in; AppleGothic is macOS's own Korean face.
+const FACES: [(&str, &str); 7] = [
+    ("Gulim (Korea)", "gulim.ttc"),
+    ("Arial (English)", "arial.ttf"),
+    ("MS Gothic (Japan)", "msgothic.ttc"),
+    ("SimSun (China)", "simsun.ttc"),
+    ("MingLiU (Taiwan)", "mingliu.ttc"),
+    ("Verdana", "verdana.ttf"),
+    ("AppleGothic", "applegothic.ttf"),
+];
+
+/// The fonts a player can pick (Game Settings' Extras), found once: Tahoma, then each face of `FACES` whose file is in
+/// the game folder's `System/Font` (the data folder, `RUSTNAROK_CLIENT_DATA`) or the system's fonts, then the game
+/// folder's other fonts by file name.
+pub fn choices() -> &'static [Choice] {
+    static CHOICES: std::sync::OnceLock<Vec<Choice>> = std::sync::OnceLock::new();
+    CHOICES.get_or_init(|| {
+        let root = std::env::var("RUSTNAROK_CLIENT_DATA").ok().filter(|root| root != "none").unwrap_or_else(|| ".".into());
+        let game = ["System/Font", "SystemEN/Font"].map(|folder| std::path::Path::new(&root).join(folder));
+        choices_from(&files_in(&game), &system_font_files())
+    })
+}
+
+fn choices_from(game: &[String], system: &[String]) -> Vec<Choice> {
+    let file = |path: &String| std::path::Path::new(path).file_name().map(|name| name.to_string_lossy().to_lowercase());
+    let mut choices = vec![Choice { name: DEFAULT.into(), path: None }];
+    for (name, wanted) in FACES {
+        if let Some(path) = game.iter().chain(system).find(|path| file(path).as_deref() == Some(wanted)) {
+            choices.push(Choice { name: name.into(), path: Some(path.clone()) });
+        }
+    }
+    for path in game.iter().filter(|path| !FACES.iter().any(|(_, wanted)| file(path).as_deref() == Some(wanted))) {
+        let name = std::path::Path::new(path).file_stem().map_or_else(|| path.clone(), |stem| stem.to_string_lossy().into_owned());
+        choices.push(Choice { name, path: Some(path.clone()) });
+    }
+    choices
+}
+
+/// Where `name` is among the choices; an unknown name (a font since removed) is Tahoma.
+pub fn index_of(choices: &[Choice], name: &str) -> usize {
+    choices.iter().position(|choice| choice.name == name).unwrap_or(0)
+}
+
+/// The choice `by` steps after `name`, round the ends.
+pub fn stepped<'a>(choices: &'a [Choice], name: &str, by: isize) -> &'a str {
+    &choices[(index_of(choices, name) as isize + by).rem_euclid(choices.len() as isize) as usize].name
+}
+
+/// The font files (TrueType, collections, OpenType) in these folders, sorted by path.
+fn files_in(folders: &[std::path::PathBuf]) -> Vec<String> {
+    let mut files: Vec<String> = folders
+        .iter()
+        .filter_map(|folder| std::fs::read_dir(folder).ok())
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| ["ttf", "ttc", "otf"].contains(&extension.to_string_lossy().to_lowercase().as_str())))
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    files.sort();
+    files
+}
+
+/// Every font file the system has.
+fn system_font_files() -> Vec<String> {
+    let home = |under: &str| std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(under));
+    if cfg!(target_os = "macos") {
+        let folders =
+            ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts"].map(Into::into).into_iter().chain(home("Library/Fonts"));
+        files_in(&folders.collect::<Vec<_>>())
+    } else if cfg!(windows) {
+        let windows = std::env::var_os("WINDIR").map_or_else(|| r"C:\Windows".into(), std::path::PathBuf::from).join("Fonts");
+        let own = std::env::var_os("LOCALAPPDATA").map(|local| std::path::Path::new(&local).join(r"Microsoft\Windows\Fonts"));
+        files_in(&std::iter::once(windows).chain(own).collect::<Vec<_>>())
+    } else {
+        // Fontconfig lists every font file.
+        std::process::Command::new("fc-list")
+            .args(["-f", "%{file}\n"])
+            .output()
+            .ok()
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map_or_else(Vec::new, |text| text.lines().map(Into::into).collect())
+    }
 }
 
 struct Fallback {
@@ -40,16 +138,29 @@ fn system_fonts() -> Vec<String> {
 }
 
 impl Font {
+    /// Tahoma (or `RUSTNAROK_CLIENT_FONT`).
     pub fn load() -> Self {
-        let paths: Vec<String> = std::env::var("RUSTNAROK_CLIENT_FONT").into_iter().chain(system_fonts()).collect();
-        Self::from_paths(&paths)
+        Self::named(DEFAULT)
+    }
+
+    /// The choice of that name (`choices`), with the system's fonts behind it for what it lacks; Tahoma when there's
+    /// no such choice.
+    pub fn named(name: &str) -> Self {
+        let chosen = choices().iter().find(|choice| choice.name == name).and_then(|choice| choice.path.clone());
+        let paths: Vec<String> = std::env::var("RUSTNAROK_CLIENT_FONT").into_iter().chain(chosen).chain(system_fonts()).collect();
+        Self { name: name.to_owned(), ..Self::from_paths(&paths) }
+    }
+
+    /// The choice it was loaded for.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// The first path that reads is the font; the paths after it are fallbacks, read when first needed.
     fn from_paths(paths: &[String]) -> Self {
         let (index, first) = paths.iter().enumerate().find_map(|(index, path)| Some((index, read(path)?))).unwrap_or_else(|| panic!("no font at {paths:?}"));
         let fallbacks = paths[index + 1..].iter().map(|path| Fallback { path: path.clone(), font: std::sync::OnceLock::new() }).collect();
-        Self { first, fallbacks }
+        Self { first, fallbacks, name: String::new() }
     }
 
     /// The first font that has the character, else the font's own missing glyph.
@@ -123,6 +234,36 @@ mod tests {
         assert!(font.fallbacks[0].font.get().is_none(), "Latin text read the fallback");
         assert!(font.width("\u{10FFFD}") >= 0.0);
         assert!(matches!(font.fallbacks[0].font.get(), Some(None)), "the missing fallback was not tried");
+    }
+
+    /// Tahoma first, then the faces whose files are found (the game folder's copy before the system's), then the game
+    /// folder's other fonts; stepping goes round.
+    #[test]
+    fn offers_the_faces_found_then_the_game_folders_own() {
+        let game = ["System/Font/SCDream4.otf".to_string(), "System/Font/GULIM.TTC".into()];
+        let system = ["/fonts/Arial.ttf".to_string(), "/fonts/Tahoma.ttf".into(), "/fonts/gulim.ttc".into(), "/fonts/Comic Sans MS.ttf".into()];
+        let choices = super::choices_from(&game, &system);
+        let names: Vec<&str> = choices.iter().map(|choice| choice.name.as_str()).collect();
+        assert_eq!(names, ["Tahoma", "Gulim (Korea)", "Arial (English)", "SCDream4"]);
+        assert_eq!(choices[0].path, None, "Tahoma is the system's");
+        assert_eq!(choices[1].path.as_deref(), Some("System/Font/GULIM.TTC"), "the game folder's copy first");
+        assert_eq!(super::stepped(&choices, "Tahoma", 1), "Gulim (Korea)");
+        assert_eq!(super::stepped(&choices, "Tahoma", -1), "SCDream4");
+        assert_eq!(super::stepped(&choices, "SCDream4", 1), "Tahoma");
+        assert_eq!(super::stepped(&choices, "Removed font", 1), "Gulim (Korea)", "an unknown name counts as Tahoma");
+        assert_eq!(super::stepped(&choices[..1], "Tahoma", 1), "Tahoma");
+    }
+
+    /// A picked font draws the text; a name with no font behind it draws in Tahoma.
+    #[test]
+    fn a_named_font_draws_and_keeps_its_name() {
+        let tahoma = super::Font::load();
+        let missing = super::Font::named("No such font");
+        assert_eq!(missing.name(), "No such font");
+        assert_eq!(missing.width("Prontera 123"), tahoma.width("Prontera 123"));
+        if super::choices().iter().any(|choice| choice.name == "Arial (English)") {
+            assert_ne!(super::Font::named("Arial (English)").width("Prontera 123"), tahoma.width("Prontera 123"));
+        }
     }
 
     #[test]

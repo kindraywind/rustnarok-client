@@ -3549,7 +3549,7 @@ impl App {
                 self.play_music(Some(&map));
             }
         } else {
-            let before = self.graphics;
+            let before = self.graphics.clone();
             if let Some(id) = game.send_chat(party, guild, &self.messages, &mut self.graphics) {
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
             }
