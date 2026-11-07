@@ -4450,10 +4450,13 @@ impl Game {
     }
 
     /// The numbers of a hit as it lands: split over a multi-hit's hits (with the running total over monsters),
-    /// yellow for a critical, "Lucky" for a lucky dodge.
+    /// yellow for a critical, "Lucky" for a lucky dodge, MISS for no damage (a critical's too), none for −30000.
     /// The numbers (and the flinch) of a hit, landing `hit_ms` after now (the attacker's "atk" frame), or after its
     /// attack motion when its sprite doesn't say.
     pub(crate) fn show_hit(&mut self, act: &net::Act, hit_ms: Option<f32>, gap: Duration, from: HitFrom) {
+        if preamble(act) {
+            return;
+        }
         let me = self.account_id;
         let target = (act.target != me).then_some(act.target);
         let hit = match target {
@@ -4471,8 +4474,7 @@ impl Game {
         let flinch = (amount > 0 && !endured(act.kind, from)).then_some(act.target_speed as f32);
         let kind = match act.kind {
             11 => DamageKind::Lucky,
-            10 | 13 => DamageKind::Critical,
-            _ if amount + left.unwrap_or(0) <= 0 => {
+            kind if misses(kind, amount + left.unwrap_or(0)) => {
                 // MISS shows over the attacker: white when it's a monster or an NPC, red otherwise.
                 let attacker = if act.source == me { Some(&self.player) } else { self.units.get(&act.source) };
                 let red = attacker.is_none_or(|actor| !(actor::is_monster_job(actor.job) || actor::is_npc_job(actor.job)));
@@ -4492,6 +4494,7 @@ impl Game {
                 }
                 return;
             }
+            10 | 13 => DamageKind::Critical,
             _ => DamageKind::Hit { taken: on_player, sp: act.sp },
         };
         let hits = if amount > 0 { i32::from(act.hits.max(1)) } else { 1 };
@@ -4523,10 +4526,18 @@ fn red_number(job: Option<u16>, ground_unit: bool) -> bool {
     !ground_unit && job.is_none_or(|job| !(actor::is_monster_job(job) || actor::is_npc_job(job)))
 }
 
-/// A splash skill's preamble on its first target (Grimtooth's damage −30000, type 6): its hit effects, and no number,
-/// MISS or flinch.
+/// The damage that marks a hit with no number: −30000, whatever the hit's type (a splash skill's preamble on its first
+/// target, Grimtooth's; some servers' extra skill hits). Its hit effects, and no number, MISS or flinch.
+const NO_NUMBER: i32 = -30_000;
+
 pub(crate) fn preamble(act: &net::Act) -> bool {
-    act.kind == 6 && act.damage < 0
+    act.damage == NO_NUMBER
+}
+
+/// Whether a hit shows MISS: no damage, a critical too; a lucky dodge shows its own.
+// ponytail: any other negative damage counts as none; the game draws it as a positive number in the heal style.
+fn misses(kind: u8, damage: i32) -> bool {
+    kind != 11 && damage <= 0
 }
 
 /// Whether a hit doesn't flinch its target: misses aside, an endured hit or a lucky dodge. A skill's endured multi-hit
@@ -4609,9 +4620,14 @@ mod tests {
         assert!(endured(14, HitFrom::Splash) && !endured(5, HitFrom::Splash) && !endured(14, HitFrom::Skill));
         // A ground unit's single hit shows the total; a skill's single hit doesn't.
         assert!(shows_total(1, HitFrom::Unit) && !shows_total(1, HitFrom::Skill) && shows_total(2, HitFrom::Skill));
-        // Grimtooth's preamble (type 6, −30000) shows its hit effects alone; a real miss (0) and a hit aren't one.
+        // −30000 shows the hit effects alone, whatever the type (Grimtooth's preamble is type 6; a server sends it on a
+        // multi-hit or a critical too); a real miss (0) and a hit aren't one.
         let act = |kind, damage| net::Act { source: 1, target: 2, source_speed: 432, target_speed: 288, damage, sp: false, hits: 1, kind, left_damage: 0 };
-        assert!(preamble(&act(6, -30000)) && !preamble(&act(8, 0)) && !preamble(&act(8, 120)) && !preamble(&act(6, 50)));
+        assert!(preamble(&act(6, -30000)) && preamble(&act(8, -30000)) && preamble(&act(10, -30000)));
+        assert!(!preamble(&act(8, 0)) && !preamble(&act(8, 120)) && !preamble(&act(6, 50)));
+        // A critical of 0 is a MISS like any hit of 0; a lucky dodge isn't, and a critical that hits isn't.
+        assert!(misses(10, 0) && misses(13, 0) && misses(0, 0) && misses(8, -1));
+        assert!(!misses(11, 0) && !misses(10, 1627) && !misses(0, 977));
     }
 
     #[test]
