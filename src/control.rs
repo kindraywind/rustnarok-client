@@ -2328,6 +2328,11 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["level_ups"] = json!({"base": game.level_ups.base, "job": game.level_ups.job});
     // The status icon tooltip's lines while one shows.
     state["status_tip"] = json!(game.status_tip);
+    // The item whose name the enchant window's tooltip shows.
+    state["enchant_hover"] = json!(game.enchant.as_ref().and_then(|window| window.hovered(app.cursor, &game.inventory.items)).map(|hovered| match hovered {
+        crate::enchant::Hovered::Carried(item) => item.id,
+        crate::enchant::Hovered::Item(id) => id,
+    }));
     orbs(&mut state["player"], None);
     grade(&mut state, play::mode(), game.quest_window.frame.open, crate::screen());
     state
@@ -2483,6 +2488,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("status_icons", Assist),
         ("status_icons_drawn", Fair),
         ("status_tip", Fair),
+        ("enchant_hover", Fair),
         ("storage_box_text", Fair),
         ("storage_categories_open", Fair),
         ("storage_found", Fair),
