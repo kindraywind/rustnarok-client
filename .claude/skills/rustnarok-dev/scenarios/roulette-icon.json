@@ -1,0 +1,15 @@
+{
+  "about": "The Lucky Roulette's icon keeps to the screen's right edge: 187 px in from it and 71 down, left of the minimap, at any window width. In a 1365x768 window it's at (1178, 71); clicking it opens the roulette.",
+  "account": "",
+  "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_WINDOW": "1365x768"},
+  "steps": [
+    {"say": "@warp prontera 156 180"}, {"settle": 1500},
+    {"move": [700, 600]}, {"wait": 300},
+    {"expect": {"button": {"name": "roulette", "box": [1178, 71, 43, 43]}}},
+    {"shot": "roulette-icon-wide", "crop": [965, 0, 400, 260], "threshold": 30},
+    {"click_on": {"button": "roulette"}}, {"wait_for": {"packet": "0x0a1c", "ms": 5000}}, {"wait": 300},
+    {"expect": {"windows_open": ["Roulette"]}},
+    {"key": "Escape"}, {"wait": 300}
+  ]
+}

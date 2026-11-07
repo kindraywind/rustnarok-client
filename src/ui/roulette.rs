@@ -22,7 +22,7 @@ pub const SPINNING: usize = 2640;
 const SIZE: [f32; 2] = [640.0, 480.0];
 pub const HEIGHT: f32 = TITLE_HEIGHT + SIZE[1];
 // ponytail: the slots are measured from roullettebg.bmp and the buttons matched against it (their pictures carry the
-// panel behind them); the boxes' and fields' places, the light's pace and the icon's place on screen are estimates.
+// panel behind them); the boxes' and fields' places and the light's pace are estimates.
 const SLOT: [f32; 2] = [29.0, 29.0];
 const BONUS_AT: [f32; 2] = [58.0, 117.0];
 const RESULT_AT: [f32; 2] = [186.0, 126.0];
@@ -33,9 +33,15 @@ const BUTTON: [f32; 2] = [99.0, 99.0];
 const PRIZE_BUTTON: [f32; 2] = [203.0, 381.0];
 const START_BUTTON: [f32; 2] = [339.0, 381.0];
 const LIGHT_STEP_MS: u128 = 80;
-/// The icon that opens the window, left of the minimap.
-const ICON_AT: [f32; 2] = [826.0, 18.0];
+/// The icon that opens the window: left of the minimap, 187 px in from the screen's right edge and 71 down, so it moves
+/// with the screen's width.
+const ICON_FROM_RIGHT: f32 = 187.0;
+const ICON_TOP: f32 = 71.0;
 const ICON_SIZE: [f32; 2] = [43.0, 43.0];
+
+fn icon_at(screen: [f32; 2]) -> [f32; 2] {
+    [screen[0] - ICON_FROM_RIGHT, ICON_TOP]
+}
 
 pub struct Assets {
     background: Texture,
@@ -94,7 +100,7 @@ pub fn claim_message(result: u8) -> Option<usize> {
 
 /// Over the open icon: the window opens.
 pub fn icon_hit(cursor: [f32; 2]) -> bool {
-    contains(ICON_AT, ICON_SIZE, cursor)
+    contains(icon_at(screen()), ICON_SIZE, cursor)
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -291,20 +297,28 @@ pub fn draw_icon<'a>(
     messages: &[String],
     cursor: [f32; 2],
 ) {
-    layer.sprites.push((&assets.icon, ICON_AT, ICON_SIZE));
+    let at = icon_at(screen());
+    layer.sprites.push((&assets.icon, at, ICON_SIZE));
     if icon_hit(cursor) {
-        window::tooltip(tooltip, chrome, font, messages.get(TITLE).map_or("", String::as_str), offset(ICON_AT, [0.0, -20.0]), [255; 3]);
+        window::tooltip(tooltip, chrome, font, messages.get(TITLE).map_or("", String::as_str), offset(at, [0.0, -20.0]), [255; 3]);
     }
 }
 
 /// The icon's box on screen, for scripted clicks.
 pub fn icon_box() -> [f32; 4] {
-    [ICON_AT[0], ICON_AT[1], ICON_SIZE[0], ICON_SIZE[1]]
+    let at = icon_at(screen());
+    [at[0], at[1], ICON_SIZE[0], ICON_SIZE[1]]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_icon_keeps_to_the_right_edge() {
+        assert_eq!(icon_at([1024.0, 768.0]), [837.0, 71.0]);
+        assert_eq!(icon_at([1728.0, 1052.0]), [1541.0, 71.0]);
+    }
 
     #[test]
     fn spins_and_claims() {
