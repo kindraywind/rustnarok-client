@@ -3987,11 +3987,27 @@ impl Game {
         self.cashshop_buy_asked = false;
     }
 
-    /// Closes the deal-type question and drops its drag.
-    pub(crate) fn close_deal_choice(&mut self) {
-        self.deal_choice = None;
+    /// The deal-type question goes and its drag is dropped, with no word to the server (a map change, or Buy and Sell
+    /// that say their own). The NPC it was for.
+    pub(crate) fn drop_deal_choice(&mut self) -> Option<u32> {
         self.deal_frame.open = false;
         self.deal_frame.drop_drag();
+        self.deal_choice.take()
+    }
+
+    /// The deal-type question closes without Buy or Sell (Cancel, Esc): the server hears the shop closed. A script's
+    /// shop marks the player busy as it asks, and until then every NPC refuses to talk.
+    pub(crate) fn close_deal_choice(&mut self) {
+        if self.drop_deal_choice().is_some() {
+            let _ = self.session.quit_npc_trade();
+        }
+    }
+
+    /// The deal-type question's Buy or Sell.
+    pub(crate) fn choose_deal(&mut self, sell: bool) {
+        if let Some(npc) = self.drop_deal_choice() {
+            let _ = self.session.choose_deal(npc, sell);
+        }
     }
 
     /// The answer to a pick list: the row picked, Cancel, or Close.

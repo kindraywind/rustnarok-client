@@ -1,0 +1,8 @@
+// A test NPC for the deal-cancel scenario: a script that asks buy or sell with callshop, as many servers' shop NPCs do.
+// rathena marks the player busy with that shop as it asks, and refuses every NPC until the client says the shop closed.
+// Load it with @loadnpc <absolute path>, take it out with @unloadnpcfile <absolute path>.
+-	shop	RustnarokDealShop	-1,501:-1
+morocc,160,123,4	script	Deal Tester	4_M_01,{
+	callshop "RustnarokDealShop",0;
+	end;
+}

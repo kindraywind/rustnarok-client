@@ -1,0 +1,31 @@
+{
+  "about": "Cancelling the buy-or-sell question tells the server the shop closed. A test NPC (deal-cancel.txt) asks with a script's callshop, which marks the player busy with that shop from the question on. Cancel sends CZ_NPC_TRADE_QUIT, and a second talk asks again instead of the server's busy line; Esc does the same.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@unloadnpcfile {scenarios}/deal-cancel.txt"}, {"wait": 500},
+    {"say": "@loadnpc {scenarios}/deal-cancel.txt"}, {"wait": 800},
+    {"say": "@warp morocc 160 120"}, {"settle": 2000},
+    {"click_on": {"unit": "Deal Tester"}},
+    {"wait_for": {"packet": "0x00c4", "ms": 3000}},
+    {"expect": {"windows_open": ["DealChoice"]}},
+    {"click_on": {"button": "deal_cancel"}},
+    {"wait_for": {"sent": "0x09d4", "ms": 1500}},
+    {"expect": {"windows_closed": ["DealChoice"]}},
+    {"wait": 700},
+    {"click_on": {"unit": "Deal Tester"}},
+    {"wait_for": {"packet": "0x00c4", "ms": 3000}},
+    {"expect": {"windows_open": ["DealChoice"]}},
+    {"move": [1000, 750]},
+    {"shot": "deal-cancel-asks-again", "crop": [0, 0, 1024, 768], "threshold": 5},
+    {"key": "Escape"},
+    {"wait_for": {"sent": "0x09d4", "ms": 1500}},
+    {"expect": {"windows_closed": ["DealChoice"]}},
+    {"wait": 700},
+    {"click_on": {"unit": "Deal Tester"}},
+    {"wait_for": {"packet": "0x00c4", "ms": 3000}},
+    {"click_on": {"button": "deal_cancel"}},
+    {"wait": 500},
+    {"say": "@unloadnpcfile {scenarios}/deal-cancel.txt"}, {"wait": 500}
+  ]
+}

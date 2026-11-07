@@ -147,23 +147,12 @@ impl App {
                     links::Target::Tip => {}
                 }
             }
-            Scene::Game(game) if game.deal_choice.is_some() => {
-                let npc = game.deal_choice.unwrap();
-                match shop::deal_hit(game.deal_frame.position, cursor) {
-                    Some(shop::DealHit::Buy) => {
-                        game.close_deal_choice();
-                        let _ = game.session.choose_deal(npc, false);
-                    }
-                    Some(shop::DealHit::Sell) => {
-                        game.close_deal_choice();
-                        let _ = game.session.choose_deal(npc, true);
-                    }
-                    Some(shop::DealHit::Cancel) => {
-                        game.close_deal_choice();
-                    }
-                    _ => {}
-                }
-            }
+            Scene::Game(game) if game.deal_choice.is_some() => match shop::deal_hit(game.deal_frame.position, cursor) {
+                Some(shop::DealHit::Buy) => game.choose_deal(false),
+                Some(shop::DealHit::Sell) => game.choose_deal(true),
+                Some(shop::DealHit::Cancel) => game.close_deal_choice(),
+                _ => {}
+            },
             // The world map covers the screen; its close button closes it.
             Scene::Game(game) if game.world_map.is_some() => {
                 if game.world_map.as_ref().unwrap().closes(cursor) {
@@ -4352,11 +4341,7 @@ impl App {
             },
             Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Escape)) => game.close_deal_choice(),
             // Enter is the deal-type box's default button: Buy.
-            Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Enter)) => {
-                let npc = game.deal_choice.unwrap();
-                game.close_deal_choice();
-                let _ = game.session.choose_deal(npc, false);
-            }
+            Scene::Game(game) if game.deal_choice.is_some() && matches!(key, Key::Named(NamedKey::Enter)) => game.choose_deal(false),
             // Earlier arms are windows that want the key. Esc is game_escape, which closes an open battle-mode
             // line first. Here the chat line has the key. Off: the line is always open and letters type. On: Enter
             // opens it, Enter on an empty line closes it, and a closed line sends letters and digits to shortcuts.
