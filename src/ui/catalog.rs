@@ -56,9 +56,11 @@ pub fn failure(reason: u8) -> Option<Failure> {
     }
 }
 
-/// A name found by what was typed: holding it ("Include similar items?"), else exactly it. Letter case counts.
+/// A name found by what was typed: holding it ("Include similar items?"), else exactly it. Letter case doesn't count
+/// (in the game it does: "sanctified" misses "Sanctified Oil").
 fn found(name: &str, typed: &str, similar: bool) -> bool {
-    if similar { name.contains(typed) } else { name == typed }
+    let (name, typed) = (name.to_lowercase(), typed.to_lowercase());
+    if similar { name.contains(&typed) } else { name == typed }
 }
 
 /// The items `typed` finds, in ID order: by the item's name or its card word; with `cards_only`, cards alone.
@@ -764,11 +766,13 @@ mod tests {
     }
 
     #[test]
-    fn finds_names_holding_the_text_or_exactly_it_with_letter_case() {
+    fn finds_names_holding_the_text_or_exactly_it_in_any_letter_case() {
         let (items, cards) = (items(), cards());
         assert_eq!(lookup("Jellopy", false, true, &items, &cards), [909, 7126]);
         assert_eq!(lookup("Jellopy", false, false, &items, &cards), [909]);
-        assert!(lookup("jellopy", false, true, &items, &cards).is_empty());
+        assert_eq!(lookup("jellopy", false, true, &items, &cards), [909, 7126]);
+        assert_eq!(lookup("JELLOPY", false, false, &items, &cards), [909]);
+        assert_eq!(lookup("lucky", true, true, &items, &cards), [4001]);
         // A card by its name or its word; the card box finds cards alone.
         assert_eq!(lookup("Lucky", true, true, &items, &cards), [4001]);
         assert_eq!(lookup("Card", true, true, &items, &cards), [4001, 4002]);
