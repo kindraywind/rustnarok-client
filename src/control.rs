@@ -1817,6 +1817,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         // Its goods by item ID with the number on their icons (selling to an NPC: what's left to sell), and the
         // "Toggle Item Amount." box.
         "shop_goods": game.shop.as_ref().map(|shop| shop.goods().into_iter().map(|(item, count)| (item.to_string(), json!(count))).collect::<serde_json::Map<_, _>>()),
+        // The price of one, by item ID, as the rows show it: what the shop charges, or pays (with a discount or
+        // Overcharge), for every offer, those all in the deal too.
+        "shop_prices": game.shop.as_ref().map(|shop| shop.prices().into_iter().map(|(item, price)| (item.to_string(), json!(price))).collect::<serde_json::Map<_, _>>()),
         "shop_whole": game.shop.as_ref().map(|shop| shop.whole),
         // The windows Esc closes, in the order it closes them (newest first).
         "esc_order": game.esc_order.iter().map(|id| id.name()).collect::<Vec<_>>(),
@@ -2460,6 +2463,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("settings", Fair),
         ("shop_deal", Fair),
         ("shop_goods", Fair),
+        ("shop_prices", Fair),
         ("shop_size", Fair),
         ("shop_whole", Fair),
         ("shortcuts", Fair),
