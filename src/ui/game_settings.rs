@@ -1,10 +1,10 @@
 //! Game Settings (2374): one 400×350 window, centred and made fresh each time it opens, with the game's five tabs and
 //! this client's Extras. Basic has the music and effect sound rows, Effect the effect switches this client has,
 //! Control the Quick Slots switch, Graphics the screen mode; Other stays empty here. Extras has switches the game
-//! doesn't have, all off at first.
+//! doesn't have, all off at first, and the font the text is drawn in.
 
 use rustnarok_client::grf::Grf;
-use rustnarok_client::text::Font;
+use rustnarok_client::text::{self, Font};
 
 use crate::options::GraphicsSettings;
 use crate::render::{Gpu, Texture};
@@ -87,6 +87,12 @@ const EXTRA_ROWS: [(&str, &str); 5] = [
     ("Item options", "An item's random options in its name box"),
     ("Cooldown numbers", "Seconds left on a cooling skill's hotkey"),
 ];
+/// The Extras row under the switches: the font's name between a left and a right arrow, which step through the fonts
+/// found (`text::choices`).
+const FONT_ROW: usize = EXTRA_ROWS.len();
+const FONT_TITLE: &str = "Font";
+const FONT_LESS: f32 = ROW_TEXT;
+const FONT_MORE: f32 = ROW_TEXT + ROW_TEXT_WIDTH - ARROW;
 /// The screen mode group, Graphics page y 160: "Screen mode", the Full screen and Window radios at (150, 12) and
 /// (270, 12), their labels 17 px right.
 const SCREEN_TOP: f32 = 160.0;
@@ -126,6 +132,8 @@ pub enum Hit {
     Switch(usize),
     /// A screen mode radio: full screen or not.
     Screen(bool),
+    /// The font row's left (-1) or right (1) arrow.
+    Font(isize),
     Title,
     Window,
 }
@@ -197,6 +205,10 @@ impl GameSettings {
                     _ => None,
                 })
                 .unwrap_or(Hit::Window),
+            EXTRAS if ((y - 1.0) / ROW).floor() == FONT_ROW as f32 => [(FONT_LESS, -1), (FONT_MORE, 1)]
+                .into_iter()
+                .find(|&(left, _)| (left..left + ARROW).contains(&x) && (5.0..5.0 + ARROW).contains(&(y - 1.0 - FONT_ROW as f32 * ROW)))
+                .map_or(Hit::Window, |(_, by)| Hit::Font(by)),
             EFFECT | CONTROL | EXTRAS => {
                 let row = ((y - 1.0) / ROW).floor();
                 if (0.0..row_count(self.tab) as f32).contains(&row) && x < ROW_TITLE { Hit::Switch(row as usize) } else { Hit::Window }
@@ -266,6 +278,10 @@ impl GameSettings {
                 self.fullscreen = fullscreen;
                 None
             }
+            Hit::Font(by) => {
+                graphics.font = text::stepped(text::choices(), &graphics.font, by).to_owned();
+                Some(Action::Graphics)
+            }
             _ => None,
         }
     }
@@ -302,9 +318,16 @@ impl GameSettings {
             BASIC => boxes.extend(
                 SOUND_ROWS.iter().enumerate().map(|(row, &y)| (format!("sound_off:{row}"), place([OFF_BOX, PAGE_TOP + SOUND_TOP + y + 1.0], [10.0, 10.0]))),
             ),
-            EFFECT | CONTROL | EXTRAS => boxes.extend(
-                (0..row_count(self.tab)).map(|row| (format!("switch:{row}"), place([SWITCH[0], PAGE_TOP + 1.0 + row as f32 * ROW + SWITCH[1]], [20.0, 15.0]))),
-            ),
+            EFFECT | CONTROL | EXTRAS => {
+                boxes.extend(
+                    (0..row_count(self.tab))
+                        .map(|row| (format!("switch:{row}"), place([SWITCH[0], PAGE_TOP + 1.0 + row as f32 * ROW + SWITCH[1]], [20.0, 15.0]))),
+                );
+                if self.tab == EXTRAS {
+                    let top = PAGE_TOP + 1.0 + FONT_ROW as f32 * ROW + 5.0;
+                    boxes.extend([("font_less", FONT_LESS), ("font_more", FONT_MORE)].map(|(name, x)| (name.to_owned(), place([x, top], [ARROW, ARROW]))));
+                }
+            }
             GRAPHICS => boxes.extend(
                 SCREEN_RADIOS.iter().enumerate().map(|(radio, &(x, _))| (format!("screen:{radio}"), place([x, PAGE_TOP + SCREEN_TOP + 12.0], [12.0, 12.0]))),
             ),
@@ -392,6 +415,18 @@ impl GameSettings {
                     layer.sprites.push((check, page([SWITCH[0], top + SWITCH[1] + 2.0]), check.size));
                     layer.texts.push((window::fit(font, &title, ROW_TEXT - ROW_TITLE - 4.0), page([ROW_TITLE, top + 6.0]), black));
                     layer.texts.push((window::fit(font, &text, ROW_TEXT_WIDTH), page([ROW_TEXT, top + 6.0]), black));
+                }
+                if self.tab == EXTRAS {
+                    // The font's name centred between its arrows.
+                    let top = 1.0 + FONT_ROW as f32 * ROW;
+                    layer.texts.push((FONT_TITLE.to_owned(), page([ROW_TITLE, top + 6.0]), black));
+                    let [less, more] = &options.arrows;
+                    layer.sprites.push((less, page([FONT_LESS, top + 5.0]), less.size));
+                    layer.sprites.push((more, page([FONT_MORE, top + 5.0]), more.size));
+                    let choices = text::choices();
+                    let room = FONT_MORE - FONT_LESS - ARROW;
+                    let name = window::fit(font, &choices[text::index_of(choices, &graphics.font)].name, room - 4.0);
+                    layer.texts.push((name.clone(), page([FONT_LESS + ARROW + ((room - font.width(&name)) / 2.0).floor(), top + 6.0]), black));
                 }
             }
             GRAPHICS => {
@@ -557,6 +592,36 @@ mod tests {
         assert!(window.button_boxes().iter().any(|(name, _)| name == "switch:0"));
         reset(&mut sound, &mut graphics);
         assert!(graphics.quick_slot);
+    }
+
+    /// The font row's arrows step through the fonts found and back; Reset puts Tahoma back.
+    #[test]
+    fn the_font_row_steps_through_the_fonts() {
+        let mut window = GameSettings::new([1024.0, 768.0], false);
+        let (mut sound, mut graphics) = (Settings::default(), GraphicsSettings::default());
+        assert_eq!(graphics.font, text::DEFAULT);
+        window.click(Hit::Tab(EXTRAS), &mut sound, &mut graphics);
+        let corner = window.frame.position;
+        let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
+        let row = PAGE_TOP + 1.0 + FONT_ROW as f32 * ROW + 8.0;
+        assert_eq!(window.hit(at([FONT_LESS + 3.0, row])), Some(Hit::Font(-1)));
+        assert_eq!(window.hit(at([FONT_MORE + 3.0, row])), Some(Hit::Font(1)));
+        assert_eq!(window.hit(at([FONT_LESS + 40.0, row])), Some(Hit::Window), "the name itself does nothing");
+        assert_eq!(window.hit(at([12.0, row])), Some(Hit::Window), "no switch on the font row");
+        let names = ["font_less", "font_more"];
+        assert!(names.iter().all(|name| window.button_boxes().iter().any(|(target, _)| target == name)));
+        assert_eq!(window.click(Hit::Font(1), &mut sound, &mut graphics), Some(Action::Graphics));
+        assert_eq!(graphics.font, text::stepped(text::choices(), text::DEFAULT, 1));
+        assert_eq!(graphics, GraphicsSettings { font: graphics.font.clone(), ..GraphicsSettings::default() }, "nothing else moved");
+        window.click(Hit::Font(-1), &mut sound, &mut graphics);
+        assert_eq!(graphics.font, text::DEFAULT);
+        window.click(Hit::Font(-1), &mut sound, &mut graphics);
+        reset(&mut sound, &mut graphics);
+        assert_eq!(graphics, GraphicsSettings::default());
+        // Not on the other pages.
+        window.click(Hit::Tab(EFFECT), &mut sound, &mut graphics);
+        assert_eq!(window.hit(at([FONT_MORE + 3.0, row])), Some(Hit::Window));
+        assert!(!window.button_boxes().iter().any(|(target, _)| target == "font_more"));
     }
 
     #[test]

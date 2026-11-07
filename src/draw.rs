@@ -71,6 +71,13 @@ impl App {
     pub(crate) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
         // The map packets since the last frame first, before anything moves.
         self.apply_frame_events();
+        // A font picked in Game Settings (or put back by Reset) draws from this frame on.
+        if self.font.name() != self.graphics.font {
+            self.font = Font::named(&self.graphics.font);
+            if let Some(gpu) = &self.gpu {
+                gpu.forget_texts();
+            }
+        }
         if self.loading.is_some() {
             return self.draw_loading(event_loop);
         }

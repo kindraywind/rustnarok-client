@@ -5275,7 +5275,7 @@ impl ApplicationHandler<NetEvent> for App {
                     // Through the chat line, so the client's commands (/organize, %) work too.
                     let say_at = std::env::var("RUSTNAROK_CLIENT_SAY_AT").ok().and_then(|seconds| seconds.parse().ok()).unwrap_or(1.0);
                     if let Some(texts) = game.auto_say.take_if(|_| game.entered.elapsed().as_secs_f32() >= say_at) {
-                        let before = self.graphics;
+                        let before = self.graphics.clone();
                         for text in texts.split('|') {
                             game.chat.input = text.to_owned();
                             let _ = game.send_chat(false, false, &self.messages, &mut self.graphics);
@@ -5321,7 +5321,7 @@ impl ApplicationHandler<NetEvent> for App {
                     }
                     if let Some(whispers) = std::env::var("RUSTNAROK_CLIENT_WHISPER").ok().filter(|_| game.whispered.is_empty() && game.chat.whisper.is_empty())
                     {
-                        let before = self.graphics;
+                        let before = self.graphics.clone();
                         for whisper in whispers.split(';') {
                             let (to, text) = whisper.split_once('|').unwrap_or((whisper, "hi"));
                             game.chat.whisper = to.to_owned();
@@ -5598,6 +5598,7 @@ fn main() {
     let quest_filters = quest::Filters::load(&grf);
     let sound = sound::Settings::load();
     let graphics = options::GraphicsSettings::load();
+    let font = Font::named(&graphics.font);
     let keybinds = shortcuts::Shortcuts::load(&grf);
     let mut app = App {
         grf,
@@ -5654,7 +5655,7 @@ fn main() {
         cursor_look,
         loading_images,
         loading: None,
-        font: Font::load(),
+        font,
         proxy: event_loop.create_proxy(),
         gpu: None,
         assets: None,

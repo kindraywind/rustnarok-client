@@ -1,0 +1,146 @@
+{
+  "about": "Game Settings' Extras tab: the Font row under the switches steps through the fonts this machine has (each region's usual font of the game, then any in the game's System/Font folder). The window in Tahoma, then in the next font found (Arial on macOS), then back in Tahoma: every line of text is drawn again in the font picked, without a restart. Main has no Font row.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings_tab:5"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.tab": 5,
+          "settings.font": "Tahoma",
+          "settings.font_index": 0
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "font-tahoma",
+      "crop": [
+        302,
+        199,
+        420,
+        370
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "font_more"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.font_index": 1
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "font-next",
+      "crop": [
+        302,
+        199,
+        420,
+        370
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "font_less"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.font": "Tahoma",
+          "settings.font_index": 0
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "font-back",
+      "crop": [
+        302,
+        199,
+        420,
+        370
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "settings_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    }
+  ]
+}
