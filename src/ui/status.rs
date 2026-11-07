@@ -3,6 +3,7 @@
 //! labels are the backgrounds' own.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::net::{STATUS_ATK, STATUS_BONUS, STATUS_POINTS, STATUS_STR, STATUS_STR_COST};
@@ -87,17 +88,22 @@ pub enum Hit {
 
 pub struct StatusWindow {
     pub frame: Frame,
-    /// A raise (a stat's or a trait's) waits for the server's answer: until it comes, clicks ask nothing.
-    pub waiting: bool,
+    /// A raise (a stat's or a trait's) waits for the server's answer (sent then): until it comes, or for at most
+    /// RAISE_WAIT, clicks ask nothing.
+    pub waiting: Option<Instant>,
     /// The trait panel under the stats is open.
     pub traits_open: bool,
 }
+
+/// How long a raise waits for its answer: one the server never answers (a click on points already spent) mustn't
+/// lock the "+" for good.
+const RAISE_WAIT: Duration = Duration::from_millis(1500);
 
 impl Default for StatusWindow {
     /// Open for every job the first time; the choice isn't saved.
     // ponytail: a new login makes a new window, so the panel opens again then, not only once per run.
     fn default() -> Self {
-        Self { frame: Frame::new(POSITION, WIDTH).collapsing(), waiting: false, traits_open: true }
+        Self { frame: Frame::new(POSITION, WIDTH).collapsing(), waiting: None, traits_open: true }
     }
 }
 
@@ -275,9 +281,9 @@ impl StatusWindow {
     pub fn click(&mut self, hit: Hit) -> Option<u16> {
         match hit {
             Hit::Title(title) => self.frame.click_title(title),
-            Hit::Raise(_) | Hit::RaiseTrait(_) if self.waiting => {}
+            Hit::Raise(_) | Hit::RaiseTrait(_) if self.waiting.is_some_and(|sent| sent.elapsed() < RAISE_WAIT) => {}
             Hit::Raise(stat) | Hit::RaiseTrait(stat) => {
-                self.waiting = true;
+                self.waiting = Some(Instant::now());
                 return Some(stat);
             }
             Hit::Traits => self.traits_open = !self.traits_open,
@@ -403,9 +409,20 @@ mod tests {
         assert_eq!(window.click(Hit::Raise(STATUS_STR)), None);
         assert_eq!(window.click(Hit::RaiseTrait(TRAIT_POW)), None);
         // The answer, taken or refused, lets the next go.
-        window.waiting = false;
+        window.waiting = None;
         assert_eq!(window.click(Hit::RaiseTrait(TRAIT_POW)), Some(TRAIT_POW));
-        assert!(window.waiting);
+        assert!(window.waiting.is_some());
+    }
+
+    #[test]
+    fn a_lost_answer_stops_waiting_after_a_while() {
+        let mut window = StatusWindow::default();
+        assert_eq!(window.click(Hit::Raise(STATUS_STR)), Some(STATUS_STR));
+        assert_eq!(window.click(Hit::Raise(STATUS_STR)), None);
+        // No answer came: past RAISE_WAIT the next raise, a stat's or a trait's, goes anyway.
+        window.waiting = Instant::now().checked_sub(RAISE_WAIT);
+        assert_eq!(window.click(Hit::RaiseTrait(TRAIT_POW)), Some(TRAIT_POW));
+        assert_eq!(window.click(Hit::Raise(STATUS_STR)), None);
     }
 
     #[test]

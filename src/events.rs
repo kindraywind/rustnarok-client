@@ -1632,7 +1632,7 @@ impl App {
             MapEvent::Statuses(values) => game.status.extend(values),
             // The raise's answer, taken or refused, lets the next one go.
             MapEvent::RaiseAnswer(value) => {
-                game.status_window.waiting = false;
+                game.status_window.waiting = None;
                 game.status.extend(value);
             }
             // -1 takes the bar away.
