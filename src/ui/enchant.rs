@@ -9,7 +9,6 @@ use rustnarok_client::net::InventoryItem;
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
-use crate::shop::group;
 use crate::window::{self, Chrome, Frame, TitleHit};
 use crate::{Layer, UI, contains, offset};
 use crate::{inventory, iteminfo};
@@ -52,6 +51,17 @@ const ROW_SIZE: [f32; 2] = [150.0, 30.0];
 const VISIBLE: usize = 12;
 /// The box across the bottom.
 const NOTE_AT: [f32; 2] = [14.0, 425.0];
+
+/// An item icon (a material's, a card's) and where it sits in its box.
+const ICON_SIZE: [f32; 2] = [24.0, 24.0];
+const MATERIAL_ICON: [f32; 2] = [6.0, 10.0];
+const CARD_ICON: [f32; 2] = [10.0, 10.0];
+/// A material's numbers, carried over "/needed", right-aligned at the box's right: near white outlined in blue with
+/// enough carried, red without an outline when short.
+const MATERIAL_NUMBERS: [f32; 2] = [70.0, 17.0];
+const ENOUGH: [u8; 3] = [240, 240, 240];
+const ENOUGH_OUTLINE: [u8; 3] = [50, 85, 150];
+const SHORT: [u8; 3] = [230, 60, 90];
 
 const fn page(x: f32, y: f32) -> [f32; 2] {
     [PAGE[0] + x, PAGE[1] + y]
@@ -236,6 +246,15 @@ struct Shown {
     materials: Vec<(u32, u32)>,
 }
 
+/// The item under the pointer, whose name the tooltip shows.
+#[derive(Debug, PartialEq)]
+pub enum Hovered<'b> {
+    /// A carried item: a row of the left list, or the one in the picture.
+    Carried(&'b InventoryItem),
+    /// An enchant row's, a material's or a card's.
+    Item(u32),
+}
+
 pub struct Assets {
     background: Texture,
     /// The page under the tabs: plain (Reset), blue (Random) and yellow (Perfect).
@@ -354,6 +373,34 @@ impl Enchant {
         let row = (0..VISIBLE).find(|&row| contains(row_at(row), ROW_SIZE, local)).map(Hit::Row);
         let action = contains(ACTION_AT, ACTION_SIZE, local).then_some(Hit::Action);
         Some(page.or(sub).or(target).or(row).or(action).unwrap_or(Hit::Window))
+    }
+
+    /// The item under the pointer: anywhere on a row of either list, or on the picture, a material's icon or a card's.
+    pub fn hovered<'b>(&self, cursor: [f32; 2], carried: &'b [InventoryItem]) -> Option<Hovered<'b>> {
+        let local = self.frame.local(cursor, HEIGHT)?;
+        if self.frame.title_hit(local).is_some() {
+            return None;
+        }
+        let on = |at: [f32; 2], size: [f32; 2]| contains(at, size, local);
+        let targets = self.targets(carried);
+        if let Some(row) = (0..TARGETS_SHOWN).find(|&row| on(target_at(row), TARGET_SIZE)) {
+            return targets.get(self.target_scroll + row).map(|&item| Hovered::Carried(item));
+        }
+        let item = self.chosen(carried);
+        if on(PICTURE_AT, PICTURE_SIZE) {
+            return item.map(Hovered::Carried);
+        }
+        if let Some(row) = (0..VISIBLE).find(|&row| on(row_at(row), ROW_SIZE)) {
+            return self.rows(item).get(self.scroll + row).map(|row| Hovered::Item(row.result.unwrap_or(row.name)));
+        }
+        let materials = self.cost(item).map(|(_, materials)| materials).unwrap_or_default();
+        if let Some(&(id, _)) =
+            materials.iter().take(8).enumerate().find(|&(index, _)| on(offset(material_at(index), MATERIAL_ICON), ICON_SIZE)).map(|(_, material)| material)
+        {
+            return Some(Hovered::Item(id));
+        }
+        let cards = item.map_or([0; 4], |item| item.cards);
+        (0..4).find(|&slot| cards[slot] != 0 && on(offset(socket_at(slot), CARD_ICON), ICON_SIZE)).map(|slot| Hovered::Item(cards[slot]))
     }
 
     pub fn click(&mut self, hit: Hit, carried: &[InventoryItem], slots: impl Fn(u32) -> u8, count: impl FnMut(u32) -> u32, zeny: u32) -> Option<Action> {
@@ -547,6 +594,14 @@ impl Enchant {
         // Where a dragged item goes in.
         boxes.push(("item".to_owned(), self.place(PICTURE_AT, PICTURE_SIZE)));
         boxes.push(("close".to_owned(), self.place(self.frame.close_button(), window::BUTTON_SIZE)));
+        let materials = self.cost(self.chosen(carried)).map(|(_, materials)| materials).unwrap_or_default();
+        boxes.extend(
+            materials
+                .iter()
+                .take(8)
+                .enumerate()
+                .map(|(index, (id, _))| (format!("material_{id}"), self.place(offset(material_at(index), MATERIAL_ICON), ICON_SIZE))),
+        );
         let targets = self.targets(carried).into_iter().skip(self.target_scroll).take(TARGETS_SHOWN);
         boxes.extend(targets.enumerate().map(|(row, item)| (format!("target_{}", item.id), self.place(target_at(row), TARGET_SIZE))));
         boxes
@@ -590,6 +645,8 @@ impl Enchant {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
+        naming: inventory::Naming,
         chrome: &'a Chrome,
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
@@ -654,16 +711,16 @@ impl Enchant {
         }
         let aimed = self.aimed_slot(item);
         for (slot, &card) in cards.iter().enumerate() {
-            // The two on the left have the socket on their right, the two on the right on their left.
-            let (socket_x, name_x) = if slot < 2 { (59.0, 0.0) } else { (3.0, 10.0) };
-            let socket = offset(SLOTS[slot], [socket_x, 1.0]);
+            // The right two's name boxes sit 10 px in.
+            let name_x = if slot < 2 { 0.0 } else { 10.0 };
+            let socket = socket_at(slot);
             let look = if aimed == Some(slot as u8) { 2 } else { usize::from(over(socket, SOCKET_SIZE)) };
             layer.sprites.push((&assets.socket[look], at(socket), SOCKET_SIZE));
             if card == 0 {
                 continue;
             }
             if let Some(texture) = icon(card) {
-                layer.sprites.push((texture, at(offset(socket, [10.0, 10.0])), [24.0, 24.0]));
+                layer.sprites.push((texture, at(offset(socket, CARD_ICON)), ICON_SIZE));
             }
             let name = window::fit(font, &name_of(card), SLOT_NAME_WIDTH);
             let name_at = offset(SLOTS[slot], [name_x + (SLOT_NAME_WIDTH - font.width(&name)) / 2.0, 44.0]);
@@ -672,19 +729,26 @@ impl Enchant {
 
         if let Some((zeny, materials)) = self.cost(item) {
             for (index, &(id, need)) in materials.iter().take(8).enumerate() {
-                let place = offset(MATERIALS_AT, [MATERIAL_STEP[0] * (index % 4) as f32, MATERIAL_STEP[1] * (index / 4) as f32]);
+                let place = material_at(index);
                 let have: u32 = carried.iter().filter(|carried| carried.id == id).map(|carried| u32::from(carried.amount)).sum();
                 layer.sprites.push((&assets.material[usize::from(have >= need)], at(place), MATERIAL_SIZE));
                 if let Some(texture) = icon(id) {
-                    layer.sprites.push((texture, at(offset(place, [6.0, 10.0])), [24.0, 24.0]));
+                    layer.sprites.push((texture, at(offset(place, MATERIAL_ICON)), ICON_SIZE));
                 }
-                // ponytail: the needed count over the carried one is an estimate; the game has two right-aligned lines.
-                for (line, number) in [need, have].into_iter().enumerate() {
-                    let text = number.to_string();
-                    layer.texts.push((text.clone(), at(offset(place, [70.0 - font.width(&text), 17.0 + 14.0 * line as f32])), BLACK));
+                for (line, text) in [have.to_string(), format!("/{need}")].into_iter().enumerate() {
+                    let [right, top] = MATERIAL_NUMBERS;
+                    let corner = at(offset(place, [right - font.width(&text), top + 14.0 * line as f32]));
+                    if have < need {
+                        layer.texts.push((text, corner, SHORT));
+                        continue;
+                    }
+                    for step in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+                        layer.texts.push((text.clone(), offset(corner, step), ENOUGH_OUTLINE));
+                    }
+                    layer.texts.push((text, corner, ENOUGH));
                 }
             }
-            let zeny = group(u64::from(zeny));
+            let zeny = zeny.to_string();
             layer.texts.push((zeny.clone(), at([ZENY_AT[0] + ZENY_WIDTH - font.width(&zeny), ZENY_AT[1]]), BLACK));
         }
         let look = if !self.ready(item) {
@@ -709,6 +773,18 @@ impl Enchant {
         }
         if let Some(note) = self.note(item) {
             layer.texts.push((note, at(NOTE_AT), BLACK));
+        }
+        // The name of the item under the pointer, over it, in the item's colour, with its options' count.
+        let hovered = match self.hovered(pointer.0, carried) {
+            Some(Hovered::Carried(item)) => Some(item.clone()),
+            Some(Hovered::Item(id)) => Some(InventoryItem { id, identified: true, ..Default::default() }),
+            None => None,
+        };
+        if let Some(item) = hovered {
+            let (cards, makers) = naming;
+            let name = inventory::full_name(items, cards, messages, makers, &item, true);
+            let text = inventory::option_text(messages, &name, &item);
+            window::tooltip(tooltip, chrome, font, &text, offset(pointer.0, [0.0, -20.0]), inventory::name_color(&item, items));
         }
     }
 
@@ -739,6 +815,15 @@ fn sub_tab_at(index: usize) -> [f32; 2] {
 
 fn target_at(row: usize) -> [f32; 2] {
     [0.0, TARGET_TOP + row as f32 * TARGET_SIZE[1]]
+}
+
+fn material_at(index: usize) -> [f32; 2] {
+    offset(MATERIALS_AT, [MATERIAL_STEP[0] * (index % 4) as f32, MATERIAL_STEP[1] * (index / 4) as f32])
+}
+
+/// A card slot's socket: the two on the left have it on their right, the two on the right on their left.
+fn socket_at(slot: usize) -> [f32; 2] {
+    offset(SLOTS[slot], [if slot < 2 { 59.0 } else { 3.0 }, 1.0])
 }
 
 fn row_at(row: usize) -> [f32; 2] {
@@ -851,6 +936,29 @@ mod tests {
         window.forget_request();
         window.try_item(&other, 2).unwrap();
         assert_eq!(window.item, Some(9));
+    }
+
+    #[test]
+    fn the_name_goes_with_the_item_under_the_pointer() {
+        let mut window = Enchant::open(33, table());
+        let item = item([0, 0, 0, 4818]);
+        window.try_item(&item, 2).unwrap();
+        window.tab = Tab::Perfect;
+        let carried = std::slice::from_ref(&item);
+        let at = |local: [f32; 2]| window.frame.at(offset(local, [5.0, 5.0]));
+        // Anywhere on a left row, and the picture: the carried item itself.
+        assert_eq!(window.hovered(at(offset(target_at(0), [150.0, 30.0])), carried), Some(Hovered::Carried(&item)));
+        assert_eq!(window.hovered(at(PICTURE_AT), carried), Some(Hovered::Carried(&item)));
+        // An enchant row, a material's icon (not the rest of its box) and a card's icon (not an empty socket).
+        assert_eq!(window.hovered(at(offset(row_at(0), [100.0, 0.0])), carried), Some(Hovered::Item(4818)));
+        window.tab = Tab::Normal;
+        assert_eq!(window.hovered(at(offset(material_at(0), MATERIAL_ICON)), carried), Some(Hovered::Item(25669)));
+        assert_eq!(window.hovered(at(offset(material_at(0), [50.0, 30.0])), carried), None);
+        assert_eq!(window.hovered(at(offset(socket_at(3), CARD_ICON)), carried), Some(Hovered::Item(4818)));
+        assert_eq!(window.hovered(at(offset(socket_at(0), CARD_ICON)), carried), None);
+        // An empty left row, and the title bar.
+        assert_eq!(window.hovered(at(target_at(1)), carried), None);
+        assert_eq!(window.hovered(at([300.0, 0.0]), carried), None);
     }
 
     #[test]

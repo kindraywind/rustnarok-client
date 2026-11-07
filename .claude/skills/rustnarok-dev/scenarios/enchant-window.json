@@ -1,5 +1,5 @@
 {
-  "about": "The enchant window (issue #115): Torus opens table 33. A Beam Claymore-OSAD takes Sharp1, upgrades to Sharp2, then resets; each page is shot. Last, the window opens empty and the item is taken from the list on the left. Closing the window lets Torus talk again.",
+  "about": "The enchant window (issue #115): Torus opens table 33. A Beam Claymore-OSAD takes Sharp1, upgrades to Sharp2, then resets; each page is shot. Last, the window opens empty and the item is taken from the list on the left. Pointing at a material's icon, an enchant row and a left row shows that item's name (enchant_hover), and the materials read carried over /needed. Closing the window lets Torus talk again.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -37,6 +37,11 @@
     {"move": [20, 700]},
     {"shot": "enchant-perfect", "crop": [160, 35, 835, 500]},
     {"click_on": {"pick_item": 4818}},
+    {"move": {"button": "material_25669"}}, {"wait": 200},
+    {"expect": {"state": {"enchant_hover": 25669}}},
+    {"shot": "enchant-material-hover", "crop": [160, 35, 835, 500]},
+    {"move": {"pick_item": 4818}}, {"wait": 200},
+    {"expect": {"state": {"enchant_hover": 4818}}},
     {"click_on": {"button": "action"}},
     {"wait_for": {"packet": "0x0b9f", "ms": 5000}},
     {"expect": {"chat": "Enchantment successful!", "inventory_has": [{"id": 600028, "cards": [0, 0, 0, 4818]}], "zeny": 700000, "windows_closed": ["Enchant"]}},
@@ -110,6 +115,9 @@
     {"wait": 200},
     {"move": [20, 700]},
     {"shot": "enchant-chosen", "crop": [160, 35, 835, 500]},
+    {"move": {"button": "target_600028"}}, {"wait": 200},
+    {"expect": {"state": {"enchant_hover": 600028}}},
+    {"shot": "enchant-target-hover", "crop": [160, 35, 835, 500]},
     {"click_on": {"button": "close"}},
     {"wait": 400},
     {"expect": {"windows_closed": ["Enchant"]}},

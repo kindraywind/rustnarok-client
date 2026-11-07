@@ -2478,7 +2478,19 @@ impl App {
             window.draw(shop_layer.esc(W::GradeEnchant), &assets.chrome, &assets.grade, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.enchant {
-            window.draw(shop_layer.esc(W::Enchant), &assets.chrome, &assets.enchant, icons, items, &game.inventory.items, messages, font, pointer);
+            window.draw(
+                shop_layer.esc(W::Enchant),
+                &mut tooltip,
+                (card_names, &game.char_names),
+                &assets.chrome,
+                &assets.enchant,
+                icons,
+                items,
+                &game.inventory.items,
+                messages,
+                font,
+                pointer,
+            );
         }
         if let Some(window) = &game.stylist {
             let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
