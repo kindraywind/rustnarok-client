@@ -1500,7 +1500,7 @@ impl App {
                 // The mirror's status ends with the warp.
                 game.boss = None;
                 game.materials = None;
-                game.close_deal_choice();
+                game.drop_deal_choice();
                 game.attack = None;
                 // The merge window closes without a word.
                 if matches!(game.pick, Some((_, Picking::Merge))) {
@@ -4199,8 +4199,7 @@ impl App {
                 game.deal_frame.open = true;
                 // Dev switch: answer at once.
                 if let Ok(deal) = std::env::var("RUSTNAROK_CLIENT_DEAL") {
-                    game.close_deal_choice();
-                    let _ = game.session.choose_deal(npc, deal.starts_with("sell"));
+                    game.choose_deal(deal.starts_with("sell"));
                 }
             }
             MapEvent::ShopGoods(goods) => {
