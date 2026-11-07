@@ -1634,6 +1634,8 @@ struct Game {
     companion_mark: Option<(u32, u32)>,
     /// Open windows from back to front.
     windows: Vec<Panel>,
+    /// Every window from the bottom up, as drawn: the last opened or pressed on top (`front`).
+    front: front::Front,
     /// Windows Esc closes, newest first. Pushed on open and on a press, dropped on close.
     esc_order: Vec<escape::WindowId>,
     /// The save-point question (messages[1548]) is up.
@@ -4390,13 +4392,42 @@ struct Layer<'a> {
     faded: f32,
     /// Where each window after the first starts (sprites, texts): it covers the text of the windows before it.
     windows: Vec<(usize, usize)>,
+    /// Where the layer sits among the windows (`front`), and each window after the first.
+    place: front::Place,
+    places: Vec<front::Place>,
 }
 
 impl Layer<'_> {
     /// Starts another window: what's drawn from here goes over everything drawn so far, text included.
     fn window(&mut self) -> &mut Self {
+        let place = self.place;
+        self.window_at(place)
+    }
+
+    /// Starts `top`'s window, which sits where `top` does among the windows (`front::place`).
+    fn window_of(&mut self, top: Top) -> &mut Self {
+        self.window_at(front::place(top))
+    }
+
+    /// Starts the window Esc knows as `id` (`window_of`).
+    fn esc(&mut self, id: escape::WindowId) -> &mut Self {
+        self.window_of(Top::Esc(id))
+    }
+
+    fn window_at(&mut self, place: front::Place) -> &mut Self {
         self.windows.push((self.sprites.len(), self.texts.len()));
+        self.places.push(place);
         self
+    }
+
+    /// A layer for `top`'s window.
+    fn of(top: Top) -> Self {
+        Self { place: front::place(top), ..Self::default() }
+    }
+
+    /// A layer over every window (`front::Place::Over`).
+    fn over() -> Self {
+        Self { place: front::Place::Over, ..Self::default() }
     }
 
     /// White text with a black outline, as the client draws names and chat over the world.
@@ -4970,23 +5001,41 @@ impl App {
     }
 }
 
-/// A layer with its text rasterized.
-type Composed<'a> = (Vec<Sprite<'a>>, Vec<(Texture, [f32; 2])>, f32);
+/// A layer's window with its text rasterized, and where it sits among the windows.
+type Composed<'a> = (Vec<Sprite<'a>>, Vec<(Texture, [f32; 2])>, f32, front::Place);
 
 /// Rasterizes each layer's text, one piece per window (see `Layer::window`).
 fn compose<'a>(gpu: &Gpu, font: &Font, layers: Vec<Layer<'a>>) -> Vec<Composed<'a>> {
     layers
         .into_iter()
         .flat_map(|layer| {
+            let places = std::iter::once(layer.place).chain(layer.places.iter().copied());
             window_spans(&layer.windows, layer.sprites.len(), layer.texts.len())
                 .into_iter()
-                .map(|(sprites, texts)| {
+                .zip(places)
+                .map(|((sprites, texts), place)| {
                     let texts = layer.texts[texts].iter().map(|(text, position, color)| (gpu.text(font, text, *color), *position)).collect();
-                    (layer.sprites[sprites].to_vec(), texts, layer.faded)
+                    (layer.sprites[sprites].to_vec(), texts, layer.faded, place)
                 })
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// Puts the windows in `front`'s order: the ones newly shown on top and the closed ones out of it first, then the
+/// pieces under the windows, the windows bottom up, and what's over them, each group in the order it was drawn.
+fn order_windows(composed: &mut [Composed], front: &mut front::Front) {
+    let mut shown = Vec::new();
+    for (sprites, texts, _, place) in composed.iter() {
+        if let front::Place::Window(key) = place
+            && !(sprites.is_empty() && texts.is_empty())
+            && !shown.contains(key)
+        {
+            shown.push(*key);
+        }
+    }
+    front.sync(&shown);
+    composed.sort_by_key(|piece| front.draw_key(piece.3));
 }
 
 /// Each window's sprites and texts, from where each starts (see `Layer::window`).
@@ -5008,7 +5057,7 @@ fn window_spans(starts: &[(usize, usize)], sprites: usize, texts: usize) -> Vec<
 fn flatten<'a>(composed: &'a [Composed<'a>]) -> (Vec<Sprite<'a>>, Vec<f32>) {
     let mut sprites = Vec::new();
     let mut alphas = Vec::new();
-    for (layer, texts, faded) in composed {
+    for (layer, texts, faded, _) in composed {
         let before = sprites.len();
         sprites.extend(layer.iter().copied().chain(texts.iter().map(|(texture, position)| (texture, *position, texture.size))));
         alphas.resize(sprites.len(), 1.0);

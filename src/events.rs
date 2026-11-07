@@ -649,6 +649,7 @@ impl App {
                     esc_order: Vec::new(),
                     save_asked: false,
                     apply_asked: false,
+                    front: front::Front::default(),
                     windows: vec![
                         Panel::Hotkeys,
                         Panel::BasicInfo,

@@ -22,6 +22,7 @@ pub(crate) mod enchant;
 pub(crate) mod equipment;
 pub(crate) mod escape;
 pub(crate) mod forge;
+pub(crate) mod front;
 pub(crate) mod game_settings;
 pub(crate) mod grade;
 pub(crate) mod guild;
