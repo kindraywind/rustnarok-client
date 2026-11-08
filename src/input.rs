@@ -2353,7 +2353,7 @@ impl App {
             if let Some((card, enchant)) = card {
                 game.show_card(card, enchant);
             }
-            // A right click on an item (inventory, storage, what's worn, a shop's row, a hotkey) describes it.
+            // A right click on an item (inventory, storage, what's worn, shop rows, hotkeys, the enchant window) describes it.
             let shop_row = match game.shop.as_ref().and_then(|shop| shop.hit(self.cursor)) {
                 Some(shop::Hit::Row(window, row)) => game.shop.as_ref().and_then(|shop| shop.offer_at(window, row)),
                 _ => None,
@@ -2366,8 +2366,11 @@ impl App {
             // A trade's, a letter's, a vending window's or a catalog result's item.
             let listed = game.listed_item_at(self.cursor);
             let names = (&self.messages[..], &self.card_names, &game.char_names);
+            let on_enchant = assets.is_some_and(|assets| game.top_at(self.cursor, assets.message.size) == Some(Top::Esc(escape::WindowId::Enchant)));
             let described = viewed.or_else(|| match game.window_at(self.cursor) {
                 _ if state != ElementState::Pressed || self.modifiers.alt_key() || card.is_some() => None,
+                // The enchant window's items: either list's rows, its picture, a material or a card.
+                _ if on_enchant => game.enchant.as_ref().and_then(|window| window.hovered(self.cursor, &game.inventory.items)),
                 _ if shop_row.is_some() => shop_row.map(shop::Offer::described),
                 _ if listed.is_some() => listed,
                 Some(Panel::Inventory) => match game.inventory.hit(self.cursor) {

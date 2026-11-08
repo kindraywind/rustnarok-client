@@ -246,15 +246,6 @@ struct Shown {
     materials: Vec<(u32, u32)>,
 }
 
-/// The item under the pointer, whose name the tooltip shows.
-#[derive(Debug, PartialEq)]
-pub enum Hovered<'b> {
-    /// A carried item: a row of the left list, or the one in the picture.
-    Carried(&'b InventoryItem),
-    /// An enchant row's, a material's or a card's.
-    Item(u32),
-}
-
 pub struct Assets {
     background: Texture,
     /// The page under the tabs: plain (Reset), blue (Random) and yellow (Perfect).
@@ -365,7 +356,8 @@ impl Enchant {
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = self.frame.local(cursor, HEIGHT)?;
         if let Some(hit) = self.frame.title_hit(local) {
-            return Some(Hit::Title(hit));
+            // It has no minimize button: that spot drags it like the rest of the title bar.
+            return Some(Hit::Title(if hit == TitleHit::Minimize { TitleHit::Title } else { hit }));
         }
         let page = (0..3).find(|&index| contains(tab_at(index), TAB_SIZE, local)).map(|index| Hit::Page(PAGES[index]));
         let sub = (0..2).find(|&index| self.tab.page() != Page::Reset && contains(sub_tab_at(index), SUB_TAB_SIZE, local)).map(|index| Hit::Sub(index == 1));
@@ -376,7 +368,10 @@ impl Enchant {
     }
 
     /// The item under the pointer: anywhere on a row of either list, or on the picture, a material's icon or a card's.
-    pub fn hovered<'b>(&self, cursor: [f32; 2], carried: &'b [InventoryItem]) -> Option<Hovered<'b>> {
+    /// The tooltip names it and a right press describes it. A carried one (a left row, the picture) is that item; the
+    /// rest are plain items of their ID.
+    pub fn hovered(&self, cursor: [f32; 2], carried: &[InventoryItem]) -> Option<InventoryItem> {
+        let plain = |id| Some(InventoryItem { id, identified: true, ..Default::default() });
         let local = self.frame.local(cursor, HEIGHT)?;
         if self.frame.title_hit(local).is_some() {
             return None;
@@ -384,23 +379,23 @@ impl Enchant {
         let on = |at: [f32; 2], size: [f32; 2]| contains(at, size, local);
         let targets = self.targets(carried);
         if let Some(row) = (0..TARGETS_SHOWN).find(|&row| on(target_at(row), TARGET_SIZE)) {
-            return targets.get(self.target_scroll + row).map(|&item| Hovered::Carried(item));
+            return targets.get(self.target_scroll + row).map(|&item| item.clone());
         }
         let item = self.chosen(carried);
         if on(PICTURE_AT, PICTURE_SIZE) {
-            return item.map(Hovered::Carried);
+            return item.cloned();
         }
         if let Some(row) = (0..VISIBLE).find(|&row| on(row_at(row), ROW_SIZE)) {
-            return self.rows(item).get(self.scroll + row).map(|row| Hovered::Item(row.result.unwrap_or(row.name)));
+            return self.rows(item).get(self.scroll + row).and_then(|row| plain(row.result.unwrap_or(row.name)));
         }
         let materials = self.cost(item).map(|(_, materials)| materials).unwrap_or_default();
         if let Some(&(id, _)) =
             materials.iter().take(8).enumerate().find(|&(index, _)| on(offset(material_at(index), MATERIAL_ICON), ICON_SIZE)).map(|(_, material)| material)
         {
-            return Some(Hovered::Item(id));
+            return plain(id);
         }
         let cards = item.map_or([0; 4], |item| item.cards);
-        (0..4).find(|&slot| cards[slot] != 0 && on(offset(socket_at(slot), CARD_ICON), ICON_SIZE)).map(|slot| Hovered::Item(cards[slot]))
+        (0..4).find(|&slot| cards[slot] != 0 && on(offset(socket_at(slot), CARD_ICON), ICON_SIZE)).and_then(|slot| plain(cards[slot]))
     }
 
     pub fn click(&mut self, hit: Hit, carried: &[InventoryItem], slots: impl Fn(u32) -> u8, count: impl FnMut(u32) -> u32, zeny: u32) -> Option<Action> {
@@ -775,12 +770,7 @@ impl Enchant {
             layer.texts.push((note, at(NOTE_AT), BLACK));
         }
         // The name of the item under the pointer, over it, in the item's colour, with its options' count.
-        let hovered = match self.hovered(pointer.0, carried) {
-            Some(Hovered::Carried(item)) => Some(item.clone()),
-            Some(Hovered::Item(id)) => Some(InventoryItem { id, identified: true, ..Default::default() }),
-            None => None,
-        };
-        if let Some(item) = hovered {
+        if let Some(item) = self.hovered(pointer.0, carried) {
             let (cards, makers) = naming;
             let name = inventory::full_name(items, cards, messages, makers, &item, true);
             let text = inventory::option_text(messages, &name, &item);
@@ -946,19 +936,30 @@ mod tests {
         window.tab = Tab::Perfect;
         let carried = std::slice::from_ref(&item);
         let at = |local: [f32; 2]| window.frame.at(offset(local, [5.0, 5.0]));
+        let id = |window: &Enchant, local: [f32; 2]| window.hovered(at(local), carried).map(|item| item.id);
         // Anywhere on a left row, and the picture: the carried item itself.
-        assert_eq!(window.hovered(at(offset(target_at(0), [150.0, 30.0])), carried), Some(Hovered::Carried(&item)));
-        assert_eq!(window.hovered(at(PICTURE_AT), carried), Some(Hovered::Carried(&item)));
+        assert_eq!(window.hovered(at(offset(target_at(0), [150.0, 30.0])), carried), Some(item.clone()));
+        assert_eq!(window.hovered(at(PICTURE_AT), carried), Some(item.clone()));
         // An enchant row, a material's icon (not the rest of its box) and a card's icon (not an empty socket).
-        assert_eq!(window.hovered(at(offset(row_at(0), [100.0, 0.0])), carried), Some(Hovered::Item(4818)));
+        assert_eq!(id(&window, offset(row_at(0), [100.0, 0.0])), Some(4818));
         window.tab = Tab::Normal;
-        assert_eq!(window.hovered(at(offset(material_at(0), MATERIAL_ICON)), carried), Some(Hovered::Item(25669)));
+        assert_eq!(id(&window, offset(material_at(0), MATERIAL_ICON)), Some(25669));
         assert_eq!(window.hovered(at(offset(material_at(0), [50.0, 30.0])), carried), None);
-        assert_eq!(window.hovered(at(offset(socket_at(3), CARD_ICON)), carried), Some(Hovered::Item(4818)));
+        assert_eq!(id(&window, offset(socket_at(3), CARD_ICON)), Some(4818));
         assert_eq!(window.hovered(at(offset(socket_at(0), CARD_ICON)), carried), None);
         // An empty left row, and the title bar.
         assert_eq!(window.hovered(at(target_at(1)), carried), None);
         assert_eq!(window.hovered(at([300.0, 0.0]), carried), None);
+    }
+
+    #[test]
+    fn the_whole_title_bar_drags_it_but_not_the_rest() {
+        let window = Enchant::open(33, table());
+        let at = |local: [f32; 2]| window.frame.at(offset(local, [5.0, 5.0]));
+        assert_eq!(window.hit(at([300.0, 0.0])), Some(Hit::Title(TitleHit::Title)));
+        assert_eq!(window.hit(at(window.frame.minimize_button())), Some(Hit::Title(TitleHit::Title)));
+        assert_eq!(window.hit(at(window.frame.close_button())), Some(Hit::Title(TitleHit::Close)));
+        assert_eq!(window.hit(at([300.0, 300.0])), Some(Hit::Window));
     }
 
     #[test]
