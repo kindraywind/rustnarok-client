@@ -2329,10 +2329,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The status icon tooltip's lines while one shows.
     state["status_tip"] = json!(game.status_tip);
     // The item whose name the enchant window's tooltip shows.
-    state["enchant_hover"] = json!(game.enchant.as_ref().and_then(|window| window.hovered(app.cursor, &game.inventory.items)).map(|hovered| match hovered {
-        crate::enchant::Hovered::Carried(item) => item.id,
-        crate::enchant::Hovered::Item(id) => id,
-    }));
+    state["enchant_hover"] = json!(game.enchant.as_ref().and_then(|window| window.hovered(app.cursor, &game.inventory.items)).map(|item| item.id));
     orbs(&mut state["player"], None);
     grade(&mut state, play::mode(), game.quest_window.frame.open, crate::screen());
     state
