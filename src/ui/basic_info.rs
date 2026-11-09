@@ -171,10 +171,11 @@ pub fn zeny_text(zeny: i64) -> String {
     format!("Zeny : {}{grouped}", if zeny < 0 { "-" } else { "" })
 }
 
-/// The exp bar's hover text: "%.1f %%" to a tenth, rounded down; none at the top level (no next, or 99999999) or
-/// past the next.
-pub fn exp_tip(exp: i64, next: i64) -> Option<String> {
-    (next > 0 && next != 99_999_999 && exp <= next).then(|| format!("{:.1} %", (exp * 1000 / next) as f64 / 10.0))
+/// The exp bar's hover text: "%.1f %%" to a tenth (or, with the Extras' exp to 0.01%, `places` 2, a hundredth),
+/// rounded down; none at the top level (no next, or 99999999) or past the next.
+pub fn exp_tip(exp: i64, next: i64, places: u32) -> Option<String> {
+    let scale = 10_i64.pow(places + 2);
+    (next > 0 && next != 99_999_999 && exp <= next).then(|| format!("{:.*} %", places as usize, (exp * scale / next) as f64 * 100.0 / scale as f64))
 }
 
 /// The mini window's first line, and the shorter one when that's too wide: levels, job and base exp to a tenth.
@@ -349,6 +350,8 @@ pub struct Info<'a> {
     pub overweight: u32,
     /// The shortcuts, for the keys the menu buttons name.
     pub keys: Option<&'a Shortcuts>,
+    /// The Extras' exp to 0.01%: the exp bars' hover to a hundredth of a percent.
+    pub exp_hundredths: bool,
 }
 
 impl BasicInfo {
@@ -634,7 +637,7 @@ impl BasicInfo {
                 layer.sprites.push((&assets.exp_fill, at(offset(corner, [1.0, 1.0])), [filled, EXP_SIZE[1] - 2.0]));
                 // Resting on the bar shows how far along it is, 16 px above its corner.
                 if contains(at(corner), EXP_SIZE, cursor)
-                    && let Some(tip) = exp_tip(value(exp), next)
+                    && let Some(tip) = exp_tip(value(exp), next, if info.exp_hundredths { 2 } else { 1 })
                 {
                     crate::window::tooltip(tooltip, chrome, font, &tip, at(offset(corner, [0.0, -16.0])), [255; 3]);
                 }
@@ -776,12 +779,16 @@ mod tests {
     }
 
     #[test]
-    fn exp_bar_tip_is_a_tenth_of_a_percent_rounded_down() {
-        assert_eq!(exp_tip(4235, 10_000).as_deref(), Some("42.3 %"));
-        assert_eq!(exp_tip(0, 500).as_deref(), Some("0.0 %"));
-        assert_eq!(exp_tip(500, 500).as_deref(), Some("100.0 %"));
+    fn exp_bar_tip_is_a_tenth_or_a_hundredth_of_a_percent_rounded_down() {
+        assert_eq!(exp_tip(4235, 10_000, 1).as_deref(), Some("42.3 %"));
+        assert_eq!(exp_tip(0, 500, 1).as_deref(), Some("0.0 %"));
+        assert_eq!(exp_tip(500, 500, 1).as_deref(), Some("100.0 %"));
+        // The Extras' hundredths, rounded down too.
+        assert_eq!(exp_tip(42_359, 100_000, 2).as_deref(), Some("42.35 %"));
+        assert_eq!(exp_tip(1, 3, 2).as_deref(), Some("33.33 %"));
+        assert_eq!(exp_tip(2_000_000_000, 2_000_000_000, 2).as_deref(), Some("100.00 %"));
         // None at the top level or past the next.
-        assert_eq!([exp_tip(5, 0), exp_tip(5, 99_999_999), exp_tip(600, 500)], [None, None, None]);
+        assert_eq!([exp_tip(5, 0, 1), exp_tip(5, 99_999_999, 1), exp_tip(600, 500, 2)], [None, None, None]);
     }
 
     #[test]

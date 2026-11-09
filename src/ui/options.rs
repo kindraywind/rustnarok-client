@@ -33,12 +33,13 @@ pub struct GraphicsSettings {
     pub quick_slot: bool,
     /// This client's extras, none of them in the game and all off at first (the Extras tab): a monster's HP on its
     /// bar, its level after its name, the camera going out much further, an item's random options in its inventory
-    /// name box, and the seconds left on a cooling skill's hotkey.
+    /// name box, the seconds left on a cooling skill's hotkey, and the exp bar's hover to a hundredth of a percent.
     pub monster_hp: bool,
     pub monster_level: bool,
     pub far_zoom: bool,
     pub item_options: bool,
     pub cooldown_numbers: bool,
+    pub exp_hundredths: bool,
     /// The font the text is drawn in (Extras; `text::choices`), Tahoma at first.
     pub font: String,
 }
@@ -61,6 +62,7 @@ impl Default for GraphicsSettings {
             far_zoom: false,
             item_options: false,
             cooldown_numbers: false,
+            exp_hundredths: false,
             font: DEFAULT_FONT.into(),
         }
     }
@@ -105,6 +107,7 @@ impl GraphicsSettings {
             cooldown_numbers: next(false),
             extended_damage: next(true),
             quick_slot: next(true),
+            exp_hundredths: next(false),
             font: Some(font.trim()).filter(|font| !font.is_empty()).unwrap_or(DEFAULT_FONT).to_owned(),
         }
     }
@@ -126,6 +129,7 @@ impl GraphicsSettings {
             self.cooldown_numbers,
             self.extended_damage,
             self.quick_slot,
+            self.exp_hundredths,
         ]
         .map(|on| if on { "1" } else { "0" })
         .join(" ")
@@ -186,6 +190,7 @@ mod tests {
             cooldown_numbers: true,
             extended_damage: false,
             quick_slot: false,
+            exp_hundredths: true,
             font: "MS Gothic (Japan)".into(),
         };
         settings.save_to(&path);

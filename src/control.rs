@@ -2197,7 +2197,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "music": app.sound.on[0], "music_volume": app.sound.volume[0], "effects_sound": app.sound.on[1], "effects": app.graphics.effects_on,
         "aura_off": app.graphics.aura_off, "tab": game.settings_window.as_ref().map(|window| window.tab),
         "monster_hp": app.graphics.monster_hp, "monster_level": app.graphics.monster_level, "far_zoom": app.graphics.far_zoom,
-        "item_options": app.graphics.item_options, "cooldown_numbers": app.graphics.cooldown_numbers,
+        "item_options": app.graphics.item_options, "cooldown_numbers": app.graphics.cooldown_numbers, "exp_hundredths": app.graphics.exp_hundredths,
         "extended_damage": app.graphics.extended_damage, "font": app.graphics.font,
         "font_index": rustnarok_client::text::index_of(rustnarok_client::text::choices(), &app.graphics.font),
     });

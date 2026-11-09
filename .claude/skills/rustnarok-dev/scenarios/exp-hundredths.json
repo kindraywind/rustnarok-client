@@ -1,0 +1,118 @@
+{
+  "about": "Exp to 0.01% (Game Settings' Extras): resting on the Basic Info window's base exp bar shows how far along it is to a tenth of a percent, as the game does (a Novice with 250 of 548 exp: 45.6 %); with the switch on, to a hundredth (45.62 %), both rounded down. Off at first; switched on here. Ends with the exp back at 0.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@set BaseExp 250"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "move": [
+        140,
+        92
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "exp-hover-tenth",
+      "crop": [
+        0,
+        40,
+        240,
+        110
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings_tab:5"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "exp-hundredths-extras",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "switch:5"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.exp_hundredths": true
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "settings_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        140,
+        92
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "exp-hover-hundredth",
+      "crop": [
+        0,
+        40,
+        240,
+        110
+      ],
+      "threshold": 5
+    },
+    {
+      "say": "@set BaseExp 0"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}
