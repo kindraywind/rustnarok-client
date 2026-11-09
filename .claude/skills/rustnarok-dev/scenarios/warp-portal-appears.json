@@ -1,0 +1,16 @@
+{
+  "about": "A warp portal that appears while the player is on the map shows at once (a timed dungeon's entrance opening). @hidenpc / @shownpc run rathena's disablenpc / enablenpc, which sends the warp's entry first still hidden, then again shown. Prontera's south exit (prt001 at 156, 22) seen from 156, 30.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 156 30"}, {"settle": 2500},
+    {"move": [1000, 300]},
+    {"expect": {"unit": {"name": "prt001", "portal_rings": 8}}},
+    {"say": "@hidenpc prt001"}, {"wait": 1500},
+    {"expect": {"no_unit": "prt001"}},
+    {"shot": "warp-portal-hidden", "crop": [330, 560, 360, 208], "threshold": 5},
+    {"say": "@shownpc prt001"}, {"wait": 1500},
+    {"expect": {"unit": {"name": "prt001", "portal_rings": 8}}},
+    {"shot": "warp-portal-shown", "crop": [330, 560, 360, 208], "threshold": 5}
+  ]
+}

@@ -207,6 +207,23 @@ fn reads_the_second_outfit_body() {
     assert_eq!(body_of(&entry(ZC_NOTIFY_STANDENTRY, 82, 1)), 1);
     assert_eq!(body_of(&entry(ZC_NOTIFY_NEWENTRY, 81, 4332)), 4332);
     assert_eq!(body_of(&entry(ZC_NOTIFY_MOVEENTRY, 88, 4344)), 4344);
+}
+
+#[test]
+fn reads_a_units_option() {
+    // effectState, the u32 at 19 after body and health state. A warp shown with enablenpc comes twice: still hidden
+    // (OPTION_HIDE), then with 0.
+    let entry = |option: u32| {
+        let mut packet = vec![0u8; 108];
+        packet[..2].copy_from_slice(&ZC_NOTIFY_STANDENTRY.to_le_bytes());
+        packet[23..25].copy_from_slice(&45u16.to_le_bytes());
+        packet[19..23].copy_from_slice(&option.to_le_bytes());
+        packet
+    };
+    for option in [2, 0] {
+        let Some(MapEvent::Unit(unit)) = decode_map_packet(&entry(option)) else { panic!() };
+        assert_eq!((unit.job, unit.option), (45, option));
+    }
 
     // Character list: the i16 at 88, between hair and weapon.
     let mut info = vec![0u8; CHARACTER_INFO_SIZE];
