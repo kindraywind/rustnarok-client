@@ -1,5 +1,5 @@
 {
-  "about": "Player trade as the game does it (issue #391): the first asks the second through the right-click menu (\"Request a deal with\"). The second's request box shows the C-Code and level, and Esc leaves it up (it opens the game menu instead; a second Esc shuts that). On OK the deal opens on both sides without opening the inventory, and Esc leaves it open too. Double-clicking a sword while trading says 1699. Cancel waits for the server's 0x00ee, which closes both windows with \"The deal has been canceled.\". A refused request says \"The deal has been rejected.\". Under /nt the second refuses at once, with no box.",
+  "about": "Player trade as the game does it (issue #391): the first asks the second through the right-click menu (\"Request a deal with\"). The second's request box shows the C-Code and level, and Esc leaves it up (it opens the game menu instead; a second Esc shuts that). On OK the deal opens on both sides without opening the inventory, and Esc leaves it open too. Double-clicking a sword while trading says 1699. Cancel waits for the server's 0x00ee, which closes both windows with \"The deal has been canceled.\". A refused request says \"The deal has been rejected.\". Under /nt the second refuses at once, with no box. Typed `/deal <name>` from 5 cells away (more than 2), after `@adjgroup 0` for this session (a GM may deal from any distance), says \"You are too far away from the person to trade.\" and both stay on the map (issue #1266: older servers answer that with 0x00e7, which used to drop the connection; this server answers with 0x01f5).",
   "account": "",
   "slot": 0,
   "second": {"account": "2", "slot": 0},
@@ -45,6 +45,12 @@
     {"wait_for": {"packet": "0x01f5", "ms": 5000}}, {"wait": 300},
     {"as": "second", "expect": {"windows_closed": ["TradeAsked", "Trade"]}},
     {"as": "second", "type": "/nt"}, {"as": "second", "key": "Enter"},
-    {"say": "@delitem 1101 1"}, {"wait": 300}
+    {"say": "@delitem 1101 1"}, {"wait": 300},
+    {"as": "second", "say": "@warp prontera 156 185"}, {"as": "second", "settle": 1500},
+    {"say": "@adjgroup 0"}, {"wait": 500},
+    {"type": "/deal {second}"}, {"key": "Enter"},
+    {"wait_for": {"packet": "0x01f5", "ms": 5000}}, {"wait": 300},
+    {"expect": {"chat": "You are too far away from the person to trade.", "map": "prontera.gat", "windows_closed": ["Trade"]}},
+    {"as": "second", "expect": {"map": "prontera.gat", "windows_closed": ["TradeAsked", "Trade"]}}
   ]
 }

@@ -2869,6 +2869,23 @@ fn reads_the_first_stand_entry() {
 }
 
 #[test]
+fn reads_the_old_trade_answer() {
+    // 00e7: result.B, what rathena before #8581 answers a deal request that fails at once (#1266). It used to be an
+    // unknown packet, which dropped the connection; now it reads as the answer, and the packet after it still reads.
+    assert_eq!(packet_length(0x00E7), Some(3));
+    let mut stream = vec![0xE7, 0x00, 0x00];
+    stream.extend_from_slice(&ZC_ACK_EXCHANGE_ITEM.to_le_bytes());
+    stream.push(5);
+    stream.extend_from_slice(&150_001u32.to_le_bytes());
+    stream.extend_from_slice(&42u16.to_le_bytes());
+    let mut reader = &stream[..];
+    let old = read_packet(&mut reader).unwrap();
+    assert!(matches!(decode_map_packet(&old), Some(MapEvent::TradeAnswer { result: 0, id: 0, level: 0 })));
+    let new = read_packet(&mut reader).unwrap();
+    assert!(matches!(decode_map_packet(&new), Some(MapEvent::TradeAnswer { result: 5, id: 150_001, level: 42 })));
+}
+
+#[test]
 fn decodes_notify_move() {
     // 0086: id.L, move data (start, destination, sub-cell nibbles), start tick.L. rathena never sends it, other servers do.
     assert_eq!(packet_length(0x0086), Some(16));
