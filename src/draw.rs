@@ -2023,6 +2023,7 @@ impl App {
                         new_job_level: game.level_ups.job,
                         overweight: game.overweight,
                         keys: Some(&self.keybinds),
+                        exp_hundredths: self.graphics.exp_hundredths,
                     };
                     game.basic_info.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.basic_info, font, messages, &info, pointer.0);
                 }
