@@ -945,6 +945,9 @@ impl App {
                     actor.look = Some(look);
                 }
                 actor.guild = unit.guild;
+                // A known unit's entry again can bring it out of hiding: rathena's enablenpc and hideoffnpc show a warp
+                // portal by sending its entry again, not by an option change.
+                actor.hide_option = unit.option;
                 actor.cloaked = unit.option & actor::UNSEEN_OPTIONS != 0;
                 // Our own entry is the player actor. A copy in the unit list doesn't grow a second falcon or warg.
                 if unit.id == game.account_id {
