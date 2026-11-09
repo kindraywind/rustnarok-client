@@ -41,6 +41,10 @@ const MENU_AT: f32 = 9.0;
 const MENU_BUTTONS: [f32; 2] = [9.0, 19.0];
 const MENU_STEP: [f32; 2] = [42.0, 43.0];
 const MENU_BUTTON_SIZE: [f32; 2] = [32.0, 34.0];
+/// The "new" marks' pictures are taller, the N above the rest: the marked toggle (219 by 13) goes 4 px higher, a
+/// marked button (35 by 40) 6 px higher.
+const NEW_TOGGLE_RISE: f32 = 4.0;
+const NEW_BUTTON_RISE: f32 = 6.0;
 const MENU_COLUMNS: usize = 5;
 const BASIC_INFO_MESSAGE: usize = 238;
 const EXP_BORDER: [u8; 4] = [0xAF, 0xAF, 0xAF, 0xFF];
@@ -675,28 +679,35 @@ impl BasicInfo {
         let mut tip = None;
         // The menu toggle, and the menu when it's open.
         let marked = info.unread_mail || info.reward_waiting || info.new_items || info.new_level || info.new_job_level;
-        let toggle = match &assets.toggle_new {
-            Some(new) if !self.menu_open && marked => new,
-            _ => &assets.toggles[usize::from(self.menu_open)],
+        // The marked toggle (219 by 13) has its N above the bar: drawn 4 px higher, at its own size.
+        let (toggle, top, size) = match &assets.toggle_new {
+            Some(new) if !self.menu_open && marked => (new, self.toggle_top() - NEW_TOGGLE_RISE, new.size),
+            _ => (&assets.toggles[usize::from(self.menu_open)], self.toggle_top(), [self.width, TOGGLE_HEIGHT]),
         };
-        layer.sprites.push((toggle, at([0.0, self.toggle_top()]), [self.width, TOGGLE_HEIGHT]));
+        layer.sprites.push((toggle, at([0.0, top]), size));
         if self.menu_open {
             layer.sprites.push((&assets.menu, at([0.0, self.menu_top()]), assets.menu.size));
             for (place, name) in visible().into_iter().enumerate() {
+                let new = match name {
+                    "mail" if info.unread_mail => assets.mail_new.as_ref(),
+                    "achievement" if info.reward_waiting => assets.achievement_new.as_ref(),
+                    "item" if info.new_items => assets.item_new.as_ref(),
+                    "status" if info.new_level => assets.status_new.as_ref(),
+                    "skill" if info.new_job_level => assets.skill_new.as_ref(),
+                    _ => None,
+                };
                 let icon = assets.icons.get(name).and_then(Option::as_ref);
                 let icon = match name {
-                    "mail" if info.unread_mail => assets.mail_new.as_ref().or(icon),
-                    "achievement" if info.reward_waiting => assets.achievement_new.as_ref().or(icon),
-                    "item" if info.new_items => assets.item_new.as_ref().or(icon),
-                    "status" if info.new_level => assets.status_new.as_ref().or(icon),
                     "status" if self.doram => assets.status_doram.as_ref().or(icon),
-                    "skill" if info.new_job_level => assets.skill_new.as_ref().or(icon),
                     _ => icon,
                 };
+                // A marked button (35 by 40) has its N above the icon: drawn 6 px higher.
+                let (icon, rise) = new.map_or((icon, 0.0), |new| (Some(new), NEW_BUTTON_RISE));
                 if let Some(icon) = icon {
-                    layer.sprites.push((icon, at(self.button_corner(place)), icon.size));
+                    let corner = at(offset(self.button_corner(place), [0.0, -rise]));
+                    layer.sprites.push((icon, corner, icon.size));
                     if UNAVAILABLE.contains(&name) {
-                        layer.sprites.push((&chrome.dimmed, at(self.button_corner(place)), icon.size));
+                        layer.sprites.push((&chrome.dimmed, corner, icon.size));
                     }
                 }
                 // Its name and the key that opens its window, 20 px above it.
