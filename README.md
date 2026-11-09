@@ -30,8 +30,9 @@ player's own game data at runtime. As good as the original, and better where it 
 > This is a learning project: a study of how a game client is built, not a product.
 
 > [!NOTE]
-> **Vanilla first.** rustnarok-client aims to play as close to the unmodded game as it can. Mods and extras come
-> later, apart from the main client. Want something else now? Fork it and make it your own.
+> **Vanilla first.** rustnarok-client aims to play as close to the unmodded game as it can. A few small
+> [extras](#-extras) the game doesn't have are switches in Game Settings, all off until you turn them on; bigger mods
+> come later, apart from the main client. Want something else now? Fork it and make it your own.
 
 ---
 
@@ -110,6 +111,22 @@ against `main`.
 
 Window places are measured over the client's own bitmaps where they show them. Where they don't, they are estimates
 marked `ponytail:` in the code, to calibrate against screenshots of the real client.
+
+## 🧩 Extras
+
+Options the game doesn't have, on the **Extras** tab of Game Settings (Esc → Game Settings). Every switch is off until
+you turn it on, so the client plays as the game does by default.
+
+| Option | What it does |
+|---|---|
+| **Monster HP** | A hurt monster's HP in numbers under its bar. |
+| **Monster level** | A monster's level after its name. |
+| **Far zoom** | The camera zooms out much further. |
+| **Item options** | An item's random options in its name box. |
+| **Cooldown numbers** | The seconds left on a cooling skill's hotkey. |
+| **Exp to 0.01%** | The exp bar's hover shows two decimals. |
+| **Kill exp** | The base and job exp each kill gives, rising over the monster. |
+| **Font** | The font all text is drawn in: Tahoma, or another found in the game's `System/Font` folder or the system's fonts. |
 
 ## 🤖 An AI plays it
 
