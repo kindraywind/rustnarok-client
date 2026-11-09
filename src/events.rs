@@ -674,6 +674,7 @@ impl App {
                     .chain([Panel::StorageSearch])
                     .collect(),
                     damages: Vec::new(),
+                    exp_shown: Default::default(),
                     status,
                     unit_hp: HashMap::new(),
                     auto_talk: std::env::var("RUSTNAROK_CLIENT_TALK").ok().map(|talk| talk.split(':').next().unwrap_or_default().to_owned()),
@@ -1378,6 +1379,12 @@ impl App {
                     let at = game.world.cell_position(actor.position(Instant::now()));
                     game.effects.play(gpu, grf, table, effect, effects::Target::Ground, at, Instant::now());
                 }
+                if reason == 1
+                    && game.units.get(&id).is_some_and(|unit| unit.kind == MONSTER)
+                    && let Some(at) = game.feet(id, control::now())
+                {
+                    game.exp_shown.died(Instant::now(), at, lands);
+                }
                 let dying = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 match (reason, dying) {
                     (1, Some(actor)) => {
@@ -1908,6 +1915,12 @@ impl App {
             MapEvent::MvpExp(exp) => {
                 let [before, after] = MVP_EXP.map(|id| self.messages.get(id).cloned().unwrap_or_default());
                 game.chat_line_kind(format!("{before}{exp}{after}"), CHAT_ITEM, chat::Kind::Experience);
+            }
+            // A kill's gain, waiting for its monster's death (below) to float over its spot.
+            MapEvent::Exp { kind, amount, quest } => {
+                if amount > 0 && !quest {
+                    game.exp_shown.gained(Instant::now(), kind == net::STATUS_JOB_EXP, amount);
+                }
             }
             MapEvent::OverweightPercent(percent) => game.overweight = percent,
             MapEvent::GuildMemberPlace { account, cell: Some(cell) } => {

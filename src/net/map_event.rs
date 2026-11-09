@@ -529,6 +529,13 @@ pub enum MapEvent {
     /// The MVP's reward: an item, or EXP; or a reward too heavy to take.
     MvpItem(u32),
     MvpExp(u32),
+    /// Exp the player gained (ZC_NOTIFY_EXP2): `kind` is `STATUS_BASE_EXP` or `STATUS_JOB_EXP`; negative when lost; `quest` from
+    /// a quest.
+    Exp {
+        kind: u16,
+        amount: i64,
+        quest: bool,
+    },
     MvpOverweight,
     /// A guild member's cell on this map, for the minimap; none when they left it (ZC_NOTIFY_POSITION_TO_GUILDM).
     GuildMemberPlace {

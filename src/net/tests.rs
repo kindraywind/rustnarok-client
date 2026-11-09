@@ -739,6 +739,16 @@ fn decodes_item_announcements() {
 }
 
 #[test]
+fn decodes_exp_gained() {
+    // A kill's base exp, then its job exp, as a server sends them.
+    let base = [0xCC, 0x0A, 0x14, 0x94, 0x1E, 0x00, 0x36, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0x00, 0x00];
+    assert_eq!(packet_length(ZC_NOTIFY_EXP2), Some(base.len() as i32));
+    let Some(MapEvent::Exp { kind: STATUS_BASE_EXP, amount: 54, quest: false }) = decode_map_packet(&base) else { panic!() };
+    let job = [0xCC, 0x0A, 0x14, 0x94, 0x1E, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x00, 0x01, 0x00];
+    let Some(MapEvent::Exp { kind: STATUS_JOB_EXP, amount: -1, quest: true }) = decode_map_packet(&job) else { panic!() };
+}
+
+#[test]
 fn decodes_mvp() {
     let packet = |id: u16, value: u32| [id.to_le_bytes().as_slice(), &value.to_le_bytes()].concat();
     let Some(MapEvent::Mvp(2_000_002)) = decode_map_packet(&packet(ZC_MVP, 2_000_002)) else { panic!() };

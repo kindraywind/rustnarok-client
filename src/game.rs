@@ -1858,7 +1858,7 @@ impl Game {
     }
 
     /// Where a unit's feet are drawn now.
-    fn feet(&self, unit: u32, now: Instant) -> Option<world::Vector> {
+    pub(crate) fn feet(&self, unit: u32, now: Instant) -> Option<world::Vector> {
         let actor = if unit == self.account_id { Some(&self.player) } else { self.units.get(&unit) }?;
         Some(self.world.cell_position(actor.position(now)))
     }
