@@ -158,6 +158,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_MSG_STATE_CHANGE => MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: 0, left_ms: 0, value: 0 },
         ZC_LONGLONGPAR_CHANGE => MapEvent::Status { id: u16_at(2), value: i64::from_le_bytes(packet[4..12].try_into().unwrap()) },
+        ZC_NOTIFY_EXP2 => MapEvent::Exp { kind: u16_at(14), amount: i64::from_le_bytes(packet[6..14].try_into().unwrap()), quest: u16_at(16) != 0 },
         ZC_HP_INFO => MapEvent::UnitHp { id: u32_at(2), hp: u32_at(6) as i32, max_hp: u32_at(10) as i32 },
         ZC_ATTACK_RANGE => MapEvent::AttackRange(u16_at(2)),
         ZC_LONGPAR_CHANGE => MapEvent::Status { id: u16_at(2), value: i64::from(u32_at(4) as i32) },

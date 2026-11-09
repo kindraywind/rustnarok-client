@@ -1643,6 +1643,8 @@ struct Game {
     /// The skill window's Apply asks first (`skills::APPLY_QUESTION`).
     apply_asked: bool,
     damages: Vec<Damage>,
+    /// Kills' base and job exp, over where the monsters died.
+    exp_shown: exp_shown::ExpShown,
     /// The player's own status values (HP, SP, ...) by rathena SP_* ID.
     status: HashMap<u16, i64>,
     /// Monsters' HP, when the server shares it: (hp, max hp).

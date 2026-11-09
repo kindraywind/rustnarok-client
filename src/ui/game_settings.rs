@@ -80,13 +80,14 @@ const SWITCHES: [(Worded, Worded); 5] = [
 /// the quick slot window. Its words are ours; the game's come from GameSettings.lub, which this data lacks.
 const CONTROL_ROWS: [(&str, &str); 1] = [("Quick Slots", "The two quick slots in a window of their own")];
 /// The Extras page's rows, laid out as the Effect page's: title and description (`extras`, `extra`).
-const EXTRA_ROWS: [(&str, &str); 6] = [
+const EXTRA_ROWS: [(&str, &str); 7] = [
     ("Monster HP", "A hurt monster's HP in numbers under its bar"),
     ("Monster level", "A monster's level after its name"),
     ("Far zoom", "The camera goes out much further"),
     ("Item options", "An item's random options in its name box"),
     ("Cooldown numbers", "Seconds left on a cooling skill's hotkey"),
     ("Exp to 0.01%", "The exp bar's hover with two decimals"),
+    ("Kill exp", "Base and job exp over each monster killed"),
 ];
 /// The Extras row under the switches: the font's name between a left and a right arrow, which step through the fonts
 /// found (`text::choices`).
@@ -476,9 +477,17 @@ pub fn switch_on(graphics: &GraphicsSettings, row: usize) -> bool {
 }
 
 /// The Extras page's switches, in its rows' order: monster HP, monster level, far zoom, item options, cooldown numbers,
-/// exp to a hundredth.
-fn extras(graphics: &GraphicsSettings) -> [bool; 6] {
-    [graphics.monster_hp, graphics.monster_level, graphics.far_zoom, graphics.item_options, graphics.cooldown_numbers, graphics.exp_hundredths]
+/// exp to a hundredth, exp over monsters.
+fn extras(graphics: &GraphicsSettings) -> [bool; 7] {
+    [
+        graphics.monster_hp,
+        graphics.monster_level,
+        graphics.far_zoom,
+        graphics.item_options,
+        graphics.cooldown_numbers,
+        graphics.exp_hundredths,
+        graphics.kill_exp,
+    ]
 }
 
 fn extra(graphics: &mut GraphicsSettings, row: usize) -> &mut bool {
@@ -488,7 +497,8 @@ fn extra(graphics: &mut GraphicsSettings, row: usize) -> &mut bool {
         2 => &mut graphics.far_zoom,
         3 => &mut graphics.item_options,
         4 => &mut graphics.cooldown_numbers,
-        _ => &mut graphics.exp_hundredths,
+        5 => &mut graphics.exp_hundredths,
+        _ => &mut graphics.kill_exp,
     }
 }
 
@@ -631,12 +641,12 @@ mod tests {
     fn extras_start_off_and_switch_on_their_own_page() {
         let mut window = GameSettings::new([1024.0, 768.0], false);
         let (mut sound, mut graphics) = (Settings::default(), GraphicsSettings::default());
-        assert_eq!(extras(&graphics), [false; 6]);
+        assert_eq!(extras(&graphics), [false; 7]);
         window.click(Hit::Tab(EXTRAS), &mut sound, &mut graphics);
         let corner = window.frame.position;
         let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
         assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 2.0 * ROW + 8.0])), Some(Hit::Switch(2)));
-        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 6.0 * ROW + 8.0])), Some(Hit::Window), "six rows only");
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 7.0 * ROW + 8.0])), Some(Hit::Window), "seven rows only");
         assert_eq!(window.click(Hit::Switch(2), &mut sound, &mut graphics), Some(Action::Graphics));
         assert!(graphics.far_zoom);
         window.click(Hit::Switch(0), &mut sound, &mut graphics);
@@ -644,7 +654,8 @@ mod tests {
         window.click(Hit::Switch(3), &mut sound, &mut graphics);
         window.click(Hit::Switch(4), &mut sound, &mut graphics);
         window.click(Hit::Switch(5), &mut sound, &mut graphics);
-        assert_eq!(extras(&graphics), [true; 6]);
+        window.click(Hit::Switch(6), &mut sound, &mut graphics);
+        assert_eq!(extras(&graphics), [true; 7]);
         // The Effect page's switches didn't move.
         let all = GraphicsSettings {
             monster_hp: true,
@@ -653,11 +664,12 @@ mod tests {
             item_options: true,
             cooldown_numbers: true,
             exp_hundredths: true,
+            kill_exp: true,
             ..GraphicsSettings::default()
         };
         assert_eq!(graphics, all);
         assert!(window.button_boxes().iter().any(|(name, _)| name == "switch:2"));
         reset(&mut sound, &mut graphics);
-        assert_eq!(extras(&graphics), [false; 6]);
+        assert_eq!(extras(&graphics), [false; 7]);
     }
 }

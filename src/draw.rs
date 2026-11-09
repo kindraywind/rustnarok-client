@@ -1310,6 +1310,47 @@ impl App {
                 }
             }
         }
+        // Kills' exp over where the monsters died, floating up slowly and fading (`exp_shown::motion`): a small label and the amount in
+        // the damage digits, tinted; base, then job under it. An extra (Extras > Kill exp).
+        if self.graphics.kill_exp {
+            game.exp_shown.prepare(gpu, font);
+        }
+        if let (true, Some(digits), Some(labels)) = (self.graphics.kill_exp, &game.digits, &game.exp_shown.labels) {
+            for &(at, start, base, job) in game.exp_shown.shown.iter().filter(|(_, start, ..)| *start <= now) {
+                let elapsed = now.duration_since(start);
+                if elapsed >= crate::exp_shown::SHOWN {
+                    continue;
+                }
+                let motion = crate::exp_shown::motion(elapsed.as_secs_f32() / 0.024);
+                let anchor = [at[0], at[1] + motion.height, at[2]];
+                let lines = [base, job].into_iter().zip(labels.iter().zip(crate::exp_shown::COLORS)).filter(|(amount, _)| *amount > 0);
+                for (row, (amount, (label, color))) in lines.enumerate() {
+                    let glyphs = digits.place(i32::try_from(amount).unwrap_or(i32::MAX), motion.scale, self.graphics.extended_damage);
+                    let left = glyphs.iter().map(|(_, corner, _)| corner[0]).fold(f32::MAX, f32::min);
+                    let right = glyphs.iter().map(|(_, corner, size)| corner[0] + size[0]).fold(f32::MIN, f32::max);
+                    let height = glyphs.iter().map(|(_, _, size)| size[1]).fold(0.0, f32::max);
+                    let label_size = label.size.map(|value| value / crate::exp_shown::RASTER);
+                    // Both centred on the row, the label then a gap then the digits, the whole line centred on the spot.
+                    const GAP: f32 = 3.0;
+                    let line_left = -(label_size[0] + GAP + right - left) / 2.0;
+                    let middle = (row as f32 - 1.0) * height * 1.15;
+                    over_numbers.push((
+                        label,
+                        anchor,
+                        [line_left, middle - label_size[1] / 2.0],
+                        label_size,
+                        [1.0, 1.0, 1.0, motion.alpha],
+                        0.0,
+                        DepthLayer::default(),
+                    ));
+                    let shift = line_left + label_size[0] + GAP - left;
+                    let tint = [color[0], color[1], color[2]].map(|value| f32::from(value) / 255.0);
+                    over_numbers.extend(glyphs.into_iter().map(|(texture, corner, size)| {
+                        (texture, anchor, [corner[0] + shift, corner[1] + middle], size, [tint[0], tint[1], tint[2], motion.alpha], 0.0, DepthLayer::default())
+                    }));
+                }
+            }
+        }
 
         let viewed_preview: Vec<Sprite> =
             match (viewed_feet, game.viewing.as_ref().and_then(|viewed| viewed.figure.as_ref()).and_then(|(_, sprites)| sprites.as_ref())) {

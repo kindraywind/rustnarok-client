@@ -1849,6 +1849,9 @@ fn game_state(app: &App, game: &Game) -> Value {
         "title": game.equipment.title,
         // Skills blocked after use: milliseconds left by skill ID, on the drawing's clock (still while a shot pauses it).
         "cooldowns": game.cooldowns.blocked(crate::control::now()).map(|(skill, left)| (skill.to_string(), json!(left.as_millis() as u64))).collect::<serde_json::Map<_, _>>(),
+        // Kills' [base, job] exp floating over where they died, oldest first (Extras > Kill exp draws them);
+        // finished ones stay until the next death.
+        "exp_shown": game.exp_shown.shown.iter().map(|&(_, _, base, job)| [base, job]).collect::<Vec<_>>(),
         // The Lucky Roulette: points, bonus, prizes known, the wheel spinning, the prize waiting (or null).
         "roulette": game.roulette.as_ref().map(|window| {
             let now = crate::control::now();
@@ -2198,6 +2201,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "aura_off": app.graphics.aura_off, "tab": game.settings_window.as_ref().map(|window| window.tab),
         "monster_hp": app.graphics.monster_hp, "monster_level": app.graphics.monster_level, "far_zoom": app.graphics.far_zoom,
         "item_options": app.graphics.item_options, "cooldown_numbers": app.graphics.cooldown_numbers, "exp_hundredths": app.graphics.exp_hundredths,
+        "kill_exp": app.graphics.kill_exp,
         "extended_damage": app.graphics.extended_damage, "font": app.graphics.font,
         "font_index": rustnarok_client::text::index_of(rustnarok_client::text::choices(), &app.graphics.font),
     });
@@ -2396,6 +2400,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("entered_facing", Test),
         ("esc_order", Assist),
         ("escape", Fair),
+        ("exp_shown", Fair),
         ("first_place_seconds", Fair),
         ("front", Fair),
         ("ground_cursor", Assist),

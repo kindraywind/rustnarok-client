@@ -4,6 +4,7 @@ pub(crate) mod arrows;
 pub(crate) mod aura;
 pub(crate) mod cast_square;
 pub(crate) mod effects;
+pub(crate) mod exp_shown;
 pub(crate) mod map_effects;
 pub(crate) mod prims;
 pub(crate) mod skill_area;
