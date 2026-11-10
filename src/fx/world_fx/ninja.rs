@@ -684,7 +684,7 @@ mod tests {
     }
 
     fn seen(eye: Eye, shows: &dyn Fn(u32) -> bool) -> Seen<'_> {
-        Seen { eye, shows, hidden: &|_| false, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false }
+        Seen { eye, shows, hidden: &|_| false, ground: &|_, _| 0.0, dim: false }
     }
 
     fn all(_: u32) -> bool {

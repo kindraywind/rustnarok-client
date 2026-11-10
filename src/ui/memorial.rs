@@ -167,10 +167,6 @@ impl Window {
         }
     }
 
-    pub fn covers(&self, cursor: [f32; 2]) -> bool {
-        self.frame.local(cursor, self.height()).is_some()
-    }
-
     fn destroy_at() -> [f32; 2] {
         [((WIDTH - BUTTON[0]) / 2.0).floor(), PROGRESS_HEIGHT - BUTTON[1] - 8.0]
     }

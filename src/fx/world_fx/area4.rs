@@ -27,8 +27,11 @@ pub const GALE_STORM_SKILL: u16 = 5330;
 pub const NIPELHEIM_SKILL: u16 = 5363;
 
 /// UNT_FLORAL_FLARE_ROAD, UNT_ASTRAL_STRIKE and UNT_PNEUMATICUS_PROCELLA.
+#[cfg(test)]
 pub const FLORAL_UNIT: u32 = 273;
+#[cfg(test)]
 pub const ASTRAL_UNIT: u32 = 274;
+#[cfg(test)]
 pub const PNEUMATICUS_UNIT: u32 = 276;
 
 const FUNNEL_TEXTURE: &str = "data\\texture\\effect\\nipelheim\\nipelheim_cast\\nip_cast.tga";
@@ -966,11 +969,7 @@ mod tests {
             solo.tick(&HERE, &mut assets);
         }
         let mut faces = Vec::new();
-        solo.class.draw(
-            &solo.fx,
-            &Seen { eye: Eye::at(45.0, 0.0), shows: &|_| true, hidden: &|_| false, size: &|_| 1.0, ground: &ground, dim: false },
-            &mut faces,
-        );
+        solo.class.draw(&solo.fx, &Seen { eye: Eye::at(45.0, 0.0), shows: &|_| true, hidden: &|_| false, ground: &ground, dim: false }, &mut faces);
         let shown = solo.class.drops.iter().filter(|drop| drop.timeline.frame <= DROP_SHOWN && drop.timeline.frame > 0).count();
         // One drawn layer a part.
         assert_eq!(faces.len(), 1 + shown);
@@ -1037,11 +1036,7 @@ mod tests {
         let turned = 3.0f32.to_radians();
         assert!(close3(solo.class.quads[0][2], [4.5 * turned.cos(), 0.0, 4.5 * turned.sin()]));
         let mut faces = Vec::new();
-        solo.class.draw(
-            &solo.fx,
-            &Seen { eye: Eye::at(45.0, 0.0), shows: &|_| true, hidden: &|_| false, size: &|_| 1.0, ground: &ground, dim: false },
-            &mut faces,
-        );
+        solo.class.draw(&solo.fx, &Seen { eye: Eye::at(45.0, 0.0), shows: &|_| true, hidden: &|_| false, ground: &ground, dim: false }, &mut faces);
         assert_eq!(faces.len(), 21);
         assert!(faces.iter().all(|face| !face.additive && face.flags == FLAGS_EFFECT && face.vertices[0].tint == [1.0; 4]));
         assert!(solo.alive(&HERE));

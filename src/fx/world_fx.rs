@@ -3,9 +3,6 @@
 //! removal, tick, far rule and draw gate; the world quad; the sprite card; the draw lists by face flags; the STR part
 //! with its 2-D and 3-D draws. The per-skill objects register their classes here.
 
-// The per-skill objects come after this base; until then only the tests launch objects.
-#![allow(dead_code)]
-
 pub mod area4;
 pub mod chains;
 pub mod drops;
@@ -33,6 +30,7 @@ pub const PIXEL: f32 = 1.0 / 7.0;
 /// The STR part's default step offset in STR px: its (320, 240) sits 80 px over the point.
 pub const STR_OFFSET: [f32; 2] = [0.0, -80.0];
 /// The opaque list drops texels with less alpha than this.
+#[cfg(test)]
 pub const OPAQUE_CUT: f32 = 207.0 / 255.0;
 /// How much nearer each later layer of a sprite card sits.
 const LAYER_BIAS: f32 = 1e-5;
@@ -79,6 +77,7 @@ impl List {
 }
 
 /// Whether the opaque list keeps a texel of this alpha (0 … 1).
+#[cfg(test)]
 pub fn opaque_keeps(alpha: f32) -> bool {
     alpha >= OPAQUE_CUT
 }
@@ -189,6 +188,7 @@ pub struct Eye {
 
 impl Eye {
     /// The axes at a latitude (degrees, looking down) and longitude (degrees), as `Camera::view` builds them.
+    #[cfg(test)]
     pub fn at(latitude: f32, longitude: f32) -> Self {
         let (sin_lat, cos_lat) = latitude.to_radians().sin_cos();
         let (sin_lon, cos_lon) = longitude.to_radians().sin_cos();
@@ -270,8 +270,6 @@ pub struct Quad {
     pub scale: f32,
     /// 5/2 (source alpha, one); else 5/6 (source alpha, inverse source alpha).
     pub additive: bool,
-    /// Its own age, 0 at its first update.
-    pub counter: u32,
     pub flags: u32,
 }
 
@@ -285,7 +283,6 @@ impl Quad {
             alpha: 255,
             scale: 1.0,
             additive: true,
-            counter: 0,
             flags: FLAGS_EFFECT,
         }
     }
@@ -308,22 +305,26 @@ impl Quad {
     }
 
     /// Facing the camera.
+    #[cfg(test)]
     pub fn billboard(&mut self, point: Vector, eye: &Eye) {
         self.place(point, eye.right, eye.up);
     }
 
     /// Standing up, turned with the camera's longitude only.
+    #[cfg(test)]
     pub fn upright(&mut self, point: Vector, eye: &Eye) {
         self.place(point, eye.ground_right(), [0.0, 1.0, 0.0]);
     }
 
     /// Lying on the ground along the cell grid.
     // ponytail: the square's up is world +z.
+    #[cfg(test)]
     pub fn flat(&mut self, point: Vector) {
         self.place(point, [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
     }
 
     /// Lying on the ground with its edges along the screen.
+    #[cfg(test)]
     pub fn flat_on_screen(&mut self, point: Vector, eye: &Eye) {
         self.place(point, eye.ground_right(), eye.ground_forward());
     }
@@ -340,6 +341,9 @@ pub enum End {
     Loop,
     /// Sets the end mark.
     Stop,
+    /// Keeps the last frame.
+    // ponytail: no card ends this way yet; the test holds its rule.
+    #[allow(dead_code)]
     Hold,
     /// Never steps.
     Still,
@@ -702,8 +706,6 @@ pub struct Seen<'a> {
     pub shows: &'a dyn Fn(u32) -> bool,
     /// Whether a unit's body is hidden.
     pub hidden: &'a dyn Fn(Option<u32>) -> bool,
-    /// A unit's size factor.
-    pub size: &'a dyn Fn(Option<u32>) -> f32,
     /// The ground's height (world y) under a world x and z.
     pub ground: &'a dyn Fn(f32, f32) -> f32,
     /// On ecl_fild01, where the cut-down alphas of some objects apply.
@@ -821,6 +823,7 @@ impl WorldFx {
         self.objects.iter().filter(|object| object.fx.owner == Some(owner)).map(|object| object.fx.lift).fold(0.0, f32::max)
     }
 
+    #[cfg(test)]
     pub fn get_mut(&mut self, serial: u32) -> Option<&mut Object> {
         self.objects.iter_mut().find(|object| object.serial == serial)
     }
@@ -868,11 +871,13 @@ impl WorldFx {
     }
 
     /// A map load.
+    #[cfg(test)]
     pub fn remove_all(&mut self) {
         self.objects.clear();
     }
 
     /// A status object: its status turning on starts it afresh, turning off removes it.
+    #[cfg(test)]
     pub fn status(&mut self, launch: &Launch, on: bool, assets: &mut dyn Assets) -> Option<u32> {
         self.remove(launch.owner, launch.id);
         if on { self.launch(launch, assets) } else { None }
@@ -1017,7 +1022,7 @@ mod tests {
     }
 
     fn seen<'a>(shows: &'a dyn Fn(u32) -> bool, hidden: &'a dyn Fn(Option<u32>) -> bool) -> Seen<'a> {
-        Seen { eye: Eye::at(45.0, 0.0), shows, hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false }
+        Seen { eye: Eye::at(45.0, 0.0), shows, hidden, ground: &|_, _| 0.0, dim: false }
     }
 
     #[test]

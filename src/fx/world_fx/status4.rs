@@ -923,7 +923,7 @@ mod tests {
     }
 
     fn faces(fx: &WorldFx) -> usize {
-        fx.faces(&Seen { eye: eye(0.0), shows: &|_| true, hidden: &|_| false, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false }).len()
+        fx.faces(&Seen { eye: eye(0.0), shows: &|_| true, hidden: &|_| false, ground: &|_, _| 0.0, dim: false }).len()
     }
 
     /// One object of class `C` run on its own, as the registry runs it.
@@ -1345,7 +1345,7 @@ mod tests {
         // The back image draws while the unit is seen from 2 to 5, pulled nearer by its bias.
         solo.tick(rot(3), 0.0, &mut fake);
         let at = behind(FEET, rot(3));
-        let seen = Seen { eye: eye(0.0), shows: &|_| true, hidden: &|_| false, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false };
+        let seen = Seen { eye: eye(0.0), shows: &|_| true, hidden: &|_| false, ground: &|_, _| 0.0, dim: false };
         let mut out = Vec::new();
         solo.class.draw(&solo.fx, &seen, &mut out);
         assert_eq!(out.len(), 2);

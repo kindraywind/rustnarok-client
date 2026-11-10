@@ -3062,15 +3062,10 @@ impl App {
             };
             matches!(seen, Some(actor::Seen::Nothing | actor::Seen::Shadow))
         };
-        let size = |unit: Option<u32>| match unit {
-            None => player_scale,
-            Some(id) => game.units.get(&id).map_or(1.0, |actor| unit_draw_scale(monster_sizes, actor.kind, actor.job, actor.size_percent)),
-        };
         let fx_seen = world_fx::Seen {
             eye: world_fx::Eye { right: view.right, up: view.up, forward: view.forward },
             shows: &effects_shown,
             hidden: &hidden,
-            size: &size,
             ground: &ground_at,
             dim: game.map.trim_end_matches(".gat") == "ecl_fild01",
         };

@@ -832,7 +832,6 @@ impl Game {
         self.front.pick(hits.into_iter().flatten())
     }
 
-    /// The topmost window under the pointer.
     /// The item under `cursor` in a trade, a letter or one being written, the vending setup (a row or its mirror),
     /// the shop we run, or the catalog's results: what a right click there describes.
     pub(crate) fn listed_item_at(&self, cursor: [f32; 2]) -> Option<net::InventoryItem> {
@@ -2805,96 +2804,15 @@ impl Game {
     /// Whether the pointer is on a window, or something holds the clicks (a dialog, a menu, a question in the message
     /// box of this size): what covers the world and its signs.
     pub(crate) fn on_window(&self, cursor: [f32; 2], message: [f32; 2]) -> bool {
-        let asking = self.guild_invite.is_some()
-            || self.guild_asked.is_some()
-            || self.bind_asked.is_some()
-            || self.expansion_asked.is_some()
-            || self.leader_asked.is_some()
-            || self.question_box.is_some()
-            || self.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some())
-            || self.dismiss_asked
-            || self.homunculus_asked.is_some()
-            || self.pet_asked.is_some()
-            || self.friend_asked.is_some()
-            || self.party_invite.is_some()
-            || self.trade_asked.is_some()
-            || self.booking_asked.is_some()
-            || self.queue_asked.is_some()
-            || self.adopt_asked.is_some()
-            || self.memorial_asked;
-        self.window_at(cursor).is_some()
-            || (self.special_popup.is_some() && special_popup::covers(cursor))
-            || self.catalog.as_ref().and_then(|catalog| catalog.hit(cursor)).is_some()
-            || self.queue_window.covers(cursor)
-            || self.memorial.covers(cursor)
-            || self.storage_log.as_ref().is_some_and(|log| log.covers(cursor))
-            || self.skill_description.as_ref().is_some_and(|window| window.contains(cursor))
-            || self.level_ups.hit(cursor).is_some()
-            || (self.quest_icon && quest_notice::on_icon(cursor))
-            || (self.minimap_shown() && minimap::covers(cursor))
-            || self.reason_box.as_ref().is_some_and(|reason| reason.hit(cursor, screen()).is_some())
-            || self.minimap_window.covers(cursor)
-            || (asking && contains(dialog_position_of(screen()), message, cursor))
-            || self.on_npc_window(cursor)
+        // What a press there reaches (`top_at` lists every window once), or what holds every click while it's up,
+        // wherever the pointer is.
+        self.top_at(cursor, message).is_some()
             || self.talk_blocks()
             || self.amount.is_some()
             || self.escape.is_some()
-            || self.world_map.is_some()
-            || (self.deal_choice.is_some() && contains(self.deal_frame.position, shop::DEAL_SIZE, cursor))
             || self.menu.is_some()
-            || self.pick.as_ref().is_some_and(|(list, _)| list.covers(cursor))
-            || self.forge.as_ref().is_some_and(|forge| forge.covers(cursor))
-            || self.shop.as_ref().is_some_and(|shop| shop.covers(cursor))
-            || self.refine.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.enchant.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.materials.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.bank.as_ref().is_some_and(|bank| bank.hit(cursor).is_some())
-            || self.viewing.as_ref().is_some_and(|viewed| viewed.window.hit(cursor, &viewed.items).is_some())
-            || self.ranking.as_ref().and_then(|board| board.hit(cursor)).is_some()
-            || self.reputation_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
-            || self.navi_window.as_ref().and_then(|window| window.hit(cursor)).is_some()
-            || self.booking.as_ref().and_then(|window| window.hit(cursor)).is_some()
-            || self.dressroom.as_ref().and_then(|room| room.hit(cursor)).is_some()
-            || self.party_dialog.as_ref().and_then(|dialog| dialog.hit(cursor)).is_some()
-            || self.talks.hit(cursor).is_some()
-            || self.friend_setup.as_ref().is_some_and(|setup| setup.hit(cursor).is_some())
-            || self.block_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
-            || self.away_prompt.as_ref().is_some_and(|prompt| prompt.hit(cursor).is_some())
-            || self.chat.on_list(cursor)
-            || self.party_member_at(cursor).is_some()
-            || self.guild_companion.hit(cursor).is_some()
-            || self.settings_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.cashshop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
             || self.cashshop_buy_asked
-            || self.shortcuts_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some())
-            || self.item_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.card_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
-            || self.trade.as_ref().is_some_and(|trade| trade.hit(cursor).is_some())
-            || self.room.as_ref().is_some_and(|room| room.hit(cursor, &self.me.name).is_some())
-            || self.room_make.as_ref().is_some_and(|make| make.hit(cursor).is_some())
-            || self.vend_setup.as_ref().is_some_and(|setup| setup.covers(cursor))
-            || self.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())
-            || self.sell_history.as_ref().is_some_and(|history| history.hit(cursor).is_some())
-            || self.buying_setup.as_ref().is_some_and(|setup| setup.hit(cursor, &self.inventory.items).is_some())
-            || self.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some())
-            || self.mail.hit(cursor).is_some()
-            || self.quest_window.covers(cursor)
-            || self.achievement_window.covers(cursor)
-            || self.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.upgrade.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.reform.as_ref().is_some_and(|window| window.hit(cursor, &self.inventory.items).is_some())
-            || self.grade.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || roulette::icon_hit(cursor)
-            || self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
-            || self.stylist.as_ref().is_some_and(|window| window.covers(cursor))
-            || self.chat.blocks(cursor)
-            || self.chat.settings.as_ref().and_then(|settings| settings.hit(cursor)).is_some()
             || self.link_at(cursor).is_some()
-            || self.emotion_list.as_ref().is_some_and(|list| list.hit(cursor).is_some())
-            || self.macro_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())
     }
 
     /// Moves an item between the inventory and storage, asking how many when there's more than one.
@@ -3444,13 +3362,13 @@ impl Game {
         open
     }
 
-    /// Brings the Esc list in line with what's open.
     /// Whether a skill is used rather than passive (an unknown one counts as used).
     pub(crate) fn skill_active(&self, id: u16) -> bool {
         let guild = self.guild.iter().flat_map(|guild| &guild.skills);
         self.skills.iter().chain(guild).find(|skill| skill.id == id).is_none_or(|skill| skill.kind != 0)
     }
 
+    /// Brings the Esc list in line with what's open.
     pub(crate) fn sync_esc(&mut self) {
         let open = self.esc_open();
         escape::sync(&mut self.esc_order, &open);
