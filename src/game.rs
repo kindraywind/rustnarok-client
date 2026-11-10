@@ -1441,6 +1441,10 @@ impl Game {
 
     /// The navigation window's close: while a navigation runs it asks whether to cancel that, and the window stays.
     pub(crate) fn close_navigation(&mut self) {
+        // Its side windows (the help, the arrow sets, the route list) close first, one at a time.
+        if self.navi_window.as_mut().is_some_and(navi_window::Window::close_side) {
+            return;
+        }
         if self.navigation.is_some() {
             self.question_box = Some(BoxQuestion::StopNavigation);
         } else {
@@ -1474,7 +1478,7 @@ impl Game {
         }
         self.navigation = (found.outcome == navigation::Outcome::Guiding).then(|| {
             let mut active = navigation::Active::new(target, services);
-            active.head_for(&self.map, found.next);
+            active.head_for(&self.map, found.next, found.steps);
             active
         });
         // A start shows the window's route view.
@@ -1523,7 +1527,7 @@ impl Game {
         }
         match (found.outcome, &mut self.navigation) {
             (navigation::Outcome::Over, _) | (_, None) => self.navigation = None,
-            (_, Some(active)) => active.head_for(&self.map, found.next),
+            (_, Some(active)) => active.head_for(&self.map, found.next, found.steps),
         }
     }
 

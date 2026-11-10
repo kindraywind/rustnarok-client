@@ -3014,8 +3014,9 @@ struct Assets {
     party: party::Assets,
     chatroom: chatroom::Assets,
     reputation: reputation::Assets,
-    /// The navigation arrows that lie on the ground, by the way the step goes (north, north-west, … north-east).
-    navi_arrows: Vec<Texture>,
+    /// The navigation arrows that lie on the ground: eight sets, each by the way the step goes (north, north-west, …
+    /// north-east).
+    navi_arrows: Vec<Vec<Texture>>,
     /// The marker on the cell a navigation heads for: its four pictures in turn.
     navi_marker: Vec<Texture>,
     /// Item links' underline in the NPC window.
@@ -3152,7 +3153,7 @@ impl Assets {
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
             reputation: reputation::Assets::load(gpu, grf),
-            navi_arrows: (0..8).map(|turn| image(format!("{UI}navigation_interface3\\navi_grid1_{turn}.tga"))).collect(),
+            navi_arrows: (1..=8).map(|set| (0..8).map(|turn| image(format!("{UI}navigation_interface3\\navi_grid{set}_{turn}.tga"))).collect()).collect(),
             navi_marker: (1..=4).map(|frame| image(format!("{UI}navigation_interface3\\location{frame}.tga"))).collect(),
             url_line: gpu.solid([links::URL_COLOR[0], links::URL_COLOR[1], links::URL_COLOR[2], 0xFF]),
             link_line: gpu.solid([links::NPC_COLOR[0], links::NPC_COLOR[1], links::NPC_COLOR[2], 0xFF]),

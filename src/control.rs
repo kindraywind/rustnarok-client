@@ -2041,6 +2041,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "text": window.text, "typing": window.typing, "filter": window.filter, "rows": window.rows.len(), "row": window.row,
             "member": window.member, "service": window.service, "first": window.first, "position": window.frame.position,
             "route": window.routing(), "mini": window.mini, "auto_mini": window.auto_mini, "size": window.size(),
+            "sides": window.sides.iter().map(|side| side.as_ref().map(|frame| frame.position)).collect::<Vec<_>>(),
         })),
         // Reputation points by reputation type.
         "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),
@@ -2211,6 +2212,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "monster_hp": app.graphics.monster_hp, "monster_level": app.graphics.monster_level, "far_zoom": app.graphics.far_zoom,
         "item_options": app.graphics.item_options, "cooldown_numbers": app.graphics.cooldown_numbers, "exp_hundredths": app.graphics.exp_hundredths,
         "kill_exp": app.graphics.kill_exp, "ui_scale": app.graphics.ui_scale, "ui_size": app.graphics.ui_size,
+        "navi_icons": app.graphics.navi_icons,
         "extended_damage": app.graphics.extended_damage, "font": app.graphics.font,
         "font_index": rustnarok_client::text::index_of(rustnarok_client::text::choices(), &app.graphics.font),
     });

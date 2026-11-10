@@ -862,6 +862,11 @@ impl App {
                         let (target, services) = (window.target(&self.navi_tables), window.services());
                         game.navigate(&self.navi_tables, &self.messages, &self.grf, target, services);
                     }
+                    // An arrow set picked: it's the one on the ground from now on, and kept.
+                    navi_window::Hit::Side(navi_window::Side::Sets, navi_window::SideHit::Set(set)) => {
+                        self.graphics.navi_icons = set;
+                        self.graphics.save();
+                    }
                     hit => {
                         if window.click(hit) {
                             let map = window.picked().map(|place| place.map.clone());
@@ -1950,8 +1955,7 @@ impl App {
                 list.frame.drag_to(self.cursor, height);
             }
             if let Some(window) = &mut game.navi_window {
-                let height = window.size()[1];
-                window.frame.drag_to(self.cursor, height);
+                window.drag_to(self.cursor);
             }
             if let Some(view) = &mut game.card_view {
                 view.drag_to(self.cursor);
@@ -2851,7 +2855,7 @@ impl App {
                     | game.talks.drop_drag()
                     | game.friend_setup.as_mut().is_some_and(|setup| setup.frame.drop_drag())
                     | game.block_list.as_mut().is_some_and(|list| list.frame.drop_drag())
-                    | game.navi_window.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.navi_window.as_mut().is_some_and(navi_window::Window::drop_drag)
                     | game.minimap_window.frame.drop_drag()
                     | game.say.frame.drop_drag()
                     | game.cutin.as_mut().is_some_and(|cutin| cutin.frame.drop_drag())
@@ -3095,10 +3099,8 @@ impl App {
         if let Scene::Game(game) = &mut self.scene
             && top == Some(Esc(W::Navigation))
         {
-            if let Some(window) = &mut game.navi_window
-                && matches!(window.hit(cursor), Some(navi_window::Hit::Title(TitleHit::Title) | navi_window::Hit::Window))
-            {
-                window.frame.start_drag(cursor);
+            if let Some(window) = &mut game.navi_window {
+                window.start_drag(cursor);
             }
             return;
         }

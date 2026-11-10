@@ -2841,7 +2841,7 @@ impl App {
         // navigation under way on the picture of the map the player is on.
         let navi_here = navigation::navi_map(&self.navi_tables, &game.map);
         if let Some(window) = &mut game.navi_window {
-            window.follow(gpu, &self.grf, &navi_here, game.navigation.is_some());
+            window.follow(gpu, &self.grf, &navi_here, game.navigation.is_some(), game.navigation.as_ref().map_or(0, |active| active.steps.len()));
         }
         let mut navi_layer = Layer { faded: game.navi_window.as_ref().map_or(0.0, navi_window::Window::fade), ..Layer::of(Top::Esc(W::Navigation)) };
         if let Some(window) = &game.navi_window {
@@ -2853,8 +2853,20 @@ impl App {
                 trail: &active.trail,
                 next: active.next_cell(&game.map),
                 target: &active.target,
+                steps: &active.steps,
             });
-            window.draw(&mut navi_layer, &assets.chrome, &assets.navi_window, font, &self.navi_tables, messages, pointer.0, caret, guide.as_ref());
+            window.draw(
+                &mut navi_layer,
+                &assets.chrome,
+                &assets.navi_window,
+                font,
+                &self.navi_tables,
+                messages,
+                pointer.0,
+                caret,
+                guide.as_ref(),
+                self.graphics.navi_icons,
+            );
         }
         if let Some(window) = &game.reputation_window {
             window.draw(
@@ -3212,7 +3224,12 @@ impl App {
                 effect_meshes.push((texture, vec![a, b, d, a, d, c], false));
             };
             for (cell, turn, bright) in navigation::arrows(&active.trail, game.player.cell, ms) {
-                tile(&assets.navi_arrows[turn], cell, 0.0, [1.0, 1.0, 1.0, navigation::ARROW_ALPHA[usize::from(bright)]]);
+                tile(
+                    &assets.navi_arrows[usize::from(self.graphics.navi_icons.clamp(1, 8)) - 1][turn],
+                    cell,
+                    0.0,
+                    [1.0, 1.0, 1.0, navigation::ARROW_ALPHA[usize::from(bright)]],
+                );
             }
             if let Some(cell) = navigation::marker(&active.trail, game.player.cell) {
                 let at_goal = navigation::on_target_map(&self.navi_tables, &game.map, &active.target);

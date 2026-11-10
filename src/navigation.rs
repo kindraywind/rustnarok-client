@@ -251,6 +251,8 @@ pub struct Report {
     pub lines: Vec<String>,
     pub outcome: Outcome,
     pub next: Option<[u16; 2]>,
+    /// The route's ways in order, each its map and cell (none on the target's own map).
+    pub steps: Vec<(String, [u16; 2])>,
 }
 
 /// What the chat says when a navigation starts (`start`) or a map loads under one, with the player on `cell` of
@@ -259,7 +261,7 @@ pub struct Report {
 pub fn report(tables: &NaviTables, messages: &[String], here: &str, cell: [i32; 2], target: &Target, services: u8, start: bool, walks: &Walks) -> Report {
     let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
     let says = |id: usize| says(messages, id);
-    let found = |lines: Vec<String>, outcome: Outcome, next: Option<[u16; 2]>| Report { lines, outcome, next };
+    let found = |lines: Vec<String>, outcome: Outcome, next: Option<[u16; 2]>| Report { lines, outcome, next, steps: Vec::new() };
     let here = navi_map(tables, here);
     if !tables.maps.contains_key(&here) {
         return found(vec![says(NO_MAP)], Outcome::NoWay, None);
@@ -277,7 +279,8 @@ pub fn report(tables: &NaviTables, messages: &[String], here: &str, cell: [i32; 
             (None, None) => return found(vec![message(ARRIVED), says(ARRIVED)], Outcome::Over, None),
         }
     }
-    let Some(first) = route(tables, &here, &target.map, services, walks).and_then(|route| route.first().copied()) else {
+    let ways = route(tables, &here, &target.map, services, walks).unwrap_or_default();
+    let Some(&first) = ways.first() else {
         return found(vec![says(NO_WAY)], Outcome::NoWay, None);
     };
     // The route's first step: an NPC to talk to and where it sends you, the airship, or a warp portal.
@@ -291,7 +294,7 @@ pub fn report(tables: &NaviTables, messages: &[String], here: &str, cell: [i32; 
         205 => lines.extend([fill(&message(TALK_TO), &[&first.name]), message(TO_AIRSHIP)]),
         _ => lines.push(message(BY_PORTAL)),
     }
-    found(lines, Outcome::Guiding, Some(first.cell))
+    Report { lines, outcome: Outcome::Guiding, next: Some(first.cell), steps: ways.iter().map(|way| (way.map.clone(), way.cell)).collect() }
 }
 
 /// Which way a step goes, as the arrow pictures are numbered: 0 north (+y), then anticlockwise in eighths (1
@@ -522,16 +525,19 @@ pub struct Active {
     trail_for: Option<(String, [u16; 2])>,
     /// The map the route was last looked up on, and the cell it heads for there.
     next_for: Option<(String, Option<[u16; 2]>)>,
+    /// The route from that map on: each way's map and cell.
+    pub steps: Vec<(String, [u16; 2])>,
 }
 
 impl Active {
     pub fn new(target: Target, services: u8) -> Self {
-        Self { target, services, trail: Vec::new(), trail_for: None, next_for: None }
+        Self { target, services, trail: Vec::new(), trail_for: None, next_for: None, steps: Vec::new() }
     }
 
-    /// The cell `report` found to head for on `here`: kept until the next map's report.
-    pub fn head_for(&mut self, here: &str, next: Option<[u16; 2]>) {
+    /// The cell `report` found to head for on `here` and the route from there: kept until the next map's report.
+    pub fn head_for(&mut self, here: &str, next: Option<[u16; 2]>, steps: Vec<(String, [u16; 2])>) {
         self.next_for = Some((map_key(here), next));
+        self.steps = steps;
     }
 
     /// Where it heads on `here` (None on a map no report was made for).
@@ -769,7 +775,9 @@ mod tests {
         // Where it heads: the cell on its own map, the first way's cell on another, nowhere once it's over.
         let heads =
             [found("prontera", [100, 100], &cell, 0, true), found("prt_fild08", [10, 10], &cell, 0, true), found("prontera", [150, 150], &cell, 0, false)];
-        assert_eq!(heads.map(|found| found.next), [Some([150, 150]), Some([170, 375]), None]);
+        assert_eq!(heads.each_ref().map(|found| found.next), [Some([150, 150]), Some([170, 375]), None]);
+        // The route's ways: none on the target's own map; from the field, its warp to the town.
+        assert_eq!(heads.map(|found| found.steps), [vec![], vec![("prt_fild08".to_owned(), [170, 375])], vec![]]);
         // A cell on this map that can't be walked to from here: out by a way that can, and back in.
         let walled = Walks { from_player: &|at| (at != [150, 150]).then_some(9), to_target: &|_| Some(1) };
         let round = super::report(&tables, &messages, "prontera", [100, 100], &cell, 0, true, &walled);
@@ -830,10 +838,11 @@ mod tests {
         let target = Target { map: "prontera".into(), cell: Some([150, 150]), monster: None, name: String::new() };
         let mut active = Active::new(target, 111);
         assert_eq!(active.next_cell("prt_fild08"), None);
-        active.head_for("prt_fild08.gat", Some([170, 375]));
+        active.head_for("prt_fild08.gat", Some([170, 375]), vec![("prt_fild08".into(), [170, 375])]);
         assert_eq!((active.next_cell("prt_fild08"), active.next_cell("prontera")), (Some([170, 375]), None));
-        active.head_for("prontera", Some([150, 150]));
-        assert_eq!((active.next_cell("prontera.gat"), active.next_cell("prt_fild08")), (Some([150, 150]), None));
+        assert_eq!(active.steps.len(), 1);
+        active.head_for("prontera", Some([150, 150]), Vec::new());
+        assert_eq!((active.next_cell("prontera.gat"), active.next_cell("prt_fild08"), active.steps.len()), (Some([150, 150]), None, 0));
     }
 
     #[test]
