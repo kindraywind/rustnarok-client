@@ -2045,7 +2045,6 @@ impl App {
                     pointer.0,
                     &cooling,
                     &self.keybinds,
-                    self.graphics.hotbar_tips,
                 ),
                 Panel::Skills => {
                     game.skill_window.draw(&mut layer, &mut tooltip, &assets.chrome, &assets.skills, icons, font, messages, &sheet, pointer, &cooling)
