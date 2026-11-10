@@ -412,7 +412,7 @@ impl CashShop {
             layer.texts.push(("+".into(), at(offset(place, [CART_SIZE[0] - 26.0, 2.0])), [0, 0, 0]));
         }
         for (id, value, place) in [(CASH_MESSAGE, self.cash_points, [438.0, 292.0]), (FREE_MESSAGE, self.free_points, [438.0, 314.0])] {
-            layer.texts.push((format!("{}: {}", message(id), group(u64::from(value))), at(place), [0, 0, 0]));
+            layer.texts.push((points_line(message(id), value), at(place), [0, 0, 0]));
         }
         layer.texts.push((message(FREE_SPEND_MESSAGE).to_owned(), at([438.0, 340.0]), [0, 0, 0]));
         layer.sprites.push((&chrome.border, at(offset(FREE_FIELD, [-1.0, -1.0])), offset(FREE_SIZE, [2.0, 2.0])));
@@ -432,6 +432,11 @@ impl CashShop {
     }
 }
 
+/// A points line: the message's own `%s` takes the number ("Cash Points : %s C").
+fn points_line(template: &str, points: u32) -> String {
+    rustnarok_client::messages::fill(template, &[&group(u64::from(points))])
+}
+
 pub fn buy_result_message(result: u16) -> usize {
     // ponytail: these messages follow the server reasons until every result is observed.
     [2530, 1228, 1254, 1230, 2536, 3568, 1229, 1940, 1814, 1944, 1945, 1946, 1947].get(usize::from(result)).copied().unwrap_or(1228)
@@ -440,6 +445,12 @@ pub fn buy_result_message(result: u16) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn points_lines_fill_the_messages_own_placeholder() {
+        assert_eq!(points_line("Cash Points : %s C", 1234), "Cash Points : 1,234 C");
+        assert_eq!(points_line("Free Cash : %s C", 0), "Free Cash : 0 C");
+    }
 
     #[test]
     fn cart_accepts_amounts_one_through_ninety_nine() {

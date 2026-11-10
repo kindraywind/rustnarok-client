@@ -1,5 +1,5 @@
 {
-  "about": "Cash shop (issue #51): open it from the basic information menu, list tabs and prices, buy one Red Potion with cash points, then close it.",
+  "about": "Cash shop (issue #51): open it from the basic information menu, list tabs and prices, buy one Red Potion with cash points, then close it. The server must sell Red Potion (501) for 10 points on its New tab (see the skill's \"What you need\"): rathena sends no list for an empty cash shop, and stock rathena's is empty.",
   "account": "",
   "slot": 0,
   "steps": [
