@@ -1264,7 +1264,7 @@ pub enum MapEvent {
         level: u16,
     },
     /// How asking for a deal went: 0 too far, 1 no such character, 2 they're in another deal, 3 it's on, 4 refused,
-    /// 5 busy.
+    /// 5 busy. The partner's character ID and level, 0 when the answer is the old 0x00E7, which has neither.
     TradeAnswer {
         result: u8,
         id: u32,

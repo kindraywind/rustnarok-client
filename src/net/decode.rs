@@ -1117,6 +1117,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_GROUP_ISALIVE => MapEvent::PartyDead { account: u32_at(2), dead: packet[6] != 0 },
         ZC_REQ_EXCHANGE_ITEM => MapEvent::TradeAsked { name: c_string(&packet[2..26]), id: u32_at(26), level: u16_at(30) },
         ZC_ACK_EXCHANGE_ITEM => MapEvent::TradeAnswer { result: packet[2], id: u32_at(3), level: u16_at(7) },
+        ZC_ACK_EXCHANGE_ITEM_OLD => MapEvent::TradeAnswer { result: packet[2], id: 0, level: 0 },
         // Item, type, amount, identified, damaged, cards, options, where it's worn, look, refine, grade; no item is zeny.
         ZC_ADD_EXCHANGE_ITEM if u32_at(2) == 0 => MapEvent::TradeZeny(u32_at(7)),
         ZC_ADD_EXCHANGE_ITEM => MapEvent::TradeItem(InventoryItem {

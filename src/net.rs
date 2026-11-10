@@ -1034,6 +1034,8 @@ const CZ_CANCEL_EXCHANGE_ITEM: u16 = 0x00ED;
 const CZ_EXEC_EXCHANGE_ITEM: u16 = 0x00EF;
 const ZC_REQ_EXCHANGE_ITEM: u16 = 0x01F4;
 const ZC_ACK_EXCHANGE_ITEM: u16 = 0x01F5;
+/// Its first form, the result alone (packet_lengths_extra.txt).
+const ZC_ACK_EXCHANGE_ITEM_OLD: u16 = 0x00E7;
 const ZC_ADD_EXCHANGE_ITEM: u16 = 0x0B42;
 const ZC_ACK_ADD_EXCHANGE_ITEM: u16 = 0x00EA;
 const ZC_CONCLUDE_EXCHANGE_ITEM: u16 = 0x00EC;
