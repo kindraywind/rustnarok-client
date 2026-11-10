@@ -1,0 +1,32 @@
+{
+  "about": "A hotbar slot's tooltip sits over the slot's own row. With three rows showing and a Red Potion on the first slot of row 2, the pointer on that slot shows \"Red Potion: 3\" just over row 2, at the slot's column (it was at the top of the bar, over row 1's slots). Row 1's tooltip is where it was. The rows go back to two; the potion stays on its slot for the scenario reset to clear.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp morocc 160 120"},
+    {"settle": 1500},
+    {"say": "@item 501 3"},
+    {"wait": 500},
+    {"click_on": {"button": "hotkey_plus"}},
+    {"wait": 200},
+    {"key": "Alt+E"},
+    {"wait": 400},
+    {"drag_on": [{"inventory_item": 501}, {"hotkey": 9}]},
+    {"wait": 400},
+    {"drag_on": [{"inventory_item": 501}, {"hotkey": 2}]},
+    {"wait": 400},
+    {"key": "Alt+E"},
+    {"wait": 300},
+    {"expect": {"hotkeys": {"9": 501, "2": 501}}},
+    {"move": [258, 52]},
+    {"wait": 300},
+    {"shot": "hotbar-tip-row-2", "crop": [220, 0, 320, 110], "threshold": 1},
+    {"move": [316, 18]},
+    {"wait": 300},
+    {"shot": "hotbar-tip-row-1", "crop": [220, 0, 320, 110], "threshold": 1},
+    {"click_on": {"button": "hotkey_minus"}},
+    {"wait": 200},
+    {"say": "@delitem 501 3"},
+    {"wait": 500}
+  ]
+}

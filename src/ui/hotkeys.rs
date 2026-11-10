@@ -289,7 +289,6 @@ impl Hotkeys {
         cursor: [f32; 2],
         cooling: &crate::skills::Cooling<'a>,
         keys: &crate::shortcuts::Shortcuts,
-        tips_by_row: bool,
     ) {
         if self.frame.open {
             for row in 0..self.rows {
@@ -319,7 +318,7 @@ impl Hotkeys {
             .shown()
             .into_iter()
             .filter(|_| self.frame.open)
-            .map(|(index, local)| (index, self.frame.at(local), self.frame.at(hover_corner(local)), self.frame.at(tip_corner(local, tips_by_row)), true));
+            .map(|(index, local)| (index, self.frame.at(local), self.frame.at(hover_corner(local)), self.frame.at(tip_corner(local)), true));
         let quick_slots = self
             .quick_slots()
             .into_iter()
@@ -454,10 +453,13 @@ fn slot_corner(slot: usize) -> [f32; 2] {
     [FIRST_SLOT[0] + (slot % PER_ROW) as f32 * SLOT_STEP, (slot / PER_ROW) as f32 * ROW_HEIGHT + FIRST_SLOT[1]]
 }
 
-/// A bar slot's tooltip corner, from its icon's corner in the bar: at the slot's column, 17 px above the bar's top
-/// whatever the row, as the game has it; `by_row` (an Extras switch) puts it 17 px above the slot's own row.
-fn tip_corner([x, y]: [f32; 2], by_row: bool) -> [f32; 2] {
-    [x - 1.0, if by_row { (y / ROW_HEIGHT).floor() * ROW_HEIGHT - 17.0 } else { -17.0 }]
+/// A bar slot's tooltip corner, from its icon's corner in the bar: at the slot's column, 17 px above the slot's own
+/// row.
+// Not the game's place, on purpose. The game puts it 17 px above the bar's top whatever the row, so with several rows
+// showing, a lower slot's tooltip lands on the first row (and with the bar at the top of the screen, on its slots),
+// away from the pointer. Here it stays with the slot. The first row's is where the game has it.
+fn tip_corner([x, y]: [f32; 2]) -> [f32; 2] {
+    [x - 1.0, (y / ROW_HEIGHT).floor() * ROW_HEIGHT - 17.0]
 }
 
 /// A slot's hover (and hit) box corner from its icon's: a pixel lower.
@@ -484,14 +486,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn puts_a_slots_tooltip_over_the_bar_or_over_its_own_row() {
-        // The game's place: the slot's column, 17 px above the bar's top, whatever the row.
+    fn puts_a_slots_tooltip_over_its_own_row() {
+        // At the slot's column, 17 px above its row: the first row's over the bar's top, the others' over their own.
         let slots = [slot_corner(0), slot_corner(3), slot_corner(PER_ROW), slot_corner(3 * PER_ROW + 8)];
-        assert_eq!(slots.map(|slot| tip_corner(slot, false)[1]), [-17.0; 4]);
-        assert_eq!(tip_corner(slots[1], false)[0], slots[1][0] - 1.0);
-        // By its row: as far above the slot's own row; the first row's is the game's.
-        assert_eq!(slots.map(|slot| tip_corner(slot, true)[1]), [-17.0, -17.0, ROW_HEIGHT - 17.0, 3.0 * ROW_HEIGHT - 17.0]);
-        assert_eq!(tip_corner(slots[3], true)[0], tip_corner(slots[3], false)[0]);
+        assert_eq!(slots.map(|slot| tip_corner(slot)[1]), [-17.0, -17.0, ROW_HEIGHT - 17.0, 3.0 * ROW_HEIGHT - 17.0]);
+        assert_eq!([tip_corner(slots[1])[0], tip_corner(slots[3])[0]], [slots[1][0] - 1.0, slots[3][0] - 1.0]);
     }
 
     #[test]
