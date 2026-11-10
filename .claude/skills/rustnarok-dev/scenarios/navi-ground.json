@@ -1,0 +1,30 @@
+{
+  "about": "A navigation's arrows lie on the ground along its trail, and nothing is drawn over the player's head or on the minimap. On Morroc's road, /navi morocc 155/115 puts an arrow on every second cell from the player's own (three of them: the cell it heads for never has one) and the marker on the target cell; to a cell twenty cells away only the arrows within nine cells show (five) and no marker. The trail isn't cut or remade as the player walks along it: a few cells on, the arrows behind are still there.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp morocc 160 120"},
+    {"settle": 1500},
+    {"move": [1000, 600]},
+    {"say": "/navi morocc 155/115"},
+    {"wait": 800},
+    {"expect": {"state": {"navigation.cell": [155, 115], "navigation.trail": 6, "navigation.trail_cells.0": [160, 120], "navigation.arrows": 3, "navigation.marker": [155, 115]}}},
+    {"shot": "navi-ground-near", "threshold": 3},
+    {"say": "/navi morocc 160/140"},
+    {"wait": 800},
+    {"expect": {"state": {"navigation.cell": [160, 140], "navigation.trail": 21, "navigation.arrows": 5, "navigation.marker": null}}},
+    {"shot": "navi-ground-far", "threshold": 3},
+    {"click_on": {"cell": [160, 124]}},
+    {"wait_for": {"sent": "0x035f", "ms": 3000}},
+    {"wait": 1500},
+    {"expect": {"state": {"player.cell": [160, 124], "navigation.trail": 21, "navigation.trail_cells.0": [160, 120], "navigation.arrows": 7, "navigation.marker": null}}},
+    {"shot": "navi-ground-walked", "threshold": 3},
+    {"say": "/naviopen"},
+    {"wait": 300},
+    {"click_on": {"button": "navi_stop"}},
+    {"wait": 300},
+    {"expect": {"state": {"navigation": null}}},
+    {"key": "Escape"},
+    {"wait": 300}
+  ]
+}

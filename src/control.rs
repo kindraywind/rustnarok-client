@@ -2024,13 +2024,16 @@ fn game_state(app: &App, game: &Game) -> Value {
             "owner": room.members.iter().find(|(_, owner)| *owner).map(|(name, _)| name.clone()),
             "members": room.members.len(),
         })),
-        // The navigation under way: where to, how long the trail on this map is, and its cells from the player's on.
+        // The navigation under way: where to, how long the trail on this map is and its cells from where it was made,
+        // how many arrows are on the ground in sight, and the marker's cell when that is.
         "navigation": game.navigation.as_ref().map(|active| json!({
             "map": active.target.map,
             "cell": active.target.cell,
             "monster": active.target.monster,
             "trail": active.trail.len(),
             "trail_cells": active.trail,
+            "arrows": crate::navigation::arrows(&active.trail, game.player.cell, 0).len(),
+            "marker": crate::navigation::marker(&active.trail, game.player.cell),
         })),
         // Whether the navigation window found more than its rows show (null: it's closed).
         "navi_results_more": game.navi_window.as_ref().map(|window| window.more),

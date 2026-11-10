@@ -766,13 +766,8 @@ const SKILL_ACTION: usize = 12;
 const CAST_SQUARE_LIFT: f32 = 0.2;
 /// The ground cursor's tint (0x6600ffaa): green-blue, 40% opaque.
 const GROUND_CURSOR_TINT: [f32; 4] = [0.0, 1.0, 170.0 / 255.0, 102.0 / 255.0];
-/// The navigation arrow sits this far over the head; routes the player starts may use the Kafra and the airship, not
-/// scrolls.
-// ponytail: the client's arrow height is an estimate.
-const NAVI_ARROW_RISE: f32 = 12.0;
+/// Routes the player starts may use the Kafra and the airship, not scrolls.
 const NAVI_SERVICES: u8 = 101;
-/// How many cells toward where it heads the arrow looks.
-const NAVI_ARROW_LOOK: f32 = 3.0;
 /// The room owner's menu: "Give Master Authority", "Kick Character Out".
 const ROOM_HAND_OVER: usize = 128;
 const ROOM_KICK: usize = 127;
@@ -3018,8 +3013,10 @@ struct Assets {
     party: party::Assets,
     chatroom: chatroom::Assets,
     reputation: reputation::Assets,
-    /// The navigation arrows, by direction (south, south-west, … south-east).
+    /// The navigation arrows that lie on the ground, by the way the step goes (north, north-west, … north-east).
     navi_arrows: Vec<Texture>,
+    /// The marker on the cell a navigation heads for: its four pictures in turn.
+    navi_marker: Vec<Texture>,
     /// Item links' underline in the NPC window.
     /// NPC text's link underlines: web links', every other link's.
     url_line: Texture,
@@ -3153,7 +3150,8 @@ impl Assets {
             party: party::Assets::load(gpu, grf),
             chatroom: chatroom::Assets::load(gpu, grf),
             reputation: reputation::Assets::load(gpu, grf),
-            navi_arrows: (0..8).map(|turn| image(format!("{UI}navigation_interface\\navi_grid_{turn}.tga"))).collect(),
+            navi_arrows: (0..8).map(|turn| image(format!("{UI}navigation_interface3\\navi_grid1_{turn}.tga"))).collect(),
+            navi_marker: (1..=4).map(|frame| image(format!("{UI}navigation_interface3\\location{frame}.tga"))).collect(),
             url_line: gpu.solid([links::URL_COLOR[0], links::URL_COLOR[1], links::URL_COLOR[2], 0xFF]),
             link_line: gpu.solid([links::NPC_COLOR[0], links::NPC_COLOR[1], links::NPC_COLOR[2], 0xFF]),
             magic_target: gpu.try_load_texture(grf, "data\\texture\\effect\\magic_target.tga", false).ok(),

@@ -1623,23 +1623,12 @@ impl App {
                 [((overhead::CAST_BAR[0] - 2.0) * share_left(start, length, now)).round(), overhead::CAST_BAR[1] - 2.0],
             ));
         }
-        // Navigation: the trail to where it heads on this map, and the arrow over the head.
+        // Navigation: the trail to where it heads on this map (its arrows and marker go on the ground, with the cursor).
         let here = navigation::map_key(&game.map);
         let navi_next = game.navigation.as_mut().and_then(|active| active.next_cell(&self.navi_tables, &here));
         if let Some(active) = &mut game.navigation {
             let gat = &game.world.gat;
             active.update_trail(&here, game.player.cell, navi_next, |from, to| world::find_trail(gat, from, to));
-        }
-        if let Some(next) = navi_next {
-            // A point a few cells toward it, so a far goal off the screen still turns the arrow.
-            let toward = [f32::from(next[0]) - game.player.cell[0] as f32, f32::from(next[1]) - game.player.cell[1] as f32];
-            let length = toward[0].hypot(toward[1]).max(1.0);
-            let near = [0, 1].map(|axis| game.player.cell[axis] as f32 + toward[axis] / length * NAVI_ARROW_LOOK.min(length));
-            let goal = game.world.cell_position(near);
-            if let (Some(from), Some(to), Some([x, y])) = (sprite_point(player_feet, 0.0), sprite_point(goal, 0.0), head(&None)) {
-                let arrow = &assets.navi_arrows[navigation::arrow([to[0] - from[0], to[1] - from[1]])];
-                base.sprites.push((arrow, [x - arrow.size[0] / 2.0, y - NAVI_ARROW_RISE - arrow.size[1]], arrow.size));
-            }
         }
         // Chat room signs over their owners' heads, like speech (not the room we're in).
         game.sign_rects.clear();
@@ -1928,8 +1917,6 @@ impl App {
                 game.minimap_crop.as_ref().map(|(_, texture)| texture)
             }
         };
-        let trail = game.navigation.as_ref().map_or(&[][..], |active| active.trail.as_slice());
-        let goal = navi_next.map(|cell| cell.map(i32::from));
         let markers = minimap::Markers {
             cell: game.player.cell,
             yaw: game.player.rot,
@@ -1939,8 +1926,6 @@ impl App {
             party: &dots,
             guild: &guild,
             boss,
-            trail,
-            goal,
         };
         if game.minimap_shown() {
             minimap::draw(&mut chat_layer, &assets.minimap, overview, size, game.minimap_zoom, &markers, minimap::Pointer { at: pointer.0, down: pointer.1 });
@@ -3196,6 +3181,28 @@ impl App {
                     })
                     .collect();
                 effect_meshes.push((texture, vertices, true));
+            }
+        }
+        // A navigation's arrows, flat on the cells of its trail, and the marker turning on the cell it heads for (two
+        // cells wide; tinted on the way to a warp).
+        if let Some(active) = &game.navigation {
+            let ms = now.duration_since(game.entered).as_millis();
+            let mut tile = |texture, cell: [i32; 2], grow: f32, tint: [f32; 4]| {
+                let Some(corners) = game.world.cell_quad(cell) else { return };
+                let vertex = |corner: usize, uv: [f32; 2]| {
+                    let [x, y, z] = corners[corner];
+                    world::MeshVertex { position: [x + (uv[0] * 2.0 - 1.0) * grow, y + CAST_SQUARE_LIFT, z + (uv[1] * 2.0 - 1.0) * grow], uv, tint }
+                };
+                let [a, b, c, d] = [vertex(0, [0.0, 0.0]), vertex(1, [1.0, 0.0]), vertex(2, [0.0, 1.0]), vertex(3, [1.0, 1.0])];
+                effect_meshes.push((texture, vec![a, b, d, a, d, c], false));
+            };
+            for (cell, turn, bright) in navigation::arrows(&active.trail, game.player.cell, ms) {
+                tile(&assets.navi_arrows[turn], cell, 0.0, [1.0, 1.0, 1.0, navigation::ARROW_ALPHA[usize::from(bright)]]);
+            }
+            if let Some(cell) = navigation::marker(&active.trail, game.player.cell) {
+                let at_goal = navigation::on_target_map(&self.navi_tables, &game.map, &active.target);
+                let tint = if at_goal { navigation::MARKER_TINT } else { navigation::STEP_MARKER_TINT };
+                tile(&assets.navi_marker[navigation::marker_frame(ms)], cell, world::CELL / 2.0, tint);
             }
         }
         // The ground cursor: its square over the cell, at the corner heights of the ground tile it's part of.
