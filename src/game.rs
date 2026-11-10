@@ -944,16 +944,17 @@ impl Game {
     }
 
     /// The screen turned from `old` to `new` (the Extras' UI scale): the windows with a saved place and a moved chat
-    /// window keep their gaps to the edges they were nearer, and Game Settings, which opens centred, is centred again.
+    /// window keep their gaps to the edges they were nearer, and Game Settings stays under the pointer, which went
+    /// from `pointer[0]` to `pointer[1]`: the switch or the arrow just clicked can be clicked again.
     // ponytail: the other open windows (mail, quests, a torn-off chat tab, …) stay put, so one can be left past the
     // new edge; they'd each need their size here.
-    pub(crate) fn refit_windows(&mut self, old: [f32; 2], new: [f32; 2]) {
+    pub(crate) fn refit_windows(&mut self, old: [f32; 2], new: [f32; 2], pointer: [[f32; 2]; 2]) {
         for (_, frame) in self.panel_frames() {
             frame.refit(old, new);
         }
         self.chat.refit(old, new);
         if let Some(window) = &mut self.settings_window {
-            window.centre(new);
+            window.keep_under(pointer, new);
         }
     }
 

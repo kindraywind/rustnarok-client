@@ -82,7 +82,7 @@ mod world;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use actor::{Actor, Digits, Look, SpriteSet, Timing};
@@ -121,26 +121,29 @@ pub fn screen_scale() -> f32 {
 // ponytail: one global for the one window, read in over a hundred places that would otherwise all take it as an argument.
 static SCREEN: [AtomicU32; 3] = [AtomicU32::new(1024f32.to_bits()), AtomicU32::new(768f32.to_bits()), AtomicU32::new(1f32.to_bits())];
 
-/// The Extras' UI scale (`GraphicsSettings::ui_scale`), as the canvas was last fitted for; `redraw` keeps it up.
-static UI_SCALE: AtomicBool = AtomicBool::new(false);
+/// The Extras' UI scale (`GraphicsSettings::ui_rows`: its size's rows, 0 when off), as the canvas was last fitted for;
+/// `redraw` keeps it up.
+static UI_ROWS: AtomicU32 = AtomicU32::new(0);
 
-pub fn ui_scaled() -> bool {
-    UI_SCALE.load(Ordering::Relaxed)
+pub fn ui_rows() -> Option<f32> {
+    Some(UI_ROWS.load(Ordering::Relaxed)).filter(|&rows| rows > 0).map(|rows| rows as f32)
 }
 
-pub fn set_ui_scaled(on: bool) {
-    UI_SCALE.store(on, Ordering::Relaxed);
+pub fn set_ui_rows(rows: Option<f32>) {
+    UI_ROWS.store(rows.map_or(0, |rows| rows as u32), Ordering::Relaxed);
 }
 
 /// The canvas for a window of `size` pixels on a display of `scale_factor` pixels a point, and window pixels per canvas
 /// pixel: a whole number (the display's own, 2 on Retina) so UI pictures stay sharp, unless the window is smaller than
-/// the classic 1024×768; then it shrinks to fit that. With the Extras' UI scale (`fit`) it's the most the classic
-/// 1024×768 fits at, however big the window: the canvas stays 768 rows (1024 columns in a narrow window) and the
-/// interface grows with the window, as the world's 3D view does.
-fn canvas([width, height]: [u32; 2], scale_factor: f64, fit: bool) -> ([f32; 2], f32) {
+/// the classic 1024×768; then it shrinks to fit that. With the Extras' UI scale it's the most a 4:3 screen of the
+/// size's `rows` fits at, however big the window: at the classic 768 the canvas stays 768 rows (1024 columns in a
+/// narrow window), at 960 it stays 960, and the interface grows with the window, as the world's 3D view does. It's
+/// never under the display's own scale (a window too small for the size is as without it) nor over what 1024×768 fits at.
+fn canvas([width, height]: [u32; 2], scale_factor: f64, rows: Option<f32>) -> ([f32; 2], f32) {
     let [width, height] = [width.max(1) as f32, height.max(1) as f32];
     let most = (width / 1024.0).min(height / 768.0);
-    let scale = if fit { most } else { most.min(scale_factor.round().max(1.0) as f32) };
+    let own = most.min(scale_factor.round().max(1.0) as f32);
+    let scale = rows.map_or(own, |rows| (width / (rows * 4.0 / 3.0)).min(height / rows).clamp(own, most));
     // ponytail: the nudge keeps 1000 / (1000 / 1024) from flooring to 1023.
     ([(width / scale + 1e-3).floor(), (height / scale + 1e-3).floor()], scale)
 }
@@ -154,7 +157,7 @@ fn picture_place() -> ([f32; 2], [f32; 2]) {
 
 /// Fits the canvas to a window of `size` pixels.
 pub fn fit_screen(size: [u32; 2], scale_factor: f64) {
-    let ([width, height], scale) = canvas(size, scale_factor, ui_scaled());
+    let ([width, height], scale) = canvas(size, scale_factor, ui_rows());
     for (slot, value) in SCREEN.iter().zip([width, height, scale]) {
         slot.store(value.to_bits(), Ordering::Relaxed);
     }
@@ -5663,7 +5666,7 @@ fn main() {
     let quest_filters = quest::Filters::load(&grf);
     let sound = sound::Settings::load();
     let graphics = options::GraphicsSettings::load();
-    set_ui_scaled(graphics.ui_scale);
+    set_ui_rows(graphics.ui_rows());
     let font = Font::named(&graphics.font);
     let keybinds = shortcuts::Shortcuts::load(&grf);
     let mut app = App {
@@ -6023,11 +6026,11 @@ mod tests {
 
     #[test]
     fn canvas_grows_with_the_window_at_a_whole_scale() {
-        assert_eq!(canvas([2048, 1536], 2.0, false), ([1024.0, 768.0], 2.0), "the classic window on Retina");
-        assert_eq!(canvas([2880, 1800], 2.0, false), ([1440.0, 900.0], 2.0), "full screen: more room, same-sized HUD");
-        assert_eq!(canvas([3841, 2160], 2.0, false), ([1920.0, 1080.0], 2.0), "an odd pixel is left over, not stretched into");
-        assert_eq!(canvas([1920, 1080], 1.0, false), ([1920.0, 1080.0], 1.0));
-        let (small, scale) = canvas([1000, 1000], 1.0, false);
+        assert_eq!(canvas([2048, 1536], 2.0, None), ([1024.0, 768.0], 2.0), "the classic window on Retina");
+        assert_eq!(canvas([2880, 1800], 2.0, None), ([1440.0, 900.0], 2.0), "full screen: more room, same-sized HUD");
+        assert_eq!(canvas([3841, 2160], 2.0, None), ([1920.0, 1080.0], 2.0), "an odd pixel is left over, not stretched into");
+        assert_eq!(canvas([1920, 1080], 1.0, None), ([1920.0, 1080.0], 1.0));
+        let (small, scale) = canvas([1000, 1000], 1.0, None);
         assert_eq!(small, [1024.0, 1024.0], "smaller than 1024 wide shrinks to fit");
         assert!(scale < 1.0);
     }
@@ -6035,22 +6038,45 @@ mod tests {
     /// The Extras' UI scale: the canvas stays the classic 768 rows, so the interface grows with the window.
     #[test]
     fn canvas_keeps_768_rows_with_the_ui_scale() {
-        assert_eq!(canvas([2048, 1536], 2.0, true), ([1024.0, 768.0], 2.0), "the classic window: as without it");
-        assert_eq!(canvas([2880, 1800], 2.0, true), ([1228.0, 768.0], 1800.0 / 768.0), "a 1440x900 window on Retina");
-        assert_eq!(canvas([1440, 900], 1.0, true).0, [1228.0, 768.0], "the same canvas on a plain display");
-        assert_eq!(canvas([3456, 2234], 2.0, true), ([1188.0, 768.0], 2234.0 / 768.0), "full screen on a 16 inch MacBook Pro");
-        assert_eq!(canvas([3840, 2160], 1.0, true), ([1365.0, 768.0], 2.8125), "4K with no display scale");
-        assert_eq!(canvas([1920, 1080], 1.0, true), ([1365.0, 768.0], 1.40625));
+        const CLASSIC: Option<f32> = Some(768.0);
+        assert_eq!(canvas([2048, 1536], 2.0, CLASSIC), ([1024.0, 768.0], 2.0), "the classic window: as without it");
+        assert_eq!(canvas([2880, 1800], 2.0, CLASSIC), ([1228.0, 768.0], 1800.0 / 768.0), "a 1440x900 window on Retina");
+        assert_eq!(canvas([1440, 900], 1.0, CLASSIC).0, [1228.0, 768.0], "the same canvas on a plain display");
+        assert_eq!(canvas([3456, 2234], 2.0, CLASSIC), ([1188.0, 768.0], 2234.0 / 768.0), "full screen on a 16 inch MacBook Pro");
+        assert_eq!(canvas([3840, 2160], 1.0, CLASSIC), ([1365.0, 768.0], 2.8125), "4K with no display scale");
+        assert_eq!(canvas([1920, 1080], 1.0, CLASSIC), ([1365.0, 768.0], 1.40625));
         // Narrower than 4:3, the width is what fits: 1024 columns, more rows.
-        assert_eq!(canvas([2048, 2048], 2.0, true), ([1024.0, 1024.0], 2.0));
+        assert_eq!(canvas([2048, 2048], 2.0, CLASSIC), ([1024.0, 1024.0], 2.0));
         // Smaller than the classic window, it shrinks to fit either way.
-        assert_eq!(canvas([1000, 1000], 1.0, true), canvas([1000, 1000], 1.0, false));
+        assert_eq!(canvas([1000, 1000], 1.0, CLASSIC), canvas([1000, 1000], 1.0, None));
         // Every size keeps the classic canvas at least, and never a pixel more than the window has.
         for size in [[1024, 768], [1367, 771], [1728, 1117], [2560, 1440], [3440, 1440], [5120, 2880], [801, 2000]] {
-            let ([width, height], scale) = canvas(size, 1.0, true);
+            let ([width, height], scale) = canvas(size, 1.0, CLASSIC);
             assert!(width >= 1024.0 && height >= 768.0 && (width == 1024.0 || height == 768.0), "{size:?}: {width}x{height}");
             assert!(width * scale <= size[0] as f32 + 0.01 && height * scale <= size[1] as f32 + 0.01, "{size:?}");
         }
+    }
+
+    /// The UI scale's sizes: the canvas keeps the size's rows where the window is big enough for it.
+    #[test]
+    fn canvas_keeps_the_ui_sizes_rows() {
+        // A 1440x900 window on Retina: 864 rows fit; 960 and up would be under the display's own scale, so as without it.
+        assert_eq!(canvas([2880, 1800], 2.0, Some(864.0)), ([1382.0, 864.0], 1800.0 / 864.0));
+        assert_eq!(canvas([2880, 1800], 2.0, Some(960.0)), canvas([2880, 1800], 2.0, None));
+        assert_eq!(canvas([1440, 900], 1.0, Some(864.0)).0, [1382.0, 864.0], "the same canvas on a plain display");
+        // Full screen on a 16 inch MacBook Pro, each size: the interface 1.45, 1.29, 1.16 and 1.06 times its own, then as it is.
+        let rows = |rows: f32| canvas([3456, 2234], 2.0, Some(rows));
+        assert_eq!(rows(768.0), ([1188.0, 768.0], 2234.0 / 768.0));
+        assert_eq!(rows(864.0), ([1336.0, 864.0], 2234.0 / 864.0));
+        assert_eq!(rows(960.0), ([1485.0, 960.0], 2234.0 / 960.0));
+        assert_eq!(rows(1050.0), ([1624.0, 1050.0], 2234.0 / 1050.0));
+        assert_eq!(rows(1200.0), canvas([3456, 2234], 2.0, None));
+        // 4K with no display scale: every size grows it, the smallest by half.
+        assert_eq!(canvas([3840, 2160], 1.0, Some(1440.0)), ([2560.0, 1440.0], 1.5));
+        assert_eq!(canvas([3840, 2160], 1.0, Some(1200.0)), ([2133.0, 1200.0], 1.8));
+        // Narrower than 4:3, the width decides; and never past what the classic 1024x768 fits at.
+        assert_eq!(canvas([2048, 4000], 1.0, Some(960.0)), ([1280.0, 2500.0], 1.6));
+        assert_eq!(canvas([1100, 800], 1.0, Some(864.0)), ([1100.0, 800.0], 1.0));
     }
 
     #[test]

@@ -2202,7 +2202,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "aura_off": app.graphics.aura_off, "tab": game.settings_window.as_ref().map(|window| window.tab),
         "monster_hp": app.graphics.monster_hp, "monster_level": app.graphics.monster_level, "far_zoom": app.graphics.far_zoom,
         "item_options": app.graphics.item_options, "cooldown_numbers": app.graphics.cooldown_numbers, "exp_hundredths": app.graphics.exp_hundredths,
-        "kill_exp": app.graphics.kill_exp, "ui_scale": app.graphics.ui_scale,
+        "kill_exp": app.graphics.kill_exp, "ui_scale": app.graphics.ui_scale, "ui_size": app.graphics.ui_size,
         "extended_damage": app.graphics.extended_damage, "font": app.graphics.font,
         "font_index": rustnarok_client::text::index_of(rustnarok_client::text::choices(), &app.graphics.font),
     });

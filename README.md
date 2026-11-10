@@ -127,6 +127,7 @@ you turn it on, so the client plays as the game does by default.
 | **Exp to 0.01%** | The exp bar's hover shows two decimals. |
 | **Kill exp** | The base and job exp each kill gives, rising over the monster. |
 | **UI scale** | The interface grows with the window: on a big window or full screen, the HUD, windows and text are as large as they'd be at the classic 1024×768, and the world's view stays as it is. |
+| **UI size** | How large the UI scale makes the interface, from "As at 1024x768" (the largest) down to "As at 1920x1440": as large as it would be on a screen of that size. |
 | **Font** | The font all text is drawn in: Tahoma, or another found in the game's `System/Font` folder or the system's fonts. |
 
 ## 🤖 An AI plays it
