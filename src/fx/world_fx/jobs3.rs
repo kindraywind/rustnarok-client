@@ -34,6 +34,7 @@ pub const AXE_SKILL: u16 = 2278;
 pub const SHIELD_SKILL: u16 = 5265;
 
 /// UNT_B_TRAP.
+#[cfg(test)]
 pub const BIND_TRAP_UNIT: u32 = 260;
 /// EFST_SPHERE_1 … 5.
 const SPHERE_STATUSES: std::ops::RangeInclusive<u16> = 363..=367;
@@ -972,7 +973,7 @@ mod tests {
     }
 
     fn seen<'a>() -> Seen<'a> {
-        Seen { eye: Eye::at(45.0, 0.0), shows: &|_| true, hidden: &|_| false, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false }
+        Seen { eye: Eye::at(45.0, 0.0), shows: &|_| true, hidden: &|_| false, ground: &|_, _| 0.0, dim: false }
     }
 
     /// One object run on its own as the registry runs it: it follows its owner, updates and ages.

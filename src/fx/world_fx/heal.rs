@@ -594,7 +594,7 @@ mod tests {
         let alpha_of = |dim: bool| {
             let mut faces = Vec::new();
             let (shows, hidden) = (|_: u32| true, |_: Option<u32>| false);
-            object.draw(&fx, &Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim }, &mut faces);
+            object.draw(&fx, &Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, ground: &|_, _| 0.0, dim }, &mut faces);
             faces[0].vertices[0].tint[3]
         };
         assert!(close(alpha_of(false), 132.0 / 255.0) && close(alpha_of(true), 100.0 / 255.0));
@@ -609,7 +609,7 @@ mod tests {
         fx.position = [10.0, 0.0, 20.0];
         let mut faces = Vec::new();
         let (shows, hidden) = (|_: u32| true, |_: Option<u32>| false);
-        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false };
+        let seen = Seen { eye: Eye::at(45.0, 0.0), shows: &shows, hidden: &hidden, ground: &|_, _| 0.0, dim: false };
         object.draw(&fx, &seen, &mut faces);
         // Rings and walls of 2 passes × 20 quads; the first quad's uv is j = 1.
         assert_eq!(faces.len(), 80);

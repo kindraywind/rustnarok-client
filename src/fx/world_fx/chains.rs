@@ -229,7 +229,7 @@ mod tests {
     }
 
     fn faces_at(fx: &WorldFx, longitude: f32) -> Vec<(Vec<Vector>, bool, f32)> {
-        let seen = Seen { eye: Eye::at(45.0, longitude), shows: &|_| true, hidden: &|_| false, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false };
+        let seen = Seen { eye: Eye::at(45.0, longitude), shows: &|_| true, hidden: &|_| false, ground: &|_, _| 0.0, dim: false };
         fx.faces(&seen)
             .into_iter()
             .map(|face| (face.vertices.iter().map(|vertex| vertex.position).collect(), face.additive, face.vertices[0].tint[3]))

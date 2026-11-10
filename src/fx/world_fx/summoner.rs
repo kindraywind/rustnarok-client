@@ -701,7 +701,7 @@ mod tests {
     }
 
     fn seen<'a>(shows: &'a dyn Fn(u32) -> bool) -> Seen<'a> {
-        Seen { eye: Eye::at(45.0, 0.0), shows, hidden: &|_| false, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false }
+        Seen { eye: Eye::at(45.0, 0.0), shows, hidden: &|_| false, ground: &|_, _| 0.0, dim: false }
     }
 
     fn all(_: u32) -> bool {

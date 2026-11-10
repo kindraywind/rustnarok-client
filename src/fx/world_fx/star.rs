@@ -26,8 +26,6 @@ pub const LIGHTS: [u32; 3] = [1197, 1198, 1199];
 pub const PLASMA: u32 = 1200;
 /// Gravity Control's lift.
 pub const GRAVITY: u32 = 1201;
-/// Gravity Control's status.
-pub const GRAVITY_STATUS: u16 = 1050;
 /// Nova Explosion's globe, and Star Emperor Advent's.
 pub const NOVA: u32 = 1202;
 pub const ADVENT: u32 = 1203;
@@ -858,7 +856,7 @@ mod tests {
     }
 
     fn seen<'a>(shows: &'a dyn Fn(u32) -> bool, hidden: &'a dyn Fn(Option<u32>) -> bool) -> Seen<'a> {
-        Seen { eye: Eye::at(45.0, 0.0), shows, hidden, size: &|_| 1.0, ground: &|_, _| 0.0, dim: false }
+        Seen { eye: Eye::at(45.0, 0.0), shows, hidden, ground: &|_, _| 0.0, dim: false }
     }
 
     /// Ticks `count` times with the unit at `at` (None: gone) and the player at `player`.
