@@ -17,7 +17,7 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_
     id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
     hotkey (slot), skill (id), char_slot (a card at character select, by slot), unit (name, from `units`),
     ground_item (item id, from `ground_items`), item_link (an item link in the chat log or NPC window, item id),
-    navi_link (a navigation link there, by its map), url_link (a web link there, by its address), quest_link (a
+    navi_link (a navigation link there, by its map), place_link (a shared place there, by its map), url_link (a web link there, by its address), quest_link (a
     quest link there, by quest id),
     cell (a map cell [x, y]: its middle on screen; "offset" too, e.g. a pixel off the middle column), or
     {"point": [x, y]}; "offset": [dx, dy] shifts from the centre; a target not on screen fails the step)
@@ -258,7 +258,7 @@ def locate(target):
         if kind == "menu_item" and found.get("kind") == kind and value in found.get("label", ""):
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]
-        key = {"inventory_item": "id", "item_link": "id", "navi_link": "map", "url_link": "address", "quest_link": "id", "pick_item": "id", "button": "name", "hotkey": "slot", "skill": "id", "char_slot": "slot"}.get(kind)
+        key = {"inventory_item": "id", "item_link": "id", "navi_link": "map", "place_link": "map", "url_link": "address", "quest_link": "id", "pick_item": "id", "button": "name", "hotkey": "slot", "skill": "id", "char_slot": "slot"}.get(kind)
         if found.get("kind") == kind and found.get(key) == value:
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]

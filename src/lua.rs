@@ -117,6 +117,8 @@ const NAVI_DISTANCE: &str = "data\\luafiles514\\lua files\\navigation\\navi_link
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct NaviTables {
     pub maps: HashMap<String, String>,
+    /// Each map's width and height in cells.
+    pub sizes: HashMap<String, [u16; 2]>,
     pub links: Vec<NaviLink>,
     pub npcs: Vec<NaviNpc>,
     pub monsters: Vec<NaviMonster>,
@@ -160,7 +162,7 @@ pub fn navigation(grf: &Grf) -> io::Result<NaviTables> {
     navi_tables(&lua)
 }
 
-/// `Navi_Map` { name, shown name, .. }, `Navi_Link` { map, id, kind, .., name, .., x, y, to map, to x, to y },
+/// `Navi_Map` { name, shown name, type, width, height }, `Navi_Link` { map, id, kind, .., name, .., x, y, to map, to x, to y },
 /// `Navi_Npc` { map, id, kind, sprite, name, .., x, y }, `Navi_Mob` { map, id, kind, spawns << 16 | monster, name, .. },
 /// and `Navi_Distance` (when there): map, how many ways, { { a way's id, { "E", id, cells }.., { "NULL", 0, 0 } }.. },
 /// one after the other in one flat list.
@@ -175,6 +177,7 @@ fn navi_tables(lua: &Lua) -> io::Result<NaviTables> {
     let mut tables = NaviTables::default();
     for row in rows("Navi_Map")? {
         tables.maps.insert(text(&row, 1), text(&row, 2));
+        tables.sizes.insert(text(&row, 1), cell(&row, 4));
     }
     for row in rows("Navi_Link")? {
         tables.links.push(NaviLink {
@@ -2181,6 +2184,7 @@ mod tests {
         super::exec_bytes(&lua, "navi", source.as_bytes().to_vec()).unwrap();
         let tables = super::navi_tables(&lua).unwrap();
         assert_eq!(tables.maps.get("prt_fild08").map(String::as_str), Some("Prontera Field"));
+        assert_eq!(tables.sizes.get("prontera"), Some(&[312, 392]));
         let link =
             super::NaviLink { id: 100, map: "prt_fild08".into(), kind: 200, name: "warp".into(), cell: [170, 375], to: "prontera".into(), to_cell: [156, 22] };
         assert_eq!(tables.links, [link]);

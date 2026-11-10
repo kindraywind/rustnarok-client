@@ -1521,6 +1521,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.dialog_links.iter().chain(&game.chat_links).map(|(area, target)| match target {
             crate::links::Target::Item(item) => json!({"kind": "item_link", "id": item.id, "box": area}),
             crate::links::Target::Navi { map, .. } => json!({"kind": "navi_link", "map": map, "box": area}),
+            crate::links::Target::Place { map, cell } => json!({"kind": "place_link", "map": map, "cell": cell, "box": area}),
             crate::links::Target::Url(address) => json!({"kind": "url_link", "address": address, "box": area}),
             crate::links::Target::Quest(id) => json!({"kind": "quest_link", "id": id, "box": area}),
             crate::links::Target::Tip => json!({"kind": "tip_link", "box": area}),
@@ -2041,6 +2042,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "text": window.text, "typing": window.typing, "filter": window.filter, "rows": window.rows.len(), "row": window.row,
             "member": window.member, "service": window.service, "first": window.first, "position": window.frame.position,
             "route": window.routing(), "mini": window.mini, "auto_mini": window.auto_mini, "size": window.size(),
+            "sharing": window.sharing.is_some(),
             "sides": window.sides.iter().map(|side| side.as_ref().map(|frame| frame.position)).collect::<Vec<_>>(),
         })),
         // Reputation points by reputation type.

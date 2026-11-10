@@ -343,7 +343,8 @@ pub fn on_target_map(tables: &NaviTables, here: &str, target: &Target) -> bool {
     navi_map(tables, here) == navi_map(tables, &target.map)
 }
 
-/// One thing a search found: a map (kind 1), an NPC (2) or a monster (3), as `target_of` numbers them.
+/// One thing a search found: a map (kind 1), an NPC (2) or a monster (3), as `target_of` numbers them; a cell of a
+/// map (0) comes from a shared place.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Found {
     pub kind: u8,
@@ -426,6 +427,41 @@ pub fn groups(found: &[Found], filter: usize) -> Vec<Vec<usize>> {
     rows
 }
 
+/// The digits a shared place's x and y are written in, two each, the bigger first.
+const DIGITS: &[u8; 62] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+/// The x and y that say "no cell": the map itself.
+const NO_CELL: u16 = 1000;
+
+/// A place as the chat carries it: `<NAVIL>`, the map's name, x and y in two digits each (`DIGITS`), `</NAVIL>`; a map
+/// with no cell has 1000 for both.
+pub fn place_link(map: &str, cell: Option<[u16; 2]>) -> String {
+    let digits = |number: u16| [DIGITS[usize::from(number / 62 % 62)] as char, DIGITS[usize::from(number % 62)] as char];
+    let [x, y] = cell.unwrap_or([NO_CELL; 2]);
+    format!("<NAVIL>{map}{}{}</NAVIL>", String::from_iter(digits(x)), String::from_iter(digits(y)))
+}
+
+/// What's between a place link's tags, read back: the map's name and the cell (none when x says there's no cell).
+pub fn read_place(body: &str) -> Option<(String, Option<[u16; 2]>)> {
+    let (map, numbers) = body.split_at_checked(body.len().checked_sub(4)?)?;
+    let digit = |index: usize| DIGITS.iter().position(|&digit| digit == numbers.as_bytes()[index]).map(|digit| digit as u16);
+    let [x, y] = [digit(0)? * 62 + digit(1)?, digit(2)? * 62 + digit(3)?];
+    (!map.is_empty()).then(|| (map.to_owned(), (x != NO_CELL).then_some([x, y])))
+}
+
+/// A shared place as something the window can pick: the cell, or the map itself; none for a map the tables don't have
+/// under that very name.
+pub fn place_found(tables: &NaviTables, map: &str, cell: Option<[u16; 2]>) -> Option<Found> {
+    tables.maps.contains_key(map).then(|| Found {
+        kind: u8::from(cell.is_none()),
+        map: map.to_owned(),
+        cell: cell.unwrap_or_default(),
+        monster: 0,
+        name: map.to_owned(),
+        spawns: 0,
+        with_map: false,
+    })
+}
+
 /// How thick a monster is on its map, in the game's words (none when the tables give no count).
 pub fn density(spawns: u32) -> Option<usize> {
     Some(match spawns {
@@ -448,8 +484,10 @@ pub fn group_label(found: &[Found], row: &[usize]) -> String {
 pub fn member_label(tables: &NaviTables, messages: &[String], found: &[Found], row: &[usize], member: usize) -> String {
     let place = &found[row[member]];
     let thick = || density(place.spawns).and_then(|id| messages.get(id)).map_or(String::new(), |word| format!(" ({word})"));
+    let shown = || tables.maps.get(&place.map).cloned().unwrap_or_default();
     match place.kind {
-        1 => tables.maps.get(&place.map).cloned().unwrap_or_default(),
+        0 => format!("{} [{},{}]", shown(), place.cell[0], place.cell[1]),
+        1 => shown(),
         2 => format!("{} [{},{}]", place.map, place.cell[0], place.cell[1]),
         _ if found[row[0]].kind == 1 => format!("{}{}", place.name, thick()),
         _ => format!("{}{}", place.map, thick()),
@@ -597,6 +635,7 @@ mod tests {
                 NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 70 },
             ],
             passes: HashMap::new(),
+            sizes: HashMap::new(),
         }
     }
 
@@ -952,6 +991,24 @@ mod tests {
         assert!(names("tool prt_in").is_empty() && names("prt_in").is_empty() && names("  ").is_empty());
         // A monster once per map, however often the table lists it.
         assert_eq!(names("poring"), [place(3, "Poring", "prt_fild08"), place(3, "Poring", "izlude")]);
+    }
+
+    #[test]
+    fn writes_a_place_for_the_chat_and_reads_it_back() {
+        // x and y in two digits of 62 each; no cell is 1000 ("g8") for both.
+        assert_eq!(place_link("prontera", Some([150, 61])), "<NAVIL>prontera2q0Z</NAVIL>");
+        assert_eq!(place_link("izlude", None), "<NAVIL>izludeg8g8</NAVIL>");
+        assert_eq!(read_place("prontera2q0Z"), Some(("prontera".into(), Some([150, 61]))));
+        assert_eq!(read_place("izludeg8g8"), Some(("izlude".into(), None)));
+        assert_eq!((read_place("2q0Z"), read_place("ab"), read_place("prontera2q0!")), (None, None, None));
+        // The window picks it as a cell or as the map; a name the tables don't have, in that very spelling, is nothing.
+        let tables = tables();
+        assert_eq!(place_found(&tables, "prontera", Some([150, 61])).map(|found| (found.kind, found.cell)), Some((0, [150, 61])));
+        assert_eq!(place_found(&tables, "prontera", None).map(|found| found.kind), Some(1));
+        assert_eq!((place_found(&tables, "Prontera", None), place_found(&tables, "nowhere", None)), (None, None));
+        let found = [place_found(&tables, "prontera", Some([150, 61])).unwrap()];
+        assert_eq!((group_label(&found, &[0]), member_label(&tables, &messages(), &found, &[0], 0)), ("[1]prontera".into(), "Prontera [150,61]".into()));
+        assert_eq!(target_of(&tables, "prontera", 0, [150, 61], 0).map(|target| target.cell), Ok(Some([150, 61])));
     }
 
     #[test]
