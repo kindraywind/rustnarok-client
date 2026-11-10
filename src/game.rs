@@ -50,6 +50,8 @@ pub(crate) enum Top {
     Chat,
     QuestIcon,
     LevelUp,
+    /// The pickup popup: a window among the others, though no press reaches it.
+    Pickup,
 }
 
 impl Top {

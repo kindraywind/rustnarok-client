@@ -128,6 +128,22 @@ mod tests {
     }
 
     #[test]
+    fn the_pickup_popup_is_a_window_in_the_order() {
+        const HOTBAR: Top = Top::Panel(Panel::Hotkeys);
+        let mut front = Front::default();
+        front.sync(&[HOTBAR, INVENTORY]);
+        // It shows: on top of the hotbar and the rest. A press on the hotbar after that puts the hotbar over it.
+        front.sync(&[Top::Pickup, HOTBAR, INVENTORY]);
+        assert_eq!(front.windows(), [HOTBAR, INVENTORY, Top::Pickup]);
+        front.raise(HOTBAR);
+        assert_eq!(front.windows(), [INVENTORY, Top::Pickup, HOTBAR]);
+        // Its five seconds over, the next one is on top again.
+        front.sync(&[HOTBAR, INVENTORY]);
+        front.sync(&[Top::Pickup, HOTBAR, INVENTORY]);
+        assert_eq!(front.windows(), [INVENTORY, HOTBAR, Top::Pickup]);
+    }
+
+    #[test]
     fn a_press_goes_to_the_highest_window_under_message_boxes() {
         let mut front = Front::default();
         front.sync(&[INVENTORY, MAIL]);
