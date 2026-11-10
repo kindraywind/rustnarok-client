@@ -1625,7 +1625,7 @@ impl App {
         }
         // Navigation: the trail to where it heads on this map (its arrows and marker go on the ground, with the cursor).
         let here = navigation::map_key(&game.map);
-        let navi_next = game.navigation.as_mut().and_then(|active| active.next_cell(&self.navi_tables, &here));
+        let navi_next = game.navigation.as_ref().and_then(|active| active.next_cell(&here));
         if let Some(active) = &mut game.navigation {
             let gat = &game.world.gat;
             active.update_trail(&here, game.player.cell, navi_next, |from, to| world::find_trail(gat, from, to));

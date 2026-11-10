@@ -1,0 +1,28 @@
+{
+  "about": "Routes go by ways that can be walked to. Prontera's insides are one map of many rooms, each with its own door. From the room at prt_in 131,71, a navigation to Prontera heads for that room's own door (135,71), four cells off, not for the first door the table lists, which is in another room. From Prontera at 120,264, a navigation to prt_in 180,97 heads for the door that leads to that cell's room (120,267), three cells off, not for the first door to the insides.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prt_in 131 71"},
+    {"settle": 1500},
+    {"move": [1000, 600]},
+    {"say": "/navi prontera 150/150"},
+    {"wait": 800},
+    {"expect": {"chat": "Use the Warp Portal to move to the next area.", "state": {"navigation.map": "prontera", "navigation.trail": 5, "navigation.trail_cells.4": [135, 71], "navigation.marker": [135, 71]}}},
+    {"shot": "navi-rooms-out", "threshold": 3},
+    {"say": "@warp prontera 120 264"},
+    {"settle": 1500},
+    {"say": "/navi prt_in 180/97"},
+    {"wait": 800},
+    {"expect": {"state": {"navigation.map": "prt_in", "navigation.cell": [180, 97], "navigation.trail": 4, "navigation.trail_cells.3": [120, 267], "navigation.marker": [120, 267]}}},
+    {"move": [1000, 600]},
+    {"shot": "navi-rooms-in", "threshold": 3},
+    {"say": "/naviopen"},
+    {"wait": 300},
+    {"click_on": {"button": "navi_stop"}},
+    {"wait": 300},
+    {"expect": {"state": {"navigation": null}}},
+    {"key": "Escape"},
+    {"wait": 300}
+  ]
+}

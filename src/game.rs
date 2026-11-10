@@ -1437,28 +1437,62 @@ impl Game {
     /// Starts a navigation and says in the chat where it stands; whether a way was found. With no way, or there
     /// already, none runs. A map the tables don't have: nothing, not a word.
     // ponytail: a start that finds no way drops the one under way; what the game keeps of it then isn't known.
-    pub(crate) fn navigate(&mut self, tables: &rustnarok_client::lua::NaviTables, messages: &[String], target: navigation::Target, services: u8) -> bool {
+    pub(crate) fn navigate(&mut self, tables: &lua::NaviTables, messages: &[String], grf: &Grf, target: navigation::Target, services: u8) -> bool {
         if !tables.maps.contains_key(&navigation::navi_map(tables, &target.map)) {
             return false;
         }
-        let (lines, outcome) = navigation::report(tables, messages, &self.map, self.player.cell, &target, services, true);
-        for line in lines {
+        let found = self.navigation_report(tables, messages, grf, &target, services, true);
+        for line in found.lines {
             self.chat_line(line, CHAT_NAVIGATION);
         }
-        self.navigation = (outcome == navigation::Outcome::Guiding).then(|| navigation::Active::new(target, services));
-        outcome != navigation::Outcome::NoWay
+        self.navigation = (found.outcome == navigation::Outcome::Guiding).then(|| {
+            let mut active = navigation::Active::new(target, services);
+            active.head_for(&self.map, found.next);
+            active
+        });
+        found.outcome != navigation::Outcome::NoWay
+    }
+
+    /// `navigation::report` for the player where they stand: this map's walks counted from the player's cell, the
+    /// target map's from the target cell (its ground read from the data when a way that arrives there is weighed).
+    fn navigation_report(
+        &self,
+        tables: &lua::NaviTables,
+        messages: &[String],
+        grf: &Grf,
+        target: &navigation::Target,
+        services: u8,
+        start: bool,
+    ) -> navigation::Report {
+        let here = world::walk_counts(&self.world.gat, self.player.cell);
+        let there = std::cell::OnceCell::new();
+        let to_target = |cell: [u16; 2]| {
+            let Some(goal) = target.cell.map(|goal| goal.map(i32::from)) else { return Some(0) };
+            let counts = there.get_or_init(|| {
+                let map = navigation::navi_map(tables, &target.map);
+                let read = || rustnarok_client::map::Gat::parse(&grf.read(&format!("data\\{map}.gat")).ok()?).ok();
+                // This map's own ground when the target is on it (the cells the server changed too).
+                let own = navigation::on_target_map(tables, &self.map, target);
+                let counted = |gat: &rustnarok_client::map::Gat| gat.walkable(goal).then(|| world::walk_counts(gat, goal));
+                if own { counted(&self.world.gat) } else { read().as_ref().and_then(counted) }
+            });
+            counts.as_ref().and_then(|counts| counts(cell.map(i32::from)))
+        };
+        let walks = navigation::Walks { from_player: &|cell| here(cell.map(i32::from)), to_target: &to_target };
+        navigation::report(tables, messages, &self.map, self.player.cell, target, services, start, &walks)
     }
 
     /// A map loaded under a navigation: the chat says where it stands, and on its target's map (for a map or a monster;
     /// for a cell, right on it) it's over.
-    pub(crate) fn navigation_loaded(&mut self, tables: &rustnarok_client::lua::NaviTables, messages: &[String]) {
+    pub(crate) fn navigation_loaded(&mut self, tables: &lua::NaviTables, messages: &[String], grf: &Grf) {
         let Some(active) = &self.navigation else { return };
-        let (lines, outcome) = navigation::report(tables, messages, &self.map, self.player.cell, &active.target, active.services, false);
-        for line in lines {
+        let found = self.navigation_report(tables, messages, grf, &active.target, active.services, false);
+        for line in found.lines {
             self.chat_line(line, CHAT_NAVIGATION);
         }
-        if outcome == navigation::Outcome::Over {
-            self.navigation = None;
+        match (found.outcome, &mut self.navigation) {
+            (navigation::Outcome::Over, _) | (_, None) => self.navigation = None,
+            (_, Some(active)) => active.head_for(&self.map, found.next),
         }
     }
 
