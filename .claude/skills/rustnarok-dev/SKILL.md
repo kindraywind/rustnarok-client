@@ -29,6 +29,9 @@ Personal or machine-specific notes (your server's ports, data paths, task lists)
 - An accounts file outside the repo — `RUSTNAROK_CLIENT_ACCOUNTS`, default `~/.config/rustnarok/accounts.txt` —
   with `username:`/`password:` lines (`username2:`/`password2:` for a second account), each with a character in
   slot 0. Never print the passwords.
+- For `cash-shop.json`, an item in the server's cash shop (stock rathena's is empty, and it then sends no list): in
+  rathena's `db/import/item_cash.yml`, a `Body:` with `- Tab: New` holding `Items:` `- Item: Red_Potion` at
+  `Price: 10`, then `@reloadcashdb`.
 
 ## Build and verify
 
