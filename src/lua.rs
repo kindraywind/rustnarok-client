@@ -1508,7 +1508,7 @@ pub struct World {
 }
 
 /// The world maps (`World_List`, each naming its table of fields: region, map, box, monster and level), and the
-/// box colors as red, green, blue and alpha (`worldview_info`): where the player is, and what's pointed at.
+/// box colors as red, green, blue and alpha (`worldview_info`): a navigation route's maps (Run), and what's pointed at.
 pub fn worlds(grf: &Grf) -> io::Result<(Vec<World>, [[u8; 4]; 2])> {
     let lua = run(grf, &WORLD_VIEW)?;
     let globals = lua.globals();
