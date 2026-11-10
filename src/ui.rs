@@ -44,6 +44,7 @@ pub(crate) mod mercenary;
 pub(crate) mod minimap;
 pub(crate) mod minimap_window;
 pub(crate) mod monster_info;
+pub(crate) mod navi_window;
 pub(crate) mod npc_input;
 pub(crate) mod npc_menu;
 pub(crate) mod npc_say;

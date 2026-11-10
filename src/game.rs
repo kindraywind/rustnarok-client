@@ -1421,14 +1421,15 @@ impl Game {
         if self.navi_window.is_some() {
             self.close_navigation();
         } else {
-            self.navi_window = Some(navigation::Window::new());
+            self.open_navigation().typing = true;
         }
     }
 
     /// Opens the navigation window (open already, it stays as it is).
-    pub(crate) fn open_navigation(&mut self) -> &mut navigation::Window {
+    pub(crate) fn open_navigation(&mut self) -> &mut navi_window::Window {
         if self.navi_window.is_none() {
-            self.navi_window = Some(navigation::Window::new());
+            // Its service box as the navigation under way goes: by the Kafra or not.
+            self.navi_window = Some(navi_window::Window::new(self.navigation.as_ref().is_some_and(|active| active.services >= 100)));
             self.sync_esc();
         }
         self.navi_window.as_mut().unwrap()

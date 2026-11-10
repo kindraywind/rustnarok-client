@@ -149,6 +149,8 @@ pub struct NaviMonster {
     pub map: String,
     pub id: u16,
     pub name: String,
+    /// How many of it the map spawns.
+    pub spawns: u32,
 }
 
 pub fn navigation(grf: &Grf) -> io::Result<NaviTables> {
@@ -159,7 +161,7 @@ pub fn navigation(grf: &Grf) -> io::Result<NaviTables> {
 }
 
 /// `Navi_Map` { name, shown name, .. }, `Navi_Link` { map, id, kind, .., name, .., x, y, to map, to x, to y },
-/// `Navi_Npc` { map, id, kind, sprite, name, .., x, y }, `Navi_Mob` { map, id, kind, monster (low 16 bits), name, .. },
+/// `Navi_Npc` { map, id, kind, sprite, name, .., x, y }, `Navi_Mob` { map, id, kind, spawns << 16 | monster, name, .. },
 /// and `Navi_Distance` (when there): map, how many ways, { { a way's id, { "E", id, cells }.., { "NULL", 0, 0 } }.. },
 /// one after the other in one flat list.
 fn navi_tables(lua: &Lua) -> io::Result<NaviTables> {
@@ -189,7 +191,12 @@ fn navi_tables(lua: &Lua) -> io::Result<NaviTables> {
         tables.npcs.push(NaviNpc { map: text(&row, 1), name: text(&row, 5), cell: cell(&row, 7) });
     }
     for row in rows("Navi_Mob")? {
-        tables.monsters.push(NaviMonster { map: text(&row, 1), id: (number(&row, 4) & 0xFFFF) as u16, name: text(&row, 5) });
+        tables.monsters.push(NaviMonster {
+            map: text(&row, 1),
+            id: (number(&row, 4) & 0xFFFF) as u16,
+            name: text(&row, 5),
+            spawns: (number(&row, 4) >> 16) as u32,
+        });
     }
     // Every third entry of the flat list is a map's ways; "E" names a way that can be walked to from where this one
     // arrives, and anything else ends a way's list.
@@ -2180,7 +2187,7 @@ mod tests {
         // Each way's list of ways on, up to its end mark.
         assert_eq!(tables.passes, [(100, vec![(101, 678), (107, 6)]), (105, vec![]), (101, vec![(100, 5)])].into_iter().collect());
         assert_eq!(tables.npcs, [super::NaviNpc { map: "prontera".into(), name: "Tool Dealer".into(), cell: [134, 221] }]);
-        assert_eq!(tables.monsters, [super::NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into() }]);
+        assert_eq!(tables.monsters, [super::NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 21 }]);
     }
 
     #[test]

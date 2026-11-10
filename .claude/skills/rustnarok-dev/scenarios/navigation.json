@@ -1,5 +1,5 @@
 {
-  "about": "Navigation (issue #276) from prt_fild08: our NPC's navigateto \"prontera\",150,150,NAV_ALL,0 (0: show the window) opens the navigation window and lays arrows on the ground toward the warp to Prontera; the window's stop row ends it. A <NAVI> link in the other NPC's text starts the same route when clicked. Typing Izlude in the window's field lists it, and picking it routes there. A warp right onto the target cell ends the navigation with \"Arrived at the target map.\" The script is unloaded at the end.",
+  "about": "Navigation (issue #276) from prt_fild08: our NPC's navigateto \"prontera\",150,150,NAV_ALL,0 (0: show the window) opens the navigation window and lays arrows on the ground toward the warp to Prontera; Esc on the window asks to cancel it, and the next Esc closes the window (it opens in the middle of the screen, over the NPCs). A <NAVI> link in the other NPC's text starts the same route when clicked. Searching for Izlude in the window lists it; picking its row and pressing Find routes there. A warp right onto the target cell ends the navigation with \"Arrived at the target map.\" The script is unloaded at the end.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -73,8 +73,14 @@
       "threshold": 10
     },
     {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
       "click_on": {
-        "button": "navi_stop"
+        "button": "ok"
       }
     },
     {
@@ -86,6 +92,12 @@
           "navigation": null
         }
       }
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
     },
     {
       "click_on": {
@@ -131,9 +143,21 @@
       "wait": 500
     },
     {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
       "click_on": {
-        "button": "navi_stop"
+        "button": "ok"
       }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "/naviopen"
     },
     {
       "wait": 300
@@ -150,11 +174,25 @@
       "type": "Izlude"
     },
     {
+      "wait": 200
+    },
+    {
+      "key": "Enter"
+    },
+    {
       "wait": 500
     },
     {
       "click_on": {
-        "button": "navi_result_0"
+        "button": "navi_group_0"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "navi_find"
       }
     },
     {
@@ -179,9 +217,21 @@
       "threshold": 10
     },
     {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
       "click_on": {
-        "button": "navi_stop"
+        "button": "ok"
       }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
     },
     {
       "wait": 300

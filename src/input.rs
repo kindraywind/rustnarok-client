@@ -848,26 +848,34 @@ impl App {
                     }
                 }
             }
-            // The navigation window: its field, a result to go to, stopping.
+            // The navigation window: the search, a row or a place picked (its map's picture comes with it), Find.
             Scene::Game(game) if on(Esc(W::Navigation)) => {
                 let window = game.navi_window.as_mut().unwrap();
                 match window.hit(cursor).unwrap() {
-                    navigation::Hit::Title(TitleHit::Close) => game.close_navigation(),
-                    navigation::Hit::Title(title) => window.frame.click_title(title),
-                    navigation::Hit::Field => window.typing = true,
-                    navigation::Hit::Result(index) => {
-                        let target = window.results[index].clone();
-                        window.typing = false;
-                        game.navigate(&self.navi_tables, &self.messages, &self.grf, Ok(target), NAVI_SERVICES);
+                    navi_window::Hit::Title(TitleHit::Close) => game.close_navigation(),
+                    navi_window::Hit::Title(title) => window.frame.click_title(title),
+                    navi_window::Hit::Search => {
+                        window.click(navi_window::Hit::Search);
+                        window.search(&self.navi_tables);
                     }
-                    navigation::Hit::Stop => {
-                        window.typing = false;
-                        game.navigation = None;
+                    navi_window::Hit::Find => {
+                        window.click(navi_window::Hit::Find);
+                        let (target, services) = (window.target(&self.navi_tables), window.services());
+                        game.navigate(&self.navi_tables, &self.messages, &self.grf, target, services);
                     }
-                    navigation::Hit::Window => window.typing = false,
+                    hit => {
+                        if window.click(hit) {
+                            let map = window.picked().map(|place| place.map.clone());
+                            if window.picture.as_ref().map(|(map, _)| map) != map.as_ref() {
+                                window.picture = map.map(|map| {
+                                    let picture = self.gpu.as_ref().and_then(|gpu| navi_window::picture(gpu, &self.grf, &map));
+                                    (map, picture)
+                                });
+                            }
+                        }
+                    }
                 }
             }
-            // The reputation window: its title bar.
             Scene::Game(game) if on(Esc(W::Reputation)) => match game.reputation_window.as_ref().and_then(|window| window.hit(cursor)) {
                 Some(reputation::Hit::Title(TitleHit::Close)) => game.reputation_window = None,
                 Some(reputation::Hit::Title(title)) => game.reputation_window.as_mut().unwrap().frame.click_title(title),
@@ -1942,6 +1950,9 @@ impl App {
                 let height = list.height();
                 list.frame.drag_to(self.cursor, height);
             }
+            if let Some(window) = &mut game.navi_window {
+                window.frame.drag_to(self.cursor, navi_window::SIZE[1]);
+            }
             if let Some(view) = &mut game.card_view {
                 view.drag_to(self.cursor);
             }
@@ -2480,6 +2491,9 @@ impl App {
                     game.enchant.as_mut().unwrap().wheel(self.cursor, rows, &game.inventory.items);
                 }
                 _ if on_cashshop => game.cashshop.as_mut().unwrap().scroll_at(self.cursor, rows),
+                _ if game.navi_window.as_ref().is_some_and(|window| window.hit(self.cursor).is_some()) => {
+                    game.navi_window.as_mut().unwrap().scroll_at(self.cursor, rows);
+                }
                 _ if on_reform => game.reform.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
                 _ if on_setup => game.vend_setup.as_mut().unwrap().scroll_by(self.cursor, rows, &game.cart.items),
                 _ if game.sell_history.as_ref().is_some_and(|history| history.hit(self.cursor).is_some()) => {
@@ -2837,6 +2851,7 @@ impl App {
                     | game.talks.drop_drag()
                     | game.friend_setup.as_mut().is_some_and(|setup| setup.frame.drop_drag())
                     | game.block_list.as_mut().is_some_and(|list| list.frame.drop_drag())
+                    | game.navi_window.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.minimap_window.frame.drop_drag()
                     | game.say.frame.drop_drag()
                     | game.cutin.as_mut().is_some_and(|cutin| cutin.frame.drop_drag())
@@ -3073,6 +3088,17 @@ impl App {
         {
             if game.memorial.hit(cursor) == Some(memorial::Hit::Title(TitleHit::Title)) {
                 game.memorial.frame.start_drag(cursor);
+            }
+            return;
+        }
+        // The navigation window moves by its title and by any spot of it that's no control.
+        if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::Navigation))
+        {
+            if let Some(window) = &mut game.navi_window
+                && matches!(window.hit(cursor), Some(navi_window::Hit::Title(TitleHit::Title) | navi_window::Hit::Window))
+            {
+                window.frame.start_drag(cursor);
             }
             return;
         }
@@ -3539,7 +3565,7 @@ impl App {
                 }
                 navigation::Typed::Unclear => game.chat_line(navigation::unclear(&self.messages), CHAT_NAVIGATION),
                 // /naviopen only ever opens the window.
-                navigation::Typed::Open => drop(game.open_navigation()),
+                navigation::Typed::Open => game.open_navigation().typing = true,
             }
         } else if let Some(shown) = self.sound.command(game.chat.input.trim()) {
             game.chat.input.clear();
@@ -4285,17 +4311,17 @@ impl App {
                     _ => window.type_text(event.text.as_deref().unwrap_or_default()),
                 }
             }
-            // The navigation window's search field: each change searches again.
+            // The navigation window's search box: Enter searches, Esc leaves it.
             Scene::Game(game) if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
                 let window = game.navi_window.as_mut().unwrap();
                 match key {
-                    Key::Named(NamedKey::Enter | NamedKey::Escape) => window.typing = false,
+                    Key::Named(NamedKey::Enter) => window.search(&self.navi_tables),
+                    Key::Named(NamedKey::Escape) => window.typing = false,
                     Key::Named(NamedKey::Backspace) => {
                         window.text.pop();
                     }
-                    _ => window.text.push_str(event.text.as_deref().unwrap_or_default()),
+                    _ => window.type_text(event.text.as_deref().unwrap_or_default()),
                 }
-                window.search(&self.navi_tables);
             }
             // The quest search box: Enter applies it, Esc leaves it.
             Scene::Game(game) if game.quest_window.typing => match key {
