@@ -2930,8 +2930,14 @@ impl App {
             menu.draw(&mut menu_layer, &assets.context_menu, font, pointer.0);
         }
         let mut world_layer = Layer::over();
+        // The world map shows the route of the navigation under way, and the place picked for one.
+        if let Some(world_map) = &mut game.world_map {
+            world_map.set_route(gpu, &worlds.0, &game.navigation.as_ref().map(navigation::Active::route_maps).unwrap_or_default());
+        }
         if let Some(world_map) = &game.world_map {
-            world_map.draw(&mut world_layer, &assets.chrome, font, &worlds.0, map_names, &map_key(&game.map), pointer.0);
+            let target = game.navigation.as_ref().map(|active| active.target.map.as_str());
+            let picked = game.navi_window.as_ref().and_then(navi_window::Window::picked).map(|place| place.map.as_str()).or(target);
+            world_map.draw(&mut world_layer, &assets.chrome, font, &worlds.0, map_names, &map_key(&game.map), pointer.0, target, picked);
         }
         game.dialog_links = dialog_links;
         let mut minimap_layer = Layer::of(Top::Esc(W::Minimap));

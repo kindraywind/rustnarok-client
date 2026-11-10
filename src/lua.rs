@@ -1495,6 +1495,8 @@ pub fn sprite_scale(table_factor: f32, change_percent: Option<i32>) -> f32 {
 pub struct WorldArea {
     pub map: String,
     pub rect: [f32; 4],
+    /// Its region's number: 100 and up for towns and fields, less for dungeons.
+    pub region: u32,
 }
 
 /// A world map: its name, its picture (under the UI texture folder) and its fields.
@@ -1522,7 +1524,7 @@ pub fn worlds(grf: &Grf) -> io::Result<(Vec<World>, [[u8; 4]; 2])> {
             .filter_map(|field| {
                 let map = decode(&field.get::<mlua::LuaString>(2).ok()?).to_lowercase();
                 let rect = [3, 4, 5, 6].map(|index| field.get::<f32>(index).unwrap_or(0.0));
-                Some(WorldArea { map: map.trim_end_matches(".rsw").to_owned(), rect })
+                Some(WorldArea { map: map.trim_end_matches(".rsw").to_owned(), rect, region: field.get::<u32>(1).unwrap_or(0) })
             })
             .collect();
         worlds.push(World { name: text(1), image: text(4), fields });
@@ -2633,7 +2635,8 @@ mod tests {
         let midgard = &worlds[0];
         assert_eq!(midgard.image, "worldmap.jpg");
         let prontera = midgard.fields.iter().find(|field| field.map == "prontera").unwrap();
-        assert_eq!(prontera.rect, [812.0, 587.0, 870.0, 643.0]);
+        assert_eq!((prontera.rect, prontera.region), ([812.0, 587.0, 870.0, 643.0], 108));
+        assert!(midgard.fields.iter().find(|field| field.map == "moc_pryd01").is_some_and(|field| field.region < 100));
         assert_eq!(colors, [[85, 85, 255, 102], [149, 15, 15, 70]]);
     }
 

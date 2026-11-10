@@ -583,6 +583,11 @@ impl Active {
         self.steps = steps;
     }
 
+    /// The maps the route goes through from here, in order, ending with the target's (the world map marks them).
+    pub fn route_maps(&self) -> Vec<&str> {
+        self.steps.iter().map(|(map, _)| map.as_str()).chain([self.target.map.as_str()]).collect()
+    }
+
     /// Where it heads on `here` (None on a map no report was made for).
     pub fn next_cell(&self, here: &str) -> Option<[u16; 2]> {
         self.next_for.as_ref().filter(|(map, _)| *map == map_key(here)).and_then(|(_, next)| *next)
@@ -884,8 +889,9 @@ mod tests {
         assert_eq!(active.next_cell("prt_fild08"), None);
         active.head_for("prt_fild08.gat", Some([170, 375]), vec![("prt_fild08".into(), [170, 375])]);
         assert_eq!((active.next_cell("prt_fild08"), active.next_cell("prontera")), (Some([170, 375]), None));
-        assert_eq!(active.steps.len(), 1);
+        assert_eq!((active.steps.len(), active.route_maps()), (1, vec!["prt_fild08", "prontera"]));
         active.head_for("prontera", Some([150, 150]), Vec::new());
+        assert_eq!(active.route_maps(), ["prontera"]);
         assert_eq!((active.next_cell("prontera.gat"), active.next_cell("prt_fild08"), active.steps.len()), (Some([150, 150]), None, 0));
     }
 
