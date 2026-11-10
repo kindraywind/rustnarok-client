@@ -2329,6 +2329,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "store": game.store_mark,
     });
     // The big minimap and the memos recorded on this map.
+    state["world_map"] = json!(game.world_map.as_ref().map(|world_map| json!({"route": world_map.route_shown()})));
     state["minimap_window"] = json!({
         "open": game.minimap_window.frame.open,
         "x": game.minimap_window.frame.position[0],
@@ -2451,6 +2452,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("merge", Fair),
         ("minimap", Fair),
         ("minimap_window", Fair),
+        ("world_map", Fair),
         ("monster_info", Fair),
         ("mvp_sprites", Test),
         ("name_tags", Test),
