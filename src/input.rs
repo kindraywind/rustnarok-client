@@ -131,7 +131,7 @@ impl App {
                         let map = navigation::map_key(&map);
                         let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
                         let target = navigation::Target { cell: (cell != [0, 0]).then_some(cell), monster: None, name, map };
-                        game.navigate(&self.navi_tables, &self.messages, target, NAVI_SERVICES);
+                        game.navigate(&self.navi_tables, &self.messages, &self.grf, target, NAVI_SERVICES);
                     }
                     links::Target::Url(address) => {
                         if let Some(page) = links::page(&address) {
@@ -312,7 +312,7 @@ impl App {
                     let map = navigation::map_key(&map);
                     let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
                     let cell = (cell != [0, 0]).then(|| cell.map(|value| value.clamp(0, i32::from(u16::MAX)) as u16));
-                    game.navigate(&self.navi_tables, &self.messages, navigation::Target { cell, monster: None, name, map }, NAVI_SERVICES);
+                    game.navigate(&self.navi_tables, &self.messages, &self.grf, navigation::Target { cell, monster: None, name, map }, NAVI_SERVICES);
                 }
             }
             Scene::Game(game) if on(Esc(W::Quests)) => {
@@ -744,7 +744,7 @@ impl App {
                         let map = navigation::map_key(&game.map);
                         let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
                         let target = navigation::Target { cell: Some(cell.map(|value| value as u16)), monster: None, name, map };
-                        game.navigate(&self.navi_tables, &self.messages, target, NAVI_SERVICES);
+                        game.navigate(&self.navi_tables, &self.messages, &self.grf, target, NAVI_SERVICES);
                     }
                     Some(hit) => {
                         game.minimap_window.click(hit);
@@ -849,7 +849,7 @@ impl App {
                     navigation::Hit::Result(index) => {
                         let target = window.results[index].clone();
                         window.typing = false;
-                        game.navigate(&self.navi_tables, &self.messages, target, NAVI_SERVICES);
+                        game.navigate(&self.navi_tables, &self.messages, &self.grf, target, NAVI_SERVICES);
                     }
                     navigation::Hit::Stop => {
                         window.typing = false;
@@ -3520,7 +3520,7 @@ impl App {
                 navigation::Typed::Go { map, cell, services } => {
                     let map = navigation::navi_map(&self.navi_tables, &map);
                     let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_default();
-                    game.navigate(&self.navi_tables, &self.messages, navigation::Target { map, cell: Some(cell), monster: None, name }, services);
+                    game.navigate(&self.navi_tables, &self.messages, &self.grf, navigation::Target { map, cell: Some(cell), monster: None, name }, services);
                 }
                 navigation::Typed::Unclear => game.chat_line(navigation::unclear(&self.messages), CHAT_NAVIGATION),
                 // /naviopen only ever opens the window.

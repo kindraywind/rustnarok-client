@@ -3,7 +3,7 @@
 //! `/navi prontera 150/150`, says where it stands in the chat, and shows as arrows on the ground along the way to the
 //! next warp or the target, with a marker on the cell it heads for.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use rustnarok_client::lua::{NaviLink, NaviTables};
 use rustnarok_client::messages::fill;
@@ -93,46 +93,80 @@ pub fn allowed(kind: u32, services: u8) -> bool {
     }
 }
 
-/// The ways to take from `from` to `to`, fewest maps first (ties: the tables' order); empty when already there.
-pub fn route<'a>(tables: &'a NaviTables, from: &str, to: &str, services: u8) -> Option<Vec<&'a NaviLink>> {
-    let (from, to) = (navi_map(tables, from), navi_map(tables, to));
-    if from == to {
-        return Some(Vec::new());
-    }
-    let mut ways: HashMap<&str, Vec<&NaviLink>> = HashMap::new();
-    for link in tables.links.iter().filter(|link| allowed(link.kind, services)) {
-        ways.entry(link.map.as_str()).or_default().push(link);
-    }
-    let mut came: HashMap<&str, &NaviLink> = HashMap::new();
-    let mut seen: HashSet<&str> = HashSet::from([from.as_str()]);
-    let mut queue = VecDeque::from([from.as_str()]);
-    while let Some(map) = queue.pop_front() {
-        for &link in ways.get(map).into_iter().flatten() {
-            if !seen.insert(link.to.as_str()) {
-                continue;
-            }
-            came.insert(link.to.as_str(), link);
-            if link.to == to {
-                let mut path = vec![link];
-                while let Some(&back) = came.get(path.last().unwrap().map.as_str()) {
-                    path.push(back);
-                }
-                path.reverse();
-                return Some(path);
-            }
-            queue.push_back(link.to.as_str());
-        }
-    }
-    None
+/// What a route search asks of the maps themselves.
+pub struct Walks<'a> {
+    /// How many cells the player walks to a cell of this map; None when there's no way.
+    pub from_player: &'a dyn Fn([u16; 2]) -> Option<u32>,
+    /// How many cells it is from a cell of the target's map to the target (0 when that's the map itself or a monster);
+    /// None when there's no way.
+    pub to_target: &'a dyn Fn([u16; 2]) -> Option<u32>,
 }
 
-/// Where to head on `here`: the first way off this map on the route, or the target's cell on its own map (None for a
-/// map or monster target there: that's arrived, as is a map with no route).
-pub fn next_cell(tables: &NaviTables, here: &str, target: &Target, services: u8) -> Option<[u16; 2]> {
-    if navi_map(tables, here) == navi_map(tables, &target.map) {
-        return target.cell;
+/// The ways to take from `here` to the target on `to`, fewest ways first. It starts from this map's ways the player
+/// can walk to, goes on from each way to the ways that can be walked to from where it arrives (the distance table's
+/// lists, in their order), and ends with the first way that arrives where the target can be walked to. None when
+/// there's no such chain. A target on this very map is a route too: out and back in by another way.
+pub fn route<'a>(tables: &'a NaviTables, here: &str, to: &str, services: u8, walks: &Walks) -> Option<Vec<&'a NaviLink>> {
+    let (here, to) = (navi_map(tables, here), navi_map(tables, to));
+    let links = &tables.links;
+    let by_id: HashMap<u32, usize> = links.iter().enumerate().map(|(index, link)| (link.id, index)).collect();
+    // ponytail: data without the distance table: every way of the map a way arrives on counts as walkable to.
+    let passes = |index: usize| -> Vec<(usize, u32)> {
+        if tables.passes.is_empty() {
+            links.iter().enumerate().filter(|(_, next)| next.map == links[index].to).map(|(next, _)| (next, 0)).collect()
+        } else {
+            tables.passes.get(&links[index].id).into_iter().flatten().filter_map(|&(id, cells)| Some((*by_id.get(&id)?, cells))).collect()
+        }
+    };
+    // Each way reached: the way, the one it was reached from, the cells walked so far.
+    let mut reached: Vec<(usize, Option<usize>, u32)> = links
+        .iter()
+        .enumerate()
+        .filter(|(_, link)| link.map == here && allowed(link.kind, services))
+        .filter_map(|(index, link)| Some((index, None, (walks.from_player)(link.cell)?)))
+        .collect();
+    let mut level_of: HashMap<usize, usize> = reached.iter().map(|way| (way.0, 0)).collect();
+    let mut from = 0;
+    for level in 1..100 {
+        let until = reached.len();
+        let arrives = |&way: &usize| links[reached[way].0].to == to && (walks.to_target)(links[reached[way].0].to_cell).is_some();
+        if let Some(last) = (from..until).find(arrives) {
+            let mut chain = Vec::new();
+            let mut at = Some(last);
+            while let Some(way) = at {
+                chain.push(&links[reached[way].0]);
+                at = reached[way].1;
+            }
+            chain.reverse();
+            return Some(chain);
+        }
+        for way in from..until {
+            let (index, _, walked) = reached[way];
+            for (next, cells) in passes(index) {
+                match level_of.get(&next) {
+                    // Reached twice in one round: the shorter walk keeps it.
+                    Some(&seen) if seen == level => {
+                        if let Some(other) = reached[until..].iter_mut().find(|other| other.0 == next)
+                            && walked + cells < other.2
+                        {
+                            (other.1, other.2) = (Some(way), walked + cells);
+                        }
+                    }
+                    Some(_) => {}
+                    None if allowed(links[next].kind, services) => {
+                        level_of.insert(next, level);
+                        reached.push((next, Some(way), walked + cells));
+                    }
+                    None => {}
+                }
+            }
+        }
+        if reached.len() == until {
+            return None;
+        }
+        from = until;
     }
-    route(tables, here, &target.map, services)?.first().map(|link| link.cell)
+    None
 }
 
 fn near(cell: [i32; 2], goal: [u16; 2], within: i32) -> bool {
@@ -166,28 +200,41 @@ pub fn unclear(messages: &[String]) -> String {
     says(messages, UNCLEAR)
 }
 
+/// What `report` finds: the chat's lines, how the navigation stands, and the cell to head for on this map while it
+/// guides.
+#[derive(Debug, PartialEq)]
+pub struct Report {
+    pub lines: Vec<String>,
+    pub outcome: Outcome,
+    pub next: Option<[u16; 2]>,
+}
+
 /// What the chat says when a navigation starts (`start`) or a map loads under one, with the player on `cell` of
-/// `here`, and how it stands then.
-pub fn report(tables: &NaviTables, messages: &[String], here: &str, cell: [i32; 2], target: &Target, services: u8, start: bool) -> (Vec<String>, Outcome) {
+/// `here`, how it stands then, and where it heads on this map.
+#[allow(clippy::too_many_arguments)]
+pub fn report(tables: &NaviTables, messages: &[String], here: &str, cell: [i32; 2], target: &Target, services: u8, start: bool, walks: &Walks) -> Report {
     let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
     let says = |id: usize| says(messages, id);
+    let found = |lines: Vec<String>, outcome: Outcome, next: Option<[u16; 2]>| Report { lines, outcome, next };
     let here = navi_map(tables, here);
     if !tables.maps.contains_key(&here) {
-        return (vec![says(NO_MAP)], Outcome::NoWay);
+        return found(vec![says(NO_MAP)], Outcome::NoWay, None);
     }
     if here == navi_map(tables, &target.map) {
-        return match (target.cell, target.monster) {
+        match (target.cell, target.monster) {
             // Next to the cell: nothing starts. A load right onto it: that's the end, said like any arrival.
-            (Some(goal), _) if start && near(cell, goal, 1) => (vec![says(THERE)], Outcome::Over),
-            (Some(goal), _) if !start && near(cell, goal, 0) => (vec![message(ARRIVED), says(THERE)], Outcome::Over),
-            (Some(_), _) => (vec![says(GO)], Outcome::Guiding),
+            (Some(goal), _) if start && near(cell, goal, 1) => return found(vec![says(THERE)], Outcome::Over, None),
+            (Some(goal), _) if !start && near(cell, goal, 0) => return found(vec![message(ARRIVED), says(THERE)], Outcome::Over, None),
+            (Some(goal), _) if (walks.from_player)(goal).is_some() => return found(vec![says(GO)], Outcome::Guiding, Some(goal)),
+            // No walking there from here: a route out of the map and back in, below.
+            (Some(_), _) => {}
             // ponytail: the lines of a load onto the target's map, for a start on it too.
-            (None, Some(_)) => (vec![message(ARRIVED), says(MONSTER_MAP)], Outcome::Over),
-            (None, None) => (vec![message(ARRIVED), says(ARRIVED)], Outcome::Over),
-        };
+            (None, Some(_)) => return found(vec![message(ARRIVED), says(MONSTER_MAP)], Outcome::Over, None),
+            (None, None) => return found(vec![message(ARRIVED), says(ARRIVED)], Outcome::Over, None),
+        }
     }
-    let Some(first) = route(tables, &here, &target.map, services).and_then(|route| route.first().copied()) else {
-        return (vec![says(NO_WAY)], Outcome::NoWay);
+    let Some(first) = route(tables, &here, &target.map, services, walks).and_then(|route| route.first().copied()) else {
+        return found(vec![says(NO_WAY)], Outcome::NoWay, None);
     };
     // The route's first step: an NPC to talk to and where it sends you, the airship, or a warp portal.
     let mut lines = vec![says(FOLLOW)];
@@ -200,7 +247,7 @@ pub fn report(tables: &NaviTables, messages: &[String], here: &str, cell: [i32; 
         205 => lines.extend([fill(&message(TALK_TO), &[&first.name]), message(TO_AIRSHIP)]),
         _ => lines.push(message(BY_PORTAL)),
     }
-    (lines, Outcome::Guiding)
+    found(lines, Outcome::Guiding, Some(first.cell))
 }
 
 /// Which way a step goes, as the arrow pictures are numbered: 0 north (+y), then anticlockwise in eighths (1
@@ -343,7 +390,7 @@ pub struct Active {
     pub trail: Vec<[i32; 2]>,
     /// The map and the cell headed for that the trail was made for.
     trail_for: Option<(String, [u16; 2])>,
-    /// The map `next_cell` was found for and what it found: the route only changes with the map.
+    /// The map the route was last looked up on, and the cell it heads for there.
     next_for: Option<(String, Option<[u16; 2]>)>,
 }
 
@@ -352,17 +399,14 @@ impl Active {
         Self { target, services, trail: Vec::new(), trail_for: None, next_for: None }
     }
 
-    /// `next_cell` on `here`, found again only when the map changed.
-    pub fn next_cell(&mut self, tables: &NaviTables, here: &str) -> Option<[u16; 2]> {
-        let here = map_key(here);
-        match &self.next_for {
-            Some((map, next)) if *map == here => *next,
-            _ => {
-                let next = next_cell(tables, &here, &self.target, self.services);
-                self.next_for = Some((here, next));
-                next
-            }
-        }
+    /// The cell `report` found to head for on `here`: kept until the next map's report.
+    pub fn head_for(&mut self, here: &str, next: Option<[u16; 2]>) {
+        self.next_for = Some((map_key(here), next));
+    }
+
+    /// Where it heads on `here` (None on a map no report was made for).
+    pub fn next_cell(&self, here: &str) -> Option<[u16; 2]> {
+        self.next_for.as_ref().filter(|(map, _)| *map == map_key(here)).and_then(|(_, next)| *next)
     }
 
     /// Makes the trail (with `path`, the cells walked from one cell to another) when the map or the cell headed for
@@ -522,9 +566,13 @@ mod tests {
     use super::*;
     use rustnarok_client::lua::{NaviMonster, NaviNpc};
 
+    /// A way with an id of its own (its cell's numbers), arriving on (1, 1).
     fn link(map: &str, kind: u32, cell: [u16; 2], to: &str) -> NaviLink {
-        NaviLink { map: map.into(), kind, name: String::new(), cell, to: to.into(), to_cell: [0, 0] }
+        NaviLink { id: u32::from(cell[0]) * 1000 + u32::from(cell[1]), map: map.into(), kind, name: String::new(), cell, to: to.into(), to_cell: [1, 1] }
     }
+
+    /// Every cell can be walked to, a cell off.
+    const OPEN: Walks = Walks { from_player: &|_| Some(1), to_target: &|_| Some(1) };
 
     fn tables() -> NaviTables {
         NaviTables {
@@ -544,20 +592,74 @@ mod tests {
                 NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into() },
                 NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into() },
             ],
+            passes: HashMap::new(),
         }
     }
 
     #[test]
     fn routes_across_maps() {
         let tables = tables();
+        let maps = |route: Option<Vec<&NaviLink>>| route.map(|route| route.iter().map(|link| (link.map.clone(), link.cell)).collect::<Vec<_>>());
         // Two maps on: the field's warp to Prontera, then Prontera's to the inside.
-        let path = route(&tables, "prt_fild08.gat", "prt_in", 0).unwrap();
-        assert_eq!(path.iter().map(|link| (link.map.as_str(), link.cell)).collect::<Vec<_>>(), [("prt_fild08", [170, 375]), ("prontera", [100, 50])]);
-        assert_eq!(route(&tables, "prontera", "prontera", 0), Some(Vec::new()));
+        assert_eq!(maps(route(&tables, "prt_fild08.gat", "prt_in", 0, &OPEN)), Some(vec![("prt_fild08".into(), [170, 375]), ("prontera".into(), [100, 50])]));
         // Prontera to Izlude: the Kafra (204) only with the Kafra allowed; else round by the field.
-        assert_eq!(route(&tables, "prontera", "izlude", 100).unwrap().len(), 1);
-        assert_eq!(route(&tables, "prontera", "izlude", 0).unwrap().iter().map(|link| link.map.as_str()).collect::<Vec<_>>(), ["prontera", "prt_fild08"]);
-        assert_eq!(route(&tables, "prt_in", "izlude", 111), None);
+        assert_eq!(route(&tables, "prontera", "izlude", 100, &OPEN).unwrap().len(), 1);
+        assert_eq!(
+            maps(route(&tables, "prontera", "izlude", 0, &OPEN)).unwrap().iter().map(|way| way.0.as_str()).collect::<Vec<_>>(),
+            ["prontera", "prt_fild08"]
+        );
+        assert_eq!(route(&tables, "prt_in", "izlude", 111, &OPEN), None);
+        // A place on this very map: out and back in.
+        assert_eq!(
+            maps(route(&tables, "prontera", "prontera", 0, &OPEN)).unwrap().iter().map(|way| way.0.as_str()).collect::<Vec<_>>(),
+            ["prontera", "prt_fild08"]
+        );
+    }
+
+    #[test]
+    fn routes_only_by_ways_that_can_be_walked_to() {
+        // A town in two halves: the gate (10, 10) leads to the field, the pier (90, 90) to the island; the field's own
+        // warps go back to the gate's half (20, 20) and to the island.
+        let way = |map: &str, cell: [u16; 2], to: &str, to_cell: [u16; 2]| NaviLink { to_cell, ..link(map, 200, cell, to) };
+        let mut tables = tables();
+        tables.links = vec![
+            way("town", [10, 10], "field", [5, 5]),
+            way("town", [90, 90], "island", [1, 1]),
+            way("field", [6, 6], "town", [20, 20]),
+            way("field", [50, 50], "island", [9, 9]),
+            way("island", [2, 2], "town", [91, 91]),
+        ];
+        let id = |cell: [u16; 2]| u32::from(cell[0]) * 1000 + u32::from(cell[1]);
+        // From where each way arrives: the field's two warps from the gate, the gate from the field, the pier from the
+        // island; nothing from the island's far shore (9, 9).
+        tables.passes = [
+            (id([10, 10]), vec![(id([6, 6]), 3), (id([50, 50]), 60)]),
+            (id([90, 90]), vec![(id([2, 2]), 2)]),
+            (id([6, 6]), vec![(id([10, 10]), 12)]),
+            (id([50, 50]), vec![]),
+            (id([2, 2]), vec![(id([90, 90]), 2)]),
+        ]
+        .into_iter()
+        .collect();
+        let cells = |route: Option<Vec<&NaviLink>>| route.map(|route| route.iter().map(|link| link.cell).collect::<Vec<_>>());
+        // In the gate's half only the gate can be walked to: the island is the field's far warp, not the pier.
+        let west = Walks { from_player: &|cell| (cell == [10, 10]).then_some(4), to_target: &|_| Some(1) };
+        assert_eq!(cells(route(&tables, "town", "island", 0, &west)), Some(vec![[10, 10], [50, 50]]));
+        // From the pier's half: the pier.
+        let east = Walks { from_player: &|cell| (cell == [90, 90]).then_some(4), to_target: &|_| Some(1) };
+        assert_eq!(cells(route(&tables, "town", "island", 0, &east)), Some(vec![[90, 90]]));
+        // A cell on the island only its near shore (1, 1) can walk to: the far warp's arrival doesn't end the search,
+        // and nothing leads on from it. From the pier's half it's the pier.
+        let shore = |from: [u16; 2]| move |cell: [u16; 2]| (cell == from).then_some(4);
+        let near_shore = |cell: [u16; 2]| (cell == [1, 1]).then_some(3);
+        assert_eq!(cells(route(&tables, "town", "island", 0, &Walks { from_player: &shore([10, 10]), to_target: &near_shore })), None);
+        assert_eq!(cells(route(&tables, "town", "island", 0, &Walks { from_player: &shore([90, 90]), to_target: &near_shore })), Some(vec![[90, 90]]));
+        // To the pier's half of the town from the gate's half: no way by these warps; from the island, its warp.
+        let pier_half = |cell: [u16; 2]| (cell == [91, 91]).then_some(2);
+        assert_eq!(cells(route(&tables, "town", "town", 0, &Walks { from_player: &shore([10, 10]), to_target: &pier_half })), None);
+        assert_eq!(cells(route(&tables, "island", "town", 0, &Walks { from_player: &|_| Some(1), to_target: &pier_half })), Some(vec![[2, 2]]));
+        // Nowhere to walk to at all: no route.
+        assert_eq!(route(&tables, "town", "island", 0, &Walks { from_player: &|_| None, to_target: &|_| Some(1) }), None);
     }
 
     #[test]
@@ -625,7 +727,11 @@ mod tests {
         tables.links[3].name = "Kafra Employee".into();
         tables.links.push(NaviLink { name: "Airship Staff".into(), ..link("izlude", 205, [200, 50], "prt_in") });
         let cell = Target { map: "prontera".into(), cell: Some([150, 150]), monster: None, name: String::new() };
-        let report = |here: &str, at: [i32; 2], target: &Target, services: u8, start: bool| report(&tables, &messages, here, at, target, services, start);
+        let found = |here: &str, at: [i32; 2], target: &Target, services: u8, start: bool| report(&tables, &messages, here, at, target, services, start, &OPEN);
+        let report = |here: &str, at: [i32; 2], target: &Target, services: u8, start: bool| {
+            let found = found(here, at, target, services, start);
+            (found.lines, found.outcome)
+        };
         let said = |lines: &[&str], outcome| (lines.iter().map(|line| line.to_string()).collect::<Vec<_>>(), outcome);
         // A cell on this map: guiding; next to it at the start, nothing starts.
         assert_eq!(report("prontera.gat", [100, 100], &cell, 0, true), said(&["Navigation >: Please go to indicated direction."], Outcome::Guiding));
@@ -659,6 +765,17 @@ mod tests {
         let poring = Target { map: "prt_fild08".into(), cell: None, monster: Some(1002), name: String::new() };
         assert_eq!(report("prt_fild08", [1, 1], &poring, 0, false), said(&["Arrived at the target map.", "Navigation >: The mob's map."], Outcome::Over));
         assert_eq!(unclear(&messages), "Navigation >: Invalid syntax.");
+        // Where it heads: the cell on its own map, the first way's cell on another, nowhere once it's over.
+        let heads =
+            [found("prontera", [100, 100], &cell, 0, true), found("prt_fild08", [10, 10], &cell, 0, true), found("prontera", [150, 150], &cell, 0, false)];
+        assert_eq!(heads.map(|found| found.next), [Some([150, 150]), Some([170, 375]), None]);
+        // A cell on this map that can't be walked to from here: out by a way that can, and back in.
+        let walled = Walks { from_player: &|at| (at != [150, 150]).then_some(9), to_target: &|_| Some(1) };
+        let round = super::report(&tables, &messages, "prontera", [100, 100], &cell, 0, true, &walled);
+        assert_eq!((round.lines[0].as_str(), round.outcome, round.next), ("Navigation >: A route was found.", Outcome::Guiding, Some([156, 22])));
+        // With no way out that comes back: no way.
+        let stuck = Walks { from_player: &|_| None, to_target: &|_| Some(1) };
+        assert_eq!(super::report(&tables, &messages, "prontera", [100, 100], &cell, 0, true, &stuck).outcome, Outcome::NoWay);
     }
 
     #[test]
@@ -673,16 +790,14 @@ mod tests {
     }
 
     #[test]
-    fn heads_for_the_next_warp_then_the_target() {
-        let tables = tables();
+    fn keeps_where_it_heads_for_the_map_it_was_found_on() {
         let target = Target { map: "prontera".into(), cell: Some([150, 150]), monster: None, name: String::new() };
-        assert_eq!(next_cell(&tables, "prt_fild08", &target, 111), Some([170, 375]));
-        assert_eq!(next_cell(&tables, "prontera", &target, 111), Some([150, 150]));
-        // A navigation under way finds it once per map, and again on the next one.
-        let mut active = Active::new(target.clone(), 111);
-        assert_eq!(active.next_cell(&tables, "prt_fild08.gat"), Some([170, 375]));
-        assert_eq!(active.next_cell(&tables, "prt_fild08"), Some([170, 375]));
-        assert_eq!(active.next_cell(&tables, "prontera.gat"), Some([150, 150]));
+        let mut active = Active::new(target, 111);
+        assert_eq!(active.next_cell("prt_fild08"), None);
+        active.head_for("prt_fild08.gat", Some([170, 375]));
+        assert_eq!((active.next_cell("prt_fild08"), active.next_cell("prontera")), (Some([170, 375]), None));
+        active.head_for("prontera", Some([150, 150]));
+        assert_eq!((active.next_cell("prontera.gat"), active.next_cell("prt_fild08")), (Some([150, 150]), None));
     }
 
     #[test]
@@ -695,9 +810,10 @@ mod tests {
         tables.links.extend([link("iz_ac01", 200, [100, 39], "iz_ac02"), link("rag_fes_a", 200, [10, 10], "prontera")]);
         // From the copy: the warp the map it copies has; on the target map's copy: the target's cell, and there.
         let chuck = Target { map: "iz_ac02".into(), cell: Some([148, 110]), monster: None, name: String::new() };
-        assert_eq!(route(&tables, "iz_ac01_a", "iz_ac02", 0).unwrap().len(), 1);
-        assert_eq!(next_cell(&tables, "iz_ac01_a.gat", &chuck, 0), Some([100, 39]));
-        assert_eq!(next_cell(&tables, "iz_ac02_a", &chuck, 0), Some([148, 110]));
+        let messages = messages();
+        let next = |here: &str| report(&tables, &messages, here, [1, 1], &chuck, 0, true, &OPEN).next;
+        assert_eq!(route(&tables, "iz_ac01_a", "iz_ac02", 0, &OPEN).unwrap().len(), 1);
+        assert_eq!((next("iz_ac01_a.gat"), next("iz_ac02_a")), (Some([100, 39]), Some([148, 110])));
         assert!(reached(&tables, "iz_ac02_a", [148, 112], &chuck) && !reached(&tables, "iz_ac02_a", [148, 116], &chuck));
         assert!(reached(&tables, "iz_ac02", [148, 112], &Target { map: "iz_ac02_b".into(), ..chuck.clone() }));
         // A map the tables have under its own name keeps it; a copy of a map they don't have stays itself.
@@ -705,7 +821,7 @@ mod tests {
             (navi_map(&tables, "rag_fes_a"), navi_map(&tables, "geffen_a"), navi_map(&tables, "iz_ac01_ab")),
             ("rag_fes_a".into(), "geffen_a".into(), "iz_ac01_ab".into())
         );
-        assert_eq!(route(&tables, "rag_fes_a", "prontera", 0).unwrap()[0].cell, [10, 10]);
+        assert_eq!(route(&tables, "rag_fes_a", "prontera", 0, &OPEN).unwrap()[0].cell, [10, 10]);
         assert!(!reached(&tables, "rag_fes_a", [1, 1], &Target { map: "rag_fes".into(), cell: Some([1, 1]), monster: None, name: String::new() }));
     }
 

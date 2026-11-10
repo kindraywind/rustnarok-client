@@ -111,6 +111,7 @@ const NAVI_MAP: &str = "data\\luafiles514\\lua files\\navigation\\navi_map_krpri
 const NAVI_LINK: &str = "data\\luafiles514\\lua files\\navigation\\navi_link_krpri.lub";
 const NAVI_NPC: &str = "data\\luafiles514\\lua files\\navigation\\navi_npc_krpri.lub";
 const NAVI_MOB: &str = "data\\luafiles514\\lua files\\navigation\\navi_mob_krpri.lub";
+const NAVI_DISTANCE: &str = "data\\luafiles514\\lua files\\navigation\\navi_linkdistance_krpri.lub";
 
 /// The navigation tables: maps with their shown names, the ways between maps, NPCs and monsters by map.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -119,11 +120,15 @@ pub struct NaviTables {
     pub links: Vec<NaviLink>,
     pub npcs: Vec<NaviNpc>,
     pub monsters: Vec<NaviMonster>,
+    /// From a way (its id): the ways that can be walked to from where it arrives, in the table's order, and how many
+    /// cells off each is. Empty when the data has no distance table.
+    pub passes: HashMap<u32, Vec<(u32, u32)>>,
 }
 
 /// A way from one map to another: a warp (kind 200), an NPC that sends you (201), or a service (204, 205).
 #[derive(Debug, Clone, PartialEq)]
 pub struct NaviLink {
+    pub id: u32,
     pub map: String,
     pub kind: u32,
     pub name: String,
@@ -147,11 +152,16 @@ pub struct NaviMonster {
 }
 
 pub fn navigation(grf: &Grf) -> io::Result<NaviTables> {
-    navi_tables(&run(grf, &[NAVI_MAP, NAVI_LINK, NAVI_NPC, NAVI_MOB])?)
+    let lua = run(grf, &[NAVI_MAP, NAVI_LINK, NAVI_NPC, NAVI_MOB])?;
+    // Older data has no distance table: routes then take every way of a map as one that can be walked to.
+    let _ = exec(&lua, grf, &[NAVI_DISTANCE]);
+    navi_tables(&lua)
 }
 
 /// `Navi_Map` { name, shown name, .. }, `Navi_Link` { map, id, kind, .., name, .., x, y, to map, to x, to y },
-/// `Navi_Npc` { map, id, kind, sprite, name, .., x, y }, `Navi_Mob` { map, id, kind, monster (low 16 bits), name, .. }.
+/// `Navi_Npc` { map, id, kind, sprite, name, .., x, y }, `Navi_Mob` { map, id, kind, monster (low 16 bits), name, .. },
+/// and `Navi_Distance` (when there): map, how many ways, { { a way's id, { "E", id, cells }.., { "NULL", 0, 0 } }.. },
+/// one after the other in one flat list.
 fn navi_tables(lua: &Lua) -> io::Result<NaviTables> {
     let rows = |name: &str| -> io::Result<Vec<mlua::Table>> {
         let table: mlua::Table = lua.globals().get(name).map_err(lua_error)?;
@@ -166,6 +176,7 @@ fn navi_tables(lua: &Lua) -> io::Result<NaviTables> {
     }
     for row in rows("Navi_Link")? {
         tables.links.push(NaviLink {
+            id: number(&row, 2) as u32,
             map: text(&row, 1),
             kind: number(&row, 3) as u32,
             name: text(&row, 5),
@@ -179,6 +190,17 @@ fn navi_tables(lua: &Lua) -> io::Result<NaviTables> {
     }
     for row in rows("Navi_Mob")? {
         tables.monsters.push(NaviMonster { map: text(&row, 1), id: (number(&row, 4) & 0xFFFF) as u16, name: text(&row, 5) });
+    }
+    // Every third entry of the flat list is a map's ways; "E" names a way that can be walked to from where this one
+    // arrives, and anything else ends a way's list.
+    if let Ok(distances) = lua.globals().get::<mlua::Table>("Navi_Distance") {
+        for ways in distances.sequence_values::<mlua::Value>().flatten().skip(2).step_by(3).filter_map(|ways| ways.as_table().cloned()) {
+            for way in ways.sequence_values::<mlua::Table>().flatten() {
+                let passes = way.sequence_values::<mlua::Value>().flatten().skip(1).filter_map(|pass| pass.as_table().cloned());
+                let passes = passes.take_while(|pass| text(pass, 1) == "E").map(|pass| (number(&pass, 2) as u32, number(&pass, 3) as u32));
+                tables.passes.insert(number(&way, 1) as u32, passes.collect());
+            }
+        }
     }
     Ok(tables)
 }
@@ -2144,12 +2166,19 @@ mod tests {
             Navi_Link = { { "prt_fild08", 100, 200, 99999, "warp", "", 170, 375, "prontera", 156, 22 } }
             Navi_Npc = { { "prontera", 7, 101, 706, "Tool Dealer", "yusa", 134, 221 } }
             Navi_Mob = { { "prt_fild08", 9, 300, 1377258, "Poring", "PORING", 60, 1 } }
+            Navi_Distance = {
+                "prt_fild08", 2, { { 100, { "E", 101, 678 }, { "E", 107, 6 }, { "NULL", 0, 0 } }, { 105, { "NULL", 0, 0 } } },
+                "prontera", 1, { { 101, { "E", 100, 5 }, { "NULL", 0, 0 }, { "E", 9, 9 } } },
+            }
         "#;
         super::exec_bytes(&lua, "navi", source.as_bytes().to_vec()).unwrap();
         let tables = super::navi_tables(&lua).unwrap();
         assert_eq!(tables.maps.get("prt_fild08").map(String::as_str), Some("Prontera Field"));
-        let link = super::NaviLink { map: "prt_fild08".into(), kind: 200, name: "warp".into(), cell: [170, 375], to: "prontera".into(), to_cell: [156, 22] };
+        let link =
+            super::NaviLink { id: 100, map: "prt_fild08".into(), kind: 200, name: "warp".into(), cell: [170, 375], to: "prontera".into(), to_cell: [156, 22] };
         assert_eq!(tables.links, [link]);
+        // Each way's list of ways on, up to its end mark.
+        assert_eq!(tables.passes, [(100, vec![(101, 678), (107, 6)]), (105, vec![]), (101, vec![(100, 5)])].into_iter().collect());
         assert_eq!(tables.npcs, [super::NaviNpc { map: "prontera".into(), name: "Tool Dealer".into(), cell: [134, 221] }]);
         assert_eq!(tables.monsters, [super::NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into() }]);
     }

@@ -2464,6 +2464,33 @@ pub fn find_trail(gat: &Gat, from: [i32; 2], to: [i32; 2]) -> Option<Vec<[i32; 2
     search(gat, from, to, None, None)
 }
 
+/// How many cells a walk from `from` counts to each cell it can get to (its own first: 1), by a walk's rules: eight
+/// ways, a diagonal only with both its sides open. None for a cell there's no way to.
+// ponytail: a flood's counts, not the lengths of the paths the walking search would pick; a route search only tells
+// "no way" and near from far by them.
+pub fn walk_counts(gat: &Gat, from: [i32; 2]) -> impl Fn([i32; 2]) -> Option<u32> + use<> {
+    let (width, height) = (gat.width as i32, gat.height as i32);
+    let at = move |[x, y]: [i32; 2]| (x >= 0 && y >= 0 && x < width && y < height).then(|| (y * width + x) as usize);
+    let mut counts = vec![0u32; gat.width * gat.height];
+    let mut queue = std::collections::VecDeque::new();
+    if let Some(index) = at(from) {
+        counts[index] = 1;
+        queue.push_back(from);
+    }
+    while let Some(cell) = queue.pop_front() {
+        let count = counts[at(cell).unwrap()];
+        let open = |dx: i32, dy: i32| gat.walkable([cell[0] + dx, cell[1] + dy]);
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
+            let next = [cell[0] + dx, cell[1] + dy];
+            if open(dx, dy) && (dx == 0 || dy == 0 || (open(dx, 0) && open(0, dy))) && counts[at(next).unwrap()] == 0 {
+                counts[at(next).unwrap()] = count + 1;
+                queue.push_back(next);
+            }
+        }
+    }
+    move |cell| at(cell).map(|index| counts[index]).filter(|&count| count > 0)
+}
+
 /// The most cells a walk's search reaches: the start is the first, and the 150th ends it with no path.
 const WALK_NODES: usize = 149;
 
@@ -2959,6 +2986,26 @@ mod tests {
         // No path from a cell to itself.
         assert_eq!(find_path(&open, [5, 5], [5, 5]), None);
         assert_eq!(find_trail(&open, [5, 5], [5, 5]), None);
+    }
+
+    #[test]
+    fn counts_the_cells_of_a_walk_to_everywhere_it_can_go() {
+        // 7 × 5 with a wall down x = 3, open only at its top row (y = 4).
+        let mut gat = Gat { width: 7, height: 5, cells: vec![([0.0; 4], 0); 35] };
+        for y in 0..4 {
+            gat.set_kind([3, y], 1);
+        }
+        let counts = walk_counts(&gat, [0, 0]);
+        // Its own cell is the first; a diagonal is one cell. The gap is five cells off in a line, but its corner can't be
+        // cut: by (2, 4), six.
+        assert_eq!([counts([0, 0]), counts([1, 1]), counts([2, 0]), counts([2, 4]), counts([3, 4])], [Some(1), Some(2), Some(3), Some(5), Some(6)]);
+        // Nor on the far side: from the gap to (4, 3) is by (4, 4).
+        assert_eq!((counts([2, 3]), counts([4, 3])), (Some(4), Some(8)));
+        // The wall itself and off the map: no way. A walled-off cell: no way from it to anywhere else.
+        assert_eq!([counts([3, 0]), counts([7, 0]), counts([-1, 2])], [None; 3]);
+        gat.set_kind([3, 4], 1);
+        let shut = walk_counts(&gat, [0, 0]);
+        assert_eq!((shut([2, 4]), shut([4, 4]), walk_counts(&gat, [9, 9])([0, 0])), (Some(5), None, None));
     }
 
     #[test]
