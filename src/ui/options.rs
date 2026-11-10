@@ -53,6 +53,9 @@ pub struct GraphicsSettings {
     pub exp_hundredths: bool,
     pub kill_exp: bool,
     pub ui_scale: bool,
+    /// Which of the eight sets of navigation arrows lies on the ground (the Navigation window's picker), the first at
+    /// first.
+    pub navi_icons: u8,
     /// How large the UI scale makes the interface: one of `UI_SIZES`, the classic 768 rows (the largest) at first.
     pub ui_size: u16,
     /// The font the text is drawn in (Extras; `text::choices`), Tahoma at first.
@@ -80,6 +83,7 @@ impl Default for GraphicsSettings {
             exp_hundredths: false,
             kill_exp: false,
             ui_scale: false,
+            navi_icons: 1,
             ui_size: 768,
             font: DEFAULT_FONT.into(),
         }
@@ -110,8 +114,8 @@ impl GraphicsSettings {
 
     pub fn load_from(path: &Path) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
-        // The switches and the UI size, then the font's name on a line of its own. (A word after the size is a switch
-        // that's gone.)
+        // The switches, the UI size and the navigation's arrow set, then the font's name on a line of its own. (A file
+        // from when a switch followed the size reads as the first set.)
         let (switches, font) = text.split_once('\n').unwrap_or((&text, ""));
         let mut words = switches.split_whitespace();
         let mut next = |default: bool| words.next().map_or(default, |value| value != "0");
@@ -135,6 +139,7 @@ impl GraphicsSettings {
             kill_exp: next(false),
             ui_scale: next(false),
             ui_size: words.next().and_then(|rows| rows.parse().ok()).filter(|rows| UI_SIZES.contains(rows)).unwrap_or(768),
+            navi_icons: words.next().and_then(|set| set.parse().ok()).filter(|set| (1..=8).contains(set)).unwrap_or(1),
             font: Some(font.trim()).filter(|font| !font.is_empty()).unwrap_or(DEFAULT_FONT).to_owned(),
         }
     }
@@ -164,6 +169,8 @@ impl GraphicsSettings {
         .join(" ")
             + " "
             + &self.ui_size.to_string()
+            + " "
+            + &self.navi_icons.to_string()
             + "\n"
             + &self.font;
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, text));
@@ -224,6 +231,7 @@ mod tests {
             exp_hundredths: true,
             kill_exp: true,
             ui_scale: true,
+            navi_icons: 5,
             ui_size: 960,
             font: "MS Gothic (Japan)".into(),
         };
@@ -240,7 +248,7 @@ mod tests {
         assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { ui_scale: true, ..GraphicsSettings::default() });
         std::fs::write(&path, "1 1 0 1 0 0 1 1 0 0 0 0 0 1 1 0 0 1 900\nTahoma").unwrap();
         assert_eq!(GraphicsSettings::load_from(&path).ui_size, 768);
-        // One with a word after the size (a switch that's gone) reads the same without it.
+        // One from when a switch followed the size: the first arrow set.
         std::fs::write(&path, "1 1 0 1 0 0 1 1 0 0 0 0 0 1 1 0 0 1 960 1\nTahoma").unwrap();
         assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { ui_scale: true, ui_size: 960, ..GraphicsSettings::default() });
         let _ = std::fs::remove_file(path);

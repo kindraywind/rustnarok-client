@@ -57,6 +57,28 @@ const MINI_CLOSE: f32 = 15.0;
 /// How see-through the small form is (alpha 170).
 const MINI_FADE: f32 = 1.0 - 170.0 / 255.0;
 const WHITE: [u8; 3] = [255, 255, 255];
+/// The title's help button, and the bottom bar's two: the route list and the arrow sets.
+const HELP_BUTTON: [f32; 4] = [230.0, 3.0, 11.0, 11.0];
+const LIST_BUTTON: [f32; 4] = [203.0, 317.0, 26.0, 18.0];
+const SETS_BUTTON: [f32; 4] = [237.0, 317.0, 26.0, 18.0];
+/// The help window ("How to use the Navigation"): where it opens, its text box, the messages in it and a line's height.
+const HELP_SIZE: [f32; 2] = [310.0, 200.0];
+const HELP_AT: [f32; 2] = [100.0, 100.0];
+const HELP_TITLE: usize = 2240;
+const HELP_BOX: [f32; 4] = [5.0, 22.0, 300.0, 173.0];
+const HELP_TEXT: [usize; 19] = [2241, 2242, 2243, 2244, 2245, 2246, 2247, 2248, 2249, 2250, 2251, 2252, 2253, 2254, 2255, 2256, 3216, 3217, 3218];
+const HELP_LINE: f32 = 14.0;
+/// The arrow sets' window ("Navigation Icons"): where it opens from the main window's corner, and the eight sets'
+/// boxes on its picture, two rows of four.
+const SETS_SIZE: [f32; 2] = [158.0, 102.0];
+const SETS_FROM: [f32; 2] = [113.0, 211.0];
+const SETS_TITLE: usize = 3203;
+const SET_COLUMNS: [f32; 4] = [11.0, 47.0, 83.0, 119.0];
+const SET_ROWS: [[f32; 2]; 2] = [[25.0, 55.0], [63.0, 91.0]];
+/// The route list ("Navigation Info"), at the main window's right edge: its list of rows.
+const LIST_SIZE: [f32; 2] = [150.0, 338.0];
+const LIST_TITLE: usize = 3204;
+const LIST_BOX: [f32; 4] = [2.0, 20.0, 146.0, 293.0];
 const GREY: [u8; 3] = [0xCC, 0xCC, 0xCC];
 const INK: [u8; 3] = [0, 0, 0];
 const PICKED: [u8; 3] = [0x30, 0x50, 0xC0];
@@ -82,6 +104,16 @@ pub struct Assets {
     dot: Texture,
     destination: Texture,
     location: Texture,
+    /// The help button (off, on); the route list's button and each arrow set's (normal, under the pointer).
+    help: [Texture; 2],
+    list_button: [Texture; 2],
+    set_buttons: Vec<[Texture; 2]>,
+    /// The arrow sets' picture and the frame round the one in use; the help's box; the route list's row icons (the
+    /// first way, a way on, the target).
+    sets: Texture,
+    set_frame: Texture,
+    help_box: Texture,
+    steps: [Texture; 3],
 }
 
 impl Assets {
@@ -104,6 +136,13 @@ impl Assets {
             dot: gpu.solid([0x0A, 0xF0, 0xF0, 0xFF]),
             destination: image("ico_destination"),
             location: image("ico_location"),
+            help: ["NaviHelp_off", "NaviHelp_on"].map(|name| gpu.load_texture(grf, &format!("{UI}navigation_interface\\{name}.bmp"), false)),
+            list_button: ["btn_roadlistwnd_normal", "btn_roadlistwnd_over"].map(image),
+            set_buttons: (1..=8).map(|set| ["normal", "over"].map(|state| image(&format!("btn_roadIocn_select{set}_{state}")))).collect(),
+            sets: image("bg_roadIocn_select"),
+            set_frame: image("img_roadIocn_bg_select"),
+            help_box: gpu.solid([0xD2, 0xD2, 0xD2, 0xFF]),
+            steps: ["icon_list_Start", "icon_list_Riute", "icon_list_Target"].map(image),
         }
     }
 }
@@ -124,6 +163,51 @@ pub struct Guide<'a> {
     pub trail: &'a [[i32; 2]],
     pub next: Option<[u16; 2]>,
     pub target: &'a Target,
+    /// The route's ways from this map on: each its map and cell.
+    pub steps: &'a [(String, [u16; 2])],
+}
+
+/// The route list's rows: each way of the route ("map (x y)"; the first marked as the start), then the target ("map
+/// (x y)", or the map alone for a map or a monster). The mark: 0 the start, 1 a way on, 2 the target.
+pub fn route_rows(guide: &Guide) -> Vec<(usize, String)> {
+    let ways = guide.steps.iter().enumerate().map(|(index, (map, [x, y]))| (index.min(1), format!("{map} ({x} {y})")));
+    let target = guide.target.cell.map_or(guide.target.map.clone(), |[x, y]| format!("{} ({x} {y})", guide.target.map));
+    ways.chain([(2, target)]).collect()
+}
+
+/// The help's lines: its messages one under the other, each wrapped to the box, an empty line between two.
+fn help_lines(font: &Font, messages: &[String]) -> Vec<String> {
+    let texts = HELP_TEXT.iter().map(|&id| messages.get(id).map_or("", String::as_str));
+    texts.flat_map(|text| crate::window::wrap(font, text, HELP_BOX[2] - 12.0, 8).into_iter().chain([String::new()])).collect()
+}
+
+/// One of the windows that go with the main one: the help, the arrow sets, the route list.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Side {
+    Help,
+    Sets,
+    List,
+}
+
+/// What a press on one of them is on: its close button, its title, an arrow set (1 to 8), or the rest.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum SideHit {
+    Close,
+    Title,
+    Set(u8),
+    Body,
+}
+
+impl Side {
+    const ALL: [Side; 3] = [Side::Help, Side::Sets, Side::List];
+
+    fn size(self) -> [f32; 2] {
+        match self {
+            Side::Help => HELP_SIZE,
+            Side::Sets => SETS_SIZE,
+            Side::List => LIST_SIZE,
+        }
+    }
 }
 
 /// A cell's point on a square picture of a map `side` wide, its shorter side centred: whole pixels, y down from `top`.
@@ -188,6 +272,12 @@ pub enum Hit {
     Auto,
     Maximize,
     Close,
+    /// The title's help button, the bottom bar's route list and arrow sets buttons, and a press on one of the windows
+    /// they open.
+    HelpButton,
+    ListButton,
+    SetsButton,
+    Side(Side, SideHit),
     Window,
 }
 
@@ -217,6 +307,11 @@ pub struct Window {
     pub auto_mini: bool,
     /// The map the player is on and its picture, for the route view.
     pub here: Option<(String, Option<Texture>)>,
+    /// The help, the arrow sets and the route list while they're open (by `Side`'s order), the help's first line shown,
+    /// and how many ways the route has (the list opens only with some).
+    pub sides: [Option<Frame>; 3],
+    pub help_first: usize,
+    pub steps: usize,
 }
 
 impl Window {
@@ -243,7 +338,61 @@ impl Window {
             mini: false,
             auto_mini: false,
             here: None,
+            sides: [None, None, None],
+            help_first: 0,
+            steps: 0,
         }
+    }
+
+    pub fn side(&self, side: Side) -> Option<&Frame> {
+        self.sides[side as usize].as_ref()
+    }
+
+    /// Opens one of the side windows, or closes it: the help where it always opens, the arrow sets over the main
+    /// window's corner, the route list at its right edge (only while the route has ways).
+    fn toggle_side(&mut self, side: Side) {
+        let open = match side {
+            _ if self.side(side).is_some() => None,
+            Side::Help => Some(HELP_AT),
+            Side::Sets => Some(self.frame.at(SETS_FROM)),
+            Side::List => (self.steps > 0).then(|| self.frame.at([SIZE[0], 0.0])),
+        };
+        self.sides[side as usize] = open.map(|at| {
+            let mut frame = Frame::new(at, side.size()[0]);
+            frame.open = true;
+            frame
+        });
+        self.help_first = 0;
+    }
+
+    /// Closes the side window opened first in `Side`'s order, if one is open (Esc closes them before the main one).
+    pub fn close_side(&mut self) -> bool {
+        let open = self.sides.iter_mut().find(|side| side.is_some());
+        open.map(|side| *side = None).is_some()
+    }
+
+    /// A press that holds a window by its title (or the main one by any spot that's no control) starts moving it.
+    pub fn start_drag(&mut self, cursor: [f32; 2]) {
+        match self.hit(cursor) {
+            Some(Hit::Side(side, SideHit::Title)) => self.sides[side as usize].as_mut().unwrap().start_drag(cursor),
+            Some(Hit::Title(TitleHit::Title) | Hit::Window) => self.frame.start_drag(cursor),
+            _ => {}
+        }
+    }
+
+    pub fn drag_to(&mut self, cursor: [f32; 2]) {
+        let height = self.size()[1];
+        self.frame.drag_to(cursor, height);
+        for side in Side::ALL {
+            if let Some(frame) = &mut self.sides[side as usize] {
+                frame.drag_to(cursor, side.size()[1]);
+            }
+        }
+    }
+
+    pub fn drop_drag(&mut self) -> bool {
+        let sides = self.sides.iter_mut().flatten().fold(false, |moved, frame| frame.drop_drag() | moved);
+        self.frame.drop_drag() | sides
     }
 
     pub fn size(&self) -> [f32; 2] {
@@ -275,8 +424,12 @@ impl Window {
     }
 
     /// Keeps what the drawing needs of the game: whether a navigation runs, and the picture of the map the player is on.
-    pub fn follow(&mut self, gpu: &Gpu, grf: &Grf, map: &str, guiding: bool) {
-        self.guiding = guiding;
+    pub fn follow(&mut self, gpu: &Gpu, grf: &Grf, map: &str, guiding: bool, steps: usize) {
+        (self.guiding, self.steps) = (guiding, steps);
+        // The route list goes with the navigation.
+        if !guiding {
+            self.sides[Side::List as usize] = None;
+        }
         if self.here.as_ref().map(|(shown, _)| shown.as_str()) != Some(map) {
             self.here = Some((map.to_owned(), picture(gpu, grf, map)));
         }
@@ -331,6 +484,11 @@ impl Window {
 
     /// The wheel over a list scrolls it, a row a notch.
     pub fn scroll_at(&mut self, cursor: [f32; 2], rows: i32) -> bool {
+        // The help's text scrolls by lines; how far is the drawing's to hold (`draw` keeps it in its lines).
+        if self.side(Side::Help).is_some_and(|frame| frame.local(cursor, HELP_SIZE[1]).is_some()) {
+            self.help_first = (self.help_first as i32 + rows).max(0) as usize;
+            return true;
+        }
         let Some(local) = self.frame.local(cursor, self.size()[1]) else { return false };
         let lists = !self.mini && !self.routing();
         for (list, area) in [GROUPS, MEMBERS].into_iter().enumerate().filter(|_| lists) {
@@ -343,6 +501,25 @@ impl Window {
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
+        // The side windows lie over the main one.
+        for side in Side::ALL {
+            if let Some(local) = self.side(side).and_then(|frame| frame.local(cursor, side.size()[1])) {
+                let frame = self.side(side).unwrap();
+                let set = || {
+                    let column = SET_COLUMNS.iter().position(|&left| (left..left + 30.0).contains(&local[0]))?;
+                    let row = SET_ROWS.iter().position(|&[top, bottom]| (top..bottom).contains(&local[1]))?;
+                    Some((row * 4 + column + 1) as u8)
+                };
+                return Some(Hit::Side(
+                    side,
+                    match frame.title_hit(local) {
+                        Some(TitleHit::Close) => SideHit::Close,
+                        Some(_) => SideHit::Title,
+                        None => set().filter(|_| side == Side::Sets).map_or(SideHit::Body, SideHit::Set),
+                    },
+                ));
+            }
+        }
         let local = self.frame.local(cursor, self.size()[1])?;
         let on = |area: [f32; 4]| contains([area[0], area[1]], [area[2], area[3]], local);
         // The small form: its two buttons, and the rest to hold it by.
@@ -355,6 +532,9 @@ impl Window {
             } else {
                 Hit::Window
             });
+        }
+        if on(HELP_BUTTON) {
+            return Some(Hit::HelpButton);
         }
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
@@ -377,6 +557,10 @@ impl Window {
             Hit::Search
         } else if on(AUTO) {
             Hit::Auto
+        } else if on(LIST_BUTTON) {
+            Hit::ListButton
+        } else if on(SETS_BUTTON) {
+            Hit::SetsButton
         } else if self.routing() {
             // The route view has no lists, no service box and no Find.
             Hit::Window
@@ -418,6 +602,10 @@ impl Window {
             Hit::Auto => self.auto_mini = !self.auto_mini,
             Hit::Maximize => self.set_mini(false),
             Hit::Title(TitleHit::Minimize) => self.set_mini(true),
+            Hit::HelpButton => self.toggle_side(Side::Help),
+            Hit::SetsButton => self.toggle_side(Side::Sets),
+            Hit::ListButton => self.toggle_side(Side::List),
+            Hit::Side(side, SideHit::Close) => self.sides[side as usize] = None,
             _ => {}
         }
         false
@@ -434,9 +622,27 @@ impl Window {
             [x, y, w, h]
         };
         let plain = |name: &str, at: [f32; 4]| (name.to_owned(), area(at), None, None);
+        // The side windows' close buttons and the arrow sets' boxes.
+        let mut sides = Vec::new();
+        for (side, name) in Side::ALL.into_iter().zip(["help", "sets", "list"]) {
+            let Some(frame) = self.side(side) else { continue };
+            let within = |[x, y, w, h]: [f32; 4]| {
+                let [x, y] = frame.at([x, y]);
+                [x, y, w, h]
+            };
+            let [x, y] = frame.close_button();
+            sides.push((format!("navi_{name}_close"), within([x, y, crate::window::BUTTON_SIZE[0], crate::window::BUTTON_SIZE[1]]), None, None));
+            if side == Side::Sets {
+                sides.extend((0..8).map(|set| {
+                    let [top, bottom] = SET_ROWS[set / 4];
+                    (format!("navi_set_{}", set + 1), within([SET_COLUMNS[set % 4], top, 30.0, bottom - top]), None, None)
+                }));
+            }
+        }
         if self.mini {
             let button = |from_right: f32| [MINI[0] - from_right, 2.0, MINI_BUTTON[0], MINI_BUTTON[1]];
-            return vec![plain("navi_maximize", button(MINI_MAXIMIZE)), plain("navi_close", button(MINI_CLOSE))];
+            sides.extend([plain("navi_maximize", button(MINI_MAXIMIZE)), plain("navi_close", button(MINI_CLOSE))]);
+            return sides;
         }
         let [minimize_x, minimize_y] = self.frame.minimize_button();
         let mut boxes = vec![
@@ -446,7 +652,11 @@ impl Window {
             plain("navi_search", SEARCH),
             plain("navi_auto", AUTO),
             plain("navi_minimize", [minimize_x, minimize_y, crate::window::BUTTON_SIZE[0], crate::window::BUTTON_SIZE[1]]),
+            plain("navi_help", HELP_BUTTON),
+            plain("navi_list", LIST_BUTTON),
+            plain("navi_sets", SETS_BUTTON),
         ];
+        boxes.extend(sides);
         if self.routing() {
             return boxes;
         }
@@ -476,6 +686,7 @@ impl Window {
         boxes
     }
 
+    /// The window, then the side windows over it. `set` is the arrow set in use (1 to 8).
     #[allow(clippy::too_many_arguments)]
     pub fn draw<'a>(
         &'a self,
@@ -488,10 +699,67 @@ impl Window {
         pointer: [f32; 2],
         caret: bool,
         guide: Option<&Guide>,
+        set: u8,
     ) {
         if !self.frame.open {
             return;
         }
+        self.draw_main(layer, chrome, assets, font, tables, messages, pointer, caret, guide, set);
+        let message = |id: usize| messages.get(id).map_or("", String::as_str);
+        for (side, title) in Side::ALL.into_iter().zip([HELP_TITLE, SETS_TITLE, LIST_TITLE]) {
+            let Some(frame) = self.side(side) else { continue };
+            let size = side.size();
+            let fill = |layer: &mut Layer<'a>, texture: &'a Texture, [x, y, w, h]: [f32; 4]| layer.sprites.push((texture, frame.at([x, y]), [w, h]));
+            fill(layer, &chrome.border, [0.0, TITLE_HEIGHT, size[0], size[1] - TITLE_HEIGHT]);
+            fill(layer, if side == Side::List { &assets.grey } else { &chrome.white }, [1.0, TITLE_HEIGHT, size[0] - 2.0, size[1] - TITLE_HEIGHT - 1.0]);
+            frame.draw_bar(layer, chrome);
+            frame.draw_bare_title(layer, chrome, message(title), pointer);
+            match side {
+                // Its messages in a grey box, from the line the wheel scrolled to.
+                Side::Help => {
+                    fill(layer, &assets.help_box, HELP_BOX);
+                    let lines = help_lines(font, messages);
+                    let shown = (HELP_BOX[3] / HELP_LINE) as usize;
+                    let first = self.help_first.min(lines.len().saturating_sub(shown));
+                    for (row, line) in lines.into_iter().skip(first).take(shown).enumerate() {
+                        layer.texts.push((line, frame.at([HELP_BOX[0] + 4.0, HELP_BOX[1] + 3.0 + row as f32 * HELP_LINE]), INK));
+                    }
+                }
+                // The eight sets' picture, a frame round the one in use.
+                Side::Sets => {
+                    layer.sprites.push((&assets.sets, frame.at([0.0, TITLE_HEIGHT]), assets.sets.size));
+                    let index = usize::from(set.clamp(1, 8)) - 1;
+                    let mark = [36.0 * (index % 4 + 1) as f32 - 26.0, if index < 4 { 24.0 } else { 60.0 }];
+                    layer.sprites.push((&assets.set_frame, frame.at(mark), assets.set_frame.size));
+                }
+                // A row a way of the route, then the target.
+                Side::List => {
+                    fill(layer, &chrome.white, LIST_BOX);
+                    let rows = guide.map(route_rows).unwrap_or_default();
+                    for (row, (mark, words)) in rows.into_iter().take((LIST_BOX[3] / ROW) as usize).enumerate() {
+                        let top = LIST_BOX[1] + row as f32 * ROW;
+                        layer.sprites.push((&assets.steps[mark], frame.at([LIST_BOX[0] + 2.0, top + 2.0]), assets.steps[mark].size));
+                        layer.texts.push((crate::window::fit(font, &words, LIST_BOX[2] - 18.0), frame.at([LIST_BOX[0] + 14.0, top + 2.0]), INK));
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_main<'a>(
+        &'a self,
+        layer: &mut Layer<'a>,
+        chrome: &'a Chrome,
+        assets: &'a Assets,
+        font: &Font,
+        tables: &NaviTables,
+        messages: &[String],
+        pointer: [f32; 2],
+        caret: bool,
+        guide: Option<&Guide>,
+        set: u8,
+    ) {
         let at = |local: [f32; 2]| self.frame.at(local);
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let title = messages.get(TITLE).map_or("Navigation", String::as_str);
@@ -532,6 +800,14 @@ impl Window {
         let auto = &assets.check[usize::from(self.auto_mini)];
         layer.sprites.push((auto, at([AUTO[0], AUTO[1] + 1.0]), auto.size));
         layer.texts.push(("Minimize".to_owned(), at([AUTO[0] + auto.size[0] + 3.0, AUTO[1]]), INK));
+        // The help button on the title (lit while the help is open), and the bottom bar's route list and arrow sets
+        // buttons (the set in use on its own).
+        let help = &assets.help[usize::from(self.side(Side::Help).is_some())];
+        layer.sprites.push((help, at([HELP_BUTTON[0], HELP_BUTTON[1]]), help.size));
+        let list = &assets.list_button[usize::from(over(LIST_BUTTON))];
+        layer.sprites.push((list, at([LIST_BUTTON[0], LIST_BUTTON[1]]), list.size));
+        let sets = &assets.set_buttons[usize::from(set.clamp(1, 8)) - 1][usize::from(over(SETS_BUTTON))];
+        layer.sprites.push((sets, at([SETS_BUTTON[0], SETS_BUTTON[1]]), sets.size));
         // The type box with its arrow, the search box with what's typed, the Search button.
         layer.sprites.push((&assets.filter[0], at([FILTER[0], FILTER[1]]), assets.filter[0].size));
         layer.sprites.push((&assets.filter[1], at([FILTER[0] + FILTER[2] - assets.filter[1].size[0], FILTER[1]]), assets.filter[1].size));
@@ -689,7 +965,8 @@ mod tests {
         };
         let cell = Target { map: "prontera".into(), cell: Some([150, 150]), monster: None, name: String::new() };
         let trail = [[10, 10], [11, 10], [12, 10], [13, 10]];
-        let guide = |map: &'static str, next, target: &'static Target| Guide { map, size: [400, 200], player: [10, 10], trail: &trail, next, target };
+        let guide =
+            |map: &'static str, next, target: &'static Target| Guide { map, size: [400, 200], player: [10, 10], trail: &trail, next, target, steps: &[] };
         let cell: &'static Target = Box::leak(Box::new(cell));
         let field: &'static Target = Box::leak(Box::new(Target { map: "prt_fild08".into(), cell: None, monster: Some(1002), name: String::new() }));
         // On the way: this map's shown name, the warp walked to, the target and its cell.
@@ -709,6 +986,60 @@ mod tests {
         assert_eq!(points, [[3.0 * 2.078_125 + MAP[0], 91.0 * 2.078_125 + MAP[1]], [4.0 * 2.078_125 + MAP[0], 91.0 * 2.078_125 + MAP[1]]]);
         // The player's mark: its bottom middle on the cell.
         assert_eq!(location([200, 100], [400, 200]), [MAP[0] + 133.0 - 9.0, MAP[1] + 133.0 - 17.0]);
+    }
+
+    #[test]
+    fn opens_the_help_the_arrow_sets_and_the_route_list() {
+        let mut window = Window::new(false);
+        let corner = window.frame.position;
+        let at = |area: [f32; 4]| [corner[0] + area[0] + 3.0, corner[1] + area[1] + 3.0];
+        assert_eq!(
+            [window.hit(at(HELP_BUTTON)), window.hit(at(LIST_BUTTON)), window.hit(at(SETS_BUTTON))],
+            [Some(Hit::HelpButton), Some(Hit::ListButton), Some(Hit::SetsButton)]
+        );
+        // The help opens where it always does; the arrow sets over the main window's corner; the route list only while
+        // the route has ways, at the right edge.
+        window.click(Hit::HelpButton);
+        window.click(Hit::SetsButton);
+        window.click(Hit::ListButton);
+        assert_eq!(window.side(Side::Help).map(|frame| frame.position), Some(HELP_AT));
+        assert_eq!(window.side(Side::Sets).map(|frame| frame.position), Some([corner[0] + 113.0, corner[1] + 211.0]));
+        assert!(window.side(Side::List).is_none());
+        window.steps = 2;
+        window.click(Hit::ListButton);
+        assert_eq!(window.side(Side::List).map(|frame| frame.position), Some([corner[0] + SIZE[0], corner[1]]));
+        // A press on one is its own: its title, its close, an arrow set by its box (two rows of four).
+        let sets = window.side(Side::Sets).unwrap().position;
+        let set = |x: f32, y: f32| window.hit([sets[0] + x, sets[1] + y]);
+        assert_eq!(
+            [set(12.0, 26.0), set(120.0, 54.0), set(48.0, 64.0), set(148.0, 90.0)].map(|hit| hit.unwrap()),
+            [1, 4, 6, 8].map(|set| Hit::Side(Side::Sets, SideHit::Set(set)))
+        );
+        assert_eq!(
+            [set(43.0, 30.0), set(12.0, 58.0), set(50.0, 5.0)].map(|hit| hit.unwrap()),
+            [SideHit::Body, SideHit::Body, SideHit::Title].map(|hit| Hit::Side(Side::Sets, hit))
+        );
+        let close = window.side(Side::Help).unwrap().close_button();
+        assert_eq!(window.hit([HELP_AT[0] + close[0] + 2.0, HELP_AT[1] + close[1] + 2.0]), Some(Hit::Side(Side::Help, SideHit::Close)));
+        // The wheel over the help scrolls its lines.
+        assert!(window.scroll_at([HELP_AT[0] + 50.0, HELP_AT[1] + 50.0], 3));
+        assert_eq!(window.help_first, 3);
+        // Esc closes them one at a time before the main window; the button closes its own.
+        window.click(Hit::Side(Side::Help, SideHit::Close));
+        assert!(window.side(Side::Help).is_none() && window.close_side() && window.side(Side::Sets).is_none());
+        window.click(Hit::ListButton);
+        assert!(window.side(Side::List).is_none() && !window.close_side());
+    }
+
+    #[test]
+    fn lists_the_route_way_by_way() {
+        let steps = vec![("prt_fild08".to_owned(), [170, 375]), ("prontera".to_owned(), [100, 50])];
+        let target = Target { map: "prt_in".into(), cell: Some([30, 40]), monster: None, name: String::new() };
+        let guide = Guide { map: "prt_fild08", size: [400, 400], player: [1, 1], trail: &[], next: Some([170, 375]), target: &target, steps: &steps };
+        // The first way is the start, the others ways on, the target last.
+        assert_eq!(route_rows(&guide), [(0, "prt_fild08 (170 375)".to_owned()), (1, "prontera (100 50)".to_owned()), (2, "prt_in (30 40)".to_owned())]);
+        let field = Target { map: "prt_fild08".into(), cell: None, monster: Some(1002), name: String::new() };
+        assert_eq!(route_rows(&Guide { target: &field, steps: &[], ..guide }), [(2, "prt_fild08".to_owned())]);
     }
 
     fn window(text: &str) -> Window {
