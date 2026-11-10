@@ -852,8 +852,7 @@ impl App {
             Scene::Game(game) if on(Esc(W::Navigation)) => {
                 let window = game.navi_window.as_mut().unwrap();
                 match window.hit(cursor).unwrap() {
-                    navi_window::Hit::Title(TitleHit::Close) => game.close_navigation(),
-                    navi_window::Hit::Title(title) => window.frame.click_title(title),
+                    navi_window::Hit::Title(TitleHit::Close) | navi_window::Hit::Close => game.close_navigation(),
                     navi_window::Hit::Search => {
                         window.click(navi_window::Hit::Search);
                         window.search(&self.navi_tables);
@@ -1951,7 +1950,8 @@ impl App {
                 list.frame.drag_to(self.cursor, height);
             }
             if let Some(window) = &mut game.navi_window {
-                window.frame.drag_to(self.cursor, navi_window::SIZE[1]);
+                let height = window.size()[1];
+                window.frame.drag_to(self.cursor, height);
             }
             if let Some(view) = &mut game.card_view {
                 view.drag_to(self.cursor);
