@@ -3872,15 +3872,11 @@ impl App {
                 }
                 game.sync_esc();
             }
-            // The server starts a navigation: to a cell (kind 0), a map (1) or a monster's map (3).
+            // The server starts a navigation: to a cell (kind 0), a map (1), the NPC on a cell (2) or a monster's map (3).
             MapEvent::Navigate { kind, services, hide_window, map, cell, monster } => {
-                let map = navigation::map_key(&map);
-                let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
-                let target = navigation::Target { cell: (kind == 0).then_some(cell), monster: (kind == 3).then_some(monster), name, map };
-                let found = game.navigate(&self.navi_tables, &self.messages, &self.grf, target, services);
-                if found && !hide_window && game.navi_window.is_none() {
-                    game.toggle_navigation();
-                    game.sync_esc();
+                let target = navigation::target_of(&self.navi_tables, &map, kind, cell, monster);
+                if game.navigate(&self.navi_tables, &self.messages, &self.grf, target, services) && !hide_window {
+                    game.open_navigation();
                 }
             }
             // A script's progress bar is the player's cast bar; on another unit it's that unit's.

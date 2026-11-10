@@ -19,12 +19,13 @@ pub const NAVI_COLOR: [u8; 3] = [0xC0, 0x00, 0x00];
 pub const URL_COLOR: [u8; 3] = [0x00, 0xA3, 0xE6];
 pub const NPC_COLOR: [u8; 3] = [0x4A, 0x93, 0xF4];
 
-/// What a link opens: an item's information, a navigation to a place (x and y 0: the map itself), a web page (the
-/// address as the script gave it), a quest in the quest window, or nothing yet (`<TIPBOX>`, a `<QUEST>` without an id).
+/// What a link opens: an item's information, a navigation to a place (with the numbers that follow its x and y, when
+/// there are any: `navigation::linked` reads them), a web page (the address as the script gave it), a quest in the
+/// quest window, or nothing yet (`<TIPBOX>`, a `<QUEST>` without an id).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Item(ItemLink),
-    Navi { map: String, cell: [u16; 2] },
+    Navi { map: String, cell: [u16; 2], rest: Option<[i32; 4]> },
     Url(String),
     Quest(u32),
     // ponytail: a tip link does nothing when clicked until that window exists.
@@ -57,7 +58,10 @@ impl Target {
     fn encode(&self) -> String {
         match self {
             Target::Item(item) => format!("i {}", item.encode()),
-            Target::Navi { map, cell } => format!("n {} {} {map}", cell[0], cell[1]),
+            Target::Navi { map, cell, rest } => {
+                let rest = rest.map_or("-".to_owned(), |rest| rest.map(|number| number.to_string()).join(","));
+                format!("n {} {} {rest} {map}", cell[0], cell[1])
+            }
             Target::Url(address) => format!("u {address}"),
             Target::Quest(id) => format!("q {id}"),
             Target::Tip => "t -".into(),
@@ -68,9 +72,13 @@ impl Target {
         match text.split_once(' ')? {
             ("i", item) => ItemLink::decode(item).map(Target::Item),
             ("n", place) => {
-                let mut fields = place.splitn(3, ' ');
+                let mut fields = place.splitn(4, ' ');
                 let cell = [fields.next()?.parse().ok()?, fields.next()?.parse().ok()?];
-                Some(Target::Navi { map: fields.next()?.to_owned(), cell })
+                let rest = match fields.next()? {
+                    "-" => None,
+                    rest => Some(<[i32; 4]>::try_from(rest.split(',').map(str::parse).collect::<Result<Vec<_>, _>>().ok()?).ok()?),
+                };
+                Some(Target::Navi { map: fields.next()?.to_owned(), cell, rest })
             }
             ("u", address) => Some(Target::Url(address.to_owned())),
             ("q", id) => id.parse().ok().map(Target::Quest),
@@ -203,12 +211,14 @@ pub fn mark(text: &str, name_of: &dyn Fn(&ItemLink) -> String) -> String {
                 let info = || body.split_once("<INFO>").map(|(words, info)| (words, info.trim_end_matches("</INFO>").trim()));
                 let link = match tag {
                     "ITEML" => decode_iteml(body).map(|item| (name_of(&item), Target::Item(item))),
-                    // name<INFO>map,x,y,…</INFO>
+                    // name<INFO>map,x,y</INFO>, or with type, options, window and id after them (one left out is 0)
                     "NAVI" => info().and_then(|(words, info)| {
                         let mut fields = info.split(',');
                         let map = fields.next()?.trim().to_owned();
                         let cell = [fields.next()?.trim().parse().ok()?, fields.next()?.trim().parse().ok()?];
-                        Some((words.to_owned(), Target::Navi { map, cell }))
+                        let more: Vec<i32> = fields.take(4).map(|field| field.trim().parse().unwrap_or(0)).collect();
+                        let rest = (!more.is_empty()).then(|| std::array::from_fn(|index| more.get(index).copied().unwrap_or(0)));
+                        Some((words.to_owned(), Target::Navi { map, cell, rest }))
                     }),
                     // words<INFO>address</INFO>
                     "URL" => info().map(|(words, address)| (words.to_owned(), Target::Url(address.to_owned()))),
@@ -306,8 +316,17 @@ mod tests {
         // A navigation link: its words and its place.
         let (shown, runs) = split(&mark("go to <NAVI>[Tool Shop]<INFO>prontera,134,221,0,000,0</INFO></NAVI>.", &named));
         assert_eq!(shown, "go to [Tool Shop].");
-        assert_eq!(runs, vec![(6..17, Target::Navi { map: "prontera".into(), cell: [134, 221] })]);
+        assert_eq!(runs, vec![(6..17, Target::Navi { map: "prontera".into(), cell: [134, 221], rest: Some([0, 0, 0, 0]) })]);
         assert_eq!(runs[0].1.color(), NAVI_COLOR);
+        // One that ends at y has no more; one that stops short reads the rest as 0; negative numbers stay.
+        let rest = |info: &str| match &split(&mark(&format!("<NAVI>x<INFO>{info}</INFO></NAVI>"), &named)).1[..] {
+            [(_, Target::Navi { rest, .. })] => *rest,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            [rest("prontera,134,221"), rest("izlude,0,0,3,-222"), rest("izlude,1,2,1,101,1,1002,9")],
+            [None, Some([3, -222, 0, 0]), Some([1, 101, 1, 1002])]
+        );
         // A plain item with nothing after its id, and text that only looks like a tag.
         assert_eq!(decode_iteml("0000000jn").map(|item| (item.id, item.equip)), Some((1201, false)));
         assert_eq!(split(&mark("a < b <ITEM>broken</ITEM>", &named)).0, "a < b <ITEM>broken</ITEM>");
@@ -329,7 +348,7 @@ mod tests {
         assert_eq!(page("javascript:alert(1)"), None);
         // NPC text draws web links in their own blue and every other link in another; the chat keeps its colours.
         assert_eq!([targets[0].npc_color(), targets[1].npc_color()], [URL_COLOR, NPC_COLOR]);
-        let navi = Target::Navi { map: "prontera".into(), cell: [1, 2] };
+        let navi = Target::Navi { map: "prontera".into(), cell: [1, 2], rest: None };
         assert_eq!((navi.npc_color(), navi.color()), (NPC_COLOR, NAVI_COLOR));
     }
 

@@ -1425,6 +1425,15 @@ impl Game {
         }
     }
 
+    /// Opens the navigation window (open already, it stays as it is).
+    pub(crate) fn open_navigation(&mut self) -> &mut navigation::Window {
+        if self.navi_window.is_none() {
+            self.navi_window = Some(navigation::Window::new());
+            self.sync_esc();
+        }
+        self.navi_window.as_mut().unwrap()
+    }
+
     /// The navigation window's close: while a navigation runs it asks whether to cancel that, and the window stays.
     pub(crate) fn close_navigation(&mut self) {
         if self.navigation.is_some() {
@@ -1437,10 +1446,23 @@ impl Game {
     /// Starts a navigation and says in the chat where it stands; whether a way was found. With no way, or there
     /// already, none runs. A map the tables don't have: nothing, not a word.
     // ponytail: a start that finds no way drops the one under way; what the game keeps of it then isn't known.
-    pub(crate) fn navigate(&mut self, tables: &lua::NaviTables, messages: &[String], grf: &Grf, target: navigation::Target, services: u8) -> bool {
-        if !tables.maps.contains_key(&navigation::navi_map(tables, &target.map)) {
-            return false;
-        }
+    pub(crate) fn navigate(
+        &mut self,
+        tables: &lua::NaviTables,
+        messages: &[String],
+        grf: &Grf,
+        target: Result<navigation::Target, Option<usize>>,
+        services: u8,
+    ) -> bool {
+        // A start that names nobody the tables have says so (`navigation::target_of`).
+        let target = match target {
+            Ok(target) if tables.maps.contains_key(&navigation::navi_map(tables, &target.map)) => target,
+            Err(Some(message)) => {
+                self.chat_line(navigation::says(messages, message), CHAT_NAVIGATION);
+                return false;
+            }
+            _ => return false,
+        };
         let found = self.navigation_report(tables, messages, grf, &target, services, true);
         for line in found.lines {
             self.chat_line(line, CHAT_NAVIGATION);

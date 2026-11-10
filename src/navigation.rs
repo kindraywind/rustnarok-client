@@ -22,6 +22,7 @@ pub const ASKS_STOP: usize = 2239;
 const SAYS: usize = 2315;
 const UNCLEAR: usize = 2294;
 const NO_WAY: usize = 2298;
+const NO_INFO: usize = 2300;
 const NO_MAP: usize = 2301;
 const FOLLOW: usize = 2308;
 pub const ARRIVED: usize = 2309;
@@ -91,6 +92,52 @@ pub fn allowed(kind: u32, services: u8) -> bool {
         205 => !services.is_multiple_of(10),
         _ => false,
     }
+}
+
+/// The target a start names by its type: 0 a cell of the map, 1 the map itself, 2 the NPC standing on that very cell,
+/// 3 a monster of the map by its id. Err with the message to say ("No Information") when the tables have no such NPC
+/// or monster there, and with none (nothing at all happens) for any other type or a map the tables don't have.
+pub fn target_of(tables: &NaviTables, map: &str, kind: u8, cell: [u16; 2], monster: u16) -> Result<Target, Option<usize>> {
+    let map = navi_map(tables, map);
+    let shown = tables.maps.get(&map).ok_or(None)?.clone();
+    let named = |name: &str| format!("{name} ({map})");
+    match kind {
+        0 => Ok(Target { cell: Some(cell), monster: None, name: shown, map }),
+        1 => Ok(Target { cell: None, monster: None, name: shown, map }),
+        2 => {
+            let npc = tables.npcs.iter().find(|npc| npc.map == map && npc.cell == cell).ok_or(Some(NO_INFO))?;
+            Ok(Target { cell: Some(cell), monster: None, name: named(&npc.name), map: map.clone() })
+        }
+        3 => {
+            let found = tables.monsters.iter().find(|found| found.map == map && found.id == monster).ok_or(Some(NO_INFO))?;
+            Ok(Target { cell: None, monster: Some(monster), name: named(&found.name), map: map.clone() })
+        }
+        _ => Err(None),
+    }
+}
+
+/// What a `<NAVI>` link asks for.
+#[derive(Debug, PartialEq)]
+pub enum Linked {
+    /// A navigation to its place, read by this type (`target_of`), by these services, with the window opened or not;
+    /// the monster's id for type 3.
+    Go { kind: u8, services: u8, window: bool, monster: u16 },
+    /// The window, looking the map's name up.
+    Search,
+}
+
+/// A link's fields after its map, x and y (`rest`: type, options, window, id; none on a link that ends at y). A short
+/// link is the NPC on that cell, by the Kafra and the airship, with the window. Options are a number whose hundreds
+/// allow the Kafra, tens scrolls and ones the airship; −222 asks for a search instead.
+pub fn linked(rest: Option<[i32; 4]>) -> Option<Linked> {
+    let Some([kind, options, window, id]) = rest else { return Some(Linked::Go { kind: 2, services: 101, window: true, monster: 0 }) };
+    if options == -222 {
+        return Some(Linked::Search);
+    }
+    let (kafra, left) = if options >= 100 { (1, options - 100) } else { (0, options) };
+    let (scroll, left) = if left >= 10 { (1, left - 10) } else { (0, left) };
+    let services = kafra * 100 + scroll * 10 + u8::from(left >= 1);
+    Some(Linked::Go { kind: u8::try_from(kind).ok()?, services, window: window != 0, monster: id.clamp(0, i32::from(u16::MAX)) as u16 })
 }
 
 /// What a route search asks of the maps themselves.
@@ -787,6 +834,41 @@ mod tests {
         assert!(!reached(&tables, "prontera", [150, 144], &target) && !reached(&tables, "prt_fild08", [150, 150], &target));
         // A map or a monster never ends by a move.
         assert!(!reached(&tables, "prontera", [150, 150], &Target { cell: None, ..target }));
+    }
+
+    #[test]
+    fn names_a_target_by_its_type() {
+        let tables = tables();
+        let kind = |target: Result<Target, Option<usize>>| target.map(|target| (target.kind(), target.cell, target.monster, target.name));
+        // A cell and the map itself, named as the map is shown.
+        assert_eq!(kind(target_of(&tables, "Prontera.gat", 0, [150, 150], 0)), Ok(("cell", Some([150, 150]), None, "Prontera".into())));
+        assert_eq!(kind(target_of(&tables, "prontera", 1, [150, 150], 0)), Ok(("map", None, None, "Prontera".into())));
+        // The NPC on that very cell, or "No Information"; a monster of the map by its id, or the same.
+        assert_eq!(kind(target_of(&tables, "prt_in", 2, [30, 40], 0)), Ok(("cell", Some([30, 40]), None, "Tool Dealer (prt_in)".into())));
+        assert_eq!(target_of(&tables, "prt_in", 2, [30, 41], 0), Err(Some(NO_INFO)));
+        assert_eq!(kind(target_of(&tables, "prt_fild08", 3, [0, 0], 1002)), Ok(("monster", None, Some(1002), "Poring (prt_fild08)".into())));
+        assert_eq!(target_of(&tables, "prontera", 3, [0, 0], 1002), Err(Some(NO_INFO)));
+        // Any other type, or a map the tables don't have: nothing.
+        assert_eq!((target_of(&tables, "prontera", 4, [1, 1], 0), target_of(&tables, "nowhere", 2, [1, 1], 0)), (Err(None), Err(None)));
+    }
+
+    #[test]
+    fn reads_a_links_fields() {
+        let go = |kind, services, window, monster| Some(Linked::Go { kind, services, window, monster });
+        // It ends at y: the NPC there, by the Kafra and the airship, with the window.
+        assert_eq!(linked(None), go(2, 101, true, 0));
+        // rathena's own: a cell, no services, no window.
+        assert_eq!(linked(Some([0, 0, 0, 0])), go(0, 0, false, 0));
+        // The options' hundreds, tens and ones; the window; a monster's id.
+        assert_eq!(linked(Some([0, 101, 1, 0])), go(0, 101, true, 0));
+        assert_eq!(linked(Some([3, 111, 0, 1002])), go(3, 111, false, 1002));
+        assert_eq!(
+            [linked(Some([1, 10, 0, 0])), linked(Some([1, 1, 0, 0])), linked(Some([1, 100, 0, 0]))],
+            [go(1, 10, false, 0), go(1, 1, false, 0), go(1, 100, false, 0)]
+        );
+        assert_eq!(linked(Some([1, -5, 2, -3])), go(1, 0, true, 0));
+        // −222: a search. A type that's no type: nothing.
+        assert_eq!((linked(Some([3, -222, 0, 0])), linked(Some([-1, 0, 0, 0]))), (Some(Linked::Search), None));
     }
 
     #[test]

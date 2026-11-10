@@ -7342,7 +7342,10 @@ mod tests {
         // The place is a link to navigate to; the colour codes around it stay for the wrapping to read.
         let (shown, runs) = links::split(&links::mark(navi, &|_| String::new()));
         assert_eq!(shown, "Let me mark the ^B9062F[Tool Shop]^000000 for you.");
-        assert_eq!(runs.iter().map(|(_, target)| target.clone()).collect::<Vec<_>>(), [links::Target::Navi { map: "prontera".into(), cell: [134, 221] }]);
+        assert_eq!(
+            runs.iter().map(|(_, target)| target.clone()).collect::<Vec<_>>(),
+            [links::Target::Navi { map: "prontera".into(), cell: [134, 221], rest: Some([0, 0, 0, 0]) }]
+        );
         let marked = links::mark("a <ITEM>Apple<INFO>512</INFO></ITEM> < b", &|_| String::new());
         assert_eq!(links::split(&marked).0, "a Apple < b");
     }

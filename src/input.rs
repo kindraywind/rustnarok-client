@@ -127,12 +127,21 @@ impl App {
                         let card = self.card_pictures.name(item.id).is_some();
                         game.show_item(iteminfo::Shown::of_link(item.id, item.refine, item.cards, card, &self.items).with_link(&item));
                     }
-                    links::Target::Navi { map, cell } => {
-                        let map = navigation::map_key(&map);
-                        let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
-                        let target = navigation::Target { cell: (cell != [0, 0]).then_some(cell), monster: None, name, map };
-                        game.navigate(&self.navi_tables, &self.messages, &self.grf, target, NAVI_SERVICES);
-                    }
+                    links::Target::Navi { map, cell, rest } => match navigation::linked(rest) {
+                        Some(navigation::Linked::Go { kind, services, window, monster }) => {
+                            let target = navigation::target_of(&self.navi_tables, &map, kind, cell, monster);
+                            if game.navigate(&self.navi_tables, &self.messages, &self.grf, target, services) && window {
+                                game.open_navigation();
+                            }
+                        }
+                        // The window, with the map's name looked up.
+                        Some(navigation::Linked::Search) => {
+                            let window = game.open_navigation();
+                            (window.text, window.typing) = (navigation::map_key(&map), false);
+                            window.search(&self.navi_tables);
+                        }
+                        None => {}
+                    },
                     links::Target::Url(address) => {
                         if let Some(page) = links::page(&address) {
                             open_page(game, page);
@@ -312,7 +321,7 @@ impl App {
                     let map = navigation::map_key(&map);
                     let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
                     let cell = (cell != [0, 0]).then(|| cell.map(|value| value.clamp(0, i32::from(u16::MAX)) as u16));
-                    game.navigate(&self.navi_tables, &self.messages, &self.grf, navigation::Target { cell, monster: None, name, map }, NAVI_SERVICES);
+                    game.navigate(&self.navi_tables, &self.messages, &self.grf, Ok(navigation::Target { cell, monster: None, name, map }), NAVI_SERVICES);
                 }
             }
             Scene::Game(game) if on(Esc(W::Quests)) => {
@@ -744,7 +753,7 @@ impl App {
                         let map = navigation::map_key(&game.map);
                         let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
                         let target = navigation::Target { cell: Some(cell.map(|value| value as u16)), monster: None, name, map };
-                        game.navigate(&self.navi_tables, &self.messages, &self.grf, target, NAVI_SERVICES);
+                        game.navigate(&self.navi_tables, &self.messages, &self.grf, Ok(target), NAVI_SERVICES);
                     }
                     Some(hit) => {
                         game.minimap_window.click(hit);
@@ -849,7 +858,7 @@ impl App {
                     navigation::Hit::Result(index) => {
                         let target = window.results[index].clone();
                         window.typing = false;
-                        game.navigate(&self.navi_tables, &self.messages, &self.grf, target, NAVI_SERVICES);
+                        game.navigate(&self.navi_tables, &self.messages, &self.grf, Ok(target), NAVI_SERVICES);
                     }
                     navigation::Hit::Stop => {
                         window.typing = false;
@@ -3520,16 +3529,17 @@ impl App {
                 navigation::Typed::Go { map, cell, services } => {
                     let map = navigation::navi_map(&self.navi_tables, &map);
                     let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_default();
-                    game.navigate(&self.navi_tables, &self.messages, &self.grf, navigation::Target { map, cell: Some(cell), monster: None, name }, services);
+                    game.navigate(
+                        &self.navi_tables,
+                        &self.messages,
+                        &self.grf,
+                        Ok(navigation::Target { map, cell: Some(cell), monster: None, name }),
+                        services,
+                    );
                 }
                 navigation::Typed::Unclear => game.chat_line(navigation::unclear(&self.messages), CHAT_NAVIGATION),
                 // /naviopen only ever opens the window.
-                navigation::Typed::Open => {
-                    if game.navi_window.is_none() {
-                        game.toggle_navigation();
-                        game.sync_esc();
-                    }
-                }
+                navigation::Typed::Open => drop(game.open_navigation()),
             }
         } else if let Some(shown) = self.sound.command(game.chat.input.trim()) {
             game.chat.input.clear();
