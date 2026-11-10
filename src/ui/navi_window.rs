@@ -37,6 +37,11 @@ const PICTURE: [f32; 4] = [155.0, 60.0, 100.0, 100.0];
 /// The "service" box (its label to the right), and Find.
 const SERVICE: [f32; 4] = [146.0, 247.0, 110.0, 12.0];
 const FIND: [f32; 4] = [207.0, 263.0, 58.0, 20.0];
+/// Share, left of Find: it puts the picked place on the chat line. For a map it first shows the share view, where a
+/// press on the picture picks the cell; "Click on the location to share it in a chat room" stays up this long.
+const SHARE: [f32; 4] = [145.0, 263.0, 58.0, 20.0];
+const SHARE_HINT: usize = 3215;
+const HINT_LIFE: std::time::Duration = std::time::Duration::from_secs(5);
 const BOTTOM: [f32; 2] = [0.0, 314.0];
 /// The button that turns between the search and the route view, and the "Minimize" box: ticked, a click on the
 /// ground makes the window small.
@@ -104,6 +109,10 @@ pub struct Assets {
     dot: Texture,
     destination: Texture,
     location: Texture,
+    /// Share (normal, under the pointer); the share view's cross lines, and its hint's backing and mouse picture.
+    share: [Texture; 2],
+    cross: Texture,
+    hint: [Texture; 2],
     /// The help button (off, on); the route list's button and each arrow set's (normal, under the pointer).
     help: [Texture; 2],
     list_button: [Texture; 2],
@@ -136,6 +145,19 @@ impl Assets {
             dot: gpu.solid([0x0A, 0xF0, 0xF0, 0xFF]),
             destination: image("ico_destination"),
             location: image("ico_location"),
+            share: ["btn_share_normal", "btn_share_over"].map(|name| gpu.load_texture(grf, &format!("{UI}private_airplane\\{name}.bmp"), false)),
+            cross: gpu.solid([0x00, 0x22, 0xAA, 0xFF]),
+            hint: [
+                // The hint's backing is drawn see-through (alpha 0x66).
+                crate::render::load_image(grf, &format!("{UI}navigation_interface3\\back.bmp")).map_or_else(
+                    |_| gpu.solid([0, 0, 0, 0x66]),
+                    |mut back| {
+                        back.pixels_mut().for_each(|pixel| pixel[3] = 0x66);
+                        gpu.texture(&back, false)
+                    },
+                ),
+                image("icon_mouse"),
+            ],
             help: ["NaviHelp_off", "NaviHelp_on"].map(|name| gpu.load_texture(grf, &format!("{UI}navigation_interface\\{name}.bmp"), false)),
             list_button: ["btn_roadlistwnd_normal", "btn_roadlistwnd_over"].map(image),
             set_buttons: (1..=8).map(|set| ["normal", "over"].map(|state| image(&format!("btn_roadIocn_select{set}_{state}")))).collect(),
@@ -217,6 +239,31 @@ fn on_picture(cell: [i32; 2], [wide, high]: [usize; 2], side: f32, top: f32) -> 
     [(cell[0] as f32 * scale + centred(wide)).trunc(), (top - (cell[1] as f32 * scale + centred(high))).trunc()]
 }
 
+/// The share hint's lines: whole words, 38 characters a line at most.
+// ponytail: counts characters; the game counts bytes (2 for a Hangul letter). Count bytes if a Korean table is used.
+fn hint_lines(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split(' ') {
+        match lines.last_mut() {
+            Some(line) if line.chars().count() + 1 + word.chars().count() <= 38 => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => lines.push(word.to_owned()),
+        }
+    }
+    lines
+}
+
+/// The cell under a point of the share view's picture (window-local), when it's on the map.
+fn shared_cell(local: [f32; 2], [wide, high]: [u16; 2]) -> Option<[u16; 2]> {
+    let (wide, high) = (f32::from(wide), f32::from(high));
+    let cells = wide.max(high) / 265.0;
+    let x = (local[0] - MAP[0]) * cells - ((high - wide) / 2.0).max(0.0);
+    let y = wide.max(high) - (local[1] - MAP[1]) * cells - ((wide - high) / 2.0).max(0.0);
+    (x >= 0.0 && y >= 0.0 && x < wide && y < high).then_some([x as u16, y as u16])
+}
+
 /// The trail's dots on the route view's map, window-local: each cell's point on a 127-px picture, a point once,
 /// drawn 266/128 times as far apart.
 pub fn dots(trail: &[[i32; 2]], size: [usize; 2]) -> Vec<[f32; 2]> {
@@ -267,6 +314,9 @@ pub enum Hit {
     Member(usize),
     Service,
     Find,
+    /// Share; in the share view, a cell of the map's picture.
+    Share,
+    ShareAt([u16; 2]),
     /// The view button; the "Minimize" box; the small form's maximize and close.
     Back,
     Auto,
@@ -312,6 +362,8 @@ pub struct Window {
     pub sides: [Option<Frame>; 3],
     pub help_first: usize,
     pub steps: usize,
+    /// The share view while it's up: when Share was pressed, and the picked map's size in cells.
+    pub sharing: Option<(std::time::Instant, [u16; 2])>,
 }
 
 impl Window {
@@ -341,6 +393,46 @@ impl Window {
             sides: [None, None, None],
             help_first: 0,
             steps: 0,
+            sharing: None,
+        }
+    }
+
+    /// Share pressed: an NPC's place or a monster's map is the link to put on the chat line at once; a map or a cell
+    /// turns to the share view instead, for a press on its picture. Nothing with nothing picked.
+    pub fn share(&mut self, tables: &NaviTables, now: std::time::Instant) -> Option<String> {
+        let place = self.picked()?;
+        match place.kind {
+            2 => Some(navigation::place_link(&place.map, Some(place.cell))),
+            3 => Some(navigation::place_link(&place.map, None)),
+            _ => {
+                self.sharing = tables.sizes.get(&place.map).map(|&size| (now, size));
+                None
+            }
+        }
+    }
+
+    /// A press on the share view's picture: the link of that cell of the picked map, and back to the search view.
+    pub fn share_at(&mut self, cell: [u16; 2]) -> Option<String> {
+        let link = navigation::place_link(&self.picked()?.map, Some(cell));
+        self.sharing = None;
+        Some(link)
+    }
+
+    /// One place as the only row, picked, in the full window's search view (a place shared in the chat).
+    pub fn choose(&mut self, place: Found) {
+        (self.found, self.rows, self.row, self.member, self.first) = (vec![place], vec![vec![0]], Some(0), 0, [0, 0]);
+        (self.route_view, self.sharing) = (false, None);
+        self.set_mini(false);
+    }
+
+    /// The picked place's map picture, loaded when the pick's map changed.
+    pub fn load_picture(&mut self, gpu: Option<&Gpu>, grf: &Grf) {
+        let map = self.picked().map(|place| place.map.clone());
+        if self.picture.as_ref().map(|(map, _)| map) != map.as_ref() {
+            self.picture = map.map(|map| {
+                let picture = gpu.and_then(|gpu| picture(gpu, grf, &map));
+                (map, picture)
+            });
         }
     }
 
@@ -443,7 +535,7 @@ impl Window {
         }
         self.found = navigation::search(tables, &self.text);
         self.regroup();
-        self.route_view = false;
+        (self.route_view, self.sharing) = (false, None);
     }
 
     /// The rows again, by the type box as it stands.
@@ -561,6 +653,9 @@ impl Window {
             Hit::ListButton
         } else if on(SETS_BUTTON) {
             Hit::SetsButton
+        } else if let Some((_, size)) = self.sharing {
+            // The share view: a press on the picture is a cell of the map, when it's on the map.
+            on(MAP).then(|| shared_cell(local, size)).flatten().map_or(Hit::Window, Hit::ShareAt)
         } else if self.routing() {
             // The route view has no lists, no service box and no Find.
             Hit::Window
@@ -570,6 +665,8 @@ impl Window {
             Hit::Member(row)
         } else if on(SERVICE) {
             Hit::Service
+        } else if on(SHARE) {
+            Hit::Share
         } else if on(FIND) {
             Hit::Find
         } else {
@@ -598,6 +695,8 @@ impl Window {
                 return true;
             }
             Hit::Service => self.service = !self.service,
+            // From the share view it goes back to the route while one runs, else to the search.
+            Hit::Back if self.sharing.is_some() => (self.sharing, self.route_view) = (None, self.guiding),
             Hit::Back => self.route_view = !self.route_view,
             Hit::Auto => self.auto_mini = !self.auto_mini,
             Hit::Maximize => self.set_mini(false),
@@ -657,10 +756,14 @@ impl Window {
             plain("navi_sets", SETS_BUTTON),
         ];
         boxes.extend(sides);
+        if self.sharing.is_some() {
+            boxes.push(plain("navi_share_map", MAP));
+            return boxes;
+        }
         if self.routing() {
             return boxes;
         }
-        boxes.extend([plain("navi_service", SERVICE), plain("navi_find", FIND)]);
+        boxes.extend([plain("navi_service", SERVICE), plain("navi_share", SHARE), plain("navi_find", FIND)]);
         if self.filter_open {
             boxes.extend(
                 (0..FILTERS.len()).map(|line| plain(&format!("navi_filter_{line}"), [FILTER[0], FILTER[1] + FILTER[3] + line as f32 * ROW, FILTER[2], ROW])),
@@ -817,6 +920,37 @@ impl Window {
         layer.texts.push((crate::window::fit(font, &typed, FIELD[2] - 6.0), at([FIELD[0] + 3.0, FIELD[1] + 3.0]), INK));
         let search = &assets.search[usize::from(over(SEARCH))];
         layer.sprites.push((search, at([SEARCH[0], SEARCH[1]]), search.size));
+        // The share view: the picked map's picture with its names, lines across it through the pointer, and for a while
+        // the hint that a press there shares the cell.
+        if let Some((since, _)) = self.sharing {
+            fill(layer, &assets.grey, SQUARE);
+            fill(layer, &assets.black, MAP);
+            if let Some((map, picture)) = &self.picture {
+                if let Some(picture) = picture {
+                    layer.sprites.push((picture, at([MAP[0], MAP[1]]), [MAP[2], MAP[3]]));
+                }
+                layer.outlined(tables.maps.get(map).map_or("", String::as_str), at([9.0, 50.0]));
+                layer.outlined(map, at([9.0, 65.0]));
+            }
+            // Each line shows while the pointer is within the picture on its own axis.
+            let [x, y] = [pointer[0] - self.frame.position[0], pointer[1] - self.frame.position[1]];
+            if x > MAP[0] && x < MAP[0] + MAP[2] {
+                fill(layer, &assets.cross, [x, MAP[1], 2.0, MAP[3]]);
+            }
+            if y > MAP[1] && y < MAP[1] + MAP[3] {
+                fill(layer, &assets.cross, [MAP[0], y, MAP[2], 2.0]);
+            }
+            if crate::control::now().saturating_duration_since(since) < HINT_LIFE {
+                layer.sprites.push((&assets.hint[0], at([12.0, 272.0]), assets.hint[0].size));
+                layer.sprites.push((&assets.hint[1], at([18.0, 277.0]), assets.hint[1].size));
+                // Its lines, 14 px apart, stand centred in the backing.
+                let lines = hint_lines(message(SHARE_HINT));
+                for (row, line) in lines.iter().enumerate() {
+                    layer.outlined(line, at([42.0, (41.0 - lines.len() as f32) * 7.0 + row as f32 * 14.0]));
+                }
+            }
+            return;
+        }
         // The route view: the map the player is on, the trail's dots on it with a mark where it ends, the player's
         // mark, and the three lines.
         if let Some(guide) = guide.filter(|_| self.routing()) {
@@ -885,6 +1019,8 @@ impl Window {
         let check = &assets.check[usize::from(self.service)];
         layer.sprites.push((check, at([SERVICE[0], SERVICE[1] + 1.0]), check.size));
         layer.texts.push(("service".to_owned(), at([SERVICE[0] + check.size[0] + 3.0, SERVICE[1]]), INK));
+        let share = &assets.share[usize::from(over(SHARE))];
+        layer.sprites.push((share, at([SHARE[0], SHARE[1]]), share.size));
         let find = &assets.find[usize::from(over(FIND))];
         layer.sprites.push((find, at([FIND[0], FIND[1]]), find.size));
         // The open type box's lines, over the rest.
@@ -1040,6 +1176,47 @@ mod tests {
         assert_eq!(route_rows(&guide), [(0, "prt_fild08 (170 375)".to_owned()), (1, "prontera (100 50)".to_owned()), (2, "prt_in (30 40)".to_owned())]);
         let field = Target { map: "prt_fild08".into(), cell: None, monster: Some(1002), name: String::new() };
         assert_eq!(route_rows(&Guide { target: &field, steps: &[], ..guide }), [(2, "prt_fild08".to_owned())]);
+    }
+
+    #[test]
+    fn shares_a_place_or_asks_for_a_cell_on_the_map() {
+        let mut tables = tables();
+        tables.sizes = [("prontera".to_owned(), [300, 400]), ("prt_fild08".to_owned(), [400, 400])].into_iter().collect();
+        let now = std::time::Instant::now();
+        let mut window = Window::new(false);
+        // Nothing picked: nothing to share.
+        assert_eq!(window.share(&tables, now), None);
+        // An NPC: its map and cell, at once. A monster: its map alone.
+        window.type_text("tool");
+        window.search(&tables);
+        window.click(Hit::Group(0));
+        assert_eq!(window.share(&tables, now), Some("<NAVIL>prontera0u0E</NAVIL>".into()));
+        window.text = "poring".into();
+        window.search(&tables);
+        window.click(Hit::Group(0));
+        assert_eq!((window.share(&tables, now), window.sharing), (Some("<NAVIL>prt_fild08g8g8</NAVIL>".into()), None));
+        // A map: the share view; a press on its picture is a cell (y up from the bottom, the narrow side centred),
+        // off the map nothing; the cell goes out and the search view is back.
+        // (Both maps answer "prontera"; the town is the second row.)
+        window.text = "prontera".into();
+        window.search(&tables);
+        window.click(Hit::Group(1));
+        assert_eq!((window.share(&tables, now), window.sharing), (None, Some((now, [300, 400]))));
+        let corner = window.frame.position;
+        let hit = |x: f32, y: f32| window.hit([corner[0] + MAP[0] + x, corner[1] + MAP[1] + y]);
+        assert_eq!(hit(133.0, 133.0), Some(Hit::ShareAt([150, 199])));
+        assert_eq!([hit(10.0, 133.0), hit(260.0, 133.0)], [Some(Hit::Window), Some(Hit::Window)]);
+        assert_eq!(window.hit([corner[0] + GROUPS[0] + 42.0, corner[1] + GROUPS[1] + 3.0]), Some(Hit::ShareAt([10, 359])));
+        assert_eq!((window.share_at([150, 199]), window.sharing), (Some("<NAVIL>prontera2q3d</NAVIL>".into()), None));
+        assert_eq!(hint_lines("Click on the location to share it in a chat room"), ["Click on the location to share it in a", "chat room"]);
+        // The view button leaves the share view too.
+        window.share(&tables, now);
+        window.click(Hit::Back);
+        assert_eq!(window.sharing, None);
+        // A place from the chat: the only row, picked, in the full search view.
+        window.set_mini(true);
+        window.choose(navigation::place_found(&tables, "prontera", Some([150, 61])).unwrap());
+        assert_eq!((window.mini, window.rows.len(), window.target(&tables).map(|target| target.cell)), (false, 1, Ok(Some([150, 61]))));
     }
 
     fn window(text: &str) -> Window {

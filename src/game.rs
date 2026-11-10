@@ -1483,7 +1483,7 @@ impl Game {
         });
         // A start shows the window's route view.
         if let (Some(window), Some(_)) = (&mut self.navi_window, &self.navigation) {
-            window.route_view = true;
+            (window.route_view, window.sharing) = (true, None);
         }
         found.outcome != navigation::Outcome::NoWay
     }

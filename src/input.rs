@@ -142,6 +142,14 @@ impl App {
                         }
                         None => {}
                     },
+                    // A place a player shared: the window, with that place picked.
+                    links::Target::Place { map, cell } => {
+                        if let Some(place) = navigation::place_found(&self.navi_tables, &map, cell) {
+                            let window = game.open_navigation();
+                            window.choose(place);
+                            window.load_picture(self.gpu.as_ref(), &self.grf);
+                        }
+                    }
                     links::Target::Url(address) => {
                         if let Some(page) = links::page(&address) {
                             open_page(game, page);
@@ -867,15 +875,23 @@ impl App {
                         self.graphics.navi_icons = set;
                         self.graphics.save();
                     }
+                    // Share: the picked place's link goes on the chat line (a map first asks for a cell on its picture).
+                    hit @ (navi_window::Hit::Share | navi_window::Hit::ShareAt(_)) => {
+                        let link = match hit {
+                            navi_window::Hit::ShareAt(cell) => window.share_at(cell),
+                            _ => {
+                                window.click(hit);
+                                window.share(&self.navi_tables, control::now())
+                            }
+                        };
+                        if let Some(link) = link {
+                            game.chat.naming = false;
+                            game.chat.type_whole(&link);
+                        }
+                    }
                     hit => {
                         if window.click(hit) {
-                            let map = window.picked().map(|place| place.map.clone());
-                            if window.picture.as_ref().map(|(map, _)| map) != map.as_ref() {
-                                window.picture = map.map(|map| {
-                                    let picture = self.gpu.as_ref().and_then(|gpu| navi_window::picture(gpu, &self.grf, &map));
-                                    (map, picture)
-                                });
-                            }
+                            window.load_picture(self.gpu.as_ref(), &self.grf);
                         }
                     }
                 }

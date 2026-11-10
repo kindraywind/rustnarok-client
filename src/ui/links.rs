@@ -25,7 +25,16 @@ pub const NPC_COLOR: [u8; 3] = [0x4A, 0x93, 0xF4];
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Item(ItemLink),
-    Navi { map: String, cell: [u16; 2], rest: Option<[i32; 4]> },
+    Navi {
+        map: String,
+        cell: [u16; 2],
+        rest: Option<[i32; 4]>,
+    },
+    /// A place a player shared (`<NAVIL>`): a map, and a cell of it or none.
+    Place {
+        map: String,
+        cell: Option<[u16; 2]>,
+    },
     Url(String),
     Quest(u32),
     // ponytail: a tip link does nothing when clicked until that window exists.
@@ -37,7 +46,7 @@ impl Target {
     pub fn color(&self) -> [u8; 3] {
         match self {
             Target::Item(_) => COLOR,
-            Target::Navi { .. } => NAVI_COLOR,
+            Target::Navi { .. } | Target::Place { .. } => NAVI_COLOR,
             Target::Url(_) => URL_COLOR,
             Target::Quest(_) | Target::Tip => NPC_COLOR,
         }
@@ -62,6 +71,7 @@ impl Target {
                 let rest = rest.map_or("-".to_owned(), |rest| rest.map(|number| number.to_string()).join(","));
                 format!("n {} {} {rest} {map}", cell[0], cell[1])
             }
+            Target::Place { map, cell } => format!("p {}", crate::navigation::place_link(map, *cell)),
             Target::Url(address) => format!("u {address}"),
             Target::Quest(id) => format!("q {id}"),
             Target::Tip => "t -".into(),
@@ -79,6 +89,10 @@ impl Target {
                     rest => Some(<[i32; 4]>::try_from(rest.split(',').map(str::parse).collect::<Result<Vec<_>, _>>().ok()?).ok()?),
                 };
                 Some(Target::Navi { map: fields.next()?.to_owned(), cell, rest })
+            }
+            ("p", link) => {
+                let (map, cell) = crate::navigation::read_place(link.strip_prefix("<NAVIL>")?.strip_suffix("</NAVIL>")?)?;
+                Some(Target::Place { map, cell })
             }
             ("u", address) => Some(Target::Url(address.to_owned())),
             ("q", id) => id.parse().ok().map(Target::Quest),
@@ -192,7 +206,7 @@ pub fn marked(words: &str, target: &Target) -> String {
 
 /// Whether the text holds an item or navigation link (the chat keeps such a line whole).
 pub fn has_links(text: &str) -> bool {
-    ["<ITEMLINK>", "<ITEML>", "<ITEM>", "<NAVI>"].iter().any(|tag| text.contains(tag))
+    ["<ITEMLINK>", "<ITEML>", "<ITEM>", "<NAVI>", "<NAVIL>"].iter().any(|tag| text.contains(tag))
 }
 
 /// The text with its item and navigation links made into marked runs, items named by `name_of` where the link carries
@@ -201,7 +215,7 @@ pub fn mark(text: &str, name_of: &dyn Fn(&ItemLink) -> String) -> String {
     let mut shown = String::new();
     let mut rest = text;
     'scan: while let Some(open) = rest.find('<') {
-        for tag in ["ITEMLINK", "ITEML", "ITEM", "NAVI", "URL", "QUEST", "TIPBOX"] {
+        for tag in ["ITEMLINK", "ITEML", "ITEM", "NAVI", "NAVIL", "URL", "QUEST", "TIPBOX"] {
             let start = format!("<{tag}>");
             let end = format!("</{tag}>");
             if let Some(inner) = rest[open..].strip_prefix(start.as_str())
@@ -219,6 +233,11 @@ pub fn mark(text: &str, name_of: &dyn Fn(&ItemLink) -> String) -> String {
                         let more: Vec<i32> = fields.take(4).map(|field| field.trim().parse().unwrap_or(0)).collect();
                         let rest = (!more.is_empty()).then(|| std::array::from_fn(|index| more.get(index).copied().unwrap_or(0)));
                         Some((words.to_owned(), Target::Navi { map, cell, rest }))
+                    }),
+                    // The map's name and four digits: shown as "<map x,y>", or "<map>" with no cell.
+                    "NAVIL" => crate::navigation::read_place(body).map(|(map, cell)| {
+                        let words = cell.map_or(format!("<{map}>"), |[x, y]| format!("<{map} {x},{y}>"));
+                        (words, Target::Place { map, cell })
                     }),
                     // words<INFO>address</INFO>
                     "URL" => info().map(|(words, address)| (words.to_owned(), Target::Url(address.to_owned()))),
@@ -327,6 +346,12 @@ mod tests {
             [rest("prontera,134,221"), rest("izlude,0,0,3,-222"), rest("izlude,1,2,1,101,1,1002,9")],
             [None, Some([3, -222, 0, 0]), Some([1, 101, 1, 1002])]
         );
+        // A place a player shared: the map and its cell, or the map alone.
+        let (shown, runs) = split(&mark("meet at <NAVIL>prontera2q0Z</NAVIL> or <NAVIL>izludeg8g8</NAVIL>", &named));
+        assert_eq!(shown, "meet at <prontera 150,61> or <izlude>");
+        let places = [Target::Place { map: "prontera".into(), cell: Some([150, 61]) }, Target::Place { map: "izlude".into(), cell: None }];
+        assert_eq!(runs.iter().map(|(_, target)| target.clone()).collect::<Vec<_>>(), places);
+        assert_eq!((runs[0].1.color(), has_links("<NAVIL>izludeg8g8</NAVIL>")), (NAVI_COLOR, true));
         // A plain item with nothing after its id, and text that only looks like a tag.
         assert_eq!(decode_iteml("0000000jn").map(|item| (item.id, item.equip)), Some((1201, false)));
         assert_eq!(split(&mark("a < b <ITEM>broken</ITEM>", &named)).0, "a < b <ITEM>broken</ITEM>");
