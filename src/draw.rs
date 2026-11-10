@@ -2027,12 +2027,14 @@ impl App {
             quest_notice::draw_icon(&mut announce_layer, &assets.quest_notice, pointer);
         }
         game.banners.draw(&mut announce_layer, &assets.quest_notice, font);
-        // The pickup popup takes no clicks.
+        // The pickup popup is a window like the others: on top when it shows, under what's pressed after. It takes no
+        // clicks.
+        let mut pickup_layer = Layer::of(Top::Pickup);
         if let Some(popup) = &game.pickup_popup {
             let icon = icons.get(&popup.icon).and_then(Option::as_ref);
-            popup.draw(&mut announce_layer, &assets.chrome, &assets.pickup, icon, font);
+            popup.draw(&mut pickup_layer, &assets.chrome, &assets.pickup, icon, font);
         }
-        let mut layers = vec![base, announce_layer, chat_window];
+        let mut layers = vec![base, announce_layer, pickup_layer, chat_window];
         layers.extend(torn_layers);
         layers.push(chat_layer);
         let mut preview = Some(preview);
