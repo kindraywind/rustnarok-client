@@ -1300,6 +1300,7 @@ impl Game {
                 let _ = self.session.pick_store(account, store, item);
             }
             BoxQuestion::ResetSettings => self.reset_settings = true,
+            BoxQuestion::StopNavigation => self.navigation = None,
             BoxQuestion::RebindKey(_) | BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) | BoxQuestion::Said(_) => {}
         }
     }
@@ -1413,8 +1414,50 @@ impl Game {
         minimap::shown(self.minimap_view, self.camera_goal.indoor)
     }
 
+    /// The navigation window's button or key: opens it; open, it's the window's own close.
     pub(crate) fn toggle_navigation(&mut self) {
-        self.navi_window = if self.navi_window.is_some() { None } else { Some(navigation::Window::new()) };
+        if self.navi_window.is_some() {
+            self.close_navigation();
+        } else {
+            self.navi_window = Some(navigation::Window::new());
+        }
+    }
+
+    /// The navigation window's close: while a navigation runs it asks whether to cancel that, and the window stays.
+    pub(crate) fn close_navigation(&mut self) {
+        if self.navigation.is_some() {
+            self.question_box = Some(BoxQuestion::StopNavigation);
+        } else {
+            self.navi_window = None;
+        }
+    }
+
+    /// Starts a navigation and says in the chat where it stands; whether a way was found. With no way, or there
+    /// already, none runs. A map the tables don't have: nothing, not a word.
+    // ponytail: a start that finds no way drops the one under way; what the game keeps of it then isn't known.
+    pub(crate) fn navigate(&mut self, tables: &rustnarok_client::lua::NaviTables, messages: &[String], target: navigation::Target, services: u8) -> bool {
+        if !tables.maps.contains_key(&navigation::navi_map(tables, &target.map)) {
+            return false;
+        }
+        let (lines, outcome) = navigation::report(tables, messages, &self.map, self.player.cell, &target, services, true);
+        for line in lines {
+            self.chat_line(line, CHAT_NAVIGATION);
+        }
+        self.navigation = (outcome == navigation::Outcome::Guiding).then(|| navigation::Active::new(target, services));
+        outcome != navigation::Outcome::NoWay
+    }
+
+    /// A map loaded under a navigation: the chat says where it stands, and on its target's map (for a map or a monster;
+    /// for a cell, right on it) it's over.
+    pub(crate) fn navigation_loaded(&mut self, tables: &rustnarok_client::lua::NaviTables, messages: &[String]) {
+        let Some(active) = &self.navigation else { return };
+        let (lines, outcome) = navigation::report(tables, messages, &self.map, self.player.cell, &active.target, active.services, false);
+        for line in lines {
+            self.chat_line(line, CHAT_NAVIGATION);
+        }
+        if outcome == navigation::Outcome::Over {
+            self.navigation = None;
+        }
     }
 
     /// Opens the reputation window, or closes it.
@@ -2469,11 +2512,6 @@ impl Game {
                 {
                     let _ = self.session.ask_queue_number(name);
                 }
-                Ok(())
-            }
-            chat::Command::Navigation => {
-                self.toggle_navigation();
-                self.sync_esc();
                 Ok(())
             }
             // ponytail: the client's lines for /camera speak of zooming; they're used for on and off.
@@ -3674,7 +3712,7 @@ impl Game {
             }
             Ranking => self.ranking = None,
             Reputation => self.reputation_window = None,
-            Navigation => self.navi_window = None,
+            Navigation => self.close_navigation(),
             Catalog => self.close_catalog(),
             SkillDescription => self.skill_description = None,
             SkillDelay => {

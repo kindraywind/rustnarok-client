@@ -1623,11 +1623,8 @@ impl App {
                 [((overhead::CAST_BAR[0] - 2.0) * share_left(start, length, now)).round(), overhead::CAST_BAR[1] - 2.0],
             ));
         }
-        // Navigation: there is the end of it; else the trail to where it heads on this map, and the arrow over the head.
+        // Navigation: the trail to where it heads on this map, and the arrow over the head.
         let here = navigation::map_key(&game.map);
-        if game.navigation.as_ref().is_some_and(|active| navigation::arrived(&self.navi_tables, &here, game.player.cell, &active.target)) {
-            game.navigation = None;
-        }
         let navi_next = game.navigation.as_mut().and_then(|active| active.next_cell(&self.navi_tables, &here));
         if let Some(active) = &mut game.navigation {
             let gat = &game.world.gat;
