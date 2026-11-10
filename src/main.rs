@@ -1475,7 +1475,7 @@ struct Game {
     reputation_window: Option<reputation::Window>,
     /// The navigation under way, and the navigation window while it's open.
     navigation: Option<navigation::Active>,
-    navi_window: Option<navigation::Window>,
+    navi_window: Option<navi_window::Window>,
     /// What was just picked up, for five seconds; and whether anything was since the inventory was last open.
     pickup_popup: Option<pickup::Popup>,
     new_items: bool,
@@ -3004,6 +3004,7 @@ struct Assets {
     catalog: catalog::Assets,
     skill_descript: skill_descript::Assets,
     pickup: pickup::Assets,
+    navi_window: navi_window::Assets,
     level_up: level_up::Assets,
     quest_notice: quest_notice::Assets,
     battle_queue: battle_queue::Assets,
@@ -3141,6 +3142,7 @@ impl Assets {
             catalog: catalog::Assets::load(gpu, grf),
             skill_descript: skill_descript::Assets::load(gpu),
             pickup: pickup::Assets::load(gpu, grf),
+            navi_window: navi_window::Assets::load(gpu, grf),
             level_up: level_up::Assets::load(gpu, grf),
             quest_notice: quest_notice::Assets::load(gpu, grf),
             battle_queue: battle_queue::Assets::load(gpu, grf, &lua::entry_queue(grf).unwrap_or_default()),
@@ -4855,11 +4857,7 @@ impl App {
                 None if game.party_dialog.as_ref().is_some_and(|dialog| dialog.typing) => game.party_dialog.as_mut().unwrap().type_text(text),
                 None if game.reason_box.is_some() => game.reason_box.as_mut().unwrap().type_text(text),
                 None if game.guild_companion.typing() => game.guild_companion.create.as_mut().unwrap().type_text(text),
-                None if game.navi_window.as_ref().is_some_and(|window| window.typing) => {
-                    let window = game.navi_window.as_mut().unwrap();
-                    window.text.push_str(text);
-                    window.search(&self.navi_tables);
-                }
+                None if game.navi_window.as_ref().is_some_and(|window| window.typing) => game.navi_window.as_mut().unwrap().type_text(text),
                 None if game.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) => game.catalog.as_mut().unwrap().type_text(text),
                 None if game.room_make.is_some() => game.room_make.as_mut().unwrap().type_text(text),
                 None if game.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) => {

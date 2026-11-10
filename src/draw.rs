@@ -2839,7 +2839,7 @@ impl App {
         }
         if let Some(window) = &game.navi_window {
             let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-            window.draw(shop_layer.esc(W::Navigation), &assets.chrome, font, messages, game.navigation.as_ref().map(|active| &active.target), pointer.0, caret);
+            window.draw(shop_layer.esc(W::Navigation), &assets.chrome, &assets.navi_window, font, &self.navi_tables, messages, pointer.0, caret);
         }
         if let Some(window) = &game.reputation_window {
             window.draw(

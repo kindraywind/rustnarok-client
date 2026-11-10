@@ -1,16 +1,12 @@
 //! Navigation: a route to a map, a cell, an NPC or a monster across maps, by the client's navigation tables
 //! (lua::NaviTables). It starts from the server (ZC_NAVIGATION_ACTIVE), a `<NAVI>` link, the navigation window or a typed
-//! `/navi prontera 150/150`, says where it stands in the chat, and shows as arrows on the ground along the way to the
+//! `/navi prontera 150/150` (the window itself is `ui/navi_window.rs`), says where it stands in the chat, and shows as arrows on the ground along the way to the
 //! next warp or the target, with a marker on the cell it heads for.
 
 use std::collections::{HashMap, HashSet};
 
 use rustnarok_client::lua::{NaviLink, NaviTables};
 use rustnarok_client::messages::fill;
-use rustnarok_client::text::Font;
-
-use crate::Layer;
-use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
 
 /// A move ordered to a cell this near the target's, on both axes, ends the navigation.
 pub const REACHED: i32 = 5;
@@ -54,6 +50,7 @@ pub struct Target {
 
 impl Target {
     /// What it routes to: a monster on its map, a cell, or the map itself.
+    #[cfg(test)]
     pub fn kind(&self) -> &'static str {
         match (self.monster, self.cell) {
             (Some(_), _) => "monster",
@@ -343,31 +340,117 @@ pub fn on_target_map(tables: &NaviTables, here: &str, target: &Target) -> bool {
     navi_map(tables, here) == navi_map(tables, &target.map)
 }
 
-/// What the navigation window finds for `text`: maps (by name or shown name), NPCs and monsters whose names hold it
-/// (any case), at most `most`.
-pub fn search(tables: &NaviTables, text: &str, most: usize) -> Vec<Target> {
-    let text = text.trim().to_lowercase();
-    if text.is_empty() {
+/// One thing a search found: a map (kind 1), an NPC (2) or a monster (3), as `target_of` numbers them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Found {
+    pub kind: u8,
+    pub map: String,
+    pub cell: [u16; 2],
+    pub monster: u16,
+    /// What it's sorted and grouped by: the map's own name, the NPC's, the monster's.
+    pub name: String,
+    /// How many of a monster its map spawns.
+    pub spawns: u32,
+    /// A monster listed because its map matched: it goes in the map's group.
+    pub with_map: bool,
+}
+
+/// What the navigation window finds for `text`: every word of it (split at spaces) must be in the name, in any case.
+/// A map's name is its own and its shown one (the insides, "_in" maps, are left out, but for gl_in01), and a map found
+/// brings its monsters; an NPC's and a monster's is its own. Sorted by name, last first.
+pub fn search(tables: &NaviTables, text: &str) -> Vec<Found> {
+    let words: Vec<String> = text.split(' ').filter(|word| !word.is_empty()).map(str::to_lowercase).collect();
+    if words.is_empty() {
         return Vec::new();
     }
-    let has = |name: &str| name.to_lowercase().contains(&text);
-    let mut maps: Vec<(&String, &String)> = tables.maps.iter().filter(|(map, shown)| has(map) || has(shown)).collect();
-    maps.sort();
-    let maps = maps.into_iter().map(|(map, shown)| Target { map: map.clone(), cell: None, monster: None, name: format!("{shown} ({map})") });
-    let npcs = tables.npcs.iter().filter(|npc| has(&npc.name)).map(|npc| Target {
-        map: npc.map.clone(),
-        cell: Some(npc.cell),
-        monster: None,
-        name: format!("{} ({})", npc.name, npc.map),
-    });
+    let has = |name: &str| words.iter().all(|word| name.to_lowercase().contains(word.as_str()));
+    let monster = |found: &rustnarok_client::lua::NaviMonster, with_map| Found {
+        kind: 3,
+        map: found.map.clone(),
+        cell: [0, 0],
+        monster: found.id,
+        name: found.name.clone(),
+        spawns: found.spawns,
+        with_map,
+    };
+    // A map's row twice over (the table lists some) is one.
     let mut seen = HashSet::new();
-    let monsters = tables.monsters.iter().filter(|monster| has(&monster.name) && seen.insert((monster.map.clone(), monster.id))).map(|monster| Target {
-        map: monster.map.clone(),
-        cell: None,
-        monster: Some(monster.id),
-        name: format!("{} ({})", monster.name, monster.map),
-    });
-    maps.chain(npcs).chain(monsters).take(most).collect()
+    let monsters: Vec<_> = tables.monsters.iter().filter(|found| seen.insert((found.map.as_str(), found.id))).collect();
+    let mut maps: Vec<(&String, &String)> = tables.maps.iter().filter(|(map, _)| !map.contains("_in") || *map == "gl_in01").collect();
+    maps.sort();
+    let mut found = Vec::new();
+    for (map, _) in maps.into_iter().filter(|(map, shown)| has(&format!("{map} {shown} "))) {
+        found.push(Found { kind: 1, map: map.clone(), cell: [0, 0], monster: 0, name: map.clone(), spawns: 0, with_map: false });
+        found.extend(monsters.iter().filter(|found| found.map == *map).map(|found| monster(found, true)));
+    }
+    found.extend(tables.npcs.iter().filter(|npc| has(&npc.name)).map(|npc| Found {
+        kind: 2,
+        map: npc.map.clone(),
+        cell: npc.cell,
+        monster: 0,
+        name: npc.name.clone(),
+        spawns: 0,
+        with_map: false,
+    }));
+    found.extend(monsters.iter().filter(|found| has(&found.name)).map(|found| monster(found, false)));
+    found.sort_by(|first, second| second.name.cmp(&first.name));
+    found
+}
+
+/// The rows of the window's left list, each the places (by their index in `found`) it stands for, by the type filter
+/// (0 all, 1 maps, 2 NPCs, 3 monsters). With all or maps, each map is a row of its own with the monsters it brought,
+/// first; then what else the filter lets through, one row a kind and name.
+pub fn groups(found: &[Found], filter: usize) -> Vec<Vec<usize>> {
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    let mut placed = vec![false; found.len()];
+    if filter <= 1 {
+        for (index, map) in found.iter().enumerate().filter(|(_, place)| place.kind == 1) {
+            let brought = found.iter().enumerate().filter(|(_, place)| place.with_map && place.map == map.map).map(|(other, _)| other);
+            let row: Vec<usize> = std::iter::once(index).chain(brought).collect();
+            row.iter().for_each(|&member| placed[member] = true);
+            rows.push(row);
+        }
+    }
+    for (index, place) in found.iter().enumerate() {
+        if placed[index] || !(filter == 0 || usize::from(place.kind) == filter) || place.kind == 1 {
+            continue;
+        }
+        match rows.iter_mut().find(|row| (found[row[0]].kind, &found[row[0]].name) == (place.kind, &place.name)) {
+            Some(row) => row.push(index),
+            None => rows.push(vec![index]),
+        }
+    }
+    rows
+}
+
+/// How thick a monster is on its map, in the game's words (none when the tables give no count).
+pub fn density(spawns: u32) -> Option<usize> {
+    Some(match spawns {
+        0 => return None,
+        1..=4 => 2453,
+        5..=19 => 2452,
+        20..=49 => 2451,
+        50..=99 => 2450,
+        _ => 2449,
+    })
+}
+
+/// A left row's words: how many places it stands for, and their name.
+pub fn group_label(found: &[Found], row: &[usize]) -> String {
+    format!("[{}]{}", row.len(), found[row[0]].name)
+}
+
+/// A right row's words, for the place `member` of the row `row`: a map's shown name; an NPC's map and cell; a
+/// monster's map (in a map's row: its own name) and how thick it is there.
+pub fn member_label(tables: &NaviTables, messages: &[String], found: &[Found], row: &[usize], member: usize) -> String {
+    let place = &found[row[member]];
+    let thick = || density(place.spawns).and_then(|id| messages.get(id)).map_or(String::new(), |word| format!(" ({word})"));
+    match place.kind {
+        1 => tables.maps.get(&place.map).cloned().unwrap_or_default(),
+        2 => format!("{} [{},{}]", place.map, place.cell[0], place.cell[1]),
+        _ if found[row[0]].kind == 1 => format!("{}{}", place.name, thick()),
+        _ => format!("{}{}", place.map, thick()),
+    }
 }
 
 /// A typed navigation command.
@@ -476,138 +559,6 @@ impl Active {
     }
 }
 
-/// "Navigation", and the window's labels.
-const TITLE: usize = 2221;
-// ponytail: the window is ours over the client's chrome: a search field, eight results, a stop row.
-const WIDTH: f32 = 280.0;
-const ROW: f32 = 16.0;
-const ROWS: usize = 8;
-const FIELD_TOP: f32 = TITLE_HEIGHT + 6.0;
-const RESULTS_TOP: f32 = FIELD_TOP + ROW + 6.0;
-const STOP_TOP: f32 = RESULTS_TOP + ROWS as f32 * ROW + 4.0;
-const HEIGHT: f32 = STOP_TOP + ROW + 6.0;
-const LEFT: f32 = 8.0;
-const TEXT: [u8; 3] = [0, 0, 0];
-const GREY: [u8; 3] = [0x80, 0x80, 0x80];
-const PICKED: [u8; 3] = [0x30, 0x50, 0xC0];
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Hit {
-    Title(TitleHit),
-    Field,
-    Result(usize),
-    Stop,
-    Window,
-}
-
-/// The navigation window: what's typed, what it finds (and whether it found more than it shows), and whether typing
-/// goes to it.
-pub struct Window {
-    pub frame: Frame,
-    pub text: String,
-    pub typing: bool,
-    pub results: Vec<Target>,
-    pub more: bool,
-}
-
-impl Window {
-    pub fn new() -> Self {
-        // ponytail: where it opens; right of the middle, clear of the player.
-        let mut frame = Frame::new([680.0, 180.0], WIDTH);
-        frame.open = true;
-        Self { frame, text: String::new(), typing: true, results: Vec::new(), more: false }
-    }
-
-    /// Searches again for what's typed: one more than the rows, to know whether the list was cut.
-    pub fn search(&mut self, tables: &NaviTables) {
-        self.results = search(tables, &self.text, ROWS + 1);
-        self.more = self.results.len() > ROWS;
-        self.results.truncate(ROWS);
-    }
-
-    pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
-        let local = self.frame.local(cursor, HEIGHT)?;
-        if let Some(hit) = self.frame.title_hit(local) {
-            return Some(Hit::Title(hit));
-        }
-        let row = |top: f32| (top..top + ROW).contains(&local[1]);
-        Some(if row(FIELD_TOP) {
-            Hit::Field
-        } else if row(STOP_TOP) {
-            Hit::Stop
-        } else if (RESULTS_TOP..RESULTS_TOP + ROWS as f32 * ROW).contains(&local[1]) {
-            let index = ((local[1] - RESULTS_TOP) / ROW) as usize;
-            if index < self.results.len() { Hit::Result(index) } else { Hit::Window }
-        } else {
-            Hit::Window
-        })
-    }
-
-    /// The field, the results' rows (with the target each picks) and the stop row on screen (for the test driver).
-    pub fn button_boxes(&self) -> Vec<(String, [f32; 4], Option<&Target>)> {
-        if !self.frame.open || self.frame.minimized {
-            return Vec::new();
-        }
-        let area = |top: f32| {
-            let [x, y] = self.frame.at([LEFT, top]);
-            [x, y, WIDTH - 2.0 * LEFT, ROW]
-        };
-        let mut boxes: Vec<(String, [f32; 4], Option<&Target>)> = vec![("navi_field".to_owned(), area(FIELD_TOP), None)];
-        boxes.extend(
-            self.results.iter().enumerate().map(|(index, target)| (format!("navi_result_{index}"), area(RESULTS_TOP + index as f32 * ROW), Some(target))),
-        );
-        boxes.push(("navi_stop".to_owned(), area(STOP_TOP), None));
-        boxes
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw<'a>(
-        &self,
-        layer: &mut Layer<'a>,
-        chrome: &'a Chrome,
-        font: &Font,
-        messages: &[String],
-        active: Option<&Target>,
-        pointer: [f32; 2],
-        caret: bool,
-    ) {
-        if !self.frame.open {
-            return;
-        }
-        let at = |local: [f32; 2]| self.frame.at(local);
-        self.frame.draw_title(layer, chrome, messages.get(TITLE).map_or("Navigation", String::as_str), pointer);
-        if self.frame.minimized {
-            return;
-        }
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, HEIGHT - TITLE_HEIGHT]));
-        for x in [0.0, WIDTH - 1.0] {
-            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, HEIGHT - TITLE_HEIGHT]));
-        }
-        layer.sprites.push((&chrome.border, at([0.0, HEIGHT - 1.0]), [WIDTH, 1.0]));
-        // The search field: a framed line with the caret.
-        let field = at([LEFT, FIELD_TOP]);
-        layer.sprites.push((&chrome.border, field, [WIDTH - 2.0 * LEFT, ROW]));
-        layer.sprites.push((&chrome.white, [field[0] + 1.0, field[1] + 1.0], [WIDTH - 2.0 * LEFT - 2.0, ROW - 2.0]));
-        let typed = if self.typing && caret { format!("{}_", self.text) } else { self.text.clone() };
-        layer.texts.push((typed, [field[0] + 3.0, field[1] + 1.0], TEXT));
-        for (index, target) in self.results.iter().enumerate() {
-            let color = if active == Some(target) { PICKED } else { TEXT };
-            layer.texts.push((label(font, target), at([LEFT, RESULTS_TOP + index as f32 * ROW]), color));
-        }
-        // The stop row while a navigation runs: what it goes to.
-        let stop = match active {
-            Some(target) => format!("■ {}", crate::window::fit(font, &target.name, WIDTH - 2.0 * LEFT - 20.0)),
-            None => String::new(),
-        };
-        layer.texts.push((stop, at([LEFT, STOP_TOP]), if active.is_some() { PICKED } else { GREY }));
-    }
-}
-
-/// What a result's row shows: its target's name, fit to the row.
-pub fn label(font: &Font, target: &Target) -> String {
-    crate::window::fit(font, &target.name, WIDTH - 2.0 * LEFT)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -636,8 +587,8 @@ mod tests {
             ],
             npcs: vec![NaviNpc { map: "prt_in".into(), name: "Tool Dealer".into(), cell: [30, 40] }],
             monsters: vec![
-                NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into() },
-                NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into() },
+                NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 70 },
+                NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 70 },
             ],
             passes: HashMap::new(),
         }
@@ -747,7 +698,7 @@ mod tests {
 
     /// The messages a navigation says, each under its own number.
     fn messages() -> Vec<String> {
-        let mut messages = vec![String::new(); 2321];
+        let mut messages = vec![String::new(); 2454];
         for (id, text) in [
             (SAYS, "Navigation >: %s"),
             (UNCLEAR, "Invalid syntax."),
@@ -762,6 +713,9 @@ mod tests {
             (MOVE_TO, "Navigation >: Please move to [%s]."),
             (TO_AIRSHIP, "Navigation >: Please move to the Airship."),
             (BY_PORTAL, "Navigation >: Use the Warp Portal to move to the next area."),
+            (2449, "Very High"),
+            (2450, "High"),
+            (2453, "Very Low"),
         ] {
             messages[id] = text.into();
         }
@@ -965,43 +919,6 @@ mod tests {
     }
 
     #[test]
-    fn picks_results_in_the_window() {
-        let mut window = Window::new();
-        window.text = "pront".into();
-        window.search(&tables());
-        let boxes = window.button_boxes();
-        assert_eq!(boxes[0].0, "navi_field");
-        let [x, y, w, h] = boxes[2].1;
-        assert_eq!(window.hit([x + w / 2.0, y + h / 2.0]), Some(Hit::Result(1)));
-        let [x, y, w, h] = boxes.last().unwrap().1;
-        assert_eq!((boxes.last().unwrap().0.as_str(), window.hit([x + w / 2.0, y + h / 2.0])), ("navi_stop", Some(Hit::Stop)));
-    }
-
-    #[test]
-    fn says_what_each_result_picks_and_whether_the_list_was_cut() {
-        let mut tables = tables();
-        let mut window = Window::new();
-        window.text = "tool".into();
-        window.search(&tables);
-        let rows: Vec<_> = window.button_boxes().into_iter().filter_map(|(name, _, target)| Some((name, target?.clone()))).collect();
-        assert_eq!(
-            rows,
-            [("navi_result_0".to_owned(), Target { map: "prt_in".into(), cell: Some([30, 40]), monster: None, name: "Tool Dealer (prt_in)".into() })]
-        );
-        assert_eq!((rows[0].1.kind(), window.more), ("cell", false));
-        assert_eq!([search(&tables, "pront", 1)[0].kind(), search(&tables, "poring", 1)[0].kind()], ["map", "monster"]);
-        // One more match than the rows: the rows stay full and the window says there's more.
-        tables.maps.extend((0..ROWS).map(|index| (format!("prt_fild{index:02}"), format!("Prontera Field {index}"))));
-        window.text = "pront".into();
-        window.search(&tables);
-        assert_eq!((window.results.len(), window.more), (ROWS, true));
-        // Exactly as many as the rows: not cut.
-        tables.maps.retain(|map, _| !["prt_in", "prontera", "prt_fild08"].contains(&map.as_str()));
-        window.search(&tables);
-        assert_eq!((window.results.len(), window.more), (ROWS, false));
-    }
-
-    #[test]
     fn turns_the_arrow_with_the_step() {
         // North is 0, then anticlockwise: north-west, west, south-west, south, south-east, east, north-east.
         let turns = [[0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1], [1, 0], [1, 1]].map(|[x, y]| step_turn([10, 10], [10 + x, 10 + y]));
@@ -1010,12 +927,47 @@ mod tests {
 
     #[test]
     fn finds_maps_npcs_and_monsters() {
-        let tables = tables();
-        let names = |text: &str| search(&tables, text, 10).into_iter().map(|target| target.name).collect::<Vec<_>>();
-        assert_eq!(names("pront"), ["Prontera (prontera)", "Prontera Field (prt_fild08)", "Prontera Inside (prt_in)"]);
-        assert_eq!(names("TOOL"), ["Tool Dealer (prt_in)"]);
-        // A monster once per map, its target the map.
-        assert_eq!(search(&tables, "poring", 10), [Target { map: "prt_fild08".into(), cell: None, monster: Some(1002), name: "Poring (prt_fild08)".into() }]);
-        assert!(search(&tables, " ", 10).is_empty());
+        let mut tables = tables();
+        tables.monsters.push(NaviMonster { map: "izlude".into(), id: 1002, name: "Poring".into(), spawns: 3 });
+        tables.monsters.push(NaviMonster { map: "prt_fild08".into(), id: 1007, name: "Fabre".into(), spawns: 0 });
+        let names = |text: &str| search(&tables, text).into_iter().map(|found| (found.kind, found.name, found.map)).collect::<Vec<_>>();
+        let place = |kind: u8, name: &str, map: &str| (kind, name.to_owned(), map.to_owned());
+        // A map by its own name or its shown one, any case, with its monsters; the insides are left out. Last name first.
+        assert_eq!(names("FIELD"), [place(1, "prt_fild08", "prt_fild08"), place(3, "Poring", "prt_fild08"), place(3, "Fabre", "prt_fild08")]);
+        assert_eq!(
+            names("pront"),
+            [place(1, "prt_fild08", "prt_fild08"), place(1, "prontera", "prontera"), place(3, "Poring", "prt_fild08"), place(3, "Fabre", "prt_fild08")]
+        );
+        // Every word must be there; an NPC and a monster by their own names only (not their map's).
+        assert_eq!(names("tool deal"), [place(2, "Tool Dealer", "prt_in")]);
+        assert!(names("tool prt_in").is_empty() && names("prt_in").is_empty() && names("  ").is_empty());
+        // A monster once per map, however often the table lists it.
+        assert_eq!(names("poring"), [place(3, "Poring", "prt_fild08"), place(3, "Poring", "izlude")]);
+    }
+
+    #[test]
+    fn groups_what_it_found() {
+        let (mut tables, messages) = (tables(), messages());
+        tables.monsters.push(NaviMonster { map: "izlude".into(), id: 1002, name: "Poring".into(), spawns: 3 });
+        tables.npcs.push(NaviNpc { map: "izlude".into(), name: "Tool Dealer".into(), cell: [10, 20] });
+        // "o" finds two maps, two NPCs and the Porings: by name and with their map.
+        let found = search(&tables, "o");
+        let rows = |filter: usize| groups(&found, filter).iter().map(|row| group_label(&found, row)).collect::<Vec<_>>();
+        // All: each map with the monsters it brought, then a row a name.
+        assert_eq!(rows(0), ["[2]prt_fild08", "[1]prontera", "[2]Tool Dealer", "[2]Poring"]);
+        assert_eq!(rows(1), ["[2]prt_fild08", "[1]prontera"]);
+        assert_eq!(rows(2), ["[2]Tool Dealer"]);
+        // Monsters only: the ones their map brought too, one row a name.
+        assert_eq!(rows(3), ["[3]Poring"]);
+        // The right list: a map's shown name and its monster with how thick it is; an NPC's map and cell; a monster's map.
+        let all = groups(&found, 0);
+        let members = |row: usize| (0..all[row].len()).map(|member| member_label(&tables, &messages, &found, &all[row], member)).collect::<Vec<_>>();
+        assert_eq!(members(0), ["Prontera Field", "Poring (High)"]);
+        assert_eq!(members(2), ["prt_in [30,40]", "izlude [10,20]"]);
+        assert_eq!(members(3), ["prt_fild08 (High)", "izlude (Very Low)"]);
+        assert_eq!(
+            [0, 1, 4, 5, 19, 20, 49, 50, 99, 100].map(density),
+            [None, Some(2453), Some(2453), Some(2452), Some(2452), Some(2451), Some(2451), Some(2450), Some(2450), Some(2449)]
+        );
     }
 }

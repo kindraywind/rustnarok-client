@@ -17,12 +17,10 @@
     {"expect": {"state": {"navigation.map": "prt_in", "navigation.cell": [180, 97], "navigation.trail": 4, "navigation.trail_cells.3": [120, 267], "navigation.marker": [120, 267]}}},
     {"move": [1000, 600]},
     {"shot": "navi-rooms-in", "threshold": 3},
-    {"say": "/naviopen"},
-    {"wait": 300},
-    {"click_on": {"button": "navi_stop"}},
-    {"wait": 300},
-    {"expect": {"state": {"navigation": null}}},
     {"key": "Escape"},
-    {"wait": 300}
+    {"wait": 300},
+    {"click_on": {"button": "ok"}},
+    {"wait": 300},
+    {"expect": {"state": {"navigation": null}}}
   ]
 }

@@ -1526,11 +1526,11 @@ fn game_state(app: &App, game: &Game) -> Value {
             crate::links::Target::Tip => json!({"kind": "tip_link", "box": area}),
         }))
         .chain(
-            // A result's row: the text it shows and where it routes to.
-            game.navi_window.iter().flat_map(crate::navigation::Window::button_boxes).map(|(name, area, result)| match result {
-                Some(target) => json!({
-                    "kind": "button", "name": name, "box": area, "text": crate::navigation::label(&app.font, target),
-                    "map": target.map, "cell": target.cell, "monster": target.monster, "target_kind": target.kind(),
+            // The navigation window's controls; a row comes with its words and the place it stands for.
+            game.navi_window.iter().flat_map(|window| window.button_boxes(&app.navi_tables, &app.messages)).map(|(name, area, words, place)| match place {
+                Some(place) => json!({
+                    "kind": "button", "name": name, "box": area, "text": words,
+                    "map": place.map, "cell": place.cell, "monster": place.monster, "place_kind": place.kind,
                 }),
                 None => json!({"kind": "button", "name": name, "box": area}),
             }),
@@ -2035,8 +2035,12 @@ fn game_state(app: &App, game: &Game) -> Value {
             "arrows": crate::navigation::arrows(&active.trail, game.player.cell, 0).len(),
             "marker": crate::navigation::marker(&active.trail, game.player.cell),
         })),
-        // Whether the navigation window found more than its rows show (null: it's closed).
-        "navi_results_more": game.navi_window.as_ref().map(|window| window.more),
+        // The navigation window (null: it's closed): what's typed, the type box, how many rows it found, the row and the
+        // place picked, the service box, the lists' first rows, where it stands.
+        "navi_window": game.navi_window.as_ref().map(|window| json!({
+            "text": window.text, "typing": window.typing, "filter": window.filter, "rows": window.rows.len(), "row": window.row,
+            "member": window.member, "service": window.service, "first": window.first, "position": window.frame.position,
+        })),
         // Reputation points by reputation type.
         "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),
         // The item information window's item, if it's open.
@@ -2444,7 +2448,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("monster_info", Fair),
         ("mvp_sprites", Test),
         ("name_tags", Test),
-        ("navi_results_more", Assist),
+        ("navi_window", Assist),
         ("navigation", Assist),
         ("opened_page", Fair),
         ("partner", Fair),
