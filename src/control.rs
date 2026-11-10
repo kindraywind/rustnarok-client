@@ -2043,6 +2043,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "member": window.member, "service": window.service, "first": window.first, "position": window.frame.position,
             "route": window.routing(), "mini": window.mini, "auto_mini": window.auto_mini, "size": window.size(),
             "sharing": window.sharing.is_some(),
+            "lines": window.lines.iter().map(|(line, ..)| line).collect::<Vec<_>>(), "figure": window.has_figure(),
             "sides": window.sides.iter().map(|side| side.as_ref().map(|frame| frame.position)).collect::<Vec<_>>(),
         })),
         // Reputation points by reputation type.

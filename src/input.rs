@@ -147,7 +147,6 @@ impl App {
                         if let Some(place) = navigation::place_found(&self.navi_tables, &map, cell) {
                             let window = game.open_navigation();
                             window.choose(place);
-                            window.load_picture(self.gpu.as_ref(), &self.grf);
                         }
                     }
                     links::Target::Url(address) => {
@@ -890,9 +889,7 @@ impl App {
                         }
                     }
                     hit => {
-                        if window.click(hit) {
-                            window.load_picture(self.gpu.as_ref(), &self.grf);
-                        }
+                        window.click(hit);
                     }
                 }
             }
