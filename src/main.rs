@@ -178,6 +178,8 @@ const CHAT_ERROR: [u8; 3] = [0xFF, 0x00, 0x00];
 // ponytail: the two announcement shades are guesses; calibrate them against the real client.
 const CHAT_BROADCAST: [u8; 3] = [0xFF, 0xFF, 0x00];
 const CHAT_REFINE_ANNOUNCEMENT: [u8; 3] = [0xFF, 0xB0, 0x62];
+/// What a navigation says.
+const CHAT_NAVIGATION: [u8; 3] = [0xFF, 0xB0, 0x62];
 /// Messages that come with a skill's name, "[Name] message" (rathena's notes give 0xCDCDFF).
 const CHAT_SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
 /// The battle messages (msgstringtable): "Someone", and the four damage lines: on you, a party member attacked by someone, a
@@ -764,12 +766,11 @@ const SKILL_ACTION: usize = 12;
 const CAST_SQUARE_LIFT: f32 = 0.2;
 /// The ground cursor's tint (0x6600ffaa): green-blue, 40% opaque.
 const GROUND_CURSOR_TINT: [f32; 4] = [0.0, 1.0, 170.0 / 255.0, 102.0 / 255.0];
-/// The navigation arrow sits this far over the head; routes the player starts may use every service.
-// ponytail: the client's arrow height and its services for a route picked by hand are estimates.
+/// The navigation arrow sits this far over the head; routes the player starts may use the Kafra and the airship, not
+/// scrolls.
+// ponytail: the client's arrow height is an estimate.
 const NAVI_ARROW_RISE: f32 = 12.0;
-const NAVI_SERVICES: u8 = 111;
-/// "That does not support the navigation area": a typed navigation to a map the navigation tables don't have.
-const NAVI_UNKNOWN_MAP: usize = 2293;
+const NAVI_SERVICES: u8 = 101;
 /// How many cells toward where it heads the arrow looks.
 const NAVI_ARROW_LOOK: f32 = 3.0;
 /// The room owner's menu: "Give Master Authority", "Kick Character Out".
@@ -2601,6 +2602,8 @@ enum BoxQuestion {
     RebindKey(String),
     /// A Gold catalog's result: open this store from afar? (1785).
     OpenStall { account: u32, store: u32, item: u32 },
+    /// "Do you want to cancel navigation?" (2239).
+    StopNavigation,
 }
 
 impl BoxQuestion {
@@ -2618,6 +2621,7 @@ impl BoxQuestion {
             Self::ResetSettings => game_settings::RESET_ASKS,
             Self::RebindKey(_) => shortcut_window::ASKS_REBIND,
             Self::OpenStall { .. } => catalog::OPEN_STALL_ASKS,
+            Self::StopNavigation => navigation::ASKS_STOP,
         }
     }
 

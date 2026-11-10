@@ -1,19 +1,39 @@
 //! Navigation: a route to a map, a cell, an NPC or a monster across maps, by the client's navigation tables
 //! (lua::NaviTables). It starts from the server (ZC_NAVIGATION_ACTIVE), a `<NAVI>` link, the navigation window or a typed
-//! `/navi prontera 150 150`, and shows as an arrow over the player's head and a trail on the minimap to the next warp or
-//! the target.
+//! `/navi prontera 150/150`, says where it stands in the chat, and shows as an arrow over the player's head and a trail
+//! on the minimap to the next warp or the target.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use rustnarok_client::lua::{NaviLink, NaviTables};
+use rustnarok_client::messages::fill;
 use rustnarok_client::text::Font;
 
 use crate::Layer;
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
 
-/// How near the target cell counts as there, in cells.
-// ponytail: the client's own arrival distance isn't known; two cells.
-pub const ARRIVED: i32 = 2;
+/// A move ordered to a cell this near the target's, on both axes, ends the navigation.
+pub const REACHED: i32 = 5;
+/// "Do you want to cancel navigation?"
+pub const ASKS_STOP: usize = 2239;
+/// "Navigation >: %s", around most of what a navigation says in the chat, and what it says: a typed one that can't be
+/// read, no way, a map the tables don't have, a route found, there (said bare too), on the monster's map, the way on
+/// this map, there already.
+const SAYS: usize = 2315;
+const UNCLEAR: usize = 2294;
+const NO_WAY: usize = 2298;
+const NO_MAP: usize = 2301;
+const FOLLOW: usize = 2308;
+pub const ARRIVED: usize = 2309;
+const MONSTER_MAP: usize = 2311;
+const GO: usize = 2313;
+const THERE: usize = 2314;
+/// A route's first step, said whole: "Talk to [%s]", "Please move to [%s].", "Please move to the Airship.", "Use the
+/// Warp Portal to move to the next area."
+const TALK_TO: usize = 2316;
+const MOVE_TO: usize = 2317;
+const TO_AIRSHIP: usize = 2319;
+const BY_PORTAL: usize = 2320;
 /// The minimap trail: a dot every this many cells.
 pub const TRAIL_STEP: usize = 3;
 
@@ -111,10 +131,72 @@ pub fn next_cell(tables: &NaviTables, here: &str, target: &Target, services: u8)
     route(tables, here, &target.map, services)?.first().map(|link| link.cell)
 }
 
-/// Whether the player at `cell` on `here` has got there.
-pub fn arrived(tables: &NaviTables, here: &str, cell: [i32; 2], target: &Target) -> bool {
-    navi_map(tables, here) == navi_map(tables, &target.map)
-        && target.cell.is_none_or(|goal| (cell[0] - i32::from(goal[0])).abs().max((cell[1] - i32::from(goal[1])).abs()) <= ARRIVED)
+fn near(cell: [i32; 2], goal: [u16; 2], within: i32) -> bool {
+    (cell[0] - i32::from(goal[0])).abs() <= within && (cell[1] - i32::from(goal[1])).abs() <= within
+}
+
+/// Whether a move ordered to `to` on `here` ends the navigation: its target is a cell on this map, `REACHED` or nearer
+/// on both axes. A map or a monster ends it when the map loads (`report`).
+pub fn reached(tables: &NaviTables, here: &str, to: [i32; 2], target: &Target) -> bool {
+    navi_map(tables, here) == navi_map(tables, &target.map) && target.cell.is_some_and(|goal| near(to, goal, REACHED))
+}
+
+/// How a navigation stands once it starts or a map loads under it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Outcome {
+    Guiding,
+    /// There: nothing to guide to.
+    Over,
+    /// No way from this map.
+    NoWay,
+}
+
+/// "Navigation >: " and a message.
+pub fn says(messages: &[String], id: usize) -> String {
+    let message = |id: usize| messages.get(id).map_or("", String::as_str);
+    fill(message(SAYS), &[&message(id)])
+}
+
+/// The typed navigation that can't be read, as the chat says it.
+pub fn unclear(messages: &[String]) -> String {
+    says(messages, UNCLEAR)
+}
+
+/// What the chat says when a navigation starts (`start`) or a map loads under one, with the player on `cell` of
+/// `here`, and how it stands then.
+pub fn report(tables: &NaviTables, messages: &[String], here: &str, cell: [i32; 2], target: &Target, services: u8, start: bool) -> (Vec<String>, Outcome) {
+    let message = |id: usize| messages.get(id).cloned().unwrap_or_default();
+    let says = |id: usize| says(messages, id);
+    let here = navi_map(tables, here);
+    if !tables.maps.contains_key(&here) {
+        return (vec![says(NO_MAP)], Outcome::NoWay);
+    }
+    if here == navi_map(tables, &target.map) {
+        return match (target.cell, target.monster) {
+            // Next to the cell: nothing starts. A load right onto it: that's the end, said like any arrival.
+            (Some(goal), _) if start && near(cell, goal, 1) => (vec![says(THERE)], Outcome::Over),
+            (Some(goal), _) if !start && near(cell, goal, 0) => (vec![message(ARRIVED), says(THERE)], Outcome::Over),
+            (Some(_), _) => (vec![says(GO)], Outcome::Guiding),
+            // ponytail: the lines of a load onto the target's map, for a start on it too.
+            (None, Some(_)) => (vec![message(ARRIVED), says(MONSTER_MAP)], Outcome::Over),
+            (None, None) => (vec![message(ARRIVED), says(ARRIVED)], Outcome::Over),
+        };
+    }
+    let Some(first) = route(tables, &here, &target.map, services).and_then(|route| route.first().copied()) else {
+        return (vec![says(NO_WAY)], Outcome::NoWay);
+    };
+    // The route's first step: an NPC to talk to and where it sends you, the airship, or a warp portal.
+    let mut lines = vec![says(FOLLOW)];
+    match first.kind {
+        201..=204 => {
+            let shown = tables.maps.get(&first.to).map_or("", String::as_str);
+            lines.push(fill(&message(TALK_TO), &[&first.name]));
+            lines.push(fill(&message(MOVE_TO), &[&format!(" {shown}[ {} ] ", first.to)]));
+        }
+        205 => lines.extend([fill(&message(TALK_TO), &[&first.name]), message(TO_AIRSHIP)]),
+        _ => lines.push(message(BY_PORTAL)),
+    }
+    (lines, Outcome::Guiding)
 }
 
 /// The arrow (navi_grid_0..7: south, south-west, west, north-west, north, north-east, east, south-east) for a screen
@@ -152,34 +234,64 @@ pub fn search(tables: &NaviTables, text: &str, most: usize) -> Vec<Target> {
     maps.chain(npcs).chain(monsters).take(most).collect()
 }
 
-/// A typed navigation, as the game's help on navigation writes it: `/navi <map> [<x> <y>]` (or `/navigation`), and
-/// `/navi2 <map> <x> <y> [<scroll><zeny><plane>]` (or `/navigation2`), each of those three 1 or 0; `x/y` works too. The
-/// map, the cell, and the services the route may use (`all` unless /navi2 says). None for any other line, the bare
-/// `/navi` (which opens the window) among them (#1230).
-// ponytail: the help's /navi2 line names its flags "Scroll | Zeny | Plane"; zeny is read as the Kafra's, plane as the
-// airship's.
-pub fn typed(text: &str, all: u8) -> Option<(String, Option<[u16; 2]>, u8)> {
-    let mut words = text.split_whitespace();
-    let second = match words.next()? {
-        "/navi" | "/navigation" => false,
-        "/navi2" | "/navigation2" => true,
+/// A typed navigation command.
+#[derive(Debug, PartialEq)]
+pub enum Typed {
+    /// A cell of a map, and the services the route may use.
+    Go { map: String, cell: [u16; 2], services: u8 },
+    /// Its `x/y` or its options can't be read.
+    Unclear,
+    /// `/naviopen`: the window.
+    Open,
+}
+
+/// A typed navigation, as the game's help on navigation writes it: `/navi <map> <x>/<y>` (or `/navigation`) by the
+/// `usual` services, and `/navi2 <map> <x>/<y> <scroll>/<kafra>/<airship>` (or `/navigation2`), each of those three 1
+/// or 0. Words past those are left unread. None for any other line and for one with too few words (`/navi`, `/navi
+/// prontera`): that's no command at all.
+pub fn typed(text: &str, usual: u8) -> Option<Typed> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let options = match (words.first()?.to_ascii_lowercase().as_str(), words.len()) {
+        ("/naviopen", _) => return Some(Typed::Open),
+        ("/navi" | "/navigation", 3..) => None,
+        ("/navi2" | "/navigation2", 4..) => Some(words[3]),
         _ => return None,
     };
-    let map = map_key(words.next()?);
-    let rest: Vec<&str> = words.flat_map(|word| word.split('/')).filter(|word| !word.is_empty()).collect();
-    let cell = |x: &str, y: &str| Some([x.parse().ok()?, y.parse().ok()?]);
-    match (second, rest.as_slice()) {
-        (false, []) => Some((map, None, all)),
-        (_, [x, y]) => Some((map, Some(cell(x, y)?), all)),
-        (true, [x, y, flags]) => {
-            let [scroll, zeny, plane] = <[u8; 3]>::try_from(flags.as_bytes()).ok()?.map(|flag| flag.wrapping_sub(b'0'));
-            if [scroll, zeny, plane].iter().any(|&flag| flag > 1) {
-                return None;
+    let go = || {
+        let cell = pair(words[2])?;
+        let services = match options {
+            Some(options) => {
+                let [scroll, kafra, airship] = flags(options)?;
+                kafra * 100 + scroll * 10 + airship
             }
-            Some((map, Some(cell(x, y)?), zeny * 100 + scroll * 10 + plane))
-        }
-        _ => None,
-    }
+            None => usual,
+        };
+        Some(Typed::Go { map: map_key(words[1]), cell, services })
+    };
+    Some(go().unwrap_or(Typed::Unclear))
+}
+
+/// C's atoi: a sign, then digits up to anything else (none: 0).
+fn atoi(text: &str) -> i64 {
+    let (sign, digits) = match text.strip_prefix('-') {
+        Some(digits) => (-1, digits),
+        None => (1, text.strip_prefix('+').unwrap_or(text)),
+    };
+    sign * digits.bytes().take_while(u8::is_ascii_digit).fold(0, |value: i64, digit| (value * 10 + i64::from(digit - b'0')).min(i64::from(u32::MAX)))
+}
+
+/// `x/y`: a number on each side of the first "/", both from 0 to 500.
+fn pair(text: &str) -> Option<[u16; 2]> {
+    let (x, y) = text.split_once('/')?;
+    let side = |text: &str| (!text.is_empty()).then(|| atoi(text)).filter(|value| (0..=500).contains(value)).map(|value| value as u16);
+    Some([side(x)?, side(y)?])
+}
+
+/// `1/0/1`: three parts, each 1 or 0.
+fn flags(text: &str) -> Option<[u8; 3]> {
+    let mut parts = text.splitn(3, '/');
+    let mut flag = || parts.next().filter(|part| !part.is_empty()).map(atoi).filter(|value| (0..=1).contains(value)).map(|value| value as u8);
+    Some([flag()?, flag()?, flag()?])
 }
 
 /// A navigation under way: its target, the services it may use, and the trail on this map to where it heads next.
@@ -404,25 +516,114 @@ mod tests {
 
     #[test]
     fn reads_a_typed_navigation() {
-        assert_eq!(typed("/navi prontera 100 100", 111), Some(("prontera".into(), Some([100, 100]), 111)));
-        assert_eq!(typed("/navigation Prontera.gat 150/180", 111), Some(("prontera".into(), Some([150, 180]), 111)));
-        assert_eq!(typed("/navi izlude", 111), Some(("izlude".into(), None, 111)));
-        // /navi2's flags: Scroll, Zeny (the Kafra's: hundreds) and Plane (the airship: ones).
-        assert_eq!(typed("/navi2 prontera 100 90 010", 111), Some(("prontera".into(), Some([100, 90]), 100)));
-        assert_eq!(typed("/navi2 prontera 100 90 100", 111), Some(("prontera".into(), Some([100, 90]), 10)));
-        assert_eq!(typed("/navi2 prontera 100 90", 111), Some(("prontera".into(), Some([100, 90]), 111)));
-        // The bare command opens the window; anything it can't read is left to it too.
+        let go = |map: &str, cell, services| Some(Typed::Go { map: map.into(), cell, services });
+        assert_eq!(typed("/navi prontera 100/100", 101), go("prontera", [100, 100], 101));
+        assert_eq!(typed("/NAVIGATION Prontera.gat 150/180 and more", 101), go("prontera", [150, 180], 101));
+        // /navi2's options: scrolls (tens), the Kafra (hundreds), the airship (ones).
+        assert_eq!(typed("/navi2 prontera 100/90 0/1/0", 101), go("prontera", [100, 90], 100));
+        assert_eq!(typed("/navigation2 prontera 100/90 1/0/1", 101), go("prontera", [100, 90], 11));
+        assert_eq!(typed("/navi2 prontera 100/100 1/1/1", 101), go("prontera", [100, 100], 111));
+        // Numbers as C reads them: what isn't one is 0, and what follows one is dropped.
+        assert_eq!(typed("/navi prontera abc/def", 101), go("prontera", [0, 0], 101));
+        assert_eq!(typed("/navi prontera 100/100/9", 101), go("prontera", [100, 100], 101));
+        assert_eq!(typed("/navi prontera 500/+7x", 101), go("prontera", [500, 7], 101));
+        // An x/y or options that can't be read.
         for text in [
-            "/navi",
-            "/navi prontera 100",
-            "/navi prontera x 100",
-            "/navi2 prontera",
-            "/navi2 prontera 1 2 12",
-            "/navi2 prontera 1 2 0101",
-            "/navx prontera 1 2",
+            "/navi prontera 100 100",
+            "/navi prontera 100,100 x",
+            "/navi prontera /100",
+            "/navi prontera 100/",
+            "/navi prontera 501/100",
+            "/navi prontera 100/-1",
+            "/navi2 prontera 100 100 1/1/1",
+            "/navi2 prontera 100/100 111",
+            "/navi2 prontera 100/100 1/1",
+            "/navi2 prontera 100/100 1//1",
+            "/navi2 prontera 100/100 1/2/0",
         ] {
-            assert_eq!(typed(text, 111), None, "{text}");
+            assert_eq!(typed(text, 101), Some(Typed::Unclear), "{text}");
         }
+        assert_eq!((typed("/naviopen", 101), typed("/NaviOpen now", 101)), (Some(Typed::Open), Some(Typed::Open)));
+        // Too few words is no command, like any other line.
+        for text in ["/navi", "/navi prontera", "/navigation prontera", "/navi2 prontera 100/100", "/navx prontera 1/2", "navi prontera 1/2", ""] {
+            assert_eq!(typed(text, 101), None, "{text}");
+        }
+    }
+
+    /// The messages a navigation says, each under its own number.
+    fn messages() -> Vec<String> {
+        let mut messages = vec![String::new(); 2321];
+        for (id, text) in [
+            (SAYS, "Navigation >: %s"),
+            (UNCLEAR, "Invalid syntax."),
+            (NO_WAY, "Failed to find a path."),
+            (NO_MAP, "Map doesn't support directions"),
+            (FOLLOW, "A route was found."),
+            (ARRIVED, "Arrived at the target map."),
+            (MONSTER_MAP, "The mob's map."),
+            (GO, "Please go to indicated direction."),
+            (THERE, "The goal has been reached"),
+            (TALK_TO, "Navigation >: Talk to [%s]"),
+            (MOVE_TO, "Navigation >: Please move to [%s]."),
+            (TO_AIRSHIP, "Navigation >: Please move to the Airship."),
+            (BY_PORTAL, "Navigation >: Use the Warp Portal to move to the next area."),
+        ] {
+            messages[id] = text.into();
+        }
+        messages
+    }
+
+    #[test]
+    fn says_where_a_navigation_stands() {
+        let (mut tables, messages) = (tables(), messages());
+        tables.links[3].name = "Kafra Employee".into();
+        tables.links.push(NaviLink { name: "Airship Staff".into(), ..link("izlude", 205, [200, 50], "prt_in") });
+        let cell = Target { map: "prontera".into(), cell: Some([150, 150]), monster: None, name: String::new() };
+        let report = |here: &str, at: [i32; 2], target: &Target, services: u8, start: bool| report(&tables, &messages, here, at, target, services, start);
+        let said = |lines: &[&str], outcome| (lines.iter().map(|line| line.to_string()).collect::<Vec<_>>(), outcome);
+        // A cell on this map: guiding; next to it at the start, nothing starts.
+        assert_eq!(report("prontera.gat", [100, 100], &cell, 0, true), said(&["Navigation >: Please go to indicated direction."], Outcome::Guiding));
+        assert_eq!(report("prontera", [149, 151], &cell, 0, true), said(&["Navigation >: The goal has been reached"], Outcome::Over));
+        assert_eq!(report("prontera", [148, 150], &cell, 0, true).1, Outcome::Guiding);
+        // A load onto its map: guiding to the cell, or over when right on it.
+        assert_eq!(report("prontera", [149, 151], &cell, 0, false).1, Outcome::Guiding);
+        assert_eq!(
+            report("prontera", [150, 150], &cell, 0, false),
+            said(&["Arrived at the target map.", "Navigation >: The goal has been reached"], Outcome::Over)
+        );
+        // Another map: the route's first step, a warp portal here.
+        let by_portal = ["Navigation >: A route was found.", "Navigation >: Use the Warp Portal to move to the next area."];
+        assert_eq!(report("prt_fild08", [10, 10], &cell, 0, true), said(&by_portal, Outcome::Guiding));
+        assert_eq!(report("prt_fild08", [10, 10], &cell, 0, false), said(&by_portal, Outcome::Guiding));
+        // The Kafra: who to talk to and where she sends you. The airship: its own line.
+        let izlude = Target { map: "izlude".into(), cell: None, monster: None, name: String::new() };
+        let by_kafra = ["Navigation >: A route was found.", "Navigation >: Talk to [Kafra Employee]", "Navigation >: Please move to [ Izlude[ izlude ] ]."];
+        assert_eq!(report("prontera", [10, 10], &izlude, 100, true), said(&by_kafra, Outcome::Guiding));
+        let inside = Target { map: "prt_in".into(), cell: Some([30, 40]), monster: None, name: String::new() };
+        let by_airship = ["Navigation >: A route was found.", "Navigation >: Talk to [Airship Staff]", "Navigation >: Please move to the Airship."];
+        assert_eq!(report("izlude", [10, 10], &inside, 1, true), said(&by_airship, Outcome::Guiding));
+        // No way (the airship not allowed), and a map the tables don't have.
+        assert_eq!(report("izlude", [10, 10], &inside, 0, true), said(&["Navigation >: Failed to find a path."], Outcome::NoWay));
+        assert_eq!(report("nowhere", [10, 10], &inside, 111, false), said(&["Navigation >: Map doesn't support directions"], Outcome::NoWay));
+        // A map or a monster: over on its map.
+        assert_eq!(
+            report("izlude", [1, 1], &izlude, 0, false),
+            said(&["Arrived at the target map.", "Navigation >: Arrived at the target map."], Outcome::Over)
+        );
+        let poring = Target { map: "prt_fild08".into(), cell: None, monster: Some(1002), name: String::new() };
+        assert_eq!(report("prt_fild08", [1, 1], &poring, 0, false), said(&["Arrived at the target map.", "Navigation >: The mob's map."], Outcome::Over));
+        assert_eq!(unclear(&messages), "Navigation >: Invalid syntax.");
+    }
+
+    #[test]
+    fn ends_on_a_move_near_the_cell() {
+        let tables = tables();
+        let target = Target { map: "prontera".into(), cell: Some([150, 150]), monster: None, name: String::new() };
+        // Five cells on both axes, on its map only.
+        assert!(reached(&tables, "prontera.gat", [155, 145], &target) && !reached(&tables, "prontera", [156, 150], &target));
+        assert!(!reached(&tables, "prontera", [150, 144], &target) && !reached(&tables, "prt_fild08", [150, 150], &target));
+        // A map or a monster never ends by a move.
+        assert!(!reached(&tables, "prontera", [150, 150], &Target { cell: None, ..target }));
     }
 
     #[test]
@@ -436,10 +637,6 @@ mod tests {
         assert_eq!(active.next_cell(&tables, "prt_fild08.gat"), Some([170, 375]));
         assert_eq!(active.next_cell(&tables, "prt_fild08"), Some([170, 375]));
         assert_eq!(active.next_cell(&tables, "prontera.gat"), Some([150, 150]));
-        assert!(!arrived(&tables, "prontera", [150, 147], &target) && arrived(&tables, "prontera", [148, 152], &target));
-        assert!(!arrived(&tables, "prt_fild08", [150, 150], &target));
-        let map_only = Target { cell: None, ..target };
-        assert!(arrived(&tables, "prontera.gat", [1, 1], &map_only));
     }
 
     #[test]
@@ -455,15 +652,15 @@ mod tests {
         assert_eq!(route(&tables, "iz_ac01_a", "iz_ac02", 0).unwrap().len(), 1);
         assert_eq!(next_cell(&tables, "iz_ac01_a.gat", &chuck, 0), Some([100, 39]));
         assert_eq!(next_cell(&tables, "iz_ac02_a", &chuck, 0), Some([148, 110]));
-        assert!(arrived(&tables, "iz_ac02_a", [148, 112], &chuck) && !arrived(&tables, "iz_ac02_a", [148, 115], &chuck));
-        assert!(arrived(&tables, "iz_ac02", [148, 112], &Target { map: "iz_ac02_b".into(), ..chuck.clone() }));
+        assert!(reached(&tables, "iz_ac02_a", [148, 112], &chuck) && !reached(&tables, "iz_ac02_a", [148, 116], &chuck));
+        assert!(reached(&tables, "iz_ac02", [148, 112], &Target { map: "iz_ac02_b".into(), ..chuck.clone() }));
         // A map the tables have under its own name keeps it; a copy of a map they don't have stays itself.
         assert_eq!(
             (navi_map(&tables, "rag_fes_a"), navi_map(&tables, "geffen_a"), navi_map(&tables, "iz_ac01_ab")),
             ("rag_fes_a".into(), "geffen_a".into(), "iz_ac01_ab".into())
         );
         assert_eq!(route(&tables, "rag_fes_a", "prontera", 0).unwrap()[0].cell, [10, 10]);
-        assert!(!arrived(&tables, "rag_fes_a", [1, 1], &Target { map: "rag_fes".into(), cell: None, monster: None, name: String::new() }));
+        assert!(!reached(&tables, "rag_fes_a", [1, 1], &Target { map: "rag_fes".into(), cell: Some([1, 1]), monster: None, name: String::new() }));
     }
 
     #[test]

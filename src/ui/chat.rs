@@ -2464,8 +2464,6 @@ pub enum Command {
     /// /away: the away-message box.
     // ponytail: /away is the command that opens it; the client's own command isn't identified.
     Away,
-    /// /navigation, /navi: the navigation window, open or closed.
-    Navigation,
     /// /cashshop: the cash shop; /battleground: the battleground queue, open or closed. The game opens them from
     /// elsewhere than the menu.
     // ponytail: the commands' names are ours.
@@ -2516,8 +2514,6 @@ pub fn command(text: &str) -> Option<Command> {
         // Only the bare /pk: /pk on and /pk off are another command.
         "/pk" if name.is_empty() => Command::Ranking(3),
         "/away" => Command::Away,
-        // With a map, a navigation (`navigation::typed`, ahead of these); bare, the window.
-        "/navigation" | "/navi" | "/navigation2" | "/navi2" => Command::Navigation,
         "/cashshop" => Command::CashShop,
         "/battleground" => Command::BattleQueue,
         _ => return None,
@@ -3425,7 +3421,8 @@ mod tests {
             assert_eq!(command(text), Some(Command::Ranking(kind)), "{text}");
         }
         assert_eq!(command("/pk on"), None);
-        assert!(["/navigation", "/navi", "/navigation2", "/navi2"].iter().all(|text| command(text) == Some(Command::Navigation)));
+        // A navigation command with too few words is no command (`navigation::typed` reads the whole ones first).
+        assert!(["/navigation", "/navi", "/navigation2", "/navi2"].iter().all(|text| command(text).is_none()));
         assert_eq!([command("/cashshop"), command("/battleground")], [Some(Command::CashShop), Some(Command::BattleQueue)]);
         assert_eq!(command("/away"), Some(Command::Away));
         assert_eq!(command("/ex"), Some(Command::BlockList));

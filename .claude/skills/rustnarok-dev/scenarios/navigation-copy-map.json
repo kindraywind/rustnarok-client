@@ -1,5 +1,5 @@
 {
-  "about": "Navigation on a map copy (issue #1122): the navi tables have iz_ac01 and iz_ac02 but not their copies, which rathena runs with the same NPCs at the same cells. On iz_ac01_a the Academy Receptionist's [Chuck] link (iz_ac02,148,110; rathena npc/re/jobs/novice/academy.txt) draws the arrow and a trail to the base map's warp; on iz_ac02_a the trail leads to Chuck, and two cells from him the navigation ends.",
+  "about": "Navigation on a map copy (issue #1122): the navi tables have iz_ac01 and iz_ac02 but not their copies, which rathena runs with the same NPCs at the same cells. On iz_ac01_a the Academy Receptionist's [Chuck] link (iz_ac02,148,110; rathena npc/re/jobs/novice/academy.txt) draws the arrow and a trail to the base map's warp; on iz_ac02_a the trail leads to Chuck, and a warp right onto his cell ends the navigation.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -171,7 +171,7 @@
       "threshold": 10
     },
     {
-      "say": "@warp iz_ac02_a 148 112"
+      "say": "@warp iz_ac02_a 148 110"
     },
     {
       "settle": 1500

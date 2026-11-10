@@ -799,6 +799,7 @@ impl App {
                 // The server announces the pet again on load.
                 (game.pet_id, game.pet) = (None, None);
                 game.put_after_warp(position);
+                game.navigation_loaded(&self.navi_tables, &self.messages);
                 let _ = game.session.loaded();
                 game.player.loaded_at = Some(Instant::now());
             }
@@ -1425,6 +1426,11 @@ impl App {
                 if let Some((from, sub, path)) = walk {
                     game.player.walk_from(from, sub, path, begin, now, true);
                 }
+                // A move ordered to near the navigation's cell ends it.
+                if game.navigation.as_ref().is_some_and(|active| navigation::reached(&self.navi_tables, &game.map, to, &active.target)) {
+                    game.navigation = None;
+                    game.chat_line(self.messages.get(navigation::ARRIVED).cloned().unwrap_or_default(), CHAT_NAVIGATION);
+                }
             }
             // A knockback puts the unit on its new cell at once; what it was doing goes on until the stop that follows.
             MapEvent::Knocked { id, position } => {
@@ -1523,6 +1529,7 @@ impl App {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
                     // the load is acknowledged (it drops everything else till then) and sends what's in view again.
                     game.put_after_warp(position);
+                    game.navigation_loaded(&self.navi_tables, &self.messages);
                     forget_view(&mut game.units, &mut game.skill_units, &mut game.effects);
                     game.ground.clear();
                     let _ = game.session.loaded();
@@ -3870,8 +3877,8 @@ impl App {
                 let map = navigation::map_key(&map);
                 let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
                 let target = navigation::Target { cell: (kind == 0).then_some(cell), monster: (kind == 3).then_some(monster), name, map };
-                game.navigation = Some(navigation::Active::new(target, services));
-                if !hide_window && game.navi_window.is_none() {
+                let found = game.navigate(&self.navi_tables, &self.messages, target, services);
+                if found && !hide_window && game.navi_window.is_none() {
                     game.toggle_navigation();
                     game.sync_esc();
                 }

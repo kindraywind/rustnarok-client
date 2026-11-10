@@ -131,7 +131,7 @@ impl App {
                         let map = navigation::map_key(&map);
                         let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
                         let target = navigation::Target { cell: (cell != [0, 0]).then_some(cell), monster: None, name, map };
-                        game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
+                        game.navigate(&self.navi_tables, &self.messages, target, NAVI_SERVICES);
                     }
                     links::Target::Url(address) => {
                         if let Some(page) = links::page(&address) {
@@ -312,7 +312,7 @@ impl App {
                     let map = navigation::map_key(&map);
                     let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
                     let cell = (cell != [0, 0]).then(|| cell.map(|value| value.clamp(0, i32::from(u16::MAX)) as u16));
-                    game.navigation = Some(navigation::Active::new(navigation::Target { cell, monster: None, name, map }, NAVI_SERVICES));
+                    game.navigate(&self.navi_tables, &self.messages, navigation::Target { cell, monster: None, name, map }, NAVI_SERVICES);
                 }
             }
             Scene::Game(game) if on(Esc(W::Quests)) => {
@@ -744,7 +744,7 @@ impl App {
                         let map = navigation::map_key(&game.map);
                         let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_else(|| map.clone());
                         let target = navigation::Target { cell: Some(cell.map(|value| value as u16)), monster: None, name, map };
-                        game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
+                        game.navigate(&self.navi_tables, &self.messages, target, NAVI_SERVICES);
                     }
                     Some(hit) => {
                         game.minimap_window.click(hit);
@@ -843,13 +843,13 @@ impl App {
             Scene::Game(game) if on(Esc(W::Navigation)) => {
                 let window = game.navi_window.as_mut().unwrap();
                 match window.hit(cursor).unwrap() {
-                    navigation::Hit::Title(TitleHit::Close) => game.navi_window = None,
+                    navigation::Hit::Title(TitleHit::Close) => game.close_navigation(),
                     navigation::Hit::Title(title) => window.frame.click_title(title),
                     navigation::Hit::Field => window.typing = true,
                     navigation::Hit::Result(index) => {
                         let target = window.results[index].clone();
                         window.typing = false;
-                        game.navigation = Some(navigation::Active::new(target, NAVI_SERVICES));
+                        game.navigate(&self.navi_tables, &self.messages, target, NAVI_SERVICES);
                     }
                     navigation::Hit::Stop => {
                         window.typing = false;
@@ -3508,23 +3508,28 @@ impl App {
     }
 
     /// Sends what's on the chat's input line, as Enter does: the client's sound commands (/bgm, /sound, /bv, /v), a
-    /// typed navigation (`/navi prontera 150 150`), else `Game::send_chat` (party with `party`, guild with `guild`).
+    /// typed navigation (`/navi prontera 150/150`), else `Game::send_chat` (party with `party`, guild with `guild`).
     pub(crate) fn send_chat_input(&mut self, party: bool, guild: bool) {
         let Scene::Game(game) = &mut self.scene else { return };
         let music_was_on = self.sound.on[0];
-        if let Some((map, cell, services)) = navigation::typed(game.chat.input.trim(), NAVI_SERVICES) {
-            let typed = std::mem::take(&mut game.chat.input);
-            game.chat.sent(&typed);
-            // As the server starts one: to the cell, or to the map, with the window open.
-            let map = navigation::navi_map(&self.navi_tables, &map);
-            if let Some(name) = self.navi_tables.maps.get(&map).cloned() {
-                game.navigation = Some(navigation::Active::new(navigation::Target { map, cell, monster: None, name }, services));
-                if game.navi_window.is_none() {
-                    game.toggle_navigation();
-                    game.sync_esc();
+        if let Some(typed) = navigation::typed(game.chat.input.trim(), NAVI_SERVICES) {
+            let line = std::mem::take(&mut game.chat.input);
+            game.chat.sent(&line);
+            match typed {
+                // To the cell, and no window with it.
+                navigation::Typed::Go { map, cell, services } => {
+                    let map = navigation::navi_map(&self.navi_tables, &map);
+                    let name = self.navi_tables.maps.get(&map).cloned().unwrap_or_default();
+                    game.navigate(&self.navi_tables, &self.messages, navigation::Target { map, cell: Some(cell), monster: None, name }, services);
                 }
-            } else {
-                game.chat_line(self.messages.get(NAVI_UNKNOWN_MAP).cloned().unwrap_or_default(), CHAT_ERROR);
+                navigation::Typed::Unclear => game.chat_line(navigation::unclear(&self.messages), CHAT_NAVIGATION),
+                // /naviopen only ever opens the window.
+                navigation::Typed::Open => {
+                    if game.navi_window.is_none() {
+                        game.toggle_navigation();
+                        game.sync_esc();
+                    }
+                }
             }
         } else if let Some(shown) = self.sound.command(game.chat.input.trim()) {
             game.chat.input.clear();
@@ -3598,6 +3603,8 @@ impl App {
             Some(escape::EscAct::Cancel(id) | escape::EscAct::Close(id)) => game.close_esc(id),
             Some(escape::EscAct::ShopCancel) => game.close_esc(escape::WindowId::Shop),
             Some(escape::EscAct::AnswerNo) => game.answer_no(&self.messages),
+            // Nothing left to close while a navigation runs: Esc asks whether to cancel it, before the menu.
+            Some(escape::EscAct::ToggleMenu) if game.navigation.is_some() && game.escape.is_none() => game.question_box = Some(BoxQuestion::StopNavigation),
             Some(escape::EscAct::ToggleMenu) => {
                 game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: game.player.dead }) };
             }
