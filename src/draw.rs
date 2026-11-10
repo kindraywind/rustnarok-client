@@ -2842,6 +2842,8 @@ impl App {
         let navi_here = navigation::navi_map(&self.navi_tables, &game.map);
         if let Some(window) = &mut game.navi_window {
             window.follow(gpu, &self.grf, &navi_here, game.navigation.is_some(), game.navigation.as_ref().map_or(0, |active| active.steps.len()));
+            let ms = control::now().saturating_duration_since(game.entered).as_secs_f32() * 1000.0;
+            window.show_picked(gpu, &self.grf, &self.navi_tables, messages, &self.job_names, ms);
         }
         let mut navi_layer = Layer { faded: game.navi_window.as_ref().map_or(0.0, navi_window::Window::fade), ..Layer::of(Top::Esc(W::Navigation)) };
         if let Some(window) = &game.navi_window {

@@ -139,20 +139,30 @@ pub struct NaviLink {
     pub to_cell: [u16; 2],
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct NaviNpc {
     pub map: String,
     pub name: String,
     pub cell: [u16; 2],
+    /// The job its sprite is drawn by.
+    pub job: u16,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct NaviMonster {
     pub map: String,
     pub id: u16,
     pub name: String,
     /// How many of it the map spawns.
     pub spawns: u32,
+    /// Its sprite's file name, its level, its element (20 a level, plus the element), size and race, and whether
+    /// the table lists it as a boss.
+    pub sprite: String,
+    pub level: u16,
+    pub element: u8,
+    pub size: u8,
+    pub race: u8,
+    pub boss: bool,
 }
 
 pub fn navigation(grf: &Grf) -> io::Result<NaviTables> {
@@ -163,7 +173,8 @@ pub fn navigation(grf: &Grf) -> io::Result<NaviTables> {
 }
 
 /// `Navi_Map` { name, shown name, type, width, height }, `Navi_Link` { map, id, kind, .., name, .., x, y, to map, to x, to y },
-/// `Navi_Npc` { map, id, kind, sprite, name, .., x, y }, `Navi_Mob` { map, id, kind, spawns << 16 | monster, name, .. },
+/// `Navi_Npc` { map, id, kind, sprite, name, .., x, y }, `Navi_Mob` { map, id, kind (301 a boss), spawns << 16 | monster,
+/// name, sprite, level, element << 16 | size << 8 | race },
 /// and `Navi_Distance` (when there): map, how many ways, { { a way's id, { "E", id, cells }.., { "NULL", 0, 0 } }.. },
 /// one after the other in one flat list.
 fn navi_tables(lua: &Lua) -> io::Result<NaviTables> {
@@ -191,7 +202,7 @@ fn navi_tables(lua: &Lua) -> io::Result<NaviTables> {
         });
     }
     for row in rows("Navi_Npc")? {
-        tables.npcs.push(NaviNpc { map: text(&row, 1), name: text(&row, 5), cell: cell(&row, 7) });
+        tables.npcs.push(NaviNpc { map: text(&row, 1), name: text(&row, 5), cell: cell(&row, 7), job: number(&row, 4) as u16 });
     }
     for row in rows("Navi_Mob")? {
         tables.monsters.push(NaviMonster {
@@ -199,6 +210,12 @@ fn navi_tables(lua: &Lua) -> io::Result<NaviTables> {
             id: (number(&row, 4) & 0xFFFF) as u16,
             name: text(&row, 5),
             spawns: (number(&row, 4) >> 16) as u32,
+            sprite: text(&row, 6),
+            level: number(&row, 7) as u16,
+            element: (number(&row, 8) >> 16) as u8,
+            size: (number(&row, 8) >> 8) as u8,
+            race: number(&row, 8) as u8,
+            boss: number(&row, 3) == 301,
         });
     }
     // Every third entry of the flat list is a map's ways; "E" names a way that can be walked to from where this one
@@ -2175,7 +2192,7 @@ mod tests {
             Navi_Map = { { "prontera", "Prontera", 5001, 312, 392 }, { "prt_fild08", "Prontera Field", 5002, 400, 400 } }
             Navi_Link = { { "prt_fild08", 100, 200, 99999, "warp", "", 170, 375, "prontera", 156, 22 } }
             Navi_Npc = { { "prontera", 7, 101, 706, "Tool Dealer", "yusa", 134, 221 } }
-            Navi_Mob = { { "prt_fild08", 9, 300, 1377258, "Poring", "PORING", 60, 1 } }
+            Navi_Mob = { { "prt_fild08", 9, 301, 1377258, "Poring", "PORING", 60, 3211521 } }
             Navi_Distance = {
                 "prt_fild08", 2, { { 100, { "E", 101, 678 }, { "E", 107, 6 }, { "NULL", 0, 0 } }, { 105, { "NULL", 0, 0 } } },
                 "prontera", 1, { { 101, { "E", 100, 5 }, { "NULL", 0, 0 }, { "E", 9, 9 } } },
@@ -2190,8 +2207,20 @@ mod tests {
         assert_eq!(tables.links, [link]);
         // Each way's list of ways on, up to its end mark.
         assert_eq!(tables.passes, [(100, vec![(101, 678), (107, 6)]), (105, vec![]), (101, vec![(100, 5)])].into_iter().collect());
-        assert_eq!(tables.npcs, [super::NaviNpc { map: "prontera".into(), name: "Tool Dealer".into(), cell: [134, 221] }]);
-        assert_eq!(tables.monsters, [super::NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 21 }]);
+        assert_eq!(tables.npcs, [super::NaviNpc { map: "prontera".into(), name: "Tool Dealer".into(), cell: [134, 221], job: 706 }]);
+        let poring = super::NaviMonster {
+            map: "prt_fild08".into(),
+            id: 1002,
+            name: "Poring".into(),
+            spawns: 21,
+            sprite: "PORING".into(),
+            level: 60,
+            element: 49,
+            size: 1,
+            race: 1,
+            boss: true,
+        };
+        assert_eq!(tables.monsters, [poring]);
     }
 
     #[test]

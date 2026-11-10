@@ -351,6 +351,8 @@ pub struct Found {
     pub map: String,
     pub cell: [u16; 2],
     pub monster: u16,
+    /// The job an NPC's sprite is drawn by.
+    pub job: u16,
     /// What it's sorted and grouped by: the map's own name, the NPC's, the monster's.
     pub name: String,
     /// How many of a monster its map spawns.
@@ -373,6 +375,7 @@ pub fn search(tables: &NaviTables, text: &str) -> Vec<Found> {
         map: found.map.clone(),
         cell: [0, 0],
         monster: found.id,
+        job: 0,
         name: found.name.clone(),
         spawns: found.spawns,
         with_map,
@@ -384,7 +387,7 @@ pub fn search(tables: &NaviTables, text: &str) -> Vec<Found> {
     maps.sort();
     let mut found = Vec::new();
     for (map, _) in maps.into_iter().filter(|(map, shown)| has(&format!("{map} {shown} "))) {
-        found.push(Found { kind: 1, map: map.clone(), cell: [0, 0], monster: 0, name: map.clone(), spawns: 0, with_map: false });
+        found.push(Found { kind: 1, map: map.clone(), cell: [0, 0], monster: 0, job: 0, name: map.clone(), spawns: 0, with_map: false });
         found.extend(monsters.iter().filter(|found| found.map == *map).map(|found| monster(found, true)));
     }
     found.extend(tables.npcs.iter().filter(|npc| has(&npc.name)).map(|npc| Found {
@@ -392,6 +395,7 @@ pub fn search(tables: &NaviTables, text: &str) -> Vec<Found> {
         map: npc.map.clone(),
         cell: npc.cell,
         monster: 0,
+        job: npc.job,
         name: npc.name.clone(),
         spawns: 0,
         with_map: false,
@@ -456,6 +460,7 @@ pub fn place_found(tables: &NaviTables, map: &str, cell: Option<[u16; 2]>) -> Op
         map: map.to_owned(),
         cell: cell.unwrap_or_default(),
         monster: 0,
+        job: 0,
         name: map.to_owned(),
         spawns: 0,
         with_map: false,
@@ -629,10 +634,10 @@ mod tests {
                 link("prontera", 204, [150, 100], "izlude"),
                 link("prt_fild08", 200, [380, 200], "izlude"),
             ],
-            npcs: vec![NaviNpc { map: "prt_in".into(), name: "Tool Dealer".into(), cell: [30, 40] }],
+            npcs: vec![NaviNpc { map: "prt_in".into(), name: "Tool Dealer".into(), cell: [30, 40], ..NaviNpc::default() }],
             monsters: vec![
-                NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 70 },
-                NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 70 },
+                NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 70, ..NaviMonster::default() },
+                NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 70, ..NaviMonster::default() },
             ],
             passes: HashMap::new(),
             sizes: HashMap::new(),
@@ -976,8 +981,8 @@ mod tests {
     #[test]
     fn finds_maps_npcs_and_monsters() {
         let mut tables = tables();
-        tables.monsters.push(NaviMonster { map: "izlude".into(), id: 1002, name: "Poring".into(), spawns: 3 });
-        tables.monsters.push(NaviMonster { map: "prt_fild08".into(), id: 1007, name: "Fabre".into(), spawns: 0 });
+        tables.monsters.push(NaviMonster { map: "izlude".into(), id: 1002, name: "Poring".into(), spawns: 3, ..NaviMonster::default() });
+        tables.monsters.push(NaviMonster { map: "prt_fild08".into(), id: 1007, name: "Fabre".into(), spawns: 0, ..NaviMonster::default() });
         let names = |text: &str| search(&tables, text).into_iter().map(|found| (found.kind, found.name, found.map)).collect::<Vec<_>>();
         let place = |kind: u8, name: &str, map: &str| (kind, name.to_owned(), map.to_owned());
         // A map by its own name or its shown one, any case, with its monsters; the insides are left out. Last name first.
@@ -1014,8 +1019,8 @@ mod tests {
     #[test]
     fn groups_what_it_found() {
         let (mut tables, messages) = (tables(), messages());
-        tables.monsters.push(NaviMonster { map: "izlude".into(), id: 1002, name: "Poring".into(), spawns: 3 });
-        tables.npcs.push(NaviNpc { map: "izlude".into(), name: "Tool Dealer".into(), cell: [10, 20] });
+        tables.monsters.push(NaviMonster { map: "izlude".into(), id: 1002, name: "Poring".into(), spawns: 3, ..NaviMonster::default() });
+        tables.npcs.push(NaviNpc { map: "izlude".into(), name: "Tool Dealer".into(), cell: [10, 20], ..NaviNpc::default() });
         // "o" finds two maps, two NPCs and the Porings: by name and with their map.
         let found = search(&tables, "o");
         let rows = |filter: usize| groups(&found, filter).iter().map(|row| group_label(&found, row)).collect::<Vec<_>>();

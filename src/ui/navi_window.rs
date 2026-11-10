@@ -4,9 +4,12 @@
 //! the navigation heads.
 
 use rustnarok_client::grf::Grf;
+use std::collections::HashMap;
+
 use rustnarok_client::lua::NaviTables;
 use rustnarok_client::text::Font;
 
+use crate::actor::{ImageKey, SpriteSet, Timing};
 use crate::navigation::{self, Found, Target};
 use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
@@ -31,9 +34,26 @@ const GROUPS: [f32; 4] = [1.0, 70.0, 138.0, 240.0];
 const MEMBERS: [f32; 4] = [139.0, 166.0, 132.0, 80.0];
 /// A list's scrollbar: this wide, at its right edge.
 const BAR: f32 = 7.0;
-/// The picked place's name and its map's picture.
+/// The picked place: its name in lines of 11 letters from here, 14 px apart, and its map's picture.
 const NAME_AT: [f32; 2] = [141.0, 46.0];
+const NAME_LINE: usize = 11;
 const PICTURE: [f32; 4] = [155.0, 60.0, 100.0, 100.0];
+/// An NPC or a monster: its sprite within this square, standing on a small ellipse, playing its first action once
+/// every 1.5 s; its map's picture is small then, at the square's corner. The lines under the name: an NPC's or a
+/// cell's "( x y )"; a monster's level, element, race and size, and "Boss" where the cell would be.
+const FIGURE: [f32; 4] = [147.0, 45.0, 116.0, 116.0];
+const FIGURE_LOOP_MS: f32 = 1500.0;
+const SMALL_PICTURE: [f32; 4] = [227.0, 120.0, 40.0, 40.0];
+const CELL_AT: [f32; 2] = [142.0, 149.0];
+const LEVEL_AT: [f32; 2] = [142.0, 77.0];
+/// Element lines "Water %d" to "Undead %d" follow this id by the element's number; neutral's is the eleventh.
+const ELEMENT: usize = 2262;
+const NEUTRAL: usize = 2272;
+/// Sizes: medium, large, small. Races 1 to 9 follow `RACE`; any other is formless.
+const SIZES: [usize; 3] = [2273, 2274, 2275];
+const RACE: usize = 2275;
+const FORMLESS: usize = 2285;
+const BOSS: usize = 2230;
 /// The "service" box (its label to the right), and Find.
 const SERVICE: [f32; 4] = [146.0, 247.0, 110.0, 12.0];
 const FIND: [f32; 4] = [207.0, 263.0, 58.0, 20.0];
@@ -86,7 +106,10 @@ const LIST_TITLE: usize = 3204;
 const LIST_BOX: [f32; 4] = [2.0, 20.0, 146.0, 293.0];
 const GREY: [u8; 3] = [0xCC, 0xCC, 0xCC];
 const INK: [u8; 3] = [0, 0, 0];
-const PICKED: [u8; 3] = [0x30, 0x50, 0xC0];
+/// The picked place's lines, each over a grey copy a pixel down and right; "Boss" is red over a darker grey.
+const PICKED: [u8; 3] = [0x54, 0x6B, 0xCB];
+const PICKED_SHADOW: [u8; 3] = [0xDC, 0xDC, 0xDC];
+const BOSS_COLORS: [[u8; 3]; 2] = [[0xFF, 0x00, 0x00], [0xC8, 0xC8, 0xC8]];
 
 pub struct Assets {
     /// The type box and its arrow; the search box; the Search button and Find (normal, under the pointer).
@@ -109,6 +132,8 @@ pub struct Assets {
     dot: Texture,
     destination: Texture,
     location: Texture,
+    /// The ellipse a previewed NPC or monster stands on.
+    ellipse: Texture,
     /// Share (normal, under the pointer); the share view's cross lines, and its hint's backing and mouse picture.
     share: [Texture; 2],
     cross: Texture,
@@ -145,6 +170,7 @@ impl Assets {
             dot: gpu.solid([0x0A, 0xF0, 0xF0, 0xFF]),
             destination: image("ico_destination"),
             location: image("ico_location"),
+            ellipse: gpu.load_texture(grf, &format!("{UI}anibackground.bmp"), false),
             share: ["btn_share_normal", "btn_share_over"].map(|name| gpu.load_texture(grf, &format!("{UI}private_airplane\\{name}.bmp"), false)),
             cross: gpu.solid([0x00, 0x22, 0xAA, 0xFF]),
             hint: [
@@ -237,6 +263,69 @@ fn on_picture(cell: [i32; 2], [wide, high]: [usize; 2], side: f32, top: f32) -> 
     let scale = side / wide.max(high).max(1) as f32;
     let centred = |short: usize| ((wide.max(high) - short) as f32 * 0.5 * scale).trunc();
     [(cell[0] as f32 * scale + centred(wide)).trunc(), (top - (cell[1] as f32 * scale + centred(high))).trunc()]
+}
+
+/// The picked place's name in the preview: "[name]" in lines of eleven letters. The game makes one line more than
+/// every twelve letters fill, so a name can lose its last letter or two (23 letters: one); kept as it is.
+fn name_lines(name: &str) -> Vec<String> {
+    let letters: Vec<char> = format!("[{name}").chars().collect();
+    let mut lines: Vec<String> = letters.chunks(NAME_LINE).take(letters.len() / (NAME_LINE + 1) + 1).map(|line| line.iter().collect()).collect();
+    if let Some(last) = lines.last_mut() {
+        last.push(']');
+    }
+    lines
+}
+
+/// The preview's lines for a place, each with where it goes and whether it's the red "Boss": the name (a map's shown
+/// name, a cell's map, an NPC's or a monster's own), then a cell's or an NPC's "( x y )", or a monster's level,
+/// element with its level, race and size, as its map's row in the table has them.
+fn details(tables: &NaviTables, messages: &[String], place: &Found) -> Vec<(String, [f32; 2], bool)> {
+    let message = |id: usize| messages.get(id).map_or("", String::as_str);
+    let name = match place.kind {
+        1 => tables.maps.get(&place.map).unwrap_or(&place.map),
+        0 => &place.map,
+        _ => &place.name,
+    };
+    let mut lines: Vec<_> = name_lines(name).into_iter().enumerate().map(|(row, line)| (line, [NAME_AT[0], NAME_AT[1] + row as f32 * 14.0], false)).collect();
+    let mut line = |row: f32, text: String| lines.push((text, [LEVEL_AT[0], LEVEL_AT[1] + row * 16.0], false));
+    match place.kind {
+        0 | 2 => lines.push((format!("( {} {} )", place.cell[0], place.cell[1]), CELL_AT, false)),
+        3 => {
+            if let Some(monster) = tables.monsters.iter().find(|monster| monster.map == place.map && monster.id == place.monster) {
+                line(0.0, format!("Lv. {}", monster.level));
+                let element = match monster.element % 10 {
+                    0 => NEUTRAL,
+                    kind => ELEMENT + usize::from(kind),
+                };
+                line(1.0, rustnarok_client::messages::fill(message(element), &[&(monster.element / 20)]));
+                line(2.0, message(if (1..=9).contains(&monster.race) { RACE + usize::from(monster.race) } else { FORMLESS }).to_owned());
+                line(3.0, message(SIZES[usize::from(monster.size).wrapping_sub(1).min(2)]).to_owned());
+                if monster.boss {
+                    lines.push((message(BOSS).to_owned(), CELL_AT, true));
+                }
+            }
+        }
+        _ => {}
+    }
+    lines
+}
+
+/// Where a sprite's feet go in the preview's square and how much smaller it's drawn, from its first frame's box
+/// around the feet (left, top, right, bottom): the box in the square's middle; one wider or taller than the square is
+/// shrunk to fit its longer side (never made bigger) and centred on the other.
+fn fit_figure([left, top, right, bottom]: [f32; 4]) -> ([f32; 2], f32) {
+    let (wide, high) = (right - left, bottom - top);
+    let side = FIGURE[2];
+    let scale = if wide.max(high) > side { side / wide.max(high) } else { 1.0 };
+    let middle = |length: f32| ((side - length * scale) / 2.0).trunc();
+    let feet = if scale == 1.0 {
+        [-left + middle(wide), -top + middle(high)]
+    } else if wide >= high {
+        [(-left * scale).trunc(), (-top * scale).trunc() + middle(high)]
+    } else {
+        [(-left * scale).trunc() + middle(wide), (-top * scale).trunc()]
+    };
+    (feet, scale)
 }
 
 /// The share hint's lines: whole words, 38 characters a line at most.
@@ -364,6 +453,13 @@ pub struct Window {
     pub steps: usize,
     /// The share view while it's up: when Share was pressed, and the picked map's size in cells.
     pub sharing: Option<(std::time::Instant, [u16; 2])>,
+    /// The place the preview was made for, and its lines (`details`).
+    shown: Option<Found>,
+    pub lines: Vec<(String, [f32; 2], bool)>,
+    /// A shown NPC's or monster's sprite with where its feet go and its scale (`fit_figure`), and this frame's
+    /// pieces: each image, its corner in the window and its size.
+    figure: Option<(SpriteSet, [f32; 2], f32)>,
+    pieces: Vec<(ImageKey, [f32; 2], [f32; 2])>,
 }
 
 impl Window {
@@ -394,7 +490,61 @@ impl Window {
             help_first: 0,
             steps: 0,
             sharing: None,
+            shown: None,
+            lines: Vec::new(),
+            figure: None,
+            pieces: Vec::new(),
         }
+    }
+
+    /// Whether the preview shows a sprite.
+    pub fn has_figure(&self) -> bool {
+        self.figure.is_some()
+    }
+
+    /// Makes the preview of the picked place when the pick changed (its lines, its map's picture, an NPC's or a
+    /// monster's sprite by its job), and poses the sprite for now, `ms` on the clock.
+    pub fn show_picked(&mut self, gpu: &Gpu, grf: &Grf, tables: &NaviTables, messages: &[String], job_names: &HashMap<u16, String>, ms: f32) {
+        if self.shown.as_ref() != self.picked() {
+            self.shown = self.picked().cloned();
+            self.lines = self.shown.as_ref().map(|place| details(tables, messages, place)).unwrap_or_default();
+            let map = self.shown.as_ref().map(|place| place.map.clone());
+            if self.picture.as_ref().map(|(map, _)| map) != map.as_ref() {
+                self.picture = map.map(|map| {
+                    let picture = picture(gpu, grf, &map);
+                    (map, picture)
+                });
+            }
+            // An NPC looks in the NPC sprites first, a monster in the monsters'. Nothing shows without a sprite or
+            // a first frame.
+            // ponytail: an NPC drawn as a player (the data's pick-NPC table) shows no sprite; read that table and
+            // dress a player's sprites when someone misses them.
+            let sprites = self.shown.as_ref().and_then(|place| match place.kind {
+                2 => crate::job_sprites(grf, job_names, crate::NPC, place.job),
+                3 => crate::job_sprites(grf, job_names, crate::MONSTER, place.monster),
+                _ => None,
+            });
+            self.figure = sprites.and_then(|mut sprites| {
+                let first = sprites.flat_frame(gpu, 0, 0, 0, Timing::Span(0.0));
+                let sides = |side: usize| first.iter().flat_map(move |(_, at, size, _)| [at[side], at[side] + size[side]]);
+                let edge = |side: usize, most: bool| sides(side).reduce(if most { f32::max } else { f32::min });
+                let (feet, scale) = fit_figure([edge(0, false)?, edge(1, false)?, edge(0, true)?, edge(1, true)?]);
+                Some((sprites, feet, scale))
+            });
+        }
+        // ponytail: not cut at the square's edge; a later frame bigger than the first can stick out a little.
+        self.pieces = match &mut self.figure {
+            Some((sprites, feet, scale)) => {
+                let (feet, scale) = (*feet, *scale);
+                let frame = sprites.flat_frame(gpu, 0, 0, 0, Timing::Span(ms.rem_euclid(FIGURE_LOOP_MS) / FIGURE_LOOP_MS));
+                let place = |(key, at, size, _): crate::actor::Placed| {
+                    let corner = [FIGURE[0] + feet[0] + (at[0] * scale).trunc(), FIGURE[1] + feet[1] + (at[1] * scale).trunc()];
+                    (key, corner, [(size[0] * scale).trunc(), (size[1] * scale).trunc()])
+                };
+                frame.into_iter().map(place).collect()
+            }
+            None => Vec::new(),
+        };
     }
 
     /// Share pressed: an NPC's place or a monster's map is the link to put on the chat line at once; a map or a cell
@@ -423,17 +573,6 @@ impl Window {
         (self.found, self.rows, self.row, self.member, self.first) = (vec![place], vec![vec![0]], Some(0), 0, [0, 0]);
         (self.route_view, self.sharing) = (false, None);
         self.set_mini(false);
-    }
-
-    /// The picked place's map picture, loaded when the pick's map changed.
-    pub fn load_picture(&mut self, gpu: Option<&Gpu>, grf: &Grf) {
-        let map = self.picked().map(|place| place.map.clone());
-        if self.picture.as_ref().map(|(map, _)| map) != map.as_ref() {
-            self.picture = map.map(|map| {
-                let picture = gpu.and_then(|gpu| picture(gpu, grf, &map));
-                (map, picture)
-            });
-        }
     }
 
     pub fn side(&self, side: Side) -> Option<&Frame> {
@@ -1007,13 +1146,24 @@ impl Window {
         if let Some(picked) = self.row.and_then(|row| self.rows.get(row)) {
             list(layer, 1, MEMBERS, Some(self.member), &|member| (None, navigation::member_label(tables, messages, &self.found, picked, member)));
         }
-        // The picked place: its name over its map's picture.
+        // The picked place: an NPC or a monster on its ellipse (the feet are 14 px into that picture), then its map's
+        // picture (small at the corner for those, big for a map or a cell), then its lines over both.
         if let Some(place) = self.picked() {
-            fill(layer, &assets.black, PICTURE);
-            if let Some((_, Some(picture))) = &self.picture {
-                layer.sprites.push((picture, at([PICTURE[0], PICTURE[1]]), [PICTURE[2], PICTURE[3]]));
+            if let Some((sprites, feet, _)) = &self.figure {
+                layer.sprites.push((&assets.ellipse, at([FIGURE[0] + feet[0] - 14.0, FIGURE[1] + feet[1] - 14.0]), assets.ellipse.size));
+                layer.sprites.extend(self.pieces.iter().filter_map(|(key, corner, size)| Some((sprites.texture_of(*key)?, at(*corner), *size))));
             }
-            layer.texts.push((crate::window::fit(font, &place.name, SIZE[0] - NAME_AT[0] - 4.0), at(NAME_AT), PICKED));
+            let square = if matches!(place.kind, 2 | 3) { SMALL_PICTURE } else { PICTURE };
+            fill(layer, &assets.black, square);
+            if let Some((_, Some(picture))) = &self.picture {
+                layer.sprites.push((picture, at([square[0], square[1]]), [square[2], square[3]]));
+            }
+            for (line, place, boss) in &self.lines {
+                let [color, shadow] = if *boss { BOSS_COLORS } else { [PICKED, PICKED_SHADOW] };
+                let [x, y] = at(*place);
+                layer.texts.push((line.clone(), [x + 1.0, y + 1.0], shadow));
+                layer.texts.push((line.clone(), [x, y], color));
+            }
         }
         // The service box, and Find.
         let check = &assets.check[usize::from(self.service)];
@@ -1047,8 +1197,8 @@ mod tests {
     fn tables() -> NaviTables {
         NaviTables {
             maps: [("prt_fild08", "Prontera Field"), ("prontera", "Prontera")].map(|(map, shown)| (map.to_owned(), shown.to_owned())).into_iter().collect(),
-            npcs: vec![NaviNpc { map: "prontera".into(), name: "Tool Dealer".into(), cell: [30, 40] }],
-            monsters: vec![NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 70 }],
+            npcs: vec![NaviNpc { map: "prontera".into(), name: "Tool Dealer".into(), cell: [30, 40], ..NaviNpc::default() }],
+            monsters: vec![NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 70, ..NaviMonster::default() }],
             ..NaviTables::default()
         }
     }
@@ -1219,6 +1369,52 @@ mod tests {
         assert_eq!((window.mini, window.rows.len(), window.target(&tables).map(|target| target.cell)), (false, 1, Ok(Some([150, 61]))));
     }
 
+    #[test]
+    fn words_the_preview_and_fits_the_sprite() {
+        // The name in brackets, eleven letters a line; every twelfth letter adds a line, so 23 lose one.
+        assert_eq!(name_lines("Poring"), ["[Poring]"]);
+        assert_eq!(name_lines("Tool Dealer"), ["[Tool Deale", "r]"]);
+        assert_eq!(name_lines("abcdefghijklmnopqrstuv"), ["[abcdefghij", "klmnopqrstu]"]);
+        let mut tables = tables();
+        tables.monsters[0] = NaviMonster { level: 60, element: 49, size: 1, race: 1, boss: true, ..tables.monsters[0].clone() };
+        let mut messages = vec![String::new(); 2300];
+        for (id, text) in [
+            (2271, "Undead %d"),
+            (2272, "Neutral %d"),
+            (2274, "Large"),
+            (2273, "Medium"),
+            (2275, "Small"),
+            (2276, "Undead"),
+            (2285, "Formless"),
+            (2230, "Boss"),
+        ] {
+            messages[id] = text.to_owned();
+        }
+        let lines = |text: &str, tables: &NaviTables| {
+            let place = navigation::search(tables, text).into_iter().next().unwrap();
+            details(tables, &messages, &place).into_iter().map(|(line, at, boss)| (line, at[1], boss)).collect::<Vec<_>>()
+        };
+        // A monster: its level, element and its level, race, size, and "Boss" in red.
+        let text = |line: &str, y: f32, boss: bool| (line.to_owned(), y, boss);
+        let poring = [text("[Poring]", 46.0, false), text("Lv. 60", 77.0, false), text("Undead 2", 93.0, false)];
+        let rest = [text("Undead", 109.0, false), text("Medium", 125.0, false), text("Boss", 149.0, true)];
+        assert_eq!(lines("poring", &tables), [poring.as_slice(), rest.as_slice()].concat());
+        // No element, a race and a size off the lists: neutral, formless, small.
+        tables.monsters[0] = NaviMonster { element: 20, size: 0, race: 0, boss: false, ..tables.monsters[0].clone() };
+        let plain: Vec<_> = lines("poring", &tables).into_iter().skip(2).map(|(line, ..)| line).collect();
+        assert_eq!(plain, ["Neutral 1", "Formless", "Small"]);
+        // An NPC and a cell: the cell under the name; a map: its shown name alone.
+        assert_eq!(lines("tool", &tables), [text("[Tool Deale", 46.0, false), text("r]", 60.0, false), text("( 30 40 )", 149.0, false)]);
+        let cell = navigation::place_found(&tables, "prontera", Some([150, 61])).unwrap();
+        let cell: Vec<_> = details(&tables, &messages, &cell).into_iter().map(|(line, ..)| line).collect();
+        assert_eq!(cell, ["[prontera]", "( 150 61 )"]);
+        assert_eq!(lines("prt_fild08", &tables)[..2], [text("[Prontera F", 46.0, false), text("ield]", 60.0, false)]);
+        // A sprite's first frame goes in the middle of the square; a bigger one is shrunk by its longer side.
+        assert_eq!(fit_figure([-20.0, -50.0, 20.0, 5.0]), ([58.0, 80.0], 1.0));
+        assert_eq!(fit_figure([-116.0, -90.0, 116.0, 10.0]), ([58.0, 78.0], 0.5));
+        assert_eq!(fit_figure([-30.0, -200.0, 30.0, 32.0]), ([58.0, 100.0], 0.5));
+    }
+
     fn window(text: &str) -> Window {
         let mut window = Window::new(false);
         window.type_text(text);
@@ -1276,7 +1472,7 @@ mod tests {
     #[test]
     fn the_wheel_scrolls_a_list_that_has_more() {
         let mut tables = tables();
-        tables.npcs.extend((0..20).map(|index| NaviNpc { map: "prontera".into(), name: format!("Guard {index:02}"), cell: [index, 1] }));
+        tables.npcs.extend((0..20).map(|index| NaviNpc { map: "prontera".into(), name: format!("Guard {index:02}"), cell: [index, 1], ..NaviNpc::default() }));
         let mut window = Window::new(false);
         window.type_text("guard");
         window.search(&tables);
