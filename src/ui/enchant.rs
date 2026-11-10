@@ -70,7 +70,6 @@ const fn page(x: f32, y: f32) -> [f32; 2] {
 /// "Enchantment successful!"
 pub const SUCCESS: usize = 3857;
 /// "Enchantment failed!" The packet carries the number; a failure of either kind leaves the cards alone.
-#[allow(dead_code)]
 pub const FAILED: usize = 3858;
 /// "Enchantment Information not found."
 pub const NOT_FOUND: usize = 3859;
@@ -443,6 +442,23 @@ impl Enchant {
             Sent::Reset => Outcome::Reset,
         };
         cards_after(outcome, cards, self.item_slots, result, success)
+    }
+
+    /// The effect the game plays on the player for a success or failure answer (kRO `0x682fa0`, by the request sent):
+    /// random and perfect 2312 / 2313, upgrade 2315 / 2313, reset 2318 / 2319. Other answers have none.
+    pub fn result_effect(&self, message: u32) -> Option<u32> {
+        let success = match message as usize {
+            SUCCESS => true,
+            FAILED => false,
+            _ => return None,
+        };
+        Some(match (self.sent?, success) {
+            (Sent::Fill { .. }, true) => 2312,
+            (Sent::Upgrade { .. }, true) => 2315,
+            (Sent::Reset, true) => 2318,
+            (Sent::Reset, false) => 2319,
+            (_, false) => 2313,
+        })
     }
 
     fn act(&mut self, item: Option<&InventoryItem>, count: impl FnMut(u32) -> u32, zeny: u32) -> Option<Action> {
@@ -923,6 +939,8 @@ mod tests {
         assert_eq!(window.item, Some(4));
         assert_eq!(window.cards_after(SUCCESS as u32, 4818, item.cards), [0, 0, 0, 4818]);
         assert_eq!(window.cards_after(FAILED as u32, 0, item.cards), item.cards);
+        assert_eq!((window.result_effect(SUCCESS as u32), window.result_effect(FAILED as u32)), (Some(2312), Some(2313)));
+        assert_eq!(window.result_effect(CONDITIONS as u32), None);
         window.forget_request();
         window.try_item(&other, 2).unwrap();
         assert_eq!(window.item, Some(9));
