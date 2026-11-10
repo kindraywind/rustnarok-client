@@ -1114,6 +1114,15 @@ impl Chat {
         self.corner
     }
 
+    /// The screen turned from `old` to `new` (the Extras' UI scale): a moved window keeps its gaps to the edges it was
+    /// nearer (`window::refitted`, by its top left corner), or goes back to the bottom left when it no longer fits.
+    pub fn refit(&mut self, old: [f32; 2], new: [f32; 2]) {
+        let Some([x, bottom]) = self.corner else { return };
+        let height = self.height();
+        let [x, top] = crate::window::refitted([x, bottom - height], WIDTH, old, new);
+        self.corner = Some([x, top + height]).filter(|&[_, bottom]| bottom <= new[1]);
+    }
+
     /// Tab `tab`'s width: its label's and 10 (measured in `layout`).
     fn tab_width(&self, tab: usize) -> f32 {
         self.tab_widths.get(tab).copied().unwrap_or(UNMEASURED_TAB)

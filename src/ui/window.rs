@@ -97,6 +97,16 @@ pub fn dragged_to(to: [f32; 2], size: [f32; 2]) -> [f32; 2] {
     [x, y]
 }
 
+/// Where a window `width` wide at `at` goes when the screen turns from `old` to `new` (the Extras' UI scale): on each
+/// axis it keeps its gap to the screen edge it was nearer, so what sat by the right or the bottom edge still does, and
+/// it stays where it can be seen and grabbed: all of its width, and its title bar.
+// ponytail: by its top left corner, as a window's height isn't known here; one that fills its axis counts as by the
+// left or the top.
+pub fn refitted(at: [f32; 2], width: f32, old: [f32; 2], new: [f32; 2]) -> [f32; 2] {
+    let moved = |axis: usize| if at[axis] > old[axis] / 2.0 { at[axis] + new[axis] - old[axis] } else { at[axis] };
+    [moved(0).min(new[0] - width).max(0.0), moved(1).min(new[1] - TITLE_HEIGHT).max(0.0)]
+}
+
 /// How see-through a window is `now`: easing to HELD_FADED while held (since `held`), and back once let go (at
 /// `let_go`, from how faded it was then).
 pub(crate) fn hold_fade(held: Option<Instant>, let_go: Option<(Instant, f32)>, now: Instant) -> f32 {
@@ -163,6 +173,11 @@ impl Frame {
     pub fn local(&self, cursor: [f32; 2], height: f32) -> Option<[f32; 2]> {
         let height = if self.minimized { TITLE_HEIGHT } else { height };
         (self.open && contains(self.position, [self.width, height], cursor)).then(|| [cursor[0] - self.position[0], cursor[1] - self.position[1]])
+    }
+
+    /// The screen turned from `old` to `new` (`refitted`).
+    pub fn refit(&mut self, old: [f32; 2], new: [f32; 2]) {
+        self.position = refitted(self.position, self.width, old, new);
     }
 
     /// A window whose width changes (the skill window's two views).
@@ -514,6 +529,26 @@ impl<T> Amount<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Extras' UI scale turns the screen from one size to another under the windows.
+    #[test]
+    fn windows_keep_to_their_edges_when_the_screen_changes() {
+        let (big, small) = ([1728.0, 1117.0], [1188.0, 768.0]);
+        // By the left and the top: where it was. By the right and the bottom: as far from them as it was.
+        assert_eq!(refitted([0.0, 0.0], 220.0, big, small), [0.0, 0.0]);
+        assert_eq!(refitted([10.0, 130.0], 280.0, big, small), [10.0, 130.0]);
+        assert_eq!(refitted([1728.0 - 280.0, 1117.0 - 34.0], 280.0, big, small), [1188.0 - 280.0, 768.0 - 34.0]);
+        assert_eq!(refitted([1500.0, 20.0], 128.0, big, small), [960.0, 20.0]);
+        // And back, when the screen grows again.
+        assert_eq!(refitted([1188.0 - 280.0, 768.0 - 34.0], 280.0, small, big), [1728.0 - 280.0, 1117.0 - 34.0]);
+        assert_eq!(refitted([10.0, 130.0], 280.0, small, big), [10.0, 130.0]);
+        // One from the middle of a far bigger screen stays whole across, its title bar in reach.
+        let [x, y] = refitted([1720.0, 905.0], 400.0, [3840.0, 2160.0], [1365.0, 768.0]);
+        assert_eq!([x, y], [965.0, 768.0 - TITLE_HEIGHT]);
+        assert_eq!(refitted([2000.0, 1200.0], 280.0, [3840.0, 2160.0], [1365.0, 768.0]), [0.0, 0.0], "never past the left or the top");
+        // The same screen: nothing moves.
+        assert_eq!(refitted([500.0, 300.0], 280.0, small, small), [500.0, 300.0]);
+    }
 
     #[test]
     fn tooltips_stay_on_screen_but_for_3_px() {

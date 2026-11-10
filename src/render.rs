@@ -415,12 +415,19 @@ impl Gpu {
     }
 
     fn encode(&self, view: &wgpu::TextureView, size: [u32; 2], world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) -> wgpu::CommandEncoder {
+        let [left, top, width, height] = viewport(size);
+        // At a scale that isn't whole (a window under 1024×768, the Extras' UI scale) every edge goes to the target's
+        // nearest pixel: text, rasterized at that scale, lands on its own pixels, and pictures side by side still meet.
+        // ponytail: the pictures' own pixels then come out a target pixel wider or narrower than their neighbours; a
+        // shader that blends only at their seams would even that out.
+        let scale = width / screen()[0];
+        let snap = |at: f32| if scale.fract() == 0.0 { at } else { (at * scale).round() / scale };
         let vertices: Vec<Vertex> = sprites
             .iter()
             .enumerate()
             .flat_map(|(index, &(_, [x, y], [w, h]))| {
                 let alpha = alphas.get(index).copied().unwrap_or(1.0);
-                let corner = |dx: f32, dy: f32| Vertex { pixel: [x + dx * w, y + dy * h], uv: [dx, dy], alpha };
+                let corner = |dx: f32, dy: f32| Vertex { pixel: [snap(x + dx * w), snap(y + dy * h)], uv: [dx, dy], alpha };
                 [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
             })
             .collect();
@@ -451,8 +458,7 @@ impl Gpu {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            let [x, y, width, height] = viewport(size);
-            pass.set_viewport(x, y, width, height, 0.0, 1.0);
+            pass.set_viewport(left, top, width, height, 0.0, 1.0);
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.screen_bind_group, &[]);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));

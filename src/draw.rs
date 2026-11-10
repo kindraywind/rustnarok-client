@@ -78,6 +78,19 @@ impl App {
                 gpu.forget_texts();
             }
         }
+        // The Extras' UI scale (or Reset) refits the canvas from this frame on: the pointer stays where it is in the
+        // window, and the game's windows by the edges they were at.
+        if ui_scaled() != self.graphics.ui_scale {
+            let (old, scale) = (screen(), screen_scale());
+            set_ui_scaled(self.graphics.ui_scale);
+            if let Some(gpu) = &mut self.gpu {
+                gpu.resize();
+            }
+            self.cursor = self.cursor.map(|at| at * scale / screen_scale());
+            if let Scene::Game(game) = &mut self.scene {
+                game.refit_windows(old, screen());
+            }
+        }
         if self.loading.is_some() {
             return self.draw_loading(event_loop);
         }

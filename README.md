@@ -126,6 +126,7 @@ you turn it on, so the client plays as the game does by default.
 | **Cooldown numbers** | The seconds left on a cooling skill's hotkey. |
 | **Exp to 0.01%** | The exp bar's hover shows two decimals. |
 | **Kill exp** | The base and job exp each kill gives, rising over the monster. |
+| **UI scale** | The interface grows with the window: on a big window or full screen, the HUD, windows and text are as large as they'd be at the classic 1024×768, and the world's view stays as it is. |
 | **Font** | The font all text is drawn in: Tahoma, or another found in the game's `System/Font` folder or the system's fonts. |
 
 ## 🤖 An AI plays it
