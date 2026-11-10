@@ -250,9 +250,6 @@ pub struct Assets {
     guild_ring: Texture,
     /// The map's boss, where the Convex Mirror shows it.
     boss: Texture,
-    /// A navigation's trail dots and where it heads.
-    trail: Texture,
-    goal: Texture,
     /// Quest marks by colour (1 yellow, 2 green, 3 purple), the store search mark, and the edge arrows by side (left,
     /// right, top, bottom).
     quests: [Texture; 3],
@@ -296,8 +293,6 @@ impl Assets {
             guild: gpu.texture(&disc(2, rgba(0xffffa6d2)), false),
             guild_ring: gpu.texture(&disc(3, rgba(0xaaffffff)), false),
             boss: image(format!("{UI}map\\bossmonster.bmp")),
-            trail: gpu.texture(&disc(1, rgba(0xffff4040)), false),
-            goal: gpu.texture(&disc(3, rgba(0xffff2020)), false),
             quests: [1, 2, 3].map(|color| image(format!("{UI}basic_interface\\quest_{color}.bmp"))),
             store: image(format!("{UI}basic_interface\\search_store.bmp")),
             edge_arrows: [1, 2, 3, 4].map(|side| image(format!("{UI}basic_interface\\quest_arrow{side}.bmp"))),
@@ -380,8 +375,7 @@ pub fn load_map(grf: &Grf, map: &str) -> Option<RgbaImage> {
 }
 
 /// What the minimap draws besides the overview: the player's cell and facing in degrees (`yaw`, `Actor::rot`),
-/// NPC marks and party members (a cell and a texture of their colour), guild members, the boss, and a navigation's
-/// trail (cells) and where it heads on this map.
+/// NPC marks and party members (a cell and a texture of their colour), guild members and the boss.
 pub struct Markers<'a> {
     pub cell: [i32; 2],
     pub yaw: f32,
@@ -392,8 +386,6 @@ pub struct Markers<'a> {
     pub party: &'a [([i32; 2], &'a Texture)],
     pub guild: &'a [[i32; 2]],
     pub boss: Option<[i32; 2]>,
-    pub trail: &'a [[i32; 2]],
-    pub goal: Option<[i32; 2]>,
 }
 
 /// Draws the minimap: the overview's window (already cropped, `overview`; none when the map has no picture), then the
@@ -410,16 +402,6 @@ pub fn draw<'a>(layer: &mut Layer<'a>, assets: &'a Assets, overview: Option<&'a 
     let place = |area: [f32; 4]| ([area[0], area[1]], [area[2] - area[0], area[3] - area[1]]);
     // A plain mark: drawn whole inside the square or not at all.
     let plain = |cell: [i32; 2], half: f32| point(cell).map(|at| mark_box(at, half)).filter(|area| inside(*area));
-    // A navigation's trail, a dot every few cells, and a disc where it heads.
-    // ponytail: the client's own route look on the minimap isn't known; red dots.
-    for &cell in markers.trail.iter().step_by(crate::navigation::TRAIL_STEP) {
-        if let Some(area) = plain(cell, 1.0) {
-            layer.sprites.push((&assets.trail, [area[0], area[1]], assets.trail.size));
-        }
-    }
-    if let Some(area) = markers.goal.and_then(|cell| plain(cell, 3.0)) {
-        layer.sprites.push((&assets.goal, [area[0], area[1]], assets.goal.size));
-    }
     // The player: the arrow turned by the player's facing in whole degrees, over its arrow-shaped shadow, never left out.
     if let Some(point) = point(markers.cell).map(|at| at.map(f32::round)) {
         let (shadow_at, shadow_size) = shadow_box(point);

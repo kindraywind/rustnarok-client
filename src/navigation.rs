@@ -1,7 +1,7 @@
 //! Navigation: a route to a map, a cell, an NPC or a monster across maps, by the client's navigation tables
 //! (lua::NaviTables). It starts from the server (ZC_NAVIGATION_ACTIVE), a `<NAVI>` link, the navigation window or a typed
-//! `/navi prontera 150/150`, says where it stands in the chat, and shows as an arrow over the player's head and a trail
-//! on the minimap to the next warp or the target.
+//! `/navi prontera 150/150`, says where it stands in the chat, and shows as arrows on the ground along the way to the
+//! next warp or the target, with a marker on the cell it heads for.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -34,8 +34,12 @@ const TALK_TO: usize = 2316;
 const MOVE_TO: usize = 2317;
 const TO_AIRSHIP: usize = 2319;
 const BY_PORTAL: usize = 2320;
-/// The minimap trail: a dot every this many cells.
-pub const TRAIL_STEP: usize = 3;
+/// Arrows and the marker show this many cells from the player, on both axes.
+pub const SEEN: i32 = 9;
+/// How opaque an arrow is, and the one in five that's brighter; the marker, and its tint on the way to a warp.
+pub const ARROW_ALPHA: [f32; 2] = [0x99 as f32 / 255.0, 0xEE as f32 / 255.0];
+pub const MARKER_TINT: [f32; 4] = [1.0, 1.0, 1.0, 0xEE as f32 / 255.0];
+pub const STEP_MARKER_TINT: [f32; 4] = [0x64 as f32 / 255.0, 0xAA as f32 / 255.0, 1.0, 0xEE as f32 / 255.0];
 
 /// Where to go: a map, and a cell on it or a monster there (or neither: the map itself).
 #[derive(Debug, Clone, PartialEq)]
@@ -199,12 +203,50 @@ pub fn report(tables: &NaviTables, messages: &[String], here: &str, cell: [i32; 
     (lines, Outcome::Guiding)
 }
 
-/// The arrow (navi_grid_0..7: south, south-west, west, north-west, north, north-east, east, south-east) for a screen
-/// direction `delta` (x right, y down).
-pub fn arrow(delta: [f32; 2]) -> usize {
-    // Clockwise from straight down, in eighths.
-    let angle = (-delta[0]).atan2(delta[1]).rem_euclid(std::f32::consts::TAU);
-    (angle / (std::f32::consts::TAU / 8.0)).round() as usize % 8
+/// Which way a step goes, as the arrow pictures are numbered: 0 north (+y), then anticlockwise in eighths (1
+/// north-west, 2 west, … 7 north-east).
+pub fn step_turn(from: [i32; 2], to: [i32; 2]) -> usize {
+    match [(to[0] - from[0]).signum(), (to[1] - from[1]).signum()] {
+        [0, 1] => 0,
+        [-1, 1] => 1,
+        [-1, 0] => 2,
+        [-1, -1] => 3,
+        [0, -1] => 4,
+        [1, -1] => 5,
+        [1, 0] => 6,
+        _ => 7,
+    }
+}
+
+fn seen(cell: [i32; 2], player: [i32; 2]) -> bool {
+    (cell[0] - player[0]).abs() <= SEEN && (cell[1] - player[1]).abs() <= SEEN
+}
+
+/// The arrows on the ground: one on every second cell of the trail from its start, never on its last, where the player
+/// (on `player`) sees it: the cell, which way its step goes (`step_turn`), and whether it's a bright one. The bright
+/// ones are five arrows apart and step along the trail, one arrow each 200 ms (lit for 100).
+pub fn arrows(trail: &[[i32; 2]], player: [i32; 2], ms: u128) -> Vec<([i32; 2], usize, bool)> {
+    let lit = (ms % 1000 / 100) as usize;
+    (0..trail.len().saturating_sub(1))
+        .step_by(2)
+        .filter(|&index| seen(trail[index], player))
+        .map(|index| (trail[index], step_turn(trail[index], trail[index + 1]), index % 10 == lit))
+        .collect()
+}
+
+/// The marker's cell: the trail's last, where the player sees it.
+pub fn marker(trail: &[[i32; 2]], player: [i32; 2]) -> Option<[i32; 2]> {
+    trail.last().copied().filter(|&cell| seen(cell, player))
+}
+
+/// Which of the marker's four pictures shows: the next every 150 ms.
+pub fn marker_frame(ms: u128) -> usize {
+    (ms / 150 % 4) as usize
+}
+
+/// Whether `here` is the target's map (a copy of it counts).
+pub fn on_target_map(tables: &NaviTables, here: &str, target: &Target) -> bool {
+    navi_map(tables, here) == navi_map(tables, &target.map)
 }
 
 /// What the navigation window finds for `text`: maps (by name or shown name), NPCs and monsters whose names hold it
@@ -299,8 +341,8 @@ pub struct Active {
     pub target: Target,
     pub services: u8,
     pub trail: Vec<[i32; 2]>,
-    /// The map, the player's cell and the cell headed for that the trail was made for.
-    trail_for: Option<(String, [i32; 2], [u16; 2])>,
+    /// The map and the cell headed for that the trail was made for.
+    trail_for: Option<(String, [u16; 2])>,
     /// The map `next_cell` was found for and what it found: the route only changes with the map.
     next_for: Option<(String, Option<[u16; 2]>)>,
 }
@@ -323,17 +365,21 @@ impl Active {
         }
     }
 
-    /// Makes the trail again (with `path`, the cells walked from one cell to another) when the map, the player's cell or
-    /// the cell headed for changed.
+    /// Makes the trail (with `path`, the cells walked from one cell to another) when the map or the cell headed for
+    /// changed: the player's cell, then the way on. It isn't cut as the player walks; once none of its arrows nor its
+    /// end is in sight any more it's made again, from where the player is then. One that can't be made stays empty until
+    /// the map or the cell headed for changes.
     pub fn update_trail(&mut self, map: &str, cell: [i32; 2], next: Option<[u16; 2]>, path: impl FnOnce([i32; 2], [i32; 2]) -> Option<Vec<[i32; 2]>>) {
         let Some(next) = next else {
             self.trail.clear();
             self.trail_for = None;
             return;
         };
-        let key = (map_key(map), cell, next);
-        if self.trail_for.as_ref() != Some(&key) {
-            self.trail = path(cell, [i32::from(next[0]), i32::from(next[1])]).unwrap_or_default();
+        let key = (map_key(map), next);
+        let lost = !self.trail.is_empty() && !self.trail.iter().step_by(2).chain(self.trail.last()).any(|&drawn| seen(drawn, cell));
+        if self.trail_for.as_ref() != Some(&key) || lost {
+            let walk = path(cell, [i32::from(next[0]), i32::from(next[1])]);
+            self.trail = walk.map(|walk| std::iter::once(cell).chain(walk).collect()).unwrap_or_default();
             self.trail_for = Some(key);
         }
     }
@@ -664,21 +710,60 @@ mod tests {
     }
 
     #[test]
-    fn remakes_the_trail_only_when_needed() {
+    fn keeps_the_trail_while_its_in_sight() {
         let target = Target { map: "prontera".into(), cell: Some([150, 150]), monster: None, name: String::new() };
         let mut active = Active::new(target, 111);
         let made = std::cell::Cell::new(0);
+        // A straight walk east, one cell a step.
         let path = |from: [i32; 2], to: [i32; 2]| {
             made.set(made.get() + 1);
-            Some(vec![from, to])
+            Some((from[0] + 1..=to[0]).map(|x| [x, from[1]]).collect())
         };
-        active.update_trail("prontera", [140, 140], Some([150, 150]), path);
-        active.update_trail("prontera.gat", [140, 140], Some([150, 150]), path);
-        assert_eq!((made.get(), active.trail.clone()), (1, vec![[140, 140], [150, 150]]));
-        active.update_trail("prontera", [141, 140], Some([150, 150]), path);
-        assert_eq!(made.get(), 2);
-        active.update_trail("prontera", [141, 140], None, path);
+        // Made once, from the player's own cell on; walking along it doesn't cut it or make it again.
+        active.update_trail("prontera", [140, 150], Some([150, 150]), path);
+        active.update_trail("prontera.gat", [145, 150], Some([150, 150]), path);
+        assert_eq!((made.get(), active.trail.len(), active.trail[0], active.trail[10]), (1, 11, [140, 150], [150, 150]));
+        // Nine cells off its nearest arrow it's still in sight; ten off, it's made again from there.
+        active.update_trail("prontera", [140, 141], Some([150, 150]), path);
+        assert_eq!(made.get(), 1);
+        active.update_trail("prontera", [130, 150], Some([150, 150]), path);
+        assert_eq!((made.get(), active.trail[0], active.trail.len()), (2, [130, 150], 21));
+        // Another cell to head for: made again. One that can't be made stays empty, and isn't tried again.
+        active.update_trail("prontera", [130, 150], Some([160, 150]), path);
+        assert_eq!((made.get(), active.trail.len()), (3, 31));
+        let none = |_: [i32; 2], _: [i32; 2]| {
+            made.set(made.get() + 1);
+            None
+        };
+        active.update_trail("prontera", [130, 150], Some([170, 150]), none);
+        active.update_trail("prontera", [131, 150], Some([170, 150]), none);
+        assert_eq!((made.get(), active.trail.is_empty()), (4, true));
+        active.update_trail("prontera", [131, 150], None, path);
         assert!(active.trail.is_empty());
+    }
+
+    #[test]
+    fn puts_arrows_on_every_second_cell_in_sight() {
+        // East along y = 50 from x = 100, then north-east for the last step.
+        let mut trail: Vec<[i32; 2]> = (100..=124).map(|x| [x, 50]).collect();
+        trail.push([125, 51]);
+        let cells = |player: [i32; 2], ms: u128| arrows(&trail, player, ms);
+        // From the trail's start: cells 100, 102, … up to nine cells off; all point east (6), the first is lit at 0 ms.
+        let near = cells([100, 50], 0);
+        assert_eq!(near.iter().map(|arrow| arrow.0[0]).collect::<Vec<_>>(), [100, 102, 104, 106, 108]);
+        assert!(near.iter().all(|arrow| arrow.1 == 6) && near[0].2 && near[1..].iter().all(|arrow| !arrow.2));
+        // 200 ms on the next arrow is the lit one; in between none is. Five arrows apart, two are lit at once.
+        assert_eq!(cells([100, 50], 200).iter().map(|arrow| arrow.2).collect::<Vec<_>>(), [false, true, false, false, false]);
+        assert!(cells([100, 50], 100).iter().all(|arrow| !arrow.2));
+        assert_eq!(cells([105, 50], 0).iter().filter(|arrow| arrow.2).map(|arrow| arrow.0[0]).collect::<Vec<_>>(), [100, 110]);
+        // The last arrow is on the cell before the end and turns with its step; the end itself has none, and off to the
+        // side past nine cells nothing shows.
+        assert_eq!(cells([125, 51], 0).last(), Some(&([124, 50], 7, false)));
+        assert!(cells([110, 60], 0).is_empty() && !cells([110, 59], 0).is_empty());
+        assert!(arrows(&[[5, 5]], [5, 5], 0).is_empty() && arrows(&[], [5, 5], 0).is_empty());
+        // The marker sits on the end while that's in sight, and turns every 150 ms.
+        assert_eq!((marker(&trail, [116, 50]), marker(&trail, [115, 50]), marker(&[], [0, 0])), (Some([125, 51]), None, None));
+        assert_eq!([0, 149, 150, 599, 600].map(marker_frame), [0, 0, 1, 3, 0]);
     }
 
     #[test]
@@ -719,10 +804,10 @@ mod tests {
     }
 
     #[test]
-    fn points_the_arrow() {
-        // Down the screen is south (0), clockwise in eighths: left is west (2), up north (4), right east (6).
-        assert_eq!([arrow([0.0, 10.0]), arrow([-10.0, 0.0]), arrow([0.0, -10.0]), arrow([10.0, 0.0])], [0, 2, 4, 6]);
-        assert_eq!([arrow([-7.0, 7.0]), arrow([7.0, -7.0]), arrow([7.0, 7.0])], [1, 5, 7]);
+    fn turns_the_arrow_with_the_step() {
+        // North is 0, then anticlockwise: north-west, west, south-west, south, south-east, east, north-east.
+        let turns = [[0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1], [1, 0], [1, 1]].map(|[x, y]| step_turn([10, 10], [10 + x, 10 + y]));
+        assert_eq!(turns, [0, 1, 2, 3, 4, 5, 6, 7]);
     }
 
     #[test]
