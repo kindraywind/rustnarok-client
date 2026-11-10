@@ -80,7 +80,7 @@ const SWITCHES: [(Worded, Worded); 5] = [
 /// the quick slot window. Its words are ours; the game's come from GameSettings.lub, which this data lacks.
 const CONTROL_ROWS: [(&str, &str); 1] = [("Quick Slots", "The two quick slots in a window of their own")];
 /// The Extras page's rows, laid out as the Effect page's: title and description (`extras`, `extra`).
-const EXTRA_ROWS: [(&str, &str); 7] = [
+const EXTRA_ROWS: [(&str, &str); 8] = [
     ("Monster HP", "A hurt monster's HP in numbers under its bar"),
     ("Monster level", "A monster's level after its name"),
     ("Far zoom", "The camera goes out much further"),
@@ -88,6 +88,7 @@ const EXTRA_ROWS: [(&str, &str); 7] = [
     ("Cooldown numbers", "Seconds left on a cooling skill's hotkey"),
     ("Exp to 0.01%", "The exp bar's hover with two decimals"),
     ("Kill exp", "Base and job exp over each monster killed"),
+    ("UI scale", "The interface grows with the window"),
 ];
 /// The Extras row under the switches: the font's name between a left and a right arrow, which step through the fonts
 /// found (`text::choices`).
@@ -166,9 +167,15 @@ pub struct GameSettings {
 impl GameSettings {
     /// Opens centred on Basic, the screen mode as it is.
     pub fn new(screen: [f32; 2], fullscreen: bool) -> Self {
-        let mut frame = Frame::new([((screen[0] - SIZE[0]) / 2.0).floor(), ((screen[1] - SIZE[1]) / 2.0).floor()], SIZE[0]);
-        frame.open = true;
-        Self { frame, tab: BASIC, dragging: None, fullscreen }
+        let mut window = Self { frame: Frame::new([0.0; 2], SIZE[0]), tab: BASIC, dragging: None, fullscreen };
+        window.frame.open = true;
+        window.centre(screen);
+        window
+    }
+
+    /// Back to the middle of the screen (its size changed under the window: the Extras' UI scale).
+    pub fn centre(&mut self, screen: [f32; 2]) {
+        self.frame.position = [((screen[0] - SIZE[0]) / 2.0).floor(), ((screen[1] - SIZE[1]) / 2.0).floor()];
     }
 
     /// The volume at `x` across the window (the thumb's middle there).
@@ -477,8 +484,8 @@ pub fn switch_on(graphics: &GraphicsSettings, row: usize) -> bool {
 }
 
 /// The Extras page's switches, in its rows' order: monster HP, monster level, far zoom, item options, cooldown numbers,
-/// exp to a hundredth, exp over monsters.
-fn extras(graphics: &GraphicsSettings) -> [bool; 7] {
+/// exp to a hundredth, exp over monsters, the interface's scale.
+fn extras(graphics: &GraphicsSettings) -> [bool; 8] {
     [
         graphics.monster_hp,
         graphics.monster_level,
@@ -487,6 +494,7 @@ fn extras(graphics: &GraphicsSettings) -> [bool; 7] {
         graphics.cooldown_numbers,
         graphics.exp_hundredths,
         graphics.kill_exp,
+        graphics.ui_scale,
     ]
 }
 
@@ -498,7 +506,8 @@ fn extra(graphics: &mut GraphicsSettings, row: usize) -> &mut bool {
         3 => &mut graphics.item_options,
         4 => &mut graphics.cooldown_numbers,
         5 => &mut graphics.exp_hundredths,
-        _ => &mut graphics.kill_exp,
+        6 => &mut graphics.kill_exp,
+        _ => &mut graphics.ui_scale,
     }
 }
 
@@ -641,12 +650,13 @@ mod tests {
     fn extras_start_off_and_switch_on_their_own_page() {
         let mut window = GameSettings::new([1024.0, 768.0], false);
         let (mut sound, mut graphics) = (Settings::default(), GraphicsSettings::default());
-        assert_eq!(extras(&graphics), [false; 7]);
+        assert_eq!(extras(&graphics), [false; 8]);
         window.click(Hit::Tab(EXTRAS), &mut sound, &mut graphics);
         let corner = window.frame.position;
         let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
         assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 2.0 * ROW + 8.0])), Some(Hit::Switch(2)));
-        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 7.0 * ROW + 8.0])), Some(Hit::Window), "seven rows only");
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 7.0 * ROW + 8.0])), Some(Hit::Switch(7)));
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 8.0 * ROW + 8.0])), Some(Hit::Window), "eight rows only");
         assert_eq!(window.click(Hit::Switch(2), &mut sound, &mut graphics), Some(Action::Graphics));
         assert!(graphics.far_zoom);
         window.click(Hit::Switch(0), &mut sound, &mut graphics);
@@ -655,7 +665,8 @@ mod tests {
         window.click(Hit::Switch(4), &mut sound, &mut graphics);
         window.click(Hit::Switch(5), &mut sound, &mut graphics);
         window.click(Hit::Switch(6), &mut sound, &mut graphics);
-        assert_eq!(extras(&graphics), [true; 7]);
+        window.click(Hit::Switch(7), &mut sound, &mut graphics);
+        assert_eq!(extras(&graphics), [true; 8]);
         // The Effect page's switches didn't move.
         let all = GraphicsSettings {
             monster_hp: true,
@@ -665,11 +676,12 @@ mod tests {
             cooldown_numbers: true,
             exp_hundredths: true,
             kill_exp: true,
+            ui_scale: true,
             ..GraphicsSettings::default()
         };
         assert_eq!(graphics, all);
         assert!(window.button_boxes().iter().any(|(name, _)| name == "switch:2"));
         reset(&mut sound, &mut graphics);
-        assert_eq!(extras(&graphics), [false; 7]);
+        assert_eq!(extras(&graphics), [false; 8]);
     }
 }
