@@ -8,3 +8,11 @@ prt_fild08,187,343,4	script	Navi Sign	4_M_01,{
 	mes "Prontera is <NAVI>[this way]<INFO>prontera,150,150,0,000,0</INFO></NAVI>.";
 	close;
 }
+// Links with the fields after x and y (scenarios/navi-link-fields.json): one that ends at y on a cell with no NPC, one
+// that asks for a search (options -222), one to a map with the Kafra and the airship and the window.
+prt_fild08,190,346,4	script	Navi Board	4_M_01,{
+	mes "Nobody there: <NAVI>[a]<INFO>geffen,1,1</INFO></NAVI>.";
+	mes "Look it up: <NAVI>[b]<INFO>izlude,0,0,1,-222,1</INFO></NAVI>.";
+	mes "With the window: <NAVI>[c]<INFO>payon,150,150,1,101,1</INFO></NAVI>.";
+	close;
+}
