@@ -1277,15 +1277,21 @@ impl App {
                 }
             },
             MapEvent::Enchanted { message, item } => {
-                let success = message == enchant::SUCCESS as u32;
                 if let Some(window) = &game.enchant
                     && let Some(index) = window.item
                     && let Some(carried) = game.inventory.items.iter_mut().find(|carried| carried.index == index)
                 {
                     carried.cards = window.cards_after(message, item, carried.cards);
                 }
-                let text = self.messages.get(message as usize).cloned().unwrap_or_default();
-                game.chat_line(text, if success { CHAT_ITEM } else { CHAT_ERROR });
+                // A success or failure plays its effect on the player and says nothing; other answers are a chat line.
+                match game.enchant.as_ref().and_then(|window| window.result_effect(message)) {
+                    Some(effect) => {
+                        if let Some(gpu) = gpu {
+                            game.play_effect(gpu, grf, table, effect, game.account_id);
+                        }
+                    }
+                    None => game.chat_line(self.messages.get(message as usize).cloned().unwrap_or_default(), CHAT_ERROR),
+                }
                 game.enchant = None;
             }
             MapEvent::RefineMaterials { index, blessings, materials } => {
