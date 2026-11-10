@@ -429,6 +429,10 @@ impl Game {
     /// drawn on. A goal ends the pending pickup or skill; while the player is busy (`Actor::busy`) it's stored and
     /// goes out when that ends, otherwise it's sent by `send_walk`. Whether a walk was sent.
     pub(crate) fn walk_toward(&mut self, cell: [i32; 2], now: Instant) -> bool {
+        // A click on the ground: the navigation window goes small when its "Minimize" box says so.
+        if let Some(window) = &mut self.navi_window {
+            window.ground_clicked();
+        }
         let clock = control::now();
         let from = actor::drawn_cell(self.player.position(clock));
         let taken = blocked_cells(&self.units, &self.skill_units, clock);
@@ -1473,6 +1477,10 @@ impl Game {
             active.head_for(&self.map, found.next);
             active
         });
+        // A start shows the window's route view.
+        if let (Some(window), Some(_)) = (&mut self.navi_window, &self.navigation) {
+            window.route_view = true;
+        }
         found.outcome != navigation::Outcome::NoWay
     }
 

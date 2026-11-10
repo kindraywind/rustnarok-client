@@ -2040,6 +2040,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "navi_window": game.navi_window.as_ref().map(|window| json!({
             "text": window.text, "typing": window.typing, "filter": window.filter, "rows": window.rows.len(), "row": window.row,
             "member": window.member, "service": window.service, "first": window.first, "position": window.frame.position,
+            "route": window.routing(), "mini": window.mini, "auto_mini": window.auto_mini, "size": window.size(),
         })),
         // Reputation points by reputation type.
         "reputation": game.reputation.iter().map(|(kind, points)| (kind.to_string(), json!(points))).collect::<serde_json::Map<_, _>>(),

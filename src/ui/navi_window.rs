@@ -1,5 +1,7 @@
 //! The Navigation window: a search over the navigation tables, what it found in two lists (rows of a name on the left,
-//! the places of the picked row on the right), and Find, which starts a navigation to the place picked.
+//! the places of the picked row on the right), and Find, which starts a navigation to the place picked. While one runs
+//! it shows the route view instead (the map's picture with the trail on it), and it has a small form that says where
+//! the navigation heads.
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::NaviTables;
@@ -36,6 +38,25 @@ const PICTURE: [f32; 4] = [155.0, 60.0, 100.0, 100.0];
 const SERVICE: [f32; 4] = [146.0, 247.0, 110.0, 12.0];
 const FIND: [f32; 4] = [207.0, 263.0, 58.0, 20.0];
 const BOTTOM: [f32; 2] = [0.0, 314.0];
+/// The button that turns between the search and the route view, and the "Minimize" box: ticked, a click on the
+/// ground makes the window small.
+const BACK: [f32; 4] = [4.0, 21.0, 22.0, 18.0];
+const AUTO: [f32; 4] = [9.0, 321.0, 110.0, 12.0];
+/// The route view: a grey square, the map's picture in it, and its three lines; "Destination".
+const SQUARE: [f32; 4] = [1.0, 44.0, 270.0, 270.0];
+const MAP: [f32; 4] = [3.0, 46.0, 266.0, 266.0];
+const ROUTE_LINES: [[f32; 2]; 3] = [[10.0, 48.0], [10.0, 68.0], [10.0, 296.0]];
+const DESTINATION: usize = 3585;
+/// The small form: its size, its black box, its two lines, and its maximize and close buttons from the right edge.
+pub const MINI: [f32; 2] = [134.0, 61.0];
+const MINI_BOX: [f32; 4] = [1.0, 17.0, 132.0, 43.0];
+const MINI_LINES: [[f32; 2]; 2] = [[5.0, 21.0], [5.0, 40.0]];
+const MINI_BUTTON: [f32; 2] = [14.0, 14.0];
+const MINI_MAXIMIZE: f32 = 32.0;
+const MINI_CLOSE: f32 = 15.0;
+/// How see-through the small form is (alpha 170).
+const MINI_FADE: f32 = 1.0 - 170.0 / 255.0;
+const WHITE: [u8; 3] = [255, 255, 255];
 const GREY: [u8; 3] = [0xCC, 0xCC, 0xCC];
 const INK: [u8; 3] = [0, 0, 0];
 const PICKED: [u8; 3] = [0x30, 0x50, 0xC0];
@@ -53,6 +74,14 @@ pub struct Assets {
     grey: Texture,
     black: Texture,
     picked: Texture,
+    /// The view button (normal, under the pointer); the small form's maximize and close.
+    back: [Texture; 2],
+    maximize: [Texture; 2],
+    close: [Texture; 2],
+    /// On the route view's map: a trail dot, where the trail ends, where the player is.
+    dot: Texture,
+    destination: Texture,
+    location: Texture,
 }
 
 impl Assets {
@@ -69,6 +98,12 @@ impl Assets {
             grey: gpu.solid([GREY[0], GREY[1], GREY[2], 0xFF]),
             black: gpu.solid([0, 0, 0, 0xFF]),
             picked: gpu.solid([0xD8, 0xE0, 0xF8, 0xFF]),
+            back: ["bt_back", "bt_back_on"].map(image),
+            maximize: ["btn_maximize_normal", "btn_maximize_over"].map(image),
+            close: ["btn_close_normal", "btn_close_over"].map(image),
+            dot: gpu.solid([0x0A, 0xF0, 0xF0, 0xFF]),
+            destination: image("ico_destination"),
+            location: image("ico_location"),
         }
     }
 }
@@ -78,6 +113,58 @@ impl Assets {
 pub fn picture(gpu: &Gpu, grf: &Grf, map: &str) -> Option<Texture> {
     let own = gpu.try_load_texture(grf, &format!("{UI}map\\{map}.bmp"), true);
     own.or_else(|_| gpu.try_load_texture(grf, &format!("{UI}navigation_interface\\Interior.bmp"), true)).ok()
+}
+
+/// What the window shows of a navigation under way: the map the player is on (as the tables name it) and its size in
+/// cells, the player's cell, the trail on this map, the cell headed for on it, and the target.
+pub struct Guide<'a> {
+    pub map: &'a str,
+    pub size: [usize; 2],
+    pub player: [i32; 2],
+    pub trail: &'a [[i32; 2]],
+    pub next: Option<[u16; 2]>,
+    pub target: &'a Target,
+}
+
+/// A cell's point on a square picture of a map `side` wide, its shorter side centred: whole pixels, y down from `top`.
+fn on_picture(cell: [i32; 2], [wide, high]: [usize; 2], side: f32, top: f32) -> [f32; 2] {
+    let scale = side / wide.max(high).max(1) as f32;
+    let centred = |short: usize| ((wide.max(high) - short) as f32 * 0.5 * scale).trunc();
+    [(cell[0] as f32 * scale + centred(wide)).trunc(), (top - (cell[1] as f32 * scale + centred(high))).trunc()]
+}
+
+/// The trail's dots on the route view's map, window-local: each cell's point on a 127-px picture, a point once,
+/// drawn 266/128 times as far apart.
+pub fn dots(trail: &[[i32; 2]], size: [usize; 2]) -> Vec<[f32; 2]> {
+    let mut points: Vec<[f32; 2]> = trail.iter().map(|&cell| on_picture(cell, size, 127.0, 126.0)).collect();
+    points.dedup();
+    points.into_iter().map(|[x, y]| [x * 2.078_125 + MAP[0], y * 2.078_125 + MAP[1]]).collect()
+}
+
+/// Where the player's mark goes on the route view's map (its corner, window-local): its bottom middle on the cell.
+pub fn location(cell: [i32; 2], size: [usize; 2]) -> [f32; 2] {
+    let [x, y] = on_picture(cell, size, MAP[2], MAP[2]);
+    [MAP[0] + x - 9.0, MAP[1] + y - 17.0]
+}
+
+/// The route view's three lines: the shown name of the map being walked, where it heads on it ("map x y"), and the
+/// target ("[Destination] -> map x y"; a map or a monster: "[Destination] map").
+pub fn route_lines(tables: &NaviTables, messages: &[String], guide: &Guide) -> [String; 3] {
+    let heads = guide.next.map_or(String::new(), |[x, y]| format!("{} {x} {y}", guide.map));
+    let destination = messages.get(DESTINATION).map_or("", String::as_str);
+    let target = match guide.target.cell {
+        Some([x, y]) => format!("[{destination}] -> {} {x} {y}", guide.target.map),
+        None => format!("[{destination}] {}", guide.target.map),
+    };
+    [tables.maps.get(guide.map).cloned().unwrap_or_default(), heads, target]
+}
+
+/// The small form's two lines, when the navigation heads somewhere on this map: "map x y..." and the target
+/// (">.map x y", or ">.map").
+pub fn mini_lines(guide: &Guide) -> Option<[String; 2]> {
+    let [x, y] = guide.next?;
+    let target = guide.target.cell.map_or(format!(">.{}", guide.target.map), |[x, y]| format!(">.{} {x} {y}", guide.target.map));
+    Some([format!("{} {x} {y}...", guide.map), target])
 }
 
 /// A control or a row on screen, for the test driver: its name and box, and a row's words and place.
@@ -96,6 +183,11 @@ pub enum Hit {
     Member(usize),
     Service,
     Find,
+    /// The view button; the "Minimize" box; the small form's maximize and close.
+    Back,
+    Auto,
+    Maximize,
+    Close,
     Window,
 }
 
@@ -116,6 +208,15 @@ pub struct Window {
     pub service: bool,
     /// The picked place's map and its picture, loaded when the pick changes.
     pub picture: Option<(String, Option<Texture>)>,
+    /// Whether a navigation runs (kept by the drawing, a frame behind at most), and whether it's shown as the route
+    /// view (a start turns that on) or left for the search.
+    pub guiding: bool,
+    pub route_view: bool,
+    /// The small form, and the "Minimize" box.
+    pub mini: bool,
+    pub auto_mini: bool,
+    /// The map the player is on and its picture, for the route view.
+    pub here: Option<(String, Option<Texture>)>,
 }
 
 impl Window {
@@ -137,16 +238,59 @@ impl Window {
             first: [0, 0],
             service,
             picture: None,
+            guiding: false,
+            route_view: true,
+            mini: false,
+            auto_mini: false,
+            here: None,
         }
     }
 
-    /// Searches for what's typed (nothing typed: nothing happens) and shows the rows from the top, none picked.
+    pub fn size(&self) -> [f32; 2] {
+        if self.mini { MINI } else { SIZE }
+    }
+
+    /// How see-through it's drawn: the small form more than a little, a held one by half.
+    pub fn fade(&self) -> f32 {
+        self.frame.faded().max(if self.mini { MINI_FADE } else { 0.0 })
+    }
+
+    /// Small or full, where it stands.
+    pub fn set_mini(&mut self, mini: bool) {
+        self.mini = mini;
+        self.frame.set_width(self.size()[0]);
+        (self.typing, self.filter_open) = (false, false);
+    }
+
+    /// A click on the ground: with the "Minimize" box ticked the window goes small.
+    pub fn ground_clicked(&mut self) {
+        if self.auto_mini && !self.mini {
+            self.set_mini(true);
+        }
+    }
+
+    /// Whether the route view shows: a navigation runs and the view button hasn't turned to the search.
+    pub fn routing(&self) -> bool {
+        self.guiding && self.route_view
+    }
+
+    /// Keeps what the drawing needs of the game: whether a navigation runs, and the picture of the map the player is on.
+    pub fn follow(&mut self, gpu: &Gpu, grf: &Grf, map: &str, guiding: bool) {
+        self.guiding = guiding;
+        if self.here.as_ref().map(|(shown, _)| shown.as_str()) != Some(map) {
+            self.here = Some((map.to_owned(), picture(gpu, grf, map)));
+        }
+    }
+
+    /// Searches for what's typed (nothing typed: nothing happens) and shows the rows from the top, none picked, in the
+    /// search view.
     pub fn search(&mut self, tables: &NaviTables) {
-        if self.text.trim().is_empty() {
+        if self.text.trim().is_empty() || self.mini {
             return;
         }
         self.found = navigation::search(tables, &self.text);
         self.regroup();
+        self.route_view = false;
     }
 
     /// The rows again, by the type box as it stands.
@@ -187,8 +331,9 @@ impl Window {
 
     /// The wheel over a list scrolls it, a row a notch.
     pub fn scroll_at(&mut self, cursor: [f32; 2], rows: i32) -> bool {
-        let Some(local) = self.frame.local(cursor, SIZE[1]) else { return false };
-        for (list, area) in [GROUPS, MEMBERS].into_iter().enumerate() {
+        let Some(local) = self.frame.local(cursor, self.size()[1]) else { return false };
+        let lists = !self.mini && !self.routing();
+        for (list, area) in [GROUPS, MEMBERS].into_iter().enumerate().filter(|_| lists) {
             if contains([area[0], area[1]], [area[2], area[3]], local) {
                 let last = self.lengths()[list].saturating_sub(Self::shown(area));
                 self.first[list] = (self.first[list] as i32 + rows).clamp(0, last as i32) as usize;
@@ -198,14 +343,22 @@ impl Window {
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
-        let local = self.frame.local(cursor, SIZE[1])?;
+        let local = self.frame.local(cursor, self.size()[1])?;
+        let on = |area: [f32; 4]| contains([area[0], area[1]], [area[2], area[3]], local);
+        // The small form: its two buttons, and the rest to hold it by.
+        if self.mini {
+            let button = |from_right: f32| on([MINI[0] - from_right, 2.0, MINI_BUTTON[0], MINI_BUTTON[1]]);
+            return Some(if button(MINI_CLOSE) {
+                Hit::Close
+            } else if button(MINI_MAXIMIZE) {
+                Hit::Maximize
+            } else {
+                Hit::Window
+            });
+        }
         if let Some(hit) = self.frame.title_hit(local) {
             return Some(Hit::Title(hit));
         }
-        if self.frame.minimized {
-            return Some(Hit::Window);
-        }
-        let on = |area: [f32; 4]| contains([area[0], area[1]], [area[2], area[3]], local);
         let row_of = |list: usize, area: [f32; 4]| {
             let row = self.first[list] + ((local[1] - area[1]) / ROW) as usize;
             (on([area[0], area[1], area[2] - BAR, area[3]]) && row < self.lengths()[list]).then_some(row)
@@ -214,12 +367,19 @@ impl Window {
         let lines = [FILTER[0], FILTER[1] + FILTER[3], FILTER[2], ROW * FILTERS.len() as f32];
         Some(if self.filter_open && on(lines) {
             Hit::FilterLine(((local[1] - lines[1]) / ROW) as usize)
+        } else if on(BACK) {
+            Hit::Back
         } else if on(FILTER) {
             Hit::Filter
         } else if on(FIELD) {
             Hit::Field
         } else if on(SEARCH) {
             Hit::Search
+        } else if on(AUTO) {
+            Hit::Auto
+        } else if self.routing() {
+            // The route view has no lists, no service box and no Find.
+            Hit::Window
         } else if let Some(row) = row_of(0, GROUPS) {
             Hit::Group(row)
         } else if let Some(row) = row_of(1, MEMBERS) {
@@ -254,6 +414,10 @@ impl Window {
                 return true;
             }
             Hit::Service => self.service = !self.service,
+            Hit::Back => self.route_view = !self.route_view,
+            Hit::Auto => self.auto_mini = !self.auto_mini,
+            Hit::Maximize => self.set_mini(false),
+            Hit::Title(TitleHit::Minimize) => self.set_mini(true),
             _ => {}
         }
         false
@@ -262,7 +426,7 @@ impl Window {
     /// The controls and the rows on screen, by name (for the test driver): a row comes with its words and the place it
     /// stands for (a left row: its first).
     pub fn button_boxes(&self, tables: &NaviTables, messages: &[String]) -> Vec<Button<'_>> {
-        if !self.frame.open || self.frame.minimized {
+        if !self.frame.open {
             return Vec::new();
         }
         let area = |[x, y, w, h]: [f32; 4]| {
@@ -270,13 +434,23 @@ impl Window {
             [x, y, w, h]
         };
         let plain = |name: &str, at: [f32; 4]| (name.to_owned(), area(at), None, None);
+        if self.mini {
+            let button = |from_right: f32| [MINI[0] - from_right, 2.0, MINI_BUTTON[0], MINI_BUTTON[1]];
+            return vec![plain("navi_maximize", button(MINI_MAXIMIZE)), plain("navi_close", button(MINI_CLOSE))];
+        }
+        let [minimize_x, minimize_y] = self.frame.minimize_button();
         let mut boxes = vec![
+            plain("navi_back", BACK),
             plain("navi_filter", FILTER),
             plain("navi_field", FIELD),
             plain("navi_search", SEARCH),
-            plain("navi_service", SERVICE),
-            plain("navi_find", FIND),
+            plain("navi_auto", AUTO),
+            plain("navi_minimize", [minimize_x, minimize_y, crate::window::BUTTON_SIZE[0], crate::window::BUTTON_SIZE[1]]),
         ];
+        if self.routing() {
+            return boxes;
+        }
+        boxes.extend([plain("navi_service", SERVICE), plain("navi_find", FIND)]);
         if self.filter_open {
             boxes.extend(
                 (0..FILTERS.len()).map(|line| plain(&format!("navi_filter_{line}"), [FILTER[0], FILTER[1] + FILTER[3] + line as f32 * ROW, FILTER[2], ROW])),
@@ -313,28 +487,51 @@ impl Window {
         messages: &[String],
         pointer: [f32; 2],
         caret: bool,
+        guide: Option<&Guide>,
     ) {
         if !self.frame.open {
             return;
         }
         let at = |local: [f32; 2]| self.frame.at(local);
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
-        self.frame.draw_title(layer, chrome, messages.get(TITLE).map_or("Navigation", String::as_str), pointer);
-        if self.frame.minimized {
+        let title = messages.get(TITLE).map_or("Navigation", String::as_str);
+        let over = |area: [f32; 4]| self.frame.local(pointer, self.size()[1]).is_some_and(|local| contains([area[0], area[1]], [area[2], area[3]], local));
+        let fill = |layer: &mut Layer<'a>, texture: &'a Texture, [x, y, w, h]: [f32; 4]| layer.sprites.push((texture, at([x, y]), [w, h]));
+        // The small form: a white box with its title and two buttons, and in its black box where the navigation heads
+        // and its target.
+        if self.mini {
+            fill(layer, &chrome.border, [0.0, 0.0, MINI[0], MINI[1]]);
+            fill(layer, &chrome.white, [1.0, 1.0, MINI[0] - 2.0, MINI[1] - 2.0]);
+            fill(layer, &assets.black, MINI_BOX);
+            layer.texts.push((title.to_owned(), at([3.0, 3.0]), INK));
+            for (images, from_right) in [(&assets.maximize, MINI_MAXIMIZE), (&assets.close, MINI_CLOSE)] {
+                let corner = [MINI[0] - from_right, 2.0];
+                let image = &images[usize::from(over([corner[0], corner[1], MINI_BUTTON[0], MINI_BUTTON[1]]))];
+                layer.sprites.push((image, at(corner), image.size));
+            }
+            if let Some(lines) = guide.and_then(mini_lines) {
+                layer.sprites.push((&assets.destination, at([2.0, 18.0]), assets.destination.size));
+                for (line, place) in lines.into_iter().zip(MINI_LINES) {
+                    layer.texts.push((crate::window::fit(font, &line, MINI_BOX[2] - 6.0), at(place), WHITE));
+                }
+            }
             return;
         }
-        let over = |area: [f32; 4]| self.frame.local(pointer, SIZE[1]).is_some_and(|local| contains([area[0], area[1]], [area[2], area[3]], local));
-        let fill = |layer: &mut Layer<'a>, texture: &'a Texture, [x, y, w, h]: [f32; 4]| layer.sprites.push((texture, at([x, y]), [w, h]));
+        self.frame.draw_title(layer, chrome, title, pointer);
         // The body, its border, the line under the search row, and the lines between the lists and the picked place.
         fill(layer, &chrome.white, [0.0, TITLE_HEIGHT, SIZE[0], SIZE[1] - TITLE_HEIGHT]);
         for x in [0.0, SIZE[0] - 1.0] {
             fill(layer, &chrome.border, [x, TITLE_HEIGHT, 1.0, SIZE[1] - TITLE_HEIGHT]);
         }
         fill(layer, &chrome.border, [0.0, SIZE[1] - 1.0, SIZE[0], 1.0]);
-        for line in [[0.0, 43.0, SIZE[0], 1.0], [138.0, 44.0, 1.0, 270.0], [139.0, 242.0, 132.0, 1.0]] {
-            fill(layer, &assets.grey, line);
-        }
+        fill(layer, &assets.grey, [0.0, 43.0, SIZE[0], 1.0]);
         layer.sprites.push((&assets.bottom, at(BOTTOM), assets.bottom.size));
+        // The view button, and the "Minimize" box on the bottom bar.
+        let back = &assets.back[usize::from(over(BACK))];
+        layer.sprites.push((back, at([BACK[0], BACK[1]]), back.size));
+        let auto = &assets.check[usize::from(self.auto_mini)];
+        layer.sprites.push((auto, at([AUTO[0], AUTO[1] + 1.0]), auto.size));
+        layer.texts.push(("Minimize".to_owned(), at([AUTO[0] + auto.size[0] + 3.0, AUTO[1]]), INK));
         // The type box with its arrow, the search box with what's typed, the Search button.
         layer.sprites.push((&assets.filter[0], at([FILTER[0], FILTER[1]]), assets.filter[0].size));
         layer.sprites.push((&assets.filter[1], at([FILTER[0] + FILTER[2] - assets.filter[1].size[0], FILTER[1]]), assets.filter[1].size));
@@ -344,6 +541,30 @@ impl Window {
         layer.texts.push((crate::window::fit(font, &typed, FIELD[2] - 6.0), at([FIELD[0] + 3.0, FIELD[1] + 3.0]), INK));
         let search = &assets.search[usize::from(over(SEARCH))];
         layer.sprites.push((search, at([SEARCH[0], SEARCH[1]]), search.size));
+        // The route view: the map the player is on, the trail's dots on it with a mark where it ends, the player's
+        // mark, and the three lines.
+        if let Some(guide) = guide.filter(|_| self.routing()) {
+            fill(layer, &assets.grey, SQUARE);
+            fill(layer, &assets.black, MAP);
+            if let Some((_, Some(picture))) = &self.here {
+                layer.sprites.push((picture, at([MAP[0], MAP[1]]), [MAP[2], MAP[3]]));
+            }
+            for (line, place) in route_lines(tables, messages, guide).into_iter().zip(ROUTE_LINES) {
+                layer.texts.push((crate::window::fit(font, &line, MAP[2] - 14.0), at(place), WHITE));
+            }
+            let points = dots(guide.trail, guide.size);
+            for &point in &points {
+                layer.sprites.push((&assets.dot, at(point), [2.0, 2.0]));
+            }
+            if let Some(&[x, y]) = points.last() {
+                layer.sprites.push((&assets.destination, at([x - 8.0, y - 21.0]), assets.destination.size));
+            }
+            layer.sprites.push((&assets.location, at(location(guide.player, guide.size)), assets.location.size));
+            return;
+        }
+        for line in [[138.0, 44.0, 1.0, 270.0], [139.0, 242.0, 132.0, 1.0]] {
+            fill(layer, &assets.grey, line);
+        }
         layer.texts.push((rustnarok_client::messages::fill(message(FOUND), &[&self.rows.len()]), at(FOUND_AT), INK));
         // The lists: a row's icon and words, the picked one on its bar; a bar at the right when there's more.
         let lengths = self.lengths();
@@ -418,6 +639,76 @@ mod tests {
             monsters: vec![NaviMonster { map: "prt_fild08".into(), id: 1002, name: "Poring".into(), spawns: 70 }],
             ..NaviTables::default()
         }
+    }
+
+    #[test]
+    fn turns_between_the_search_and_the_route_and_goes_small() {
+        let mut window = Window::new(false);
+        let corner = window.frame.position;
+        let at = |area: [f32; 4]| [corner[0] + area[0] + 3.0, corner[1] + area[1] + 3.0];
+        // No navigation: the search view whatever the view button says. One runs: the route view, with no lists.
+        window.rows = vec![vec![0]];
+        window.found = navigation::search(&tables(), "prontera");
+        assert_eq!((window.routing(), window.hit(at(GROUPS))), (false, Some(Hit::Group(0))));
+        window.guiding = true;
+        assert_eq!((window.routing(), window.hit(at(GROUPS)), window.hit(at(FIND))), (true, Some(Hit::Window), Some(Hit::Window)));
+        // The view button turns to the search and back; a search turns to the search view by itself.
+        assert_eq!(window.hit(at(BACK)), Some(Hit::Back));
+        window.click(Hit::Back);
+        assert_eq!((window.routing(), window.hit(at(GROUPS))), (false, Some(Hit::Group(0))));
+        window.click(Hit::Back);
+        assert!(window.routing());
+        window.type_text("pront");
+        window.search(&tables());
+        assert!(!window.routing());
+        // The title's minimize button: the small form, where the window stands, with two buttons; maximize brings the
+        // full one back.
+        window.click(Hit::Title(TitleHit::Minimize));
+        assert_eq!((window.mini, window.size(), window.frame.position, window.fade()), (true, MINI, corner, MINI_FADE));
+        assert_eq!(window.hit([corner[0] + MINI[0] - MINI_CLOSE + 2.0, corner[1] + 4.0]), Some(Hit::Close));
+        assert_eq!(window.hit([corner[0] + MINI[0] - MINI_MAXIMIZE + 2.0, corner[1] + 4.0]), Some(Hit::Maximize));
+        assert_eq!((window.hit([corner[0] + 5.0, corner[1] + 30.0]), window.hit([corner[0] + 200.0, corner[1] + 30.0])), (Some(Hit::Window), None));
+        window.click(Hit::Maximize);
+        assert_eq!((window.mini, window.size(), window.fade()), (false, SIZE, 0.0));
+        // The "Minimize" box: ticked, a click on the ground makes it small; not ticked, nothing.
+        window.ground_clicked();
+        assert!(!window.mini);
+        assert_eq!(window.hit(at(AUTO)), Some(Hit::Auto));
+        window.click(Hit::Auto);
+        window.ground_clicked();
+        assert!(window.mini);
+    }
+
+    #[test]
+    fn says_where_the_navigation_heads_and_marks_the_map() {
+        let tables = tables();
+        let messages = {
+            let mut messages = vec![String::new(); DESTINATION + 1];
+            messages[DESTINATION] = "Destination".into();
+            messages
+        };
+        let cell = Target { map: "prontera".into(), cell: Some([150, 150]), monster: None, name: String::new() };
+        let trail = [[10, 10], [11, 10], [12, 10], [13, 10]];
+        let guide = |map: &'static str, next, target: &'static Target| Guide { map, size: [400, 200], player: [10, 10], trail: &trail, next, target };
+        let cell: &'static Target = Box::leak(Box::new(cell));
+        let field: &'static Target = Box::leak(Box::new(Target { map: "prt_fild08".into(), cell: None, monster: Some(1002), name: String::new() }));
+        // On the way: this map's shown name, the warp walked to, the target and its cell.
+        let on_the_way = guide("prt_fild08", Some([170, 375]), cell);
+        assert_eq!(route_lines(&tables, &messages, &on_the_way), ["Prontera Field", "prt_fild08 170 375", "[Destination] -> prontera 150 150"]);
+        assert_eq!(mini_lines(&on_the_way), Some(["prt_fild08 170 375...".into(), ">.prontera 150 150".into()]));
+        // A monster's map as the target: its name alone. Nowhere to head on this map: the small form says nothing.
+        assert_eq!(route_lines(&tables, &messages, &guide("prontera", Some([156, 22]), field))[2], "[Destination] prt_fild08");
+        assert_eq!(mini_lines(&guide("prontera", Some([156, 22]), field)).unwrap()[1], ">.prt_fild08");
+        assert_eq!(mini_lines(&guide("prontera", None, cell)), None);
+        // A 400 x 200 map on the square picture: the short side centred; a dot a cell, twice as far apart on the
+        // window, the same point once.
+        assert_eq!(on_picture([0, 0], [400, 200], 127.0, 126.0), [0.0, 95.0]);
+        assert_eq!(on_picture([400, 200], [400, 200], 127.0, 126.0), [127.0, 31.0]);
+        assert_eq!(on_picture([100, 100], [200, 400], 266.0, 266.0), [132.0, 199.0]);
+        let points = dots(&trail, [400, 200]);
+        assert_eq!(points, [[3.0 * 2.078_125 + MAP[0], 91.0 * 2.078_125 + MAP[1]], [4.0 * 2.078_125 + MAP[0], 91.0 * 2.078_125 + MAP[1]]]);
+        // The player's mark: its bottom middle on the cell.
+        assert_eq!(location([200, 100], [400, 200]), [MAP[0] + 133.0 - 9.0, MAP[1] + 133.0 - 17.0]);
     }
 
     fn window(text: &str) -> Window {

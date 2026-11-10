@@ -2838,9 +2838,24 @@ impl App {
             let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
             window.draw(shop_layer.window_of(Top::PartyBooking), &assets.chrome, font, pointer.0, caret);
         }
+        // The navigation window, in a layer of its own: its small form is see-through. It shows the route of the
+        // navigation under way on the picture of the map the player is on.
+        let navi_here = navigation::navi_map(&self.navi_tables, &game.map);
+        if let Some(window) = &mut game.navi_window {
+            window.follow(gpu, &self.grf, &navi_here, game.navigation.is_some());
+        }
+        let mut navi_layer = Layer { faded: game.navi_window.as_ref().map_or(0.0, navi_window::Window::fade), ..Layer::of(Top::Esc(W::Navigation)) };
         if let Some(window) = &game.navi_window {
             let caret = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-            window.draw(shop_layer.esc(W::Navigation), &assets.chrome, &assets.navi_window, font, &self.navi_tables, messages, pointer.0, caret);
+            let guide = game.navigation.as_ref().map(|active| navi_window::Guide {
+                map: &navi_here,
+                size: [game.world.gat.width, game.world.gat.height],
+                player: game.player.cell,
+                trail: &active.trail,
+                next: active.next_cell(&game.map),
+                target: &active.target,
+            });
+            window.draw(&mut navi_layer, &assets.chrome, &assets.navi_window, font, &self.navi_tables, messages, pointer.0, caret, guide.as_ref());
         }
         if let Some(window) = &game.reputation_window {
             window.draw(
@@ -2923,7 +2938,7 @@ impl App {
             special_popup::draw(&mut popup_layer, &assets.chrome, &assets.pickup, id);
         }
         // Bottom to top. `Game::top_at` lists the windows in this order, top first: presses and clicks go by it.
-        layers.extend([catalog_layer, shop_layer, popup_layer, minimap_layer, overlay, menu_layer, tooltip, minimap_tooltip, world_layer]);
+        layers.extend([catalog_layer, shop_layer, navi_layer, popup_layer, minimap_layer, overlay, menu_layer, tooltip, minimap_tooltip, world_layer]);
         let mut composed = compose(gpu, font, layers);
         order_windows(&mut composed, &mut game.front);
         let (mut sprites, alphas) = flatten(&composed);
