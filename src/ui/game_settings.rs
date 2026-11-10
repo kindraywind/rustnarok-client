@@ -1,12 +1,12 @@
 //! Game Settings (2374): one 400×350 window, centred and made fresh each time it opens, with the game's five tabs and
 //! this client's Extras. Basic has the music and effect sound rows, Effect the effect switches this client has,
 //! Control the Quick Slots switch, Graphics the screen mode; Other stays empty here. Extras has switches the game
-//! doesn't have, all off at first, and the font the text is drawn in.
+//! doesn't have, all off at first, the UI scale's size and the font the text is drawn in.
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::text::{self, Font};
 
-use crate::options::GraphicsSettings;
+use crate::options::{self, GraphicsSettings};
 use crate::render::{Gpu, Texture};
 use crate::sound::{MAX_VOLUME, Settings};
 use crate::window::{self, Chrome, Frame, TITLE_HEIGHT};
@@ -90,9 +90,12 @@ const EXTRA_ROWS: [(&str, &str); 8] = [
     ("Kill exp", "Base and job exp over each monster killed"),
     ("UI scale", "The interface grows with the window"),
 ];
-/// The Extras row under the switches: the font's name between a left and a right arrow, which step through the fonts
-/// found (`text::choices`).
-const FONT_ROW: usize = EXTRA_ROWS.len();
+/// The Extras rows under the switches, each a value between a left and a right arrow that step through its choices:
+/// the UI scale's size (`options::UI_SIZES`, the right arrow a bigger interface), then the font's name
+/// (`text::choices`).
+const SIZE_ROW: usize = EXTRA_ROWS.len();
+const SIZE_TITLE: &str = "UI size";
+const FONT_ROW: usize = SIZE_ROW + 1;
 const FONT_TITLE: &str = "Font";
 const FONT_LESS: f32 = ROW_TEXT;
 const FONT_MORE: f32 = ROW_TEXT + ROW_TEXT_WIDTH - ARROW;
@@ -137,6 +140,8 @@ pub enum Hit {
     Screen(bool),
     /// The font row's left (-1) or right (1) arrow.
     Font(isize),
+    /// The UI size row's left (-1, smaller) or right (1, bigger) arrow.
+    Size(isize),
     Title,
     Window,
 }
@@ -167,15 +172,16 @@ pub struct GameSettings {
 impl GameSettings {
     /// Opens centred on Basic, the screen mode as it is.
     pub fn new(screen: [f32; 2], fullscreen: bool) -> Self {
-        let mut window = Self { frame: Frame::new([0.0; 2], SIZE[0]), tab: BASIC, dragging: None, fullscreen };
-        window.frame.open = true;
-        window.centre(screen);
-        window
+        let mut frame = Frame::new([((screen[0] - SIZE[0]) / 2.0).floor(), ((screen[1] - SIZE[1]) / 2.0).floor()], SIZE[0]);
+        frame.open = true;
+        Self { frame, tab: BASIC, dragging: None, fullscreen }
     }
 
-    /// Back to the middle of the screen (its size changed under the window: the Extras' UI scale).
-    pub fn centre(&mut self, screen: [f32; 2]) {
-        self.frame.position = [((screen[0] - SIZE[0]) / 2.0).floor(), ((screen[1] - SIZE[1]) / 2.0).floor()];
+    /// The screen changed size under the window (the Extras' UI scale) and the pointer went from `pointer[0]` to
+    /// `pointer[1]`: the window goes with it, so what was under the pointer still is, as far as it stays on `screen`.
+    pub fn keep_under(&mut self, pointer: [[f32; 2]; 2], screen: [f32; 2]) {
+        let moved = |axis: usize| (self.frame.position[axis] + pointer[1][axis] - pointer[0][axis]).round().min(screen[axis] - SIZE[axis]).max(0.0);
+        self.frame.position = [moved(0), moved(1)];
     }
 
     /// The volume at `x` across the window (the thumb's middle there).
@@ -214,10 +220,17 @@ impl GameSettings {
                     _ => None,
                 })
                 .unwrap_or(Hit::Window),
-            EXTRAS if ((y - 1.0) / ROW).floor() == FONT_ROW as f32 => [(FONT_LESS, -1), (FONT_MORE, 1)]
-                .into_iter()
-                .find(|&(left, _)| (left..left + ARROW).contains(&x) && (5.0..5.0 + ARROW).contains(&(y - 1.0 - FONT_ROW as f32 * ROW)))
-                .map_or(Hit::Window, |(_, by)| Hit::Font(by)),
+            EXTRAS if ((y - 1.0) / ROW).floor() >= SIZE_ROW as f32 => {
+                let row = ((y - 1.0) / ROW).floor();
+                let arrow = [(FONT_LESS, -1), (FONT_MORE, 1)]
+                    .into_iter()
+                    .find(|&(left, _)| (left..left + ARROW).contains(&x) && (5.0..5.0 + ARROW).contains(&(y - 1.0 - row * ROW)));
+                match (arrow, row as usize) {
+                    (Some((_, by)), SIZE_ROW) => Hit::Size(by),
+                    (Some((_, by)), FONT_ROW) => Hit::Font(by),
+                    _ => Hit::Window,
+                }
+            }
             EFFECT | CONTROL | EXTRAS => {
                 let row = ((y - 1.0) / ROW).floor();
                 if (0.0..row_count(self.tab) as f32).contains(&row) && x < ROW_TITLE { Hit::Switch(row as usize) } else { Hit::Window }
@@ -291,6 +304,12 @@ impl GameSettings {
                 graphics.font = text::stepped(text::choices(), &graphics.font, by).to_owned();
                 Some(Action::Graphics)
             }
+            // Picking a size turns the UI scale on: off, no size shows.
+            Hit::Size(by) => {
+                graphics.ui_size = options::ui_size_stepped(graphics.ui_size, by);
+                graphics.ui_scale = true;
+                Some(Action::Graphics)
+            }
             _ => None,
         }
     }
@@ -333,8 +352,10 @@ impl GameSettings {
                         .map(|row| (format!("switch:{row}"), place([SWITCH[0], PAGE_TOP + 1.0 + row as f32 * ROW + SWITCH[1]], [20.0, 15.0]))),
                 );
                 if self.tab == EXTRAS {
-                    let top = PAGE_TOP + 1.0 + FONT_ROW as f32 * ROW + 5.0;
-                    boxes.extend([("font_less", FONT_LESS), ("font_more", FONT_MORE)].map(|(name, x)| (name.to_owned(), place([x, top], [ARROW, ARROW]))));
+                    for (row, names) in [(SIZE_ROW, ["ui_size_less", "ui_size_more"]), (FONT_ROW, ["font_less", "font_more"])] {
+                        let top = PAGE_TOP + 1.0 + row as f32 * ROW + 5.0;
+                        boxes.extend(names.into_iter().zip([FONT_LESS, FONT_MORE]).map(|(name, x)| (name.to_owned(), place([x, top], [ARROW, ARROW]))));
+                    }
                 }
             }
             GRAPHICS => boxes.extend(
@@ -426,16 +447,23 @@ impl GameSettings {
                     layer.texts.push((window::fit(font, &text, ROW_TEXT_WIDTH), page([ROW_TEXT, top + 6.0]), black));
                 }
                 if self.tab == EXTRAS {
-                    // The font's name centred between its arrows.
-                    let top = 1.0 + FONT_ROW as f32 * ROW;
-                    layer.texts.push((FONT_TITLE.to_owned(), page([ROW_TITLE, top + 6.0]), black));
-                    let [less, more] = &options.arrows;
-                    layer.sprites.push((less, page([FONT_LESS, top + 5.0]), less.size));
-                    layer.sprites.push((more, page([FONT_MORE, top + 5.0]), more.size));
+                    // The UI size (the 4:3 screen the interface is as large as on) and the font's name, each centred
+                    // between its arrows.
                     let choices = text::choices();
-                    let room = FONT_MORE - FONT_LESS - ARROW;
-                    let name = window::fit(font, &choices[text::index_of(choices, &graphics.font)].name, room - 4.0);
-                    layer.texts.push((name.clone(), page([FONT_LESS + ARROW + ((room - font.width(&name)) / 2.0).floor(), top + 6.0]), black));
+                    let values = [
+                        (SIZE_ROW, SIZE_TITLE, size_label(graphics.ui_size)),
+                        (FONT_ROW, FONT_TITLE, choices[text::index_of(choices, &graphics.font)].name.clone()),
+                    ];
+                    for (row, title, value) in values {
+                        let top = 1.0 + row as f32 * ROW;
+                        layer.texts.push((title.to_owned(), page([ROW_TITLE, top + 6.0]), black));
+                        let [less, more] = &options.arrows;
+                        layer.sprites.push((less, page([FONT_LESS, top + 5.0]), less.size));
+                        layer.sprites.push((more, page([FONT_MORE, top + 5.0]), more.size));
+                        let room = FONT_MORE - FONT_LESS - ARROW;
+                        let value = window::fit(font, &value, room - 4.0);
+                        layer.texts.push((value.clone(), page([FONT_LESS + ARROW + ((room - font.width(&value)) / 2.0).floor(), top + 6.0]), black));
+                    }
                 }
             }
             GRAPHICS => {
@@ -460,6 +488,11 @@ impl GameSettings {
 pub fn reset(sound: &mut Settings, graphics: &mut GraphicsSettings) {
     *sound = Settings::default();
     *graphics = GraphicsSettings { fullscreen: graphics.fullscreen, ..GraphicsSettings::default() };
+}
+
+/// The UI size row's words for a size of `rows`: the 4:3 screen the interface is as large as on.
+fn size_label(rows: u16) -> String {
+    format!("As at {}x{rows}", u32::from(rows) * 4 / 3)
 }
 
 /// How many switch rows a page has: Effect's, Control's, Extras'.
@@ -646,6 +679,44 @@ mod tests {
         assert!(!window.button_boxes().iter().any(|(target, _)| target == "font_more"));
     }
 
+    /// The UI size row's arrows step the interface's size, stopping at the ends, and turn the UI scale on; the window
+    /// then stays under the pointer as the screen changes size, so the arrow can be clicked again.
+    #[test]
+    fn the_ui_size_row_steps_through_the_sizes() {
+        let mut window = GameSettings::new([1440.0, 900.0], false);
+        let (mut sound, mut graphics) = (Settings::default(), GraphicsSettings::default());
+        assert_eq!((graphics.ui_scale, graphics.ui_size), (false, 768));
+        window.click(Hit::Tab(EXTRAS), &mut sound, &mut graphics);
+        let corner = window.frame.position;
+        let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
+        let row = PAGE_TOP + 1.0 + SIZE_ROW as f32 * ROW + 8.0;
+        assert_eq!(window.hit(at([FONT_LESS + 3.0, row])), Some(Hit::Size(-1)));
+        assert_eq!(window.hit(at([FONT_MORE + 3.0, row])), Some(Hit::Size(1)));
+        assert_eq!(window.hit(at([FONT_MORE + 3.0, row + ROW])), Some(Hit::Font(1)), "the font row under it");
+        assert_eq!(window.hit(at([FONT_MORE + 3.0, row + 2.0 * ROW])), Some(Hit::Window), "no third row");
+        assert_eq!(window.hit(at([FONT_LESS + 40.0, row])), Some(Hit::Window));
+        assert!(["ui_size_less", "ui_size_more", "font_less", "font_more"].iter().all(|name| window.button_boxes().iter().any(|(target, _)| target == name)));
+        // A smaller size, and the UI scale is on at it.
+        assert_eq!(window.click(Hit::Size(-1), &mut sound, &mut graphics), Some(Action::Graphics));
+        assert_eq!((graphics.ui_scale, graphics.ui_size, graphics.ui_rows()), (true, 864, Some(864.0)));
+        assert_eq!(graphics, GraphicsSettings { ui_scale: true, ui_size: 864, ..GraphicsSettings::default() }, "nothing else moved");
+        window.click(Hit::Size(1), &mut sound, &mut graphics);
+        window.click(Hit::Size(1), &mut sound, &mut graphics);
+        assert_eq!(graphics.ui_size, 768, "the largest: the right arrow stops");
+        assert_eq!([768, 864, 1440].map(size_label), ["As at 1024x768", "As at 1152x864", "As at 1920x1440"]);
+        // The screen turns from 1440x900 to 1228x768 and the pointer, on the right arrow, from one place to another:
+        // the arrow is under it still.
+        let on_arrow = at([FONT_MORE + 3.0, row]);
+        let now = [on_arrow[0] * 768.0 / 900.0, on_arrow[1] * 768.0 / 900.0];
+        window.keep_under([on_arrow, now], [1228.0, 768.0]);
+        assert_eq!(window.hit(now), Some(Hit::Size(1)));
+        // But the window stays on the screen.
+        window.keep_under([now, [2000.0, 2000.0]], [1228.0, 768.0]);
+        assert_eq!(window.frame.position, [1228.0 - SIZE[0], 768.0 - SIZE[1]]);
+        reset(&mut sound, &mut graphics);
+        assert_eq!((graphics.ui_scale, graphics.ui_size), (false, 768));
+    }
+
     #[test]
     fn extras_start_off_and_switch_on_their_own_page() {
         let mut window = GameSettings::new([1024.0, 768.0], false);
@@ -656,7 +727,7 @@ mod tests {
         let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
         assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 2.0 * ROW + 8.0])), Some(Hit::Switch(2)));
         assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 7.0 * ROW + 8.0])), Some(Hit::Switch(7)));
-        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 8.0 * ROW + 8.0])), Some(Hit::Window), "eight rows only");
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 8.0 * ROW + 8.0])), Some(Hit::Window), "eight switches only");
         assert_eq!(window.click(Hit::Switch(2), &mut sound, &mut graphics), Some(Action::Graphics));
         assert!(graphics.far_zoom);
         window.click(Hit::Switch(0), &mut sound, &mut graphics);

@@ -10,6 +10,16 @@ use crate::render::{Gpu, Texture};
 
 /// The Game Settings tabs' and pages' edge.
 const OUTLINE: [u8; 4] = [0xCE, 0xCE, 0xCE, 0xFF];
+/// The sizes the Extras' UI scale can be set to, the smallest interface first: the rows of the 4:3 screen the
+/// interface is as large as on, 1920×1440 down to the classic 1024×768 (`crate::canvas`).
+pub const UI_SIZES: [u16; 6] = [1440, 1200, 1050, 960, 864, 768];
+
+/// The UI size `by` steps after `rows` (a bigger interface is a step up), stopping at the ends.
+pub fn ui_size_stepped(rows: u16, by: isize) -> u16 {
+    let last = UI_SIZES.len() - 1;
+    let index = UI_SIZES.iter().position(|&size| size == rows).unwrap_or(last);
+    UI_SIZES[(index as isize + by).clamp(0, last as isize) as usize]
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GraphicsSettings {
@@ -43,6 +53,8 @@ pub struct GraphicsSettings {
     pub exp_hundredths: bool,
     pub kill_exp: bool,
     pub ui_scale: bool,
+    /// How large the UI scale makes the interface: one of `UI_SIZES`, the classic 768 rows (the largest) at first.
+    pub ui_size: u16,
     /// The font the text is drawn in (Extras; `text::choices`), Tahoma at first.
     pub font: String,
 }
@@ -68,12 +80,18 @@ impl Default for GraphicsSettings {
             exp_hundredths: false,
             kill_exp: false,
             ui_scale: false,
+            ui_size: 768,
             font: DEFAULT_FONT.into(),
         }
     }
 }
 
 impl GraphicsSettings {
+    /// The rows the canvas is fitted to, with the Extras' UI scale on (`crate::canvas`).
+    pub fn ui_rows(&self) -> Option<f32> {
+        self.ui_scale.then_some(f32::from(self.ui_size))
+    }
+
     fn path() -> Option<PathBuf> {
         crate::settings_path("graphics")
     }
@@ -92,7 +110,7 @@ impl GraphicsSettings {
 
     pub fn load_from(path: &Path) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
-        // The switches, then the font's name on a line of its own.
+        // The switches and the UI size, then the font's name on a line of its own.
         let (switches, font) = text.split_once('\n').unwrap_or((&text, ""));
         let mut words = switches.split_whitespace();
         let mut next = |default: bool| words.next().map_or(default, |value| value != "0");
@@ -115,6 +133,7 @@ impl GraphicsSettings {
             exp_hundredths: next(false),
             kill_exp: next(false),
             ui_scale: next(false),
+            ui_size: words.next().and_then(|rows| rows.parse().ok()).filter(|rows| UI_SIZES.contains(rows)).unwrap_or(768),
             font: Some(font.trim()).filter(|font| !font.is_empty()).unwrap_or(DEFAULT_FONT).to_owned(),
         }
     }
@@ -142,6 +161,8 @@ impl GraphicsSettings {
         ]
         .map(|on| if on { "1" } else { "0" })
         .join(" ")
+            + " "
+            + &self.ui_size.to_string()
             + "\n"
             + &self.font;
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, text));
@@ -202,6 +223,7 @@ mod tests {
             exp_hundredths: true,
             kill_exp: true,
             ui_scale: true,
+            ui_size: 960,
             font: "MS Gothic (Japan)".into(),
         };
         settings.save_to(&path);
@@ -212,6 +234,23 @@ mod tests {
         // A file from before the font choice draws in Tahoma.
         std::fs::write(&path, "1 1 0 1 0 0 1 1 1 0 0 0 0 1 1").unwrap();
         assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { monster_hp: true, ..GraphicsSettings::default() });
+        // One from before the UI size (the switch alone) keeps the classic 768 rows; a size not on the list does too.
+        std::fs::write(&path, "1 1 0 1 0 0 1 1 0 0 0 0 0 1 1 0 0 1\nTahoma").unwrap();
+        assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { ui_scale: true, ..GraphicsSettings::default() });
+        std::fs::write(&path, "1 1 0 1 0 0 1 1 0 0 0 0 0 1 1 0 0 1 900\nTahoma").unwrap();
+        assert_eq!(GraphicsSettings::load_from(&path).ui_size, 768);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ui_sizes_step_up_to_the_classic_768_rows_and_stop_at_the_ends() {
+        assert_eq!(ui_size_stepped(768, -1), 864);
+        assert_eq!(ui_size_stepped(864, 1), 768);
+        assert_eq!(ui_size_stepped(768, 1), 768, "the largest interface");
+        assert_eq!(ui_size_stepped(1440, -1), 1440, "the smallest");
+        assert_eq!(ui_size_stepped(1050, -1), 1200);
+        // Off, no rows; on, the size's.
+        let on = GraphicsSettings { ui_scale: true, ui_size: 960, ..GraphicsSettings::default() };
+        assert_eq!((GraphicsSettings::default().ui_rows(), on.ui_rows()), (None, Some(960.0)));
     }
 }
