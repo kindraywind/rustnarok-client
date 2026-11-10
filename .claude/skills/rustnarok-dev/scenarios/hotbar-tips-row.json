@@ -1,0 +1,224 @@
+{
+  "about": "Extras' Hotbar tips switch. With three rows of the hotbar showing and a Red Potion on the first slot of row 2, the pointer on that slot shows its tooltip over the bar's top (the game's place: here the top of the screen, over row 1). With Game Settings' Extras switch on, the same tooltip sits over the slot's own row. The switch goes back off, the rows back to two, and the potion stays on the slot for the scenario reset to clear.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@item 501 3"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "button": "hotkey_plus"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "drag_on": [
+        {
+          "inventory_item": 501
+        },
+        {
+          "hotkey": 9
+        }
+      ]
+    },
+    {
+      "wait": 400
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "hotkeys": {
+          "9": 501
+        },
+        "state": {
+          "settings.hotbar_tips": false
+        }
+      }
+    },
+    {
+      "move": [
+        258,
+        52
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hotbar-tip-over-the-bar",
+      "crop": [
+        220,
+        0,
+        320,
+        110
+      ],
+      "threshold": 1
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "settings"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "settings_tab:5"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "switch:8"
+      },
+      "hit": "GameSettings"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.hotbar_tips": true
+        }
+      }
+    },
+    {
+      "move": [
+        700,
+        60
+      ]
+    },
+    {
+      "shot": "hotbar-tips-switch",
+      "threshold": 3
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        258,
+        52
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "hotbar-tip-over-its-row",
+      "crop": [
+        220,
+        0,
+        320,
+        110
+      ],
+      "threshold": 1
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "settings"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "settings_tab:5"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "switch:8"
+      },
+      "hit": "GameSettings"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.hotbar_tips": false
+        }
+      }
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "hotkey_minus"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "say": "@delitem 501 3"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

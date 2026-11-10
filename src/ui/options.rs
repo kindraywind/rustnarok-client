@@ -44,7 +44,8 @@ pub struct GraphicsSettings {
     /// This client's extras, none of them in the game and all off at first (the Extras tab): a monster's HP on its
     /// bar, its level after its name, the camera going out much further, an item's random options in its inventory
     /// name box, the seconds left on a cooling skill's hotkey, the exp bar's hover to a hundredth of a percent, a
-    /// kill's base and job exp over where the monster died, and the interface growing with the window (`crate::canvas`).
+    /// kill's base and job exp over where the monster died, the interface growing with the window (`crate::canvas`),
+    /// and a hotbar slot's tooltip over its own row (the game's is over the bar's top whatever the row).
     pub monster_hp: bool,
     pub monster_level: bool,
     pub far_zoom: bool,
@@ -53,6 +54,7 @@ pub struct GraphicsSettings {
     pub exp_hundredths: bool,
     pub kill_exp: bool,
     pub ui_scale: bool,
+    pub hotbar_tips: bool,
     /// How large the UI scale makes the interface: one of `UI_SIZES`, the classic 768 rows (the largest) at first.
     pub ui_size: u16,
     /// The font the text is drawn in (Extras; `text::choices`), Tahoma at first.
@@ -80,6 +82,7 @@ impl Default for GraphicsSettings {
             exp_hundredths: false,
             kill_exp: false,
             ui_scale: false,
+            hotbar_tips: false,
             ui_size: 768,
             font: DEFAULT_FONT.into(),
         }
@@ -110,7 +113,7 @@ impl GraphicsSettings {
 
     pub fn load_from(path: &Path) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
-        // The switches and the UI size, then the font's name on a line of its own.
+        // The switches, the UI size and the switches added since, then the font's name on a line of its own.
         let (switches, font) = text.split_once('\n').unwrap_or((&text, ""));
         let mut words = switches.split_whitespace();
         let mut next = |default: bool| words.next().map_or(default, |value| value != "0");
@@ -134,6 +137,7 @@ impl GraphicsSettings {
             kill_exp: next(false),
             ui_scale: next(false),
             ui_size: words.next().and_then(|rows| rows.parse().ok()).filter(|rows| UI_SIZES.contains(rows)).unwrap_or(768),
+            hotbar_tips: words.next().is_some_and(|value| value != "0"),
             font: Some(font.trim()).filter(|font| !font.is_empty()).unwrap_or(DEFAULT_FONT).to_owned(),
         }
     }
@@ -163,6 +167,7 @@ impl GraphicsSettings {
         .join(" ")
             + " "
             + &self.ui_size.to_string()
+            + if self.hotbar_tips { " 1" } else { " 0" }
             + "\n"
             + &self.font;
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, text));
@@ -223,6 +228,7 @@ mod tests {
             exp_hundredths: true,
             kill_exp: true,
             ui_scale: true,
+            hotbar_tips: true,
             ui_size: 960,
             font: "MS Gothic (Japan)".into(),
         };
@@ -239,6 +245,9 @@ mod tests {
         assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { ui_scale: true, ..GraphicsSettings::default() });
         std::fs::write(&path, "1 1 0 1 0 0 1 1 0 0 0 0 0 1 1 0 0 1 900\nTahoma").unwrap();
         assert_eq!(GraphicsSettings::load_from(&path).ui_size, 768);
+        // One from before the hotbar tips switch (it ends at the size) has it off.
+        std::fs::write(&path, "1 1 0 1 0 0 1 1 0 0 0 0 0 1 1 0 0 1 960\nTahoma").unwrap();
+        assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { ui_scale: true, ui_size: 960, ..GraphicsSettings::default() });
         let _ = std::fs::remove_file(path);
     }
 

@@ -80,7 +80,7 @@ const SWITCHES: [(Worded, Worded); 5] = [
 /// the quick slot window. Its words are ours; the game's come from GameSettings.lub, which this data lacks.
 const CONTROL_ROWS: [(&str, &str); 1] = [("Quick Slots", "The two quick slots in a window of their own")];
 /// The Extras page's rows, laid out as the Effect page's: title and description (`extras`, `extra`).
-const EXTRA_ROWS: [(&str, &str); 8] = [
+const EXTRA_ROWS: [(&str, &str); 9] = [
     ("Monster HP", "A hurt monster's HP in numbers under its bar"),
     ("Monster level", "A monster's level after its name"),
     ("Far zoom", "The camera goes out much further"),
@@ -89,6 +89,7 @@ const EXTRA_ROWS: [(&str, &str); 8] = [
     ("Exp to 0.01%", "The exp bar's hover with two decimals"),
     ("Kill exp", "Base and job exp over each monster killed"),
     ("UI scale", "The interface grows with the window"),
+    ("Hotbar tips", "A hotbar slot's tooltip over its own row"),
 ];
 /// The Extras rows under the switches, each a value between a left and a right arrow that step through its choices:
 /// the UI scale's size (`options::UI_SIZES`, the right arrow a bigger interface), then the font's name
@@ -517,8 +518,8 @@ pub fn switch_on(graphics: &GraphicsSettings, row: usize) -> bool {
 }
 
 /// The Extras page's switches, in its rows' order: monster HP, monster level, far zoom, item options, cooldown numbers,
-/// exp to a hundredth, exp over monsters, the interface's scale.
-fn extras(graphics: &GraphicsSettings) -> [bool; 8] {
+/// exp to a hundredth, exp over monsters, the interface's scale, hotbar tooltips by their row.
+fn extras(graphics: &GraphicsSettings) -> [bool; 9] {
     [
         graphics.monster_hp,
         graphics.monster_level,
@@ -528,6 +529,7 @@ fn extras(graphics: &GraphicsSettings) -> [bool; 8] {
         graphics.exp_hundredths,
         graphics.kill_exp,
         graphics.ui_scale,
+        graphics.hotbar_tips,
     ]
 }
 
@@ -540,7 +542,8 @@ fn extra(graphics: &mut GraphicsSettings, row: usize) -> &mut bool {
         4 => &mut graphics.cooldown_numbers,
         5 => &mut graphics.exp_hundredths,
         6 => &mut graphics.kill_exp,
-        _ => &mut graphics.ui_scale,
+        7 => &mut graphics.ui_scale,
+        _ => &mut graphics.hotbar_tips,
     }
 }
 
@@ -693,7 +696,7 @@ mod tests {
         assert_eq!(window.hit(at([FONT_LESS + 3.0, row])), Some(Hit::Size(-1)));
         assert_eq!(window.hit(at([FONT_MORE + 3.0, row])), Some(Hit::Size(1)));
         assert_eq!(window.hit(at([FONT_MORE + 3.0, row + ROW])), Some(Hit::Font(1)), "the font row under it");
-        assert_eq!(window.hit(at([FONT_MORE + 3.0, row + 2.0 * ROW])), Some(Hit::Window), "no third row");
+        assert_eq!(window.hit(at([FONT_LESS + 3.0, row + 2.0 * ROW])), Some(Hit::Window), "no third row");
         assert_eq!(window.hit(at([FONT_LESS + 40.0, row])), Some(Hit::Window));
         assert!(["ui_size_less", "ui_size_more", "font_less", "font_more"].iter().all(|name| window.button_boxes().iter().any(|(target, _)| target == name)));
         // A smaller size, and the UI scale is on at it.
@@ -721,13 +724,14 @@ mod tests {
     fn extras_start_off_and_switch_on_their_own_page() {
         let mut window = GameSettings::new([1024.0, 768.0], false);
         let (mut sound, mut graphics) = (Settings::default(), GraphicsSettings::default());
-        assert_eq!(extras(&graphics), [false; 8]);
+        assert_eq!(extras(&graphics), [false; 9]);
         window.click(Hit::Tab(EXTRAS), &mut sound, &mut graphics);
         let corner = window.frame.position;
         let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
         assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 2.0 * ROW + 8.0])), Some(Hit::Switch(2)));
         assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 7.0 * ROW + 8.0])), Some(Hit::Switch(7)));
-        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 8.0 * ROW + 8.0])), Some(Hit::Window), "eight switches only");
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 8.0 * ROW + 8.0])), Some(Hit::Switch(8)));
+        assert_eq!(window.hit(at([12.0, PAGE_TOP + 1.0 + 9.0 * ROW + 8.0])), Some(Hit::Window), "nine switches only");
         assert_eq!(window.click(Hit::Switch(2), &mut sound, &mut graphics), Some(Action::Graphics));
         assert!(graphics.far_zoom);
         window.click(Hit::Switch(0), &mut sound, &mut graphics);
@@ -737,7 +741,8 @@ mod tests {
         window.click(Hit::Switch(5), &mut sound, &mut graphics);
         window.click(Hit::Switch(6), &mut sound, &mut graphics);
         window.click(Hit::Switch(7), &mut sound, &mut graphics);
-        assert_eq!(extras(&graphics), [true; 8]);
+        window.click(Hit::Switch(8), &mut sound, &mut graphics);
+        assert_eq!(extras(&graphics), [true; 9]);
         // The Effect page's switches didn't move.
         let all = GraphicsSettings {
             monster_hp: true,
@@ -748,11 +753,12 @@ mod tests {
             exp_hundredths: true,
             kill_exp: true,
             ui_scale: true,
+            hotbar_tips: true,
             ..GraphicsSettings::default()
         };
         assert_eq!(graphics, all);
         assert!(window.button_boxes().iter().any(|(name, _)| name == "switch:2"));
         reset(&mut sound, &mut graphics);
-        assert_eq!(extras(&graphics), [false; 8]);
+        assert_eq!(extras(&graphics), [false; 9]);
     }
 }
