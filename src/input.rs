@@ -547,6 +547,8 @@ impl App {
                         let _ = game.session.kick_from_chat_room(&name);
                     }
                 }
+                // The owner's Room Setup: the make window, filled from the room.
+                Some(Choice::RoomSetup) => game.room_make = game.room.as_ref().map(|room| chatroom::Make::from_sign(&room.sign)),
                 // The details alone, beside the list when it's open, else in the middle.
                 Some(Choice::QuestInfo(id)) => {
                     game.quest_window.pick(id, screen());
@@ -620,13 +622,11 @@ impl App {
             // The room we're in: closing it leaves.
             Scene::Game(game) if on(Esc(W::ChatRoom)) => {
                 let room = game.room.as_mut().unwrap();
-                match room.hit(cursor, &game.me.name) {
+                match room.hit(cursor) {
                     Some(chatroom::RoomHit::Title(TitleHit::Close)) => {
                         let _ = game.session.leave_chat_room();
                     }
                     Some(chatroom::RoomHit::Title(title)) => room.frame.click_title(title),
-                    // The owner's Room Setup: the make window, filled from the room.
-                    Some(chatroom::RoomHit::Setup) => game.room_make = Some(chatroom::Make::from_sign(&room.sign)),
                     _ => {}
                 }
             }
@@ -1920,6 +1920,11 @@ impl App {
             {
                 game.vend_size = shop.size;
             }
+            if let Some(room) = &mut game.room
+                && room.resize_to(self.cursor)
+            {
+                game.room_size = room.size;
+            }
             if let Some(setup) = &mut game.vend_setup
                 && setup.resize_to(self.cursor)
             {
@@ -2096,18 +2101,23 @@ impl App {
         {
             select.open_menu(self.cursor, &self.font, &self.messages);
         }
-        // The room owner's right click on another member's name: hand the room over, or kick them out.
+        // The room owner's right click in the member list: on another member's name kick them out or hand the room
+        // over, and anywhere in it Room Setup.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Released
             && let Some((start, None)) = game.right_press
             && (start[0] - self.cursor[0]).abs() + (start[1] - self.cursor[1]).abs() < 4.0
             && let Some(room) = &game.room
-            && let Some(chatroom::RoomHit::Member(row)) = room.hit(self.cursor, &game.me.name)
-            && room.member_choices(row, &game.me.name).is_some()
+            && let Some(chatroom::RoomHit::Members(row)) = room.hit(self.cursor)
+            && room.owned_by(&game.me.name)
         {
             game.right_press = None;
             let label = |message: usize| self.messages.get(message).cloned().unwrap_or_default();
-            let choices = vec![Some((label(ROOM_HAND_OVER), Choice::RoomOwner(row))), Some((label(ROOM_KICK), Choice::RoomKick(row)))];
+            let mut choices = Vec::new();
+            if let Some(row) = row.filter(|&row| room.member_choices(row, &game.me.name).is_some()) {
+                choices.extend([Some((label(ROOM_KICK), Choice::RoomKick(row))), Some((label(ROOM_HAND_OVER), Choice::RoomOwner(row)))]);
+            }
+            choices.push(Some((label(chatroom::ROOM_SETUP), Choice::RoomSetup)));
             game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             return;
         }
@@ -2858,6 +2868,7 @@ impl App {
                     | game.party_window.stop_resize()
                     | game.skill_window.stop_resize()
                     | game.my_shop.as_mut().is_some_and(vend::MyShop::stop_resize)
+                    | game.room.as_mut().is_some_and(chatroom::Room::stop_resize)
                     | game.vend_setup.as_mut().is_some_and(vend::Setup::stop_resize)
                     | game.shop.as_mut().is_some_and(shop::Shop::stop_resize)
                     | game.equipment.frame.drop_drag()
@@ -3193,10 +3204,12 @@ impl App {
         if let Scene::Game(game) = &mut self.scene
             && top == Some(Esc(W::ChatRoom))
             && let Some(room) = &mut game.room
-            && let Some(hit) = room.hit(cursor, &game.me.name)
+            && let Some(hit) = room.hit(cursor)
         {
-            if hit == chatroom::RoomHit::Title(TitleHit::Title) {
-                room.frame.start_drag(cursor);
+            match hit {
+                chatroom::RoomHit::Title(TitleHit::Title) => room.frame.start_drag(cursor),
+                chatroom::RoomHit::Resize => room.start_resize(cursor),
+                _ => {}
             }
             return;
         }

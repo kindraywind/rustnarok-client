@@ -817,7 +817,7 @@ impl Game {
             esc(SellHistory, self.sell_history.as_ref().is_some_and(|history| history.hit(cursor).is_some())),
             esc(MyShop, self.my_shop.as_ref().is_some_and(|shop| shop.hit(cursor).is_some())),
             esc(VendSetup, self.vend_setup.as_ref().is_some_and(|setup| setup.covers(cursor))),
-            esc(ChatRoom, self.room.as_ref().is_some_and(|room| room.hit(cursor, &self.me.name).is_some())),
+            esc(ChatRoom, self.room.as_ref().is_some_and(|room| room.hit(cursor).is_some())),
             esc(DealChoice, self.deal_choice.is_some() && contains(self.deal_frame.position, shop::DEAL_SIZE, cursor)),
             self.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some()).then_some(Top::ConfirmDeal),
             esc(Shop, self.shop.as_ref().is_some_and(|shop| shop.covers(cursor))),
@@ -991,6 +991,7 @@ impl Game {
         }
         places += &size_lines(self.inventory.size(), self.cart.size(), self.storage.rows(), self.shop_sizes);
         places += &format!("{STORAGE_CATEGORIES} 0 {} 0\n", self.storage.mask);
+        places += &format!("{ROOM_SIZE} {} {} 0\n", self.room_size[0], self.room_size[1]);
         places += &format!("{VEND_SIZE} {} {} 0\n{SKILL_LIST_SIZE} 0 {} 0\n", self.vend_size.width, self.vend_size.rows, self.skill_window.list_rows());
         places += &format!("{ITEM_PLACE} {} {} 0\n{CARD_PLACE} {} {} 0\n", self.item_place[0], self.item_place[1], self.card_place[0], self.card_place[1]);
         places += &format!("{COMPANION_SKILLS_SIZE} {} {} 0\n", self.homunculus_skill_list.height(), self.mercenary_skill_list.height());
@@ -1073,6 +1074,9 @@ impl Game {
         }
         if let Some(&([_, rows], _)) = saved.get(SKILL_LIST_SIZE) {
             self.skill_window.set_list_rows(rows as usize);
+        }
+        if let Some(&(size, _)) = saved.get(ROOM_SIZE) {
+            self.room_size = chatroom::room_size(size);
         }
         if let Some(&([width, rows], _)) = saved.get(VEND_SIZE) {
             self.vend_size = vend::GridSize::clamped(width, rows as usize);
@@ -1571,6 +1575,7 @@ impl Game {
             || (top == Some(Panel::Skills) && self.skill_window.grip_box().is_some_and(|[x, y, w, h]| contains([x, y], [w, h], cursor)))
             || matches!(self.shop.as_ref().and_then(|shop| shop.hit(cursor)), Some(shop::Hit::Resize(_)))
             || self.my_shop.as_ref().is_some_and(|shop| shop.on_grip(cursor))
+            || self.room.as_ref().is_some_and(|room| room.hit(cursor) == Some(chatroom::RoomHit::Resize))
             || self.vend_setup.as_ref().is_some_and(|setup| setup.on_grip(cursor))
     }
 

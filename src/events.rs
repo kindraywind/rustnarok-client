@@ -611,6 +611,7 @@ impl App {
                     homunculus_warned: None,
                     vend_setup: None,
                     vend_size: vend::GridSize::default(),
+                    room_size: chatroom::ROOM_SIZE,
                     my_shop: None,
                     sell_history: None,
                     buying_setup: None,
@@ -2314,7 +2315,7 @@ impl App {
                         if let Some(make) = game.room_make.take() {
                             let sign =
                                 chatroom::Sign { id: 0, limit: make.limit(), users: 1, kind: u8::from(make.public), title: make.title.trim().to_owned() };
-                            game.room = Some(chatroom::Room::new(sign, vec![(game.me.name.clone(), true)]));
+                            game.room = Some(chatroom::Room::new(sign, vec![(game.me.name.clone(), true)], game.room_size));
                         }
                         game.chat_line(message(64), CHAT_ITEM);
                     }
@@ -2345,7 +2346,7 @@ impl App {
                     kind: 1,
                     title: String::new(),
                 });
-                game.room = Some(chatroom::Room::new(chatroom::Sign { users: members.len() as u16, ..sign }, members));
+                game.room = Some(chatroom::Room::new(chatroom::Sign { users: members.len() as u16, ..sign }, members, game.room_size));
             }
             MapEvent::ChatRoomJoined { users, name } => {
                 if let Some(room) = &mut game.room {

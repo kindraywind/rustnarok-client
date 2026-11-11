@@ -13,7 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # ALSA for the sound (cpal); fontconfig and a Hangul font for the text tests.
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config fontconfig fonts-nanum
+      # The runner's own resolver sometimes can't find the Ubuntu mirrors ("Temporary failure resolving", and apt-get
+      # then takes minutes to give up): when it can't, the names go through public resolvers.
+      - run: |
+          getent hosts azure.archive.ubuntu.com security.ubuntu.com || printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf
+          sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config fontconfig fonts-nanum
       # The nightly rust-toolchain.toml pins.
       - run: rustup toolchain install --profile minimal && rustup component add clippy
       - uses: Swatinem/rust-cache@v2
