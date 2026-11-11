@@ -176,7 +176,7 @@ impl Audio {
         let output = mixer.clone();
         let stream = device
             .build_output_stream(
-                &config.config(),
+                config.config(),
                 move |data: &mut [f32], _| output.lock().unwrap().mix(data, channels),
                 |error| eprintln!("sound: {error}"),
                 None,
