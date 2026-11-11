@@ -391,6 +391,30 @@ pub fn wrap(font: &Font, text: &str, width: f32, lines: usize) -> Vec<String> {
     wrapped
 }
 
+/// The game's 1 px box line with rounded corners, as rectangles [x, y, w, h] for a box `size` big at (0, 0): the four
+/// sides stop 3 px short of each corner, and three pixels turn it.
+pub fn rounded_outline([w, h]: [f32; 2]) -> [[f32; 4]; 12] {
+    [
+        [3.0, 0.0, w - 6.0, 1.0],
+        [3.0, h - 1.0, w - 6.0, 1.0],
+        [0.0, 3.0, 1.0, h - 6.0],
+        [w - 1.0, 3.0, 1.0, h - 6.0],
+        [1.0, 1.0, 2.0, 1.0],
+        [1.0, h - 2.0, 2.0, 1.0],
+        [w - 3.0, 1.0, 2.0, 1.0],
+        [w - 3.0, h - 2.0, 2.0, 1.0],
+        [1.0, 2.0, 1.0, 1.0],
+        [1.0, h - 3.0, 1.0, 1.0],
+        [w - 2.0, 2.0, 1.0, 1.0],
+        [w - 2.0, h - 3.0, 1.0, 1.0],
+    ]
+}
+
+/// The same box filled: that line and all inside it.
+pub fn rounded_fill([w, h]: [f32; 2]) -> [[f32; 4]; 4] {
+    [[3.0, 0.0, w - 6.0, 1.0], [1.0, 1.0, w - 2.0, h - 2.0], [0.0, 3.0, w, h - 6.0], [3.0, h - 1.0, w - 6.0, 1.0]]
+}
+
 /// A window's corner grip: the 15×15 corner inside the window takes the press (its 16×16 bitmap hangs 1 px out).
 pub const GRIP: f32 = 15.0;
 
@@ -577,6 +601,22 @@ mod tests {
         assert_eq!(tooltip_corner([100.0, 50.0], [80.0, 23.0], screen), [100.0, 50.0]);
         assert_eq!(tooltip_corner([1000.0, 760.0], [80.0, 23.0], screen), [947.0, 748.0]);
         assert_eq!(tooltip_corner([-20.0, -16.0], [80.0, 23.0], screen), [-3.0, -3.0]);
+    }
+
+    #[test]
+    fn rounded_boxes_cut_their_corners() {
+        // A filled box covers its line, and neither reaches the corner pixels: (0, 0), (1, 0), (2, 0), (0, 1), (0, 2).
+        let size = [10.0, 8.0];
+        let covers = |rects: &[[f32; 4]], x: f32, y: f32| rects.iter().any(|&[rx, ry, rw, rh]| contains([rx, ry], [rw, rh], [x, y]));
+        let (line, fill) = (rounded_outline(size), rounded_fill(size));
+        for y in 0..8 {
+            for x in 0..10 {
+                let [fx, fy] = [x.min(9 - x), y.min(7 - y)];
+                let (cut, edge) = (matches!((fx, fy), (0..=2, 0) | (0, 1 | 2)), matches!((fx, fy), (3.., 0) | (1 | 2, 1) | (1, 2) | (0, 3..)));
+                let at = [x as f32, y as f32];
+                assert_eq!((covers(&line, at[0], at[1]), covers(&fill, at[0], at[1])), (edge, !cut), "{at:?}");
+            }
+        }
     }
 
     #[test]

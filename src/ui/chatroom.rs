@@ -16,17 +16,19 @@ const SIGN_TEXT: [f32; 2] = [31.0, 8.0];
 /// pixels lower.
 pub const SIGN_ABOVE: f32 = 96.0;
 const ROOM_DROP: f32 = 17.0;
-/// A shop board: a white box over all but its bottom 6 px (yellow for the one picked), a grey line inset 2 inside it.
+/// A shop board: a white box with rounded corners over all but its bottom 6 px (yellow for the one picked), a grey
+/// line with rounded corners inset 2 inside it.
 const SHOP_LINE: [u8; 4] = [0xC3, 0xC3, 0xC3, 0xFF];
 const SHOP_PICKED: [u8; 4] = [0xFF, 0xFA, 0x7D, 0xFF];
 const SHOP_BOTTOM: f32 = 6.0;
 const SHOP_INSET: f32 = 2.0;
 /// The icon's corner on both boards.
 const ICON: [f32; 2] = [3.0, 3.0];
-/// The chat room board: the system box's 14-px pieces, the edges tiled every 12 px from 12, the bottom row's top at 28.
+/// The chat room board: the system box's 14-px pieces in two rows, the edges tiled every 12 px from 12. The bottom row
+/// ends 6 px over the board's bottom (a box 28 high), and the tail's 14-px piece hangs from it down to the bottom.
 const PIECE: f32 = 14.0;
 const TILE: f32 = 12.0;
-const BOTTOM_ROW: f32 = 28.0;
+const BOTTOM_ROW: f32 = SIGN[1] - 6.0 - PIECE;
 /// The room window, as the game's: 280 × 120 at first, and its corner grip takes it 280 to 504 wide and 120 to 376
 /// high, 32 px a step. Under the title bar the talk and the member list (a fifth of the width) stand side by side
 /// over the 21 px footer, which holds the line to type on: a box 30 px narrower than the window, 16 high, 18 px up.
@@ -96,8 +98,8 @@ pub struct Assets {
     picked: Texture,
     /// The chat room board's tail.
     tail: Texture,
-    /// The system box: corners, edges (lu, mu, ru, lm, rm, ld, md, rd).
-    pieces: [Texture; 8],
+    /// The system box's top and bottom rows (lu, mu, ru, ld, md, rd).
+    pieces: [Texture; 6],
     ok: [Texture; 3],
     cancel: [Texture; 3],
     radio: [Texture; 2],
@@ -114,7 +116,7 @@ impl Assets {
             line: gpu.solid(SHOP_LINE),
             picked: gpu.solid(SHOP_PICKED),
             tail: image("sysbox_arr_l"),
-            pieces: ["lu", "mu", "ru", "lm", "rm", "ld", "md", "rd"].map(|name| image(&format!("sysbox_{name}"))),
+            pieces: ["lu", "mu", "ru", "ld", "md", "rd"].map(|name| image(&format!("sysbox_{name}"))),
             ok: ["btn_ok", "btn_ok_a", "btn_ok_b"].map(image),
             cancel: ["btn_cancel", "btn_cancel_a", "btn_cancel_b"].map(image),
             radio: [image("radiobtn_off"), image("radiobtn_on")],
@@ -136,13 +138,11 @@ pub fn sign_rect(kind: u8, head: [f32; 2]) -> [f32; 4] {
     [corner[0], corner[1], corner[0] + SIGN[0], corner[1] + SIGN[1]]
 }
 
-/// A shop board's pieces inside the board: the filled box, the grey line's four sides, the icon's corner.
-fn shop_pieces() -> ([f32; 4], [[f32; 4]; 4], [f32; 2]) {
-    let [w, h] = SIGN;
-    let fill = [0.0, 0.0, w, h - SHOP_BOTTOM];
-    let [x, y, lw, lh] = [SHOP_INSET, SHOP_INSET, w - 2.0 * SHOP_INSET, h - SHOP_BOTTOM - 2.0 * SHOP_INSET];
-    let line = [[x, y, lw, 1.0], [x, y + lh - 1.0, lw, 1.0], [x, y, 1.0, lh], [x + lw - 1.0, y, 1.0, lh]];
-    (fill, line, ICON)
+/// A shop board's pieces inside the board: the filled box's and the grey line's rectangles, the icon's corner.
+fn shop_pieces() -> ([[f32; 4]; 4], [[f32; 4]; 12], [f32; 2]) {
+    let [w, h] = [SIGN[0], SIGN[1] - SHOP_BOTTOM];
+    let line = window::rounded_outline([w - 2.0 * SHOP_INSET, h - 2.0 * SHOP_INSET]).map(|[x, y, lw, lh]| [x + SHOP_INSET, y + SHOP_INSET, lw, lh]);
+    (window::rounded_fill([w, h]), line, ICON)
 }
 
 /// Where the chat room board's tiled edge pieces go across, inside the board: every 12 px from 12 while a piece fits
@@ -160,17 +160,16 @@ pub fn draw_sign<'a>(layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, sig
     let w = SIGN[0];
     if is_shop(sign.kind) {
         let (fill, line, _) = shop_pieces();
-        layer.sprites.push((if picked { &assets.picked } else { &assets.white }, at([fill[0], fill[1]]), [fill[2], fill[3]]));
+        for [fx, fy, fw, fh] in fill {
+            layer.sprites.push((if picked { &assets.picked } else { &assets.white }, at([fx, fy]), [fw, fh]));
+        }
         for [lx, ly, lw, lh] in line {
             layer.sprites.push((&assets.line, at([lx, ly]), [lw, lh]));
         }
     } else {
-        let [lu, mu, ru, lm, rm, ld, md, rd] = &assets.pieces;
+        let [lu, mu, ru, ld, md, rd] = &assets.pieces;
         let piece = [PIECE; 2];
-        // The middle band between the rows, then the rows over it; the tail over the bottom row's middle.
-        layer.sprites.push((lm, at([0.0, PIECE]), [PIECE, BOTTOM_ROW - PIECE]));
-        layer.sprites.push((&assets.white, at([PIECE, PIECE]), [w - 2.0 * PIECE, BOTTOM_ROW - PIECE]));
-        layer.sprites.push((rm, at([w - PIECE, PIECE]), [PIECE, BOTTOM_ROW - PIECE]));
+        // The two rows, then the tail over the bottom row's middle.
         for (row, [left, middle, right]) in [(0.0, [lu, mu, ru]), (BOTTOM_ROW, [ld, md, rd])] {
             for tile in edge_tiles() {
                 layer.sprites.push((middle, at([tile, row]), piece));
@@ -178,7 +177,7 @@ pub fn draw_sign<'a>(layer: &mut Layer<'a>, assets: &'a Assets, font: &Font, sig
             layer.sprites.push((left, at([0.0, row]), piece));
             layer.sprites.push((right, at([w - PIECE, row]), piece));
         }
-        layer.sprites.push((&assets.tail, at([((w - assets.tail.size[0]) / 2.0).floor(), BOTTOM_ROW]), assets.tail.size));
+        layer.sprites.push((&assets.tail, at([((w - assets.tail.size[0]) / 2.0).floor(), SIGN[1] - assets.tail.size[1]]), assets.tail.size));
     }
     let icon = &assets.icons[match sign.kind {
         0 => 1,
@@ -518,14 +517,14 @@ mod tests {
         assert_eq!(sign_rect(BUYING_STORE, [500.0, 300.0]), [430.0, 266.0, 570.0, 300.0]);
         assert_eq!(sign_rect(1, [500.0, 300.0]), [430.0, 283.0, 570.0, 317.0]);
         assert_eq!(sign_rect(0, [500.5, 300.0]), [431.0, 283.0, 571.0, 317.0]);
-        // A shop board: white over 140 x 28, the grey line 136 x 24 at (2, 2), the icon at (3, 3).
+        // A shop board: white over 140 x 28, the grey line 136 x 24 at (2, 2), both with rounded corners; the icon at (3, 3).
         let (fill, line, icon) = shop_pieces();
-        assert_eq!(fill, [0.0, 0.0, 140.0, 28.0]);
-        assert_eq!(line, [[2.0, 2.0, 136.0, 1.0], [2.0, 25.0, 136.0, 1.0], [2.0, 2.0, 1.0, 24.0], [137.0, 2.0, 1.0, 24.0]]);
+        assert_eq!([fill[0], fill[2]], [[3.0, 0.0, 134.0, 1.0], [0.0, 3.0, 140.0, 22.0]]);
+        assert_eq!(line[..4], [[5.0, 2.0, 130.0, 1.0], [5.0, 25.0, 130.0, 1.0], [2.0, 5.0, 1.0, 18.0], [137.0, 5.0, 1.0, 18.0]]);
         assert_eq!(icon, [3.0, 3.0]);
-        // The chat room board's edges: tiles every 12 px from 12 up to the right corner at 126; the bottom row at 28.
+        // The chat room board's edges: tiles every 12 px from 12 up to the right corner at 126; the bottom row under the top one.
         assert_eq!(edge_tiles(), (1..=10).map(|step| step as f32 * 12.0).collect::<Vec<_>>());
-        assert_eq!(BOTTOM_ROW, SIGN[1] - 6.0);
+        assert_eq!(BOTTOM_ROW, PIECE);
     }
 
     #[test]
