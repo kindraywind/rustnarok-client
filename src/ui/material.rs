@@ -130,9 +130,8 @@ impl Materials {
         }
         let height = Self::height();
         let body = height - TITLE_HEIGHT - FOOTER;
-        layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [WIDTH, body]));
+        chrome.draw_body(layer, frame.position, [WIDTH, height]);
         layer.sprites.push((&assets.strip, frame.at([0.0, TITLE_HEIGHT]), [assets.strip.size[0], body]));
-        layer.sprites.push((&chrome.border, frame.at([WIDTH - 1.0, TITLE_HEIGHT]), [1.0, body]));
         layer.texts.push((message(HINT_MESSAGE).to_owned(), frame.at([LEFT + 4.0, TITLE_HEIGHT + 5.0]), [0x60, 0x60, 0x60]));
         let top = TITLE_HEIGHT + HINT;
         for (row, &(index, amount)) in self.entries.iter().enumerate().take(ROWS) {
@@ -147,7 +146,7 @@ impl Materials {
             layer.texts.push((window::fit(font, &name, WIDTH - LEFT - 90.0), frame.at([LEFT + 32.0, y + 10.0]), [0, 0, 0]));
             layer.texts.push((count.clone(), frame.at([WIDTH - 12.0 - font.width(&count), y + 10.0]), [0, 0, 0]));
         }
-        layer.sprites.push((&assets.bar, frame.at([0.0, height - FOOTER]), [WIDTH, FOOTER]));
+        chrome.draw_footer(layer, frame.at([0.0, height]), WIDTH, FOOTER);
         let hit = self.hit(pointer.0);
         let look = |target: Hit| {
             let hovered = hit == Some(target);

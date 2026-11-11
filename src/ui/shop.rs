@@ -125,7 +125,6 @@ pub struct Assets {
     side: [Texture; 2],
     /// The empty cell behind each row's icon.
     cell: Texture,
-    bar: Texture,
     /// Buy, sell, cancel and exchange: normal, hovered, pressed.
     buttons: [[Texture; 3]; 4],
     selected: Texture,
@@ -146,7 +145,6 @@ impl Assets {
         Self {
             side: ["left", "right"].map(|part| image(format!("{UI}basic_interface\\itemwin_{part}.bmp"))),
             cell: image(format!("{UI}basic_interface\\itemwin_mid.bmp")),
-            bar: image(format!("{UI}basic_interface\\btnbar_mid2.bmp")),
             buttons: [button("buy"), button("sell"), button("cancel"), button("exchange")],
             selected: gpu.solid(SELECTED),
             resize: image(format!("{UI}btn_resize.bmp")),
@@ -846,7 +844,7 @@ impl Shop {
             }
             // Footer: the deal's total and buttons.
             let footer = height - FOOTER;
-            layer.sprites.push((&assets.bar, frame.at([0.0, footer]), [width, FOOTER]));
+            chrome.draw_footer(layer, frame.at([0.0, height]), width, FOOTER);
             if self.resizable() {
                 layer.sprites.push((&assets.resize, frame.at([width - window::GRIP, height - window::GRIP]), assets.resize.size));
             }
@@ -1060,8 +1058,8 @@ impl Confirm {
         layer.texts.push((title.clone(), frame.at([17.0, 3.0]), [255; 3]));
         layer.texts.push((title, frame.at([16.0, 2.0]), [0, 0, 0]));
         let [width, height] = CONFIRM_SIZE;
-        layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT - FOOTER]));
-        layer.sprites.push((&assets.bar, frame.at([0.0, height - FOOTER]), [width, FOOTER]));
+        chrome.draw_body(layer, frame.position, CONFIRM_SIZE);
+        chrome.draw_footer(layer, frame.at([0.0, height]), width, FOOTER);
         for (row, line) in self.lines(messages).into_iter().enumerate() {
             layer.texts.push((line, frame.at([10.0, 20.0 + 20.0 * row as f32]), [0, 0, 0]));
         }

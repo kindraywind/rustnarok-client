@@ -7,7 +7,7 @@ use rustnarok_client::net::InventoryItem;
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
-use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
+use crate::window::{Chrome, Frame, TitleHit};
 use crate::{Layer, UI, contains, inventory};
 
 pub const WIDTH: f32 = 280.0;
@@ -25,7 +25,6 @@ pub const CREATE_MSG: usize = 426;
 pub const REQUIRED_MATERIALS_MSG: usize = 427;
 
 pub struct Assets {
-    pub bar: Texture,
     pub cell: Texture,
     pub buttons: [[Texture; 3]; 2],
 }
@@ -34,11 +33,7 @@ impl Assets {
     pub fn load(gpu: &Gpu, grf: &rustnarok_client::grf::Grf) -> Self {
         let image = |path: String| gpu.load_texture(grf, &path, false);
         let button = |name: &str| ["", "_a", "_b"].map(|suffix| image(format!("{UI}btn_{name}{suffix}.bmp")));
-        Self {
-            bar: image(format!("{UI}basic_interface\\btnbar_mid2.bmp")),
-            cell: image(format!("{UI}basic_interface\\itemwin_mid.bmp")),
-            buttons: [button("ok"), button("cancel")],
-        }
+        Self { cell: image(format!("{UI}basic_interface\\itemwin_mid.bmp")), buttons: [button("ok"), button("cancel")] }
     }
 }
 
@@ -219,14 +214,11 @@ impl Forge {
             return;
         }
         let pos = self.frame.position;
-        let body_height = HEIGHT - TITLE_HEIGHT - FOOTER;
-        layer.sprites.push((&chrome.white, self.frame.at([0.0, TITLE_HEIGHT]), [WIDTH, body_height]));
-        layer.sprites.push((&chrome.border, self.frame.at([0.0, TITLE_HEIGHT]), [1.0, body_height]));
-        layer.sprites.push((&chrome.border, self.frame.at([WIDTH - 1.0, TITLE_HEIGHT]), [1.0, body_height]));
+        chrome.draw_body(layer, pos, [WIDTH, HEIGHT]);
         self.frame.draw_title(layer, chrome, "", pointer.0);
 
         // Footer strip:
-        layer.sprites.push((&assets.bar, [pos[0], pos[1] + HEIGHT - FOOTER], [WIDTH, FOOTER]));
+        chrome.draw_footer(layer, [pos[0], pos[1] + HEIGHT], WIDTH, FOOTER);
 
         // Buttons:
         let (cursor, pressed) = pointer;

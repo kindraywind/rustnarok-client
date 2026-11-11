@@ -3064,7 +3064,6 @@ struct Assets {
     selection: Texture,
     /// The char-server list's #F0F0F0 fill, and the bar along the bottom of its window.
     server_fill: Texture,
-    server_bar: Texture,
     say: npc_say::Assets,
     npc_menu: npc_menu::Assets,
     npc_input: npc_input::Assets,
@@ -3194,7 +3193,6 @@ impl Assets {
             grey: gpu.solid([0x9C, 0x9C, 0x9C, 0xFF]),
             selection: gpu.solid(SELECTION_COLOR),
             server_fill: gpu.solid(servers::LIST_COLOR),
-            server_bar: image(format!("{UI}basic_interface\\btnbar_mid2.bmp")),
             say: npc_say::Assets::load(gpu),
             npc_menu: npc_menu::Assets::load(gpu, grf),
             npc_input: npc_input::Assets::load(gpu),

@@ -14,7 +14,7 @@ pub const OK: [f32; 2] = [189.0, 176.0];
 pub const CANCEL: [f32; 2] = [234.0, 176.0];
 /// #F0F0F0 behind the rows.
 pub const LIST_COLOR: [u8; 4] = [0xF0, 0xF0, 0xF0, 0xFF];
-// ponytail: the bottom bar is btnbar_mid2, 27px like the pick lists, along the window's bottom.
+// ponytail: the footer is 27 px like the pick lists; its 29 px pieces end on the window's bottom.
 pub const FOOTER: f32 = 27.0;
 pub const TITLE: usize = 2082;
 const NEW_SERVER: usize = 482;
