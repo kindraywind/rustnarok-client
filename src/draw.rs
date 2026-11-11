@@ -2363,7 +2363,7 @@ impl App {
             shop_layer.texts.push((message(DEAL_MESSAGE).to_owned(), offset(dialog, MESSAGE_TEXT), TEXT_COLOR));
         }
         if let Some(room) = &game.room {
-            room.draw(shop_layer.esc(W::ChatRoom), &assets.chrome, font, messages, &game.me.name, pointer.0, caret);
+            room.draw(shop_layer.esc(W::ChatRoom), &assets.chrome, &assets.chatroom, &assets.vend.resize, font, pointer.0, caret);
         }
         if let Some(setup) = &game.vend_setup {
             setup.draw(

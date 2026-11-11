@@ -1409,6 +1409,8 @@ struct Game {
     vend_setup: Option<vend::Setup>,
     /// The vending windows' size, kept for the next ones.
     vend_size: vend::GridSize,
+    /// The chat room window's size, as its corner grip left it.
+    room_size: [f32; 2],
     my_shop: Option<vend::MyShop>,
     /// What our shop sold, shown where it was once it closes.
     sell_history: Option<vend::SellHistory>,
@@ -2328,6 +2330,8 @@ enum Choice {
     /// The room's owner hands the room to this member, or kicks them out (by their row in the member list).
     RoomOwner(usize),
     RoomKick(usize),
+    /// The room's owner changes the room: its title, size, password.
+    RoomSetup,
     /// A tracked quest: its details in the quest window, or put it aside.
     QuestInfo(u32),
     QuestAside(u32),
@@ -3331,6 +3335,8 @@ const PARTY_MODE: &str = "party_mode";
 /// Each party window mode's corner grip rows (0: the mode's own height).
 const PARTY_SIZE: &str = "party_size";
 const VEND_SIZE: &str = "vend_size";
+/// The chat room window's width and height.
+const ROOM_SIZE: &str = "room_size";
 const SKILL_LIST_SIZE: &str = "skill_list_size";
 /// The homunculus's and the mercenary's skill lists' heights.
 const COMPANION_SKILLS_SIZE: &str = "companion_skills_size";

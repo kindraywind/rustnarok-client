@@ -1539,7 +1539,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.chat.settings.iter().flat_map(crate::chat::Settings::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.chat.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.chat.torn_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
-        .chain(game.room.iter().flat_map(|room| room.button_boxes(&game.me.name)).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.room.iter().flat_map(|room| room.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
             game.quest_window.button_boxes(&game.quests, &app.quest_texts).into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
@@ -2024,6 +2024,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             "title": room.sign.title,
             "owner": room.members.iter().find(|(_, owner)| *owner).map(|(name, _)| name.clone()),
             "members": room.members.len(),
+            "size": room.size,
         })),
         // The navigation under way: where to, how long the trail on this map is and its cells from where it was made,
         // how many arrows are on the ground in sight, and the marker's cell when that is.

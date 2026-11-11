@@ -70,8 +70,66 @@
       }
     },
     {
+      "expect": {
+        "state": {
+          "room.size": [
+            280.0,
+            120.0
+          ]
+        }
+      }
+    },
+    {
+      "mouse_down": {
+        "button": "room_resize"
+      }
+    },
+    {
+      "move": [
+        405,
+        245
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "mouse_up": {
+        "point": [
+          405,
+          245
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "room.size": [
+            312.0,
+            152.0
+          ]
+        }
+      }
+    },
+    {
       "click_on": {
-        "button": "room_setup"
+        "button": "room_member_{first}"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "shot": "owner-menu",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "menu_item": "Room Setup"
       }
     },
     {
