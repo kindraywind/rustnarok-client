@@ -65,7 +65,6 @@ pub enum PickChoice {
 
 pub struct Assets {
     pub strip: Texture,
-    pub bar: Texture,
     /// OK, cancel and make: normal, hovered, pressed.
     pub buttons: [[Texture; 3]; 3],
     selected: Texture,
@@ -77,7 +76,6 @@ impl Assets {
         let button = |name: &str| ["", "_a", "_b"].map(|suffix| image(format!("{UI}btn_{name}{suffix}.bmp")));
         Self {
             strip: image(format!("{UI}basic_interface\\itemwin_left.bmp")),
-            bar: image(format!("{UI}basic_interface\\btnbar_mid2.bmp")),
             buttons: [button("ok"), button("cancel"), button("make")],
             selected: gpu.solid(SELECTED),
         }
@@ -349,11 +347,8 @@ impl PickList {
             return;
         }
         if self.text_list {
-            let body_height = TEXT_HEIGHT - TITLE_HEIGHT - FOOTER;
-            layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [WIDTH, body_height]));
-            layer.sprites.push((&chrome.border, frame.at([0.0, TITLE_HEIGHT]), [1.0, body_height]));
-            layer.sprites.push((&chrome.border, frame.at([WIDTH - 1.0, TITLE_HEIGHT]), [1.0, body_height]));
-            layer.sprites.push((&assets.bar, frame.at([0.0, TEXT_HEIGHT - FOOTER]), [WIDTH, FOOTER]));
+            chrome.draw_body(layer, frame.position, [WIDTH, TEXT_HEIGHT]);
+            chrome.draw_footer(layer, frame.at([0.0, TEXT_HEIGHT]), WIDTH, FOOTER);
             layer.sprites.push((&npc_menu.list, frame.at(TEXT_LIST_AT), TEXT_LIST_SIZE));
             for (row, item) in self.items.iter().enumerate().skip(self.scroll).take(TEXT_ROWS) {
                 let top = TEXT_LIST_AT[1] + (row - self.scroll) as f32 * TEXT_ROW;
@@ -374,9 +369,8 @@ impl PickList {
         }
         let height = self.height();
         let list_height = height - TITLE_HEIGHT - FOOTER;
-        layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [WIDTH, list_height]));
+        chrome.draw_body(layer, frame.position, [WIDTH, height]);
         layer.sprites.push((&assets.strip, frame.at([0.0, TITLE_HEIGHT]), [assets.strip.size[0], list_height]));
-        layer.sprites.push((&chrome.border, frame.at([WIDTH - 1.0, TITLE_HEIGHT]), [1.0, list_height]));
         if self.merging {
             let hint = window::wrap(font, messages.get(MERGE_HINT).map_or("", String::as_str), WIDTH - LEFT - 8.0, 2);
             for (line, text) in hint.into_iter().enumerate() {
@@ -404,8 +398,7 @@ impl PickList {
                 layer.texts.push((amount.clone(), frame.at([WIDTH - 10.0 - font.width(&amount), y + 10.0]), [0, 0, 0]));
             }
         }
-        let footer = height - FOOTER;
-        layer.sprites.push((&assets.bar, frame.at([0.0, footer]), [WIDTH, FOOTER]));
+        chrome.draw_footer(layer, frame.at([0.0, height]), WIDTH, FOOTER);
         let hit = self.hit(pointer.0);
         let look = |target: Hit| {
             let hovered = hit == Some(target);

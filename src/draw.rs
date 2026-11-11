@@ -202,12 +202,8 @@ impl App {
             }
             Scene::ServerSelect { accepted, selected, scroll } => {
                 let place = servers::place(screen());
-                let body = servers::HEIGHT - window::TITLE_HEIGHT;
-                // Grey edge, white body, then the bottom bar over the foot of it.
-                base.sprites.push((&assets.chrome.border, offset(place, [0.0, window::TITLE_HEIGHT]), [servers::WIDTH, body]));
-                base.sprites.push((&assets.chrome.white, offset(place, [1.0, window::TITLE_HEIGHT]), [servers::WIDTH - 2.0, body - 1.0]));
-                let footer = servers::HEIGHT - servers::FOOTER;
-                base.sprites.push((&assets.server_bar, offset(place, [0.0, footer]), [servers::WIDTH, servers::FOOTER]));
+                assets.chrome.draw_body(&mut base, place, [servers::WIDTH, servers::HEIGHT]);
+                assets.chrome.draw_footer(&mut base, offset(place, [0.0, servers::HEIGHT]), servers::WIDTH, servers::FOOTER);
                 let list = offset(place, servers::LIST);
                 base.sprites.push((&assets.server_fill, list, servers::LIST_SIZE));
                 if servers::shown(*scroll, accepted.char_servers.len()).contains(selected) {

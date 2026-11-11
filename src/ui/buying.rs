@@ -296,7 +296,7 @@ impl Setup {
             return;
         }
         let height = Self::height();
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, height - TITLE_HEIGHT - FOOTER]));
+        chrome.draw_body(layer, self.frame.position, [WIDTH, height]);
         // Store name field.
         layer.sprites.push((&chrome.border, at([5.0, TITLE_HEIGHT + 3.0]), [WIDTH - 10.0, 18.0]));
         layer.sprites.push((&chrome.white, at([6.0, TITLE_HEIGHT + 4.0]), [WIDTH - 12.0, 16.0]));
@@ -325,7 +325,7 @@ impl Setup {
             }
         }
         let hit = self.hit(pointer.0, inventory);
-        layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [WIDTH, FOOTER]));
+        chrome.draw_footer(layer, at([0.0, height]), WIDTH, FOOTER);
         let [ok, cancel] = Self::buttons();
         for (images, place, target) in [(&assets.ok, ok, Hit::Ok), (&assets.cancel, cancel, Hit::Cancel)] {
             let look = if hit == Some(target) { 1 + usize::from(pointer.1) } else { 0 };
@@ -419,7 +419,7 @@ impl MyStore {
         let title = format!("{} : {}", messages.get(SETUP_TITLE).map_or("", String::as_str), self.name);
         self.frame.draw_title(layer, chrome, &title, pointer.0);
         let height = self.height();
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, height - TITLE_HEIGHT - FOOTER]));
+        chrome.draw_body(layer, self.frame.position, [WIDTH, height]);
         let limit_line = messages::fill(messages.get(LIMIT_FORMAT).map_or("Price limit: %s Zeny", String::as_str), &[&group(u64::from(self.limit))]);
         layer.texts.push((window::fit(font, &limit_line, WIDTH - 12.0), at([6.0, TITLE_HEIGHT + 5.0]), [0, 0, 0]));
         for (place, wanted) in self.items.iter().enumerate().take(ROWS) {
@@ -429,7 +429,7 @@ impl MyStore {
             let text = format!("{} z", group(u64::from(wanted.price)));
             layer.texts.push((text.clone(), at([WIDTH - 6.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
         }
-        layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [WIDTH, FOOTER]));
+        chrome.draw_footer(layer, at([0.0, height]), WIDTH, FOOTER);
         let look = if self.hit(pointer.0) == Some(true) { 1 + usize::from(pointer.1) } else { 0 };
         layer.sprites.push((&assets.close[look], at(self.close_button()), BUTTON));
     }

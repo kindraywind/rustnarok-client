@@ -98,7 +98,6 @@ pub struct Assets {
     pieces: [Texture; 8],
     ok: [Texture; 3],
     cancel: [Texture; 3],
-    footer: Texture,
     radio: [Texture; 2],
 }
 
@@ -114,7 +113,6 @@ impl Assets {
             pieces: ["lu", "mu", "ru", "lm", "rm", "ld", "md", "rd"].map(|name| image(&format!("sysbox_{name}"))),
             ok: ["btn_ok", "btn_ok_a", "btn_ok_b"].map(image),
             cancel: ["btn_cancel", "btn_cancel_a", "btn_cancel_b"].map(image),
-            footer: image("basic_interface\\btnbar_mid2"),
             radio: [image("radiobtn_off"), image("radiobtn_on")],
         }
     }
@@ -288,8 +286,8 @@ impl Room {
         if self.frame.minimized {
             return;
         }
-        let body = self.height() - TITLE_HEIGHT;
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [ROOM_WIDTH, body]));
+        chrome.draw_body(layer, self.frame.position, [ROOM_WIDTH, self.height()]);
+        chrome.draw_footer(layer, at([0.0, self.height()]), ROOM_WIDTH, ROOM_SEND);
         layer.sprites.push((&chrome.border, at([MESSAGES_WIDTH, TITLE_HEIGHT]), [1.0, ROOM_LIST]));
         layer.sprites.push((&chrome.border, at([0.0, TITLE_HEIGHT + ROOM_LIST]), [ROOM_WIDTH, 1.0]));
         // The newest lines that fit, wrapped to the talk column.
@@ -439,7 +437,7 @@ impl Make {
             frame
         };
         frame.draw_title(layer, chrome, message(if self.editing { ROOM_SETUP } else { MAKE_TITLE }), pointer.0);
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [MAKE_SIZE[0], MAKE_SIZE[1] - TITLE_HEIGHT - MAKE_FOOTER]));
+        chrome.draw_body(layer, corner, MAKE_SIZE);
         let [title, limit, mode] = Self::places();
         let field = |layer: &mut Layer<'a>, place: [f32; 2], width: f32, text: String| {
             layer.sprites.push((&chrome.border, at(offset(place, [-1.0, -1.0])), [width + 2.0, 18.0]));
@@ -461,7 +459,7 @@ impl Make {
             field(layer, offset(mode, [165.0, 0.0]), 90.0, typed(&"*".repeat(self.password.chars().count()), self.on_password));
         }
         let footer = MAKE_SIZE[1] - MAKE_FOOTER;
-        layer.sprites.push((&assets.footer, at([0.0, footer]), [MAKE_SIZE[0], MAKE_FOOTER]));
+        chrome.draw_footer(layer, at([0.0, MAKE_SIZE[1]]), MAKE_SIZE[0], MAKE_FOOTER);
         let hit = self.hit(pointer.0);
         for (images, place, target) in
             [(&assets.ok, [MAKE_SIZE[0] - 110.0, footer + 4.0], MakeHit::Ok), (&assets.cancel, [MAKE_SIZE[0] - 60.0, footer + 4.0], MakeHit::Cancel)]

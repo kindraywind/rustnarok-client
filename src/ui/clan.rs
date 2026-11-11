@@ -27,7 +27,6 @@ const INFO_LEFT: f32 = 156.0;
 const EMBLEM: [f32; 2] = [INFO_LEFT + 90.0, TITLE_HEIGHT + 8.0];
 
 pub struct Assets {
-    footer: Texture,
     frame: Texture,
     // ponytail: by their numbers, emblem and picture N are clan N's; nothing in the data says so.
     emblems: [Texture; 9],
@@ -43,7 +42,6 @@ impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let image = |name: &str| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false);
         Self {
-            footer: image("basic_interface\\btnbar_mid2"),
             frame: image("emblem_frame"),
             emblems: std::array::from_fn(|i| image(&format!("clan_system\\clan_emblem{i:02}"))),
             illusts: std::array::from_fn(|i| image(&format!("clan_system\\clan_illust{:02}", i + 1))),
@@ -115,11 +113,8 @@ impl ClanWindow {
         if self.frame.minimized {
             return;
         }
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [WIDTH, HEIGHT - TITLE_HEIGHT - FOOTER]));
-        for x in [0.0, WIDTH - 1.0] {
-            layer.sprites.push((&chrome.border, at([x, TITLE_HEIGHT]), [1.0, HEIGHT - TITLE_HEIGHT - FOOTER]));
-        }
-        layer.sprites.push((&assets.footer, at([0.0, HEIGHT - FOOTER]), [WIDTH, FOOTER]));
+        chrome.draw_body(layer, self.frame.position, [WIDTH, HEIGHT]);
+        chrome.draw_footer(layer, at([0.0, HEIGHT]), WIDTH, FOOTER);
 
         if let Some(illust) = clan.id.checked_sub(1).and_then(|i| assets.illusts.get(i as usize)) {
             layer.sprites.push((illust, at(ILLUST), illust.size));

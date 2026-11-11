@@ -109,17 +109,16 @@ impl GridSize {
             return;
         }
         let [width, height] = [self.width, self.height()];
-        layer.sprites.push((&chrome.white, frame.at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT - GRID_FOOTER]));
+        chrome.draw_body(layer, frame.position, [width, height]);
         for cell in 0..self.rows * self.columns() {
             layer.sprites.push((&assets.cell, frame.at(self.cell(cell)), assets.cell.size));
         }
-        layer.sprites.push((&assets.footer, frame.at([0.0, height - GRID_FOOTER]), [width, GRID_FOOTER]));
+        chrome.draw_footer(layer, frame.at([0.0, height]), width, GRID_FOOTER);
         layer.sprites.push((&assets.resize, frame.at([width - window::GRIP, height - window::GRIP]), assets.resize.size));
     }
 }
 
 pub struct Assets {
-    pub footer: Texture,
     /// The corner grip.
     pub resize: Texture,
     pub ok: [Texture; 3],
@@ -135,7 +134,6 @@ impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let image = |name: &str| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false);
         Self {
-            footer: image("basic_interface\\btnbar_mid2"),
             resize: image("btn_resize"),
             ok: ["btn_ok", "btn_ok_a", "btn_ok_b"].map(image),
             cancel: ["btn_cancel", "btn_cancel_a", "btn_cancel_b"].map(image),
@@ -524,7 +522,7 @@ impl Setup {
             return;
         }
         let [width, height] = SETUP_SIZE;
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT - FOOTER]));
+        chrome.draw_body(layer, self.frame.position, [width, height]);
         let boxed = |layer: &mut Layer<'a>, corner: [f32; 2], size: [f32; 2]| {
             layer.sprites.push((&chrome.border, at([corner[0] - 1.0, corner[1] - 1.0]), [size[0] + 2.0, size[1] + 2.0]));
             layer.sprites.push((&chrome.white, at(corner), size));
@@ -554,7 +552,7 @@ impl Setup {
             }
         }
         let hit = self.hit(pointer.0);
-        layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [width, FOOTER]));
+        chrome.draw_footer(layer, at([0.0, height]), width, FOOTER);
         let [ok, cancel] = self.buttons();
         for (images, place, target) in [(&assets.ok, ok, Hit::Ok), (&assets.cancel, cancel, Hit::Cancel)] {
             let look = if hit == Some(target) { 1 + usize::from(pointer.1) } else { 0 };
@@ -842,14 +840,14 @@ impl SellHistory {
             return;
         }
         let [width, height] = HISTORY_SIZE;
-        layer.sprites.push((&chrome.white, at([0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT - FOOTER]));
+        chrome.draw_body(layer, self.frame.position, [width, height]);
         for (row, sale) in self.sales.iter().enumerate().skip(self.scroll).take(HISTORY_ROWS) {
             let top = TITLE_HEIGHT + (row - self.scroll) as f32 * HISTORY_ROW;
             draw_item(layer, icons, items, naming, messages, font, &InventoryItem { amount: sale.amount, ..sale.item.clone() }, at([4.0, top + 4.0]));
             let text = format!("{} z", group(u64::from(sale.zeny.max(0).unsigned_abs())));
             layer.texts.push((text.clone(), at([width - 10.0 - font.width(&text), top + 10.0]), [0, 0, 0]));
         }
-        layer.sprites.push((&assets.footer, at([0.0, height - FOOTER]), [width, FOOTER]));
+        chrome.draw_footer(layer, at([0.0, height]), width, FOOTER);
         let look = if self.hit(pointer.0) == Some(true) { 1 + usize::from(pointer.1) } else { 0 };
         layer.sprites.push((&assets.close[look], at(self.close_button()), BUTTON));
     }

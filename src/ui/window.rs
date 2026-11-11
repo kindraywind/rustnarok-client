@@ -22,6 +22,8 @@ pub struct Chrome {
     buttons: [[Texture; 2]; 3],
     pub white: Texture,
     pub border: Texture,
+    /// The footer strip's pieces, rounded ends around a middle to stretch: the 21 px set and the 29 px one.
+    footers: [[Texture; 3]; 2],
     tooltip: Texture,
     /// A cut text's whole-words balloon: the speech balloon's border, a darker fill.
     whole_fill: Texture,
@@ -39,6 +41,24 @@ impl Chrome {
         layer.sprites.push((right, offset(corner, [width - right.size[0], 0.0]), right.size));
     }
 
+    /// A plain window under its title bar: white inside a 1 px grey frame, down to the window's bottom, where
+    /// `draw_footer` goes over it. `corner` and `size` are the whole window's.
+    pub fn draw_body<'a>(&'a self, layer: &mut Layer<'a>, corner: [f32; 2], [width, height]: [f32; 2]) {
+        layer.sprites.push((&self.border, offset(corner, [0.0, TITLE_HEIGHT]), [width, height - TITLE_HEIGHT]));
+        layer.sprites.push((&self.white, offset(corner, [1.0, TITLE_HEIGHT]), [width - 2.0, height - TITLE_HEIGHT - 1.0]));
+    }
+
+    /// The footer strip along a window's bottom, ending on `bottom` (the window's bottom-left corner): the pieces
+    /// with the rounded corners around a stretched middle, as the game draws every footer. A footer 21 px high
+    /// takes the low pieces, a higher one the 29 px ones.
+    pub fn draw_footer<'a>(&'a self, layer: &mut Layer<'a>, bottom: [f32; 2], width: f32, height: f32) {
+        let [left, middle, right] = &self.footers[usize::from(height > 21.0)];
+        let corner = offset(bottom, [0.0, -left.size[1]]);
+        layer.sprites.push((left, corner, left.size));
+        layer.sprites.push((middle, offset(corner, [left.size[0], 0.0]), [width - left.size[0] - right.size[0], middle.size[1]]));
+        layer.sprites.push((right, offset(corner, [width - right.size[0], 0.0]), right.size));
+    }
+
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let basic = format!("{UI}basic_interface\\");
         let image = |path: String| gpu.load_texture(grf, &path, false);
@@ -47,6 +67,7 @@ impl Chrome {
             buttons: ["base", "mini", "close"].map(|name| ["off", "on"].map(|state| image(format!("{basic}sys_{name}_{state}.bmp")))),
             white: gpu.solid([255; 4]),
             border: gpu.solid(BORDER),
+            footers: ["", "2"].map(|set| ["left", "mid", "right"].map(|part| image(format!("{basic}btnbar_{part}{set}.bmp")))),
             tooltip: gpu.solid(TOOLTIP),
             whole_fill: gpu.solid([0, 0, 0, 0x88]),
             balloon_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
