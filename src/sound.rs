@@ -8,12 +8,11 @@ use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustnarok_client::grf::Grf;
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 /// Decoded sound: interleaved 16-bit stereo at its own rate (the mixer resamples as it plays, which keeps a song
 /// a third the size of float samples at the output's rate).
@@ -262,21 +261,21 @@ fn decode(bytes: Vec<u8>, extension: &str) -> Option<Samples> {
     let source = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
     let mut hint = Hint::new();
     hint.with_extension(extension);
-    let mut format = symphonia::default::get_probe().format(&hint, source, &FormatOptions::default(), &MetadataOptions::default()).ok()?.format;
-    let track = format.default_track()?;
-    let (track_id, source_rate) = (track.id, track.codec_params.sample_rate?);
-    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default()).ok()?;
-    let mut samples = Vec::with_capacity(track.codec_params.n_frames.unwrap_or(0) as usize * 2);
-    while let Ok(packet) = format.next_packet() {
-        if packet.track_id() != track_id {
+    let mut format = symphonia::default::get_probe().probe(&hint, source, FormatOptions::default(), MetadataOptions::default()).ok()?;
+    let track = format.default_track(TrackType::Audio)?;
+    let params = track.codec_params.as_ref()?.audio()?;
+    let (track_id, source_rate) = (track.id, params.sample_rate?);
+    let mut decoder = symphonia::default::get_codecs().make_audio_decoder(params, &AudioDecoderOptions::default()).ok()?;
+    let mut samples = Vec::with_capacity(track.num_frames.unwrap_or(0) as usize * 2);
+    let mut buffer = Vec::<i16>::new();
+    while let Ok(Some(packet)) = format.next_packet() {
+        if packet.track_id != track_id {
             continue;
         }
         let Ok(decoded) = decoder.decode(&packet) else { continue };
-        let spec = *decoded.spec();
-        let mut buffer = SampleBuffer::<i16>::new(decoded.capacity() as u64, spec);
-        buffer.copy_interleaved_ref(decoded);
-        let channels = spec.channels.count().max(1);
-        for frame in buffer.samples().chunks_exact(channels) {
+        let channels = decoded.spec().channels().count().max(1);
+        decoded.copy_to_vec_interleaved(&mut buffer);
+        for frame in buffer.chunks_exact(channels) {
             samples.extend([frame[0], frame[channels.min(2) - 1]]);
         }
     }
