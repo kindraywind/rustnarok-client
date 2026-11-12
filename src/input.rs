@@ -2414,8 +2414,10 @@ impl App {
             let listed = game.listed_item_at(self.cursor);
             let names = (&self.messages[..], &self.card_names, &game.char_names);
             let on_enchant = assets.is_some_and(|assets| game.top_at(self.cursor, assets.message.size) == Some(Top::Esc(escape::WindowId::Enchant)));
-            let described = viewed.or_else(|| match game.window_at(self.cursor) {
+            let described = match game.window_at(self.cursor) {
+                // The press alone describes: the release would take it for the same item again and close it.
                 _ if state != ElementState::Pressed || self.modifiers.alt_key() || card.is_some() => None,
+                _ if viewed.is_some() => viewed,
                 // The enchant window's items: either list's rows, its picture, a material or a card.
                 _ if on_enchant => game.enchant.as_ref().and_then(|window| window.hovered(self.cursor, &game.inventory.items)),
                 _ if shop_row.is_some() => shop_row.map(shop::Offer::described),
@@ -2448,7 +2450,7 @@ impl App {
                     _ => None,
                 },
                 _ => None,
-            });
+            };
             if let Some(item) = described {
                 let shown = iteminfo::Shown::of(&item);
                 // The same item again closes its description; another one takes its place.
