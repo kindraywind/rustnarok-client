@@ -51,7 +51,7 @@ pub fn register(fx: &mut WorldFx) {
 }
 
 /// Draws one random whole number below its argument.
-type Rand = Box<dyn FnMut(u32) -> u32>;
+pub(crate) type Rand = Box<dyn FnMut(u32) -> u32>;
 
 /// One random whole number below `n`.
 fn pick(n: u32) -> u32 {
@@ -592,7 +592,7 @@ impl Class for Funnel {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::Eye;
     use super::*;
     use crate::actor::Placed;
@@ -601,8 +601,8 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    const UNIT: u32 = 0x700;
-    const FEET: Vector = [30.0, 4.0, 50.0];
+    pub(crate) const UNIT: u32 = 0x700;
+    pub(crate) const FEET: Vector = [30.0, 4.0, 50.0];
 
     /// The frame count of each fake STR, by its file.
     fn frames_of(file: &str) -> i32 {
@@ -625,8 +625,8 @@ mod tests {
 
     /// STRs of one layer with keys at 0 and their last frame; the files asked for kept.
     #[derive(Default)]
-    struct Fake {
-        strs: Vec<String>,
+    pub(crate) struct Fake {
+        pub(crate) strs: Vec<String>,
         textures: Vec<String>,
     }
 
@@ -660,7 +660,7 @@ mod tests {
     }
 
     /// A random source that answers from `values` in turn (then 0) and logs what it was asked.
-    fn scripted(values: &[u32]) -> (Rand, Rc<RefCell<Vec<u32>>>) {
+    pub(crate) fn scripted(values: &[u32]) -> (Rand, Rc<RefCell<Vec<u32>>>) {
         let asked = Rc::new(RefCell::new(Vec::new()));
         let log = asked.clone();
         let values = values.to_vec();
@@ -675,7 +675,7 @@ mod tests {
     }
 
     /// Always the highest answer.
-    fn top() -> Rand {
+    pub(crate) fn top() -> Rand {
         Box::new(|n: u32| n.saturating_sub(1))
     }
 
@@ -685,7 +685,7 @@ mod tests {
     }
 
     /// Runs `f` on a scene with the units in `here` standing at their feet (None = the player, at the origin).
-    fn scene<R>(here: &[(u32, Vector)], f: impl FnOnce(&Scene) -> R) -> R {
+    pub(crate) fn scene<R>(here: &[(u32, Vector)], f: impl FnOnce(&Scene) -> R) -> R {
         let feet = |unit: Option<u32>| match unit {
             Some(id) => here.iter().find(|(each, _)| *each == id).map(|(_, at)| *at),
             None => Some([0.0; 3]),
@@ -696,19 +696,19 @@ mod tests {
     }
 
     /// One object run on its own as the registry runs it: it follows its owner, updates and ages.
-    struct Solo<C> {
-        fx: Fx,
-        class: C,
+    pub(crate) struct Solo<C> {
+        pub(crate) fx: Fx,
+        pub(crate) class: C,
     }
 
     impl<C: Class> Solo<C> {
-        fn new(mut class: C, launch: Launch, assets: &mut Fake) -> Self {
+        pub(crate) fn new(mut class: C, launch: Launch, assets: &mut Fake) -> Self {
             let mut fx = Fx::of(&launch);
             class.begin(&mut fx, assets);
             Self { fx, class }
         }
 
-        fn tick(&mut self, here: &[(u32, Vector)], assets: &mut Fake) {
+        pub(crate) fn tick(&mut self, here: &[(u32, Vector)], assets: &mut Fake) {
             scene(here, |scene| {
                 if let Some(feet) = self.fx.owner.and_then(|owner| (scene.feet)(owner)) {
                     self.fx.position = feet;
@@ -719,12 +719,12 @@ mod tests {
             self.fx.age += 1;
         }
 
-        fn alive(&self, here: &[(u32, Vector)]) -> bool {
+        pub(crate) fn alive(&self, here: &[(u32, Vector)]) -> bool {
             scene(here, |scene| self.class.alive(&self.fx, scene))
         }
 
         /// Ticks while alive, at most `limit` times; the updates run.
-        fn run(&mut self, here: &[(u32, Vector)], assets: &mut Fake, limit: u32) -> u32 {
+        pub(crate) fn run(&mut self, here: &[(u32, Vector)], assets: &mut Fake, limit: u32) -> u32 {
             let mut updates = 0;
             while updates < limit && self.alive(here) {
                 self.tick(here, assets);
@@ -734,12 +734,12 @@ mod tests {
         }
 
         /// The ages of its sound events, and of its shakes.
-        fn sounds(&self) -> Vec<(u32, String)> {
+        pub(crate) fn sounds(&self) -> Vec<(u32, String)> {
             self.fx
                 .events
                 .iter()
                 .filter_map(|(age, event)| match event {
-                    Event::Sound { file, .. } => Some((*age, file.clone())),
+                    Event::Sound { file, .. } | Event::SoundAt(file, _) => Some((*age, file.clone())),
                     Event::Quake | Event::Afterimage => None,
                 })
                 .collect()
@@ -750,11 +750,11 @@ mod tests {
         (a - b).abs() < 1e-3
     }
 
-    fn close3(a: Vector, b: Vector) -> bool {
+    pub(crate) fn close3(a: Vector, b: Vector) -> bool {
         (0..3).all(|axis| close(a[axis], b[axis]))
     }
 
-    const HERE: [(u32, Vector); 1] = [(UNIT, FEET)];
+    pub(crate) const HERE: [(u32, Vector); 1] = [(UNIT, FEET)];
 
     #[test]
     fn violent_quake_picks_one_of_three_and_stands_8_units_up_the_screen() {

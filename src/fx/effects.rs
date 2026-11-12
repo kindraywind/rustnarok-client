@@ -107,6 +107,8 @@ pub struct Table {
     areas: HashMap<u32, (u32, f32)>,
     /// The units that launch an effect on themselves every tick while they're in sight, one copy at a time (`keep`).
     keeps: HashMap<u32, u32>,
+    /// The units that launch an effect at their cell as they come into sight and again every so many ticks (`every`).
+    everys: HashMap<u32, (u32, u32)>,
     models: HashMap<u32, String>,
     /// Effects that end (or, on a ground unit, start again) by their own length in ticks rather than their STR's.
     lengths: HashMap<u32, u32>,
@@ -181,6 +183,7 @@ impl Table {
             unit_rolls: HashMap::new(),
             areas: HashMap::new(),
             keeps: HashMap::new(),
+            everys: HashMap::new(),
             models: HashMap::new(),
             lengths: HashMap::new(),
             misc: HashMap::new(),
@@ -267,6 +270,11 @@ impl Table {
                 ["keep", ..] => {
                     if let (Some(kind), Some(id)) = (number(1), number(2)) {
                         table.keeps.insert(kind, id);
+                    }
+                }
+                ["every", ..] => {
+                    if let (Some(kind), Some(id), Some(ticks)) = (number(1), number(2), number(3)) {
+                        table.everys.insert(kind, (id, ticks.max(1)));
                     }
                 }
                 ["minid", ..] => match (number(1), number(2)) {
@@ -474,6 +482,11 @@ impl Table {
         self.keeps.get(&kind).copied()
     }
 
+    /// The effect a unit of this skill unit type launches at its cell as it comes into sight, and the ticks till each next one.
+    pub fn every(&self, kind: u32) -> Option<(u32, u32)> {
+        self.everys.get(&kind).copied()
+    }
+
     /// What a trap of this skill unit type shows when it goes off.
     pub fn trap(&self, kind: u32) -> Option<u32> {
         self.traps.get(&kind).copied()
@@ -634,10 +647,17 @@ struct UnitStart {
     again: Option<(u32, u32)>,
     /// `unitr`: each world effect and the draw of 100 that starts it, owned by the unit.
     rolls: Vec<(u32, u32)>,
+    /// `every`: the effect it launches at its cell (no owner) and the ticks between launches.
+    every: Option<(u32, u32)>,
     age: u32,
 }
 
 impl UnitStart {
+    /// Before this tick's `tick`: the `every` effect when one is due, at the first tick and each period after.
+    fn every_due(&self) -> Option<u32> {
+        self.every.filter(|&(_, ticks)| self.age.is_multiple_of(ticks)).map(|(effect, _)| effect)
+    }
+
     /// One 16 ms tick, `seen` telling whether the unit is in sight and `draw` giving a random number below 100: the world effects it
     /// starts, each with its owner (None = at the cell).
     fn tick(&mut self, seen: bool, draw: impl FnOnce() -> u32) -> Vec<(u32, Option<Option<u32>>)> {
@@ -3241,12 +3261,17 @@ impl Effects {
         for _ in 0..due.min(WORLD_TICKS_MAX) {
             // The ground units' own starts come first, so a copy started this tick runs it.
             let mut starts = Vec::new();
+            let mut everys = Vec::new();
             for start in &mut self.unit_starts {
+                everys.extend(start.every_due().map(|effect| (effect, start.at)));
                 let seen = (scene.feet)(Some(start.id)).is_some_and(|feet| world_str::near(feet, scene.player));
                 starts.extend(start.tick(seen, || pick(0, 99)).into_iter().map(|(world, owner)| (world, owner, start.at)));
             }
             for (world, owner, at) in starts {
                 self.launch_world(gpu, grf, table, world, owner, at, false, 0);
+            }
+            for (effect, at) in everys {
+                self.play(gpu, grf, table, effect, Target::Ground, at, now);
             }
             for point in shafts_due(&mut self.shafts, scene.feet) {
                 self.launch_world(gpu, grf, table, table.min_id(RAINSTORM_SHAFTS, self.min), None, point, false, 0);
@@ -3342,6 +3367,11 @@ impl Effects {
                 && let Some(object) = self.fx.iter().find(|object| object.fx.owner == Some(unit) && object.fx.id == effect)
             {
                 self.sounds.push((Instant::now(), "effect\\t_공격력.wav".to_owned(), object.fx.position));
+            }
+            // Star Burst's falling stars finish.
+            if effect == world_fx::rain::STAR_BURST {
+                self.fx.release_one(Some(unit), effect);
+                continue;
             }
             self.fx.remove(Some(unit), effect);
         }
@@ -5077,11 +5107,12 @@ impl Effects {
             self.launch_kept(gpu, grf);
         }
         // Under /mineffect Quagmire's cell plays its world effect (`minid`), started again by its effect's restart period; Poison
-        // Smoke's cells send up puffs by chance (`unitr`).
+        // Smoke's cells send up puffs by chance (`unitr`); Severe Rainstorm's cell launches its rain now and again (`every`).
         let again = table.unit_again(kind, self.min);
         let rolls = table.unit_rolls(kind).to_vec();
-        if again.is_some() || !rolls.is_empty() {
-            self.unit_starts.push(UnitStart { id, at, again, rolls, age: 0 });
+        let every = table.every(kind);
+        if again.is_some() || !rolls.is_empty() || every.is_some() {
+            self.unit_starts.push(UnitStart { id, at, again, rolls, every, age: 0 });
         }
         // Bind Trap's circle is sized by the trap's level.
         if let Some(effect) = table.units.get(&kind).and_then(|&effect| world_fx::jobs3::unit_effect(effect, level)) {
@@ -7699,7 +7730,7 @@ mod tests {
         let table = Table::load();
         assert_eq!(table.unit_rolls(225), [(1546, 1), (1547, 2)]);
         assert!(table.unit_rolls(142).is_empty());
-        let mut start = UnitStart { id: 7, at: [0.0; 3], again: None, rolls: table.unit_rolls(225).to_vec(), age: 0 };
+        let mut start = UnitStart { id: 7, at: [0.0; 3], again: None, rolls: table.unit_rolls(225).to_vec(), every: None, age: 0 };
         assert_eq!(start.tick(true, || 1), [(1546, Some(Some(7)))]);
         assert_eq!(start.tick(true, || 2), [(1547, Some(Some(7)))]);
         for draw in [0, 3, 99] {
@@ -7719,7 +7750,7 @@ mod tests {
 
     #[test]
     fn a_quagmire_cell_starts_its_world_effect_again() {
-        let mut start = UnitStart { id: 7, at: [0.0; 3], again: Some((1161, 130)), rolls: Vec::new(), age: 0 };
+        let mut start = UnitStart { id: 7, at: [0.0; 3], again: Some((1161, 130)), rolls: Vec::new(), every: None, age: 0 };
         let started: Vec<u32> = (1..=400).filter(|_| !start.tick(true, || panic!("drawn")).is_empty()).collect();
         assert_eq!(started, [130, 260, 390]);
         // Ownerless, at the cell, whether in sight or not.
@@ -11496,5 +11527,43 @@ mod tests {
         assert_eq!([BLOOD_LUST, FIRE_WAVE_FX, TYPHOON_MISSILE, WATER_SCREW_FX].map(|id| table.lengths[&id]), [100, 500, 100, 500]);
         // The colour rule: the body at 0.85 and the halo at 0.5 of the layer's alpha, whole numbers.
         assert_eq!(cells::blast_alphas(255.0), (216.0, 127.0));
+    }
+
+    #[test]
+    fn the_str_rains_have_their_rows() {
+        use world_fx::rain::*;
+        let table = Table::load();
+        for (kind, effect) in
+            [(266, RAIN_OF_CRYSTAL), (275, CROSS_RAIN), (286, TWINKLING_GALAXY), (287, STAR_CANNON), (288, GRENADES_DROPPING), (291, MISSION_BOMBARD)]
+        {
+            assert_eq!(table.units.get(&kind), Some(&effect), "{kind}");
+            assert!(table.units_once.contains(&kind), "{kind}");
+        }
+        assert_eq!(table.ground(5369), Some(&[(Who::Ground, 2027), (Who::Ground, DIAMOND_STORM)][..]));
+        assert!(table.world(2027).is_some());
+        assert_eq!(table.status(1391), [STAR_BURST]);
+        // Severe Rainstorm's cell: no `unit` row, its rain launched by `every`, with the rain's sound each time.
+        assert_eq!((table.units.get(&219), table.every(219)), (None, Some((SEVERE_RAINSTORM, 992))));
+        assert_eq!(table.every(218), None);
+        let sounds: Vec<_> = table.sounds[&SEVERE_RAINSTORM].iter().map(|sound| (sound.file.as_str(), sound.delay_ms, sound.listener)).collect();
+        assert_eq!(sounds, [("effect\\rainstorm", 0, false)]);
+    }
+
+    #[test]
+    fn an_every_unit_launches_at_once_and_every_period_while_it_stands() {
+        let start = || UnitStart { id: 7, at: [0.0; 3], again: None, rolls: Vec::new(), every: Some((world_fx::rain::SEVERE_RAINSTORM, 992)), age: 0 };
+        let mut unit = start();
+        let mut launched = Vec::new();
+        for tick in 0..2000 {
+            launched.extend(unit.every_due().map(|effect| (tick, effect)));
+            assert_eq!(unit.tick(true, || panic!("drawn")), []);
+        }
+        assert_eq!(launched, [(0, 1276), (992, 1276), (1984, 1276)]);
+        // Seen again, a new start launches at its first tick; a unit gone launches no more.
+        assert_eq!(start().every_due(), Some(1276));
+        let mut effects = Effects::default();
+        effects.unit_starts.push(start());
+        effects.forget(7);
+        assert!(effects.unit_starts.is_empty());
     }
 }

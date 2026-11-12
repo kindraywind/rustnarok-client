@@ -10,6 +10,7 @@ pub mod footprints;
 pub mod heal;
 pub mod jobs3;
 pub mod ninja;
+pub mod rain;
 pub mod shots;
 pub mod star;
 pub mod status4;
@@ -613,6 +614,8 @@ pub trait Assets {
 pub enum Event {
     /// A file under data\wav\, at the object's place or (`listener`) at the own player's.
     Sound { file: String, listener: bool },
+    /// A file under data\wav\ at a point of its own.
+    SoundAt(String, Vector),
     /// The 650 ms camera shake.
     Quake,
     /// The owner starts leaving Kagemusya's afterimages (Shadow Exceed's end).
@@ -781,6 +784,7 @@ impl Default for WorldFx {
         heal::register(&mut fx);
         jobs3::register(&mut fx);
         ninja::register(&mut fx);
+        rain::register(&mut fx);
         shots::register(&mut fx);
         star::register(&mut fx);
         status4::register(&mut fx);
@@ -866,6 +870,11 @@ impl WorldFx {
         self.objects.iter_mut().filter(|object| object.fx.owner == owner).for_each(|object| object.fx.released = true);
     }
 
+    /// The running copy of (owner, id) lets its pieces finish without new ones.
+    pub fn release_one(&mut self, owner: Option<Option<u32>>, id: u32) {
+        self.objects.iter_mut().filter(|object| object.fx.owner == owner && object.fx.id == id).for_each(|object| object.fx.released = true);
+    }
+
     pub fn remove_all_of(&mut self, owner: Option<Option<u32>>) {
         self.objects.retain(|object| object.fx.owner != owner);
     }
@@ -901,6 +910,7 @@ impl WorldFx {
                 match event {
                     _ if *age != fx.age => {}
                     Event::Sound { file, listener } => fired.push(Fired::Sound(file.clone(), if *listener { scene.player } else { fx.position })),
+                    Event::SoundAt(file, at) => fired.push(Fired::Sound(file.clone(), *at)),
                     Event::Quake => fired.push(Fired::Quake),
                     Event::Afterimage => fired.extend(fx.owner.map(Fired::Afterimage)),
                 }
