@@ -14,6 +14,7 @@
 # wdelay <world id> <ms>: every launch of that STR world effect (world_str.txt) waits that long before its first step
 # unitr <skill unit type> <world id> <draw>: every tick such a unit stands in sight, one random whole number below 100 is drawn; when it equals draw, the unit starts that STR world effect, owned by the unit (it follows the cell and ends with its STR)
 # area <skill unit type> <effect id> <lift>: the effect plays on a grid of points round each such unit's cell (one point at range 0, 6 units apart), now and every length less 20 ticks while it stands; lift is how far below the ground its anchor goes
+# every <skill unit type> <effect id> <ticks>: launches the effect at such a unit's cell (no owner) as the unit comes into sight and again every that many ticks while it stands; the copies launched play out, and a unit that goes launches no more
 # keep <skill unit type> <effect id>: while such a unit is in sight, every tick the effect is launched on it (owned by the unit, at its cell, unique): a running copy is kept, otherwise a new one starts; the unit going takes its copies with it
 # rsm <skill unit type> <model under data\model\ without .rsm, or an .rsm2 with its extension>: the model standing on such a unit's cell (traps)
 # wav <effect id> <file under data\wav\ without .wav> <delay ms> [random from to]: a sound the effect plays
@@ -2139,6 +2140,8 @@ wav	1664	effect\ef_beginspell	0
 wav	1677	effect\ef_beginspell	0
 wav	1709	effect\ef_beginspell	0
 wav	1569	effect\REVERBERATION	0	listener
+# ponytail: the game plays Severe Rainstorm's rain sound at the listener.
+wav	1276	effect\rainstorm	0
 wav	1286	effect\EF_BeginSpell	0
 wav	1286	effect\EF_BeginSpell	0
 wav	1286	effect\EF_BeginSpell	0
@@ -4977,6 +4980,8 @@ ground	3009	ground	984
 ground	3009	ground	1000
 ground	3009	ground	1002
 ground	2587	caster	1232
+ground	5369	ground	2027
+ground	5369	ground	2026
 trap	143	106
 trap	149	139
 trap	150	99
@@ -5050,7 +5055,7 @@ unit	206	827
 unit	207	828
 unit	208	829
 unit	218	856
-unit	219	1276
+every	219	1276	992
 unit	220	920
 unit	221	926
 unit	222	860
@@ -5086,6 +5091,12 @@ unit	264	1120
 unit	273	1804	once
 unit	274	1768	once
 unit	276	1957	once
+unit	266	1752	once
+unit	275	2462	once
+unit	286	2349	once
+unit	287	2350	once
+unit	288	2351	once
+unit	291	2354	once
 unit	265	1200	once
 area	245	959	20
 area	246	964	0
@@ -5298,6 +5309,7 @@ status	1337	2305
 status	1338	2306
 status	1339	2302
 status	1339	2303
+status	1391	2348
 length	22	270
 length	25	40
 length	215	500
