@@ -103,7 +103,12 @@ impl Spr {
             rgba.push(RgbaImage::from_raw(u32::from(width), u32::from(height), pixels).unwrap());
         }
 
-        let palette = if version >= (1, 1) { parse_palette(reader.take(1024)?).unwrap() } else { [[0; 4]; 256] };
+        // A sprite of RGBA images only may end without the palette: nothing needs it then.
+        let palette = match reader.take(1024) {
+            Ok(bytes) if version >= (1, 1) => parse_palette(bytes).unwrap(),
+            Err(_) if indexed_count > 0 && version >= (1, 1) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "sprite file is truncated")),
+            _ => [[0; 4]; 256],
+        };
         Ok(Self { indexed, rgba, palette })
     }
 
@@ -347,6 +352,17 @@ pub fn gear_shift(head_shift: [i32; 2], head: Option<&Frame>, gear: &Frame) -> [
 mod tests {
     use super::*;
     use crate::grf::Grf;
+
+    #[test]
+    fn reads_rgba_only_sprites_without_a_palette() {
+        // SPR 2.1: no palette images, one 1x1 RGBA image (ABGR), and no palette after it.
+        let rgba_only = [b"SP".as_slice(), &[1, 2], &0u16.to_le_bytes(), &1u16.to_le_bytes(), &[1, 0, 1, 0], &[255, 3, 2, 1]].concat();
+        let spr = Spr::parse(&rgba_only).unwrap();
+        assert_eq!(spr.image(1, 0, None).unwrap().get_pixel(0, 0), &Rgba([1, 2, 3, 255]));
+        // Palette images still need it.
+        let indexed = [b"SP".as_slice(), &[1, 2], &1u16.to_le_bytes(), &0u16.to_le_bytes(), &[1, 0, 1, 0], &1u16.to_le_bytes(), &[7]].concat();
+        assert!(Spr::parse(&indexed).is_err());
+    }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
     #[test]
