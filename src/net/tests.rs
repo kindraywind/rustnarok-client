@@ -953,6 +953,25 @@ fn decodes_inventory_expansion() {
 }
 
 #[test]
+fn decodes_point_shops() {
+    let words = |values: &[(u32, usize)]| values.iter().flat_map(|&(value, size)| value.to_le_bytes()[..size].to_vec()).collect::<Vec<u8>>();
+    // 12 points and 0 free; a Bubble Gum at 3 points (2 for us), then a type-0 potion at 1.
+    let body = [words(&[(12, 4), (0, 4)]), words(&[(3, 4), (2, 4), (2, 1), (50118, 4)]), words(&[(1, 4), (1, 4), (0, 1), (501, 4)])].concat();
+    let mut packet = ZC_PC_CASH_POINT_ITEMLIST.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((4 + body.len()) as u16).to_le_bytes());
+    packet.extend_from_slice(&body);
+    let Some(MapEvent::PointShop { points: 12, free: 0, goods }) = decode_map_packet(&packet) else { panic!() };
+    let read: Vec<_> = goods.iter().map(|goods| (goods.item, goods.price, goods.discounted, goods.kind)).collect();
+    assert_eq!(read, [(50118, 3, 2, 2), (501, 1, 1, 0)]);
+    let answer = [ZC_PC_CASH_POINT_UPDATE.to_le_bytes().to_vec(), words(&[(9, 4), (0, 4), (6, 2)])].concat();
+    let Some(MapEvent::PointShopBought { points: 9, free: 0, result: 6 }) = decode_map_packet(&answer) else { panic!() };
+    // The purchase: length, free points, how many kinds, then amount and item each.
+    assert_eq!(encode_point_shop_buy(0, &[(50118, 2)]), [0x88, 0x02, 16, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0xC6, 0xC3, 0, 0]);
+    let lengths = [ZC_PC_CASH_POINT_ITEMLIST, CZ_PC_BUY_CASH_POINT_ITEM, ZC_PC_CASH_POINT_UPDATE].map(packet_length);
+    assert_eq!(lengths, [Some(-1), Some(-1), Some(12)]);
+}
+
+#[test]
 fn decodes_markets_and_barters() {
     let header = |id: u16, body: &[u8]| {
         let mut packet = id.to_le_bytes().to_vec();

@@ -4301,6 +4301,31 @@ impl App {
                 let (id, color) = if ok { (54, CHAT_ITEM) } else { (57, CHAT_ERROR) };
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
             }
+            // An NPC point shop: the plain shop's windows priced in points; like it, it closes as the deal goes.
+            // ponytail: the game asks first with the 7-day withdrawal notice (3771); here the deal goes as pressed.
+            MapEvent::PointShop { points, free, goods } => {
+                let offers = goods
+                    .into_iter()
+                    .map(|goods| shop::Offer {
+                        item: goods.item,
+                        price: goods.discounted,
+                        listed: goods.price,
+                        kind: goods.kind,
+                        identified: true,
+                        ..Default::default()
+                    })
+                    .collect();
+                let mut store = shop::Shop::new(false, offers);
+                store.points = Some(shop::Points { points, free, owner: game.player.name.clone() });
+                game.open_shop(store);
+            }
+            MapEvent::PointShopBought { points, free, result } => {
+                if let Some(held) = game.shop.as_mut().and_then(|shop| shop.points.as_mut()) {
+                    (held.points, held.free) = (points, free);
+                }
+                let (id, ok) = shop::point_result(result);
+                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if ok { CHAT_ITEM } else { CHAT_ERROR });
+            }
             // A barter's answer: its own lines (by their words), the window stays with what's left.
             MapEvent::Bought(result)
                 if game.shop.as_ref().is_some_and(|shop| matches!(shop.market, Some(net::MarketKind::Barter | net::MarketKind::Expanded))) =>

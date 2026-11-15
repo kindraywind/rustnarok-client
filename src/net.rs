@@ -1013,6 +1013,10 @@ const ZC_NOTIFY_EFFECT: u16 = 0x019B;
 const ZC_SELECT_DEALTYPE: u16 = 0x00C4;
 const CZ_ACK_SELECT_DEALTYPE: u16 = 0x00C5;
 const ZC_PC_PURCHASE_ITEMLIST: u16 = 0x0B77;
+/// An NPC point shop (rathena's cashshop, itemshop and pointshop NPCs): its goods, the purchase, and the answer.
+const ZC_PC_CASH_POINT_ITEMLIST: u16 = 0x0287;
+const CZ_PC_BUY_CASH_POINT_ITEM: u16 = 0x0288;
+const ZC_PC_CASH_POINT_UPDATE: u16 = 0x0289;
 const ZC_PC_SELL_ITEMLIST: u16 = 0x00C7;
 const CZ_PC_PURCHASE_ITEMLIST: u16 = 0x00C8;
 const CZ_PC_SELL_ITEMLIST: u16 = 0x00C9;
@@ -2593,6 +2597,19 @@ fn decode_expanded_barter_at(mut rest: &[u8], refine: bool) -> Vec<Bartered> {
         rest = &rest[head + count * 12..];
     }
     goods
+}
+
+/// CZ_PC_BUY_CASH_POINT_ITEM: the free points to spend, then (item, amount) pairs (sent as amount, item).
+fn encode_point_shop_buy(free: u32, items: &[(u32, u16)]) -> Vec<u8> {
+    let mut packet = CZ_PC_BUY_CASH_POINT_ITEM.to_le_bytes().to_vec();
+    packet.extend_from_slice(&((10 + items.len() * 6) as u16).to_le_bytes());
+    packet.extend_from_slice(&free.to_le_bytes());
+    packet.extend_from_slice(&(items.len() as u16).to_le_bytes());
+    for &(item, amount) in items {
+        packet.extend_from_slice(&amount.to_le_bytes());
+        packet.extend_from_slice(&item.to_le_bytes());
+    }
+    packet
 }
 
 /// CZ_NPC_MARKET_PURCHASE: (item, amount) pairs.
