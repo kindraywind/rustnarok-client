@@ -20,7 +20,8 @@ const INSET: f32 = 6.0;
 const LINE_GAP: f32 = 4.0;
 const MESSAGE_GAP: f32 = 10.0;
 pub const SIZE: u16 = 12;
-/// Each box: black at a quarter opacity inside a 1 px grey border with cut corners.
+/// Each box: black at a quarter opacity inside a 1 px grey border with cut corners. Its text has a black shadow 1 px
+/// right and down.
 const FILL: [u8; 4] = [0, 0, 0, 0x40];
 const EDGE: [u8; 4] = [0x5C, 0x5C, 0x5C, 0xFF];
 
@@ -29,8 +30,8 @@ struct Announcement {
     color: [u8; 3],
     size: u16,
     at: Instant,
-    /// Its lines, rendered once.
-    lines: Option<Vec<Texture>>,
+    /// Its lines as the last frame drew them, each in black (the shadow) and in its color.
+    lines: Option<Vec<[Texture; 2]>>,
 }
 
 #[derive(Default)]
@@ -81,12 +82,14 @@ impl Bar {
         self.messages.iter().map(|message| (message.text.as_str(), message.color, message.size)).collect()
     }
 
-    /// Renders the lines not drawn yet.
+    /// The lines' textures for this frame: the UI's text, at the screen's own pixel size (and so as sharp as the chat's
+    /// on a scaled canvas), kept by `gpu` between frames.
     pub fn prepare(&mut self, gpu: &Gpu, font: &Font) {
         self.background.get_or_insert_with(|| [gpu.solid(FILL), gpu.solid(EDGE)]);
-        for message in self.messages.iter_mut().filter(|message| message.lines.is_none()) {
-            let lines = wrap(&message.text).iter().map(|line| gpu.texture(&font.render_sized(line, message.color, f32::from(message.size)), false)).collect();
-            message.lines = Some(lines);
+        for message in &mut self.messages {
+            let (color, size) = (message.color, f32::from(message.size));
+            let lines = wrap(&message.text).into_iter().map(|line| [[0; 3], color].map(|color| gpu.text_sized(font, &line, color, size)));
+            message.lines = Some(lines.collect());
         }
     }
 
@@ -95,15 +98,16 @@ impl Bar {
         let mut top = TOP;
         for message in &self.messages {
             let Some(lines) = &message.lines else { continue };
-            let width = lines.iter().map(|line| line.size[0]).fold(0.0, f32::max) + 2.0 * INSET;
-            let height: f32 = lines.iter().map(|line| line.size[1] + LINE_GAP).sum::<f32>() + 2.0 * INSET - LINE_GAP;
+            let width = lines.iter().map(|[_, line]| line.size[0]).fold(0.0, f32::max) + 2.0 * INSET;
+            let height: f32 = lines.iter().map(|[_, line]| line.size[1] + LINE_GAP).sum::<f32>() + 2.0 * INSET - LINE_GAP;
             let left = ((screen()[0] - width) / 2.0).floor();
             layer.sprites.push((fill, [left + 1.0, top + 1.0], [width - 2.0, height - 2.0]));
             for (at, size) in overhead::border([width, height]) {
                 layer.sprites.push((edge, [left + at[0], top + at[1]], size));
             }
             let mut y = top + INSET;
-            for line in lines {
+            for [shadow, line] in lines {
+                layer.sprites.push((shadow, [left + INSET + 1.0, y + 1.0], shadow.size));
                 layer.sprites.push((line, [left + INSET, y], line.size));
                 y += line.size[1] + LINE_GAP;
             }

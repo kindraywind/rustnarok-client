@@ -82,8 +82,8 @@ pub struct Gpu {
     frame: Cell<u64>,
 }
 
-/// Lines of text (and their color) as textures, with the frame each was last drawn in.
-type TextCache = HashMap<(String, [u8; 3]), (Texture, u64)>;
+/// Lines of text (with their color and pixel size) as textures, with the frame each was last drawn in.
+type TextCache = HashMap<(String, [u8; 3], u32), (Texture, u64)>;
 
 /// How many frames a line of text stays rasterized without being drawn.
 const TEXT_FRAMES: u64 = 120;
@@ -236,17 +236,23 @@ impl Gpu {
     /// A line of UI text, rasterized at the screen's own pixel size so it stays sharp however the canvas is scaled,
     /// and kept while it's drawn.
     pub fn text(&self, font: &Font, line: &str, color: [u8; 3]) -> Texture {
+        self.text_sized(font, line, color, text::SIZE)
+    }
+
+    /// The same at another pixel size (an announcement comes in the server's own).
+    pub fn text_sized(&self, font: &Font, line: &str, color: [u8; 3], size: f32) -> Texture {
         let frame = self.frame.get();
         let mut texts = self.texts.borrow_mut();
-        if let Some((texture, drawn)) = texts.get_mut(&(line.to_owned(), color)) {
+        let key = (line.to_owned(), color, size.to_bits());
+        if let Some((texture, drawn)) = texts.get_mut(&key) {
             *drawn = frame;
             return texture.clone();
         }
         let scale = self.ui_scale();
-        let image = font.render_sized(line, color, text::SIZE * scale);
+        let image = font.render_sized(line, color, size * scale);
         let mut texture = self.texture(&image, scale != 1.0);
         texture.size = [image.width() as f32 / scale, image.height() as f32 / scale];
-        texts.insert((line.to_owned(), color), (texture.clone(), frame));
+        texts.insert(key, (texture.clone(), frame));
         texture
     }
 
