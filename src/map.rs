@@ -499,7 +499,7 @@ pub fn indoor_maps(grf: &Grf) -> io::Result<HashSet<String>> {
 /// Maps' display names by file name (prontera -> 룬미드가츠 왕국 수도 프론테라), from data\mapnametable.txt.
 pub fn map_names(grf: &Grf) -> io::Result<HashMap<String, String>> {
     let bytes = grf.read("data\\mapnametable.txt")?;
-    let table = encoding_rs::EUC_KR.decode_without_bom_handling(&bytes).0;
+    let table = crate::net::data_codepage().decode_without_bom_handling(&bytes).0;
     Ok(table
         .lines()
         .filter_map(|line| {

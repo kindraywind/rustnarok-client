@@ -255,7 +255,7 @@ fn battlegrounds(lua: &Lua) -> io::Result<Vec<Battleground>> {
                 condition: (number("EnterCondType") as u8, [number("EnterCondValue1"), number("EnterCondValue2")]),
                 rewards: [text("RewardWin"), text("RewardDraw"), text("RewardLose")],
                 goal: text("VictoryCond"),
-                picture: text("MiniMapFile"),
+                picture: entry.get::<mlua::LuaString>("MiniMapFile").map(|text| decode_name(&text)).unwrap_or_default(),
             },
         ));
     }
@@ -284,7 +284,32 @@ pub fn local_date(pattern: &str, time: i64) -> String {
 
 fn new_lua() -> io::Result<Lua> {
     // Data tables only need these; no file or OS access for files that may come from a translation pack.
-    Lua::new_with(mlua::StdLib::TABLE | mlua::StdLib::STRING | mlua::StdLib::MATH, mlua::LuaOptions::default()).map_err(lua_error)
+    let lua = Lua::new_with(mlua::StdLib::TABLE | mlua::StdLib::STRING | mlua::StdLib::MATH, mlua::LuaOptions::default()).map_err(lua_error)?;
+    // Some tables are source that loadstrings the official file's bytecode, which is 32-bit: converted like a .lub.
+    let loadstring = lua
+        .create_function(|lua, (chunk, name): (mlua::LuaString, Option<String>)| {
+            let name = name.unwrap_or_else(|| "=(loadstring)".into());
+            let loaded = unified(chunk.as_bytes().to_vec())
+                .map_err(|error| format!("{error:?}"))
+                .and_then(|bytes| lua.load(&bytes).set_name(&name).into_function().map_err(|error| error.to_string()));
+            // Lua's own way: the function, or nil and the error.
+            Ok(match loaded {
+                Ok(function) => (Some(function), None),
+                Err(error) => (None, Some(error)),
+            })
+        })
+        .map_err(lua_error)?;
+    lua.globals().set("loadstring", loadstring).map_err(lua_error)?;
+    Ok(lua)
+}
+
+/// Bytecode converted to this Lua's format; plain source as it is.
+fn unified(bytes: Vec<u8>) -> Result<Vec<u8>, lunify::LunifyError> {
+    match lunify::unify(&bytes, &lunify::Format::default(), &lunify::Settings::default()) {
+        Ok(converted) => Ok(converted),
+        Err(lunify::LunifyError::IncorrectSignature) => Ok(bytes),
+        Err(error) => Err(error),
+    }
 }
 
 /// Runs more client Lua files in `lua`.
@@ -297,12 +322,7 @@ fn exec(lua: &Lua, grf: &Grf, files: &[&str]) -> io::Result<()> {
 
 /// Runs one file's bytes, bytecode or plain source.
 fn exec_bytes(lua: &Lua, file: &str, bytes: Vec<u8>) -> io::Result<()> {
-    let bytes = match lunify::unify(&bytes, &lunify::Format::default(), &lunify::Settings::default()) {
-        Ok(converted) => converted,
-        // Not bytecode: plain Lua source.
-        Err(lunify::LunifyError::IncorrectSignature) => bytes,
-        Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{file}: {error:?}"))),
-    };
+    let bytes = unified(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{file}: {error:?}")))?;
     lua.load(&bytes).set_name(file).exec().map_err(|error| io::Error::other(format!("{file}: {error}")))
 }
 
@@ -527,21 +547,39 @@ fn rgb_number(number: u32) -> Option<[u8; 3]> {
     }
 }
 
-/// The client's Lua strings are EUC-KR; in the newer tables those bytes were read as Windows-1252 and saved as
-/// UTF-8, which this undoes.
+/// Words to show: the data's code page (Thai in a Thai client's tables, else EUC-KR).
 fn decode(text: &mlua::LuaString) -> String {
-    let bytes = text.as_bytes();
-    if let Ok(utf8) = std::str::from_utf8(&bytes)
+    decode_in(&text.as_bytes(), crate::net::data_codepage())
+}
+
+/// A file name: EUC-KR whatever the langtype, as the archives name their files.
+fn decode_name(text: &mlua::LuaString) -> String {
+    decode_in(&text.as_bytes(), encoding_rs::EUC_KR)
+}
+
+/// Lua strings are in `codepage`; in the newer tables those bytes were read as Windows-1252 and saved as UTF-8, which
+/// this undoes.
+fn decode_in(bytes: &[u8], codepage: &'static encoding_rs::Encoding) -> String {
+    if let Ok(utf8) = std::str::from_utf8(bytes)
         && !utf8.is_ascii()
     {
         let (original, _, unmappable) = encoding_rs::WINDOWS_1252.encode(utf8);
-        return if unmappable { utf8.to_owned() } else { encoding_rs::EUC_KR.decode_without_bom_handling(&original).0.into_owned() };
+        return if unmappable { utf8.to_owned() } else { codepage.decode_without_bom_handling(&original).0.into_owned() };
     }
-    encoding_rs::EUC_KR.decode_without_bom_handling(&bytes).0.into_owned()
+    codepage.decode_without_bom_handling(bytes).0.into_owned()
 }
 
 /// A Lua table of numbers to names.
 fn names<K: TryFrom<i64> + std::hash::Hash + Eq>(table: &mlua::Table) -> io::Result<HashMap<K, String>> {
+    decoded(table, decode)
+}
+
+/// A Lua table of numbers to file names (sprites, pictures).
+fn file_names<K: TryFrom<i64> + std::hash::Hash + Eq>(table: &mlua::Table) -> io::Result<HashMap<K, String>> {
+    decoded(table, decode_name)
+}
+
+fn decoded<K: TryFrom<i64> + std::hash::Hash + Eq>(table: &mlua::Table, decode: fn(&mlua::LuaString) -> String) -> io::Result<HashMap<K, String>> {
     let mut names = HashMap::new();
     for pair in table.pairs::<i64, mlua::LuaString>() {
         let (id, name) = pair.map_err(lua_error)?;
@@ -571,7 +609,7 @@ pub fn dress_lists(grf: &Grf) -> io::Result<[Vec<u16>; 3]> {
 pub fn job_names(grf: &Grf) -> io::Result<HashMap<u16, String>> {
     let lua = run(grf, &[NPC_IDENTITY, JOB_NAME])?;
     let table: mlua::Table = lua.globals().get("JobNameTable").map_err(lua_error)?;
-    names(&table)
+    file_names(&table)
 }
 
 /// The pet tables (petinfo.lub), by monster ID or (accessories) item ID.
@@ -592,7 +630,7 @@ pub fn pet_tables(grf: &Grf) -> io::Result<PetTables> {
     // A translated petinfo may name monsters this npcidentity doesn't know: they all go under one unused key.
     lua.load("setmetatable(jobtbl, { __index = function() return -1 end })").exec().map_err(lua_error)?;
     exec(&lua, grf, &[PET_INFO])?;
-    let table = |name: &str| names(&lua.globals().get::<mlua::Table>(name).map_err(lua_error)?);
+    let table = |name: &str| file_names(&lua.globals().get::<mlua::Table>(name).map_err(lua_error)?);
     // A translation may leave the food table out.
     let food = lua
         .globals()
@@ -920,10 +958,10 @@ pub fn look_tables(grf: &Grf) -> io::Result<LookTables> {
         weapon_types.insert(view, kind);
     }
     Ok(LookTables {
-        headgears: names(&table(&accessories, "AccNameTable")?)?,
-        weapons: names(&table(&weapons, "WeaponNameTable")?)?,
+        headgears: file_names(&table(&accessories, "AccNameTable")?)?,
+        weapons: file_names(&table(&weapons, "WeaponNameTable")?)?,
         weapon_types,
-        robes: names(&table(&robes, "RobeNameTable")?)?,
+        robes: file_names(&table(&robes, "RobeNameTable")?)?,
         item_views: HashMap::new(),
         layers: LayerRules::load(grf).ok(),
     })
@@ -1013,6 +1051,7 @@ fn layered(own: io::Result<HashMap<u32, ItemInfo>>, translated: Option<HashMap<u
 fn items_in(lua: &Lua) -> io::Result<HashMap<u32, ItemInfo>> {
     let table: mlua::Table = lua.globals().get("tbl").map_err(lua_error)?;
     let text = |entry: &mlua::Table, key: &str| entry.get::<mlua::LuaString>(key).map(|text| decode(&text)).unwrap_or_default();
+    let file = |entry: &mlua::Table, key: &str| entry.get::<mlua::LuaString>(key).map(|text| decode_name(&text)).unwrap_or_default();
     let lines = |entry: &mlua::Table, key: &str| -> Vec<String> {
         entry.get::<mlua::Table>(key).map(|lines| lines.sequence_values::<mlua::LuaString>().flatten().map(|line| decode(&line)).collect()).unwrap_or_default()
     };
@@ -1025,8 +1064,8 @@ fn items_in(lua: &Lua) -> io::Result<HashMap<u32, ItemInfo>> {
                 ItemInfo {
                     name: text(&entry, "identifiedDisplayName"),
                     unidentified_name: text(&entry, "unidentifiedDisplayName"),
-                    resource: text(&entry, "identifiedResourceName"),
-                    unidentified_resource: text(&entry, "unidentifiedResourceName"),
+                    resource: file(&entry, "identifiedResourceName"),
+                    unidentified_resource: file(&entry, "unidentifiedResourceName"),
                     slots: entry.get::<u8>("slotCount").unwrap_or(0),
                     class_num: entry.get::<u32>("ClassNum").unwrap_or(0),
                     description: lines(&entry, "identifiedDescriptionName"),
@@ -1128,6 +1167,7 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
     for pair in list.pairs::<i64, mlua::Table>() {
         let Ok((id, entry)) = pair else { continue };
         let text = |key: &str| entry.get::<mlua::LuaString>(key).map(|text| decode(&text)).unwrap_or_default();
+        let file = |key: &str| entry.get::<mlua::LuaString>(key).map(|text| decode_name(&text)).unwrap_or_default();
         let description = entry
             .get::<mlua::Table>("Description")
             .map(|lines| lines.sequence_values::<mlua::LuaString>().flatten().map(|line| decode(&line)).collect())
@@ -1164,8 +1204,8 @@ fn quest_infos(lua: &Lua) -> io::Result<HashMap<u32, QuestInfo>> {
                     summary: text("Summary"),
                     npc,
                     cooldown,
-                    icon: text("IconName"),
-                    npc_sprite: text("NpcSpr"),
+                    icon: file("IconName"),
+                    npc_sprite: file("NpcSpr"),
                     npc_map: text("NpcNavi"),
                     reward_exp: written("RewardEXP"),
                     reward_job_exp: written("RewardJEXP"),
@@ -1192,7 +1232,7 @@ fn quest_filter_table(lua: &Lua) -> io::Result<HashMap<i64, (String, Vec<String>
         let tooltip = entry.get::<mlua::LuaString>("Tooltip").map(|text| decode(&text)).unwrap_or_default();
         let icons = entry
             .get::<mlua::Table>("QuestIcons")
-            .map(|icons| icons.sequence_values::<mlua::LuaString>().flatten().map(|icon| decode(&icon)).collect())
+            .map(|icons| icons.sequence_values::<mlua::LuaString>().flatten().map(|icon| decode_name(&icon)).collect())
             .unwrap_or_default();
         filters.insert(id, (tooltip, icons));
     }
@@ -1227,7 +1267,7 @@ fn skill_infos(lua: &Lua) -> io::Result<HashMap<u16, SkillInfo>> {
         let Ok((id, entry)) = pair else { continue };
         let text = |value: mlua::Result<mlua::LuaString>| value.map(|text| decode(&text)).unwrap_or_default();
         let info = SkillInfo {
-            resource: text(entry.get(1)),
+            resource: entry.get::<mlua::LuaString>(1).map(|text| decode_name(&text)).unwrap_or_default(),
             name: text(entry.get("SkillName")),
             max_level: entry.get("MaxLv").unwrap_or(0),
             max_lv: entry.get::<Option<u16>>("MaxLv").ok().flatten(),
@@ -1551,7 +1591,8 @@ pub fn worlds(grf: &Grf) -> io::Result<(Vec<World>, [[u8; 4]; 2])> {
                 Some(WorldArea { map: map.trim_end_matches(".rsw").to_owned(), rect, region: field.get::<u32>(1).unwrap_or(0) })
             })
             .collect();
-        worlds.push(World { name: text(1), image: text(4), fields });
+        let image = entry.get::<mlua::LuaString>(4).map(|text| decode_name(&text)).unwrap_or_default();
+        worlds.push(World { name: text(1), image, fields });
     }
     let info: mlua::Table = globals.get("worldview_info").map_err(lua_error)?;
     let color = |name: &str| ["ColorR", "ColorG", "ColorB", "Alpha"].map(|part| info.get::<u8>(format!("{name}_{part}")).unwrap_or(0));
@@ -2911,5 +2952,34 @@ mod tests {
         assert_eq!(super::sky_from_lua(&lua, "gef_fild07.rsw"), Some(super::SkyRow { color: None, fog: true }));
         assert_eq!(super::sky_from_lua(&lua, "izlude.rsw"), None);
         assert_eq!(super::clear_color(super::sky_from_lua(&lua, "izlude.rsw"), None), [0.0; 3]);
+    }
+
+    #[test]
+    fn decodes_words_in_the_data_code_page_and_file_names_in_euc_kr() {
+        // "ยอมรับ" in a Thai client's tables, "고글" (a headgear's sprite name) in any.
+        assert_eq!(super::decode_in(&[0xC2, 0xCD, 0xC1, 0xC3, 0xD1, 0xBA], encoding_rs::WINDOWS_874), "ยอมรับ");
+        assert_eq!(super::decode_in(&[0xB0, 0xED, 0xB1, 0xDB], encoding_rs::EUC_KR), "고글");
+        let lua = super::new_lua().unwrap();
+        assert_eq!(super::decode_name(&lua.create_string([0xB0, 0xED, 0xB1, 0xDB]).unwrap()), "고글");
+        // Korean read as Windows-1252 and saved as UTF-8 comes back.
+        let mangled: String = [0xB0u8, 0xED, 0xB1, 0xDB].iter().map(|&byte| encoding_rs::WINDOWS_1252.decode(&[byte]).0.into_owned()).collect();
+        assert_eq!(super::decode_in(mangled.as_bytes(), encoding_rs::EUC_KR), "고글");
+    }
+
+    #[test]
+    fn loadstring_runs_32_bit_bytecode() {
+        // Source that loadstrings bytecode built for a 32-bit client, as some translations wrap the official files.
+        let lua = super::new_lua().unwrap();
+        let native = lua.load("answer = 42").into_function().unwrap().dump(true);
+        let format = lunify::Format { size_t_width: lunify::BitWidth::Bit32, ..Default::default() };
+        let bytecode = lunify::unify(&native, &format, &lunify::Settings::default()).unwrap();
+        assert_ne!(bytecode, native);
+        let escaped: String = bytecode.iter().map(|byte| format!("\\{byte}")).collect();
+        lua.load(format!("local loaded = loadstring(\"{escaped}\") loaded()")).exec().unwrap();
+        assert_eq!(lua.globals().get::<i64>("answer").unwrap(), 42);
+        // Broken input: nil and the error, as Lua's own loadstring.
+        lua.load("loaded, problem = loadstring(\"answer =\")").exec().unwrap();
+        assert!(lua.globals().get::<Option<mlua::Function>>("loaded").unwrap().is_none());
+        assert!(!lua.globals().get::<String>("problem").unwrap().is_empty());
     }
 }
