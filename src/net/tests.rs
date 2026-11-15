@@ -963,6 +963,13 @@ fn decodes_point_shops() {
     let Some(MapEvent::PointShop { points: 12, free: 0, goods }) = decode_map_packet(&packet) else { panic!() };
     let read: Vec<_> = goods.iter().map(|goods| (goods.item, goods.price, goods.discounted, goods.kind)).collect();
     assert_eq!(read, [(50118, 3, 2, 2), (501, 1, 1, 0)]);
+    // The same goods from a server built with the old cash shop preview: view sprite, location, 6 unused bytes each.
+    let preview =
+        [words(&[(3, 4), (2, 4), (2, 1), (50118, 4), (0, 2), (0, 4)]), vec![0; 6], words(&[(1, 4), (1, 4), (0, 1), (501, 4), (0, 2), (0, 4)]), vec![0; 6]]
+            .concat();
+    let read: Vec<_> = decode_point_goods(&preview).iter().map(|goods| (goods.item, goods.price, goods.discounted, goods.kind)).collect();
+    assert_eq!(read, [(50118, 3, 2, 2), (501, 1, 1, 0)]);
+    assert!(decode_point_goods(&[]).is_empty());
     let answer = [ZC_PC_CASH_POINT_UPDATE.to_le_bytes().to_vec(), words(&[(9, 4), (0, 4), (6, 2)])].concat();
     let Some(MapEvent::PointShopBought { points: 9, free: 0, result: 6 }) = decode_map_packet(&answer) else { panic!() };
     // The purchase: length, free points, how many kinds, then amount and item each.

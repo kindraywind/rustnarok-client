@@ -2564,6 +2564,19 @@ fn encode_takeoff_all(location: u32) -> [u8; 6] {
 }
 
 /// A market's entry: item, type, price, stock, weight, where it's worn.
+/// A point shop's goods (ZC_PC_CASH_POINT_ITEMLIST after its 12-byte head): price, discounted price, type, item, 13 bytes
+/// each; 25 from a server built with rathena's ENABLE_OLD_CASHSHOP_PREVIEW_PATCH (view sprite, location and 6 unused bytes
+/// after each, which clients patched for it read). Told apart by the length, and when both fit by those unused bytes being 0.
+// ponytail: 25 or 50 plain 13-byte goods whose every 20th-25th bytes are 0 would read as preview ones; none seen.
+pub(crate) fn decode_point_goods(bytes: &[u8]) -> Vec<ShopGoods> {
+    let preview =
+        bytes.len().is_multiple_of(25) && (!bytes.len().is_multiple_of(13) || bytes.chunks_exact(25).all(|goods| goods[19..].iter().all(|&byte| byte == 0)));
+    bytes
+        .chunks_exact(if preview { 25 } else { 13 })
+        .map(|goods| ShopGoods { price: u32_at(goods, 0), discounted: u32_at(goods, 4), kind: goods[8], item: u32_at(goods, 9) })
+        .collect()
+}
+
 fn decode_market_goods(entry: &[u8]) -> Bartered {
     let stock = u32_at(entry, 9);
     Bartered { item: u32_at(entry, 0), kind: entry[4], zeny: u32_at(entry, 5), costs: Vec::new(), stock: (stock != UNLIMITED).then_some(stock), index: 0 }

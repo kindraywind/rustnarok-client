@@ -225,15 +225,8 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 .map(|goods| ShopGoods { item: self::u32_at(goods, 0), price: self::u32_at(goods, 4), discounted: self::u32_at(goods, 8), kind: goods[12] })
                 .collect(),
         ),
-        // Points, free points, then 13-byte goods: price, discounted price, type, item.
-        ZC_PC_CASH_POINT_ITEMLIST => MapEvent::PointShop {
-            points: u32_at(4),
-            free: u32_at(8),
-            goods: packet[12..]
-                .chunks_exact(13)
-                .map(|goods| ShopGoods { price: self::u32_at(goods, 0), discounted: self::u32_at(goods, 4), kind: goods[8], item: self::u32_at(goods, 9) })
-                .collect(),
-        },
+        // Points, free points, then the goods.
+        ZC_PC_CASH_POINT_ITEMLIST => MapEvent::PointShop { points: u32_at(4), free: u32_at(8), goods: decode_point_goods(&packet[12..]) },
         ZC_PC_CASH_POINT_UPDATE => MapEvent::PointShopBought { points: u32_at(2), free: u32_at(6), result: u16_at(10) },
         ZC_PC_SELL_ITEMLIST => {
             MapEvent::ShopWants(packet[4..].chunks_exact(10).map(|want| (self::u16_at(want, 0), self::u32_at(want, 2), self::u32_at(want, 6))).collect())
