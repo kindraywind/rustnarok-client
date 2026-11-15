@@ -342,6 +342,11 @@ impl MapSession {
         self.stream.write_all(&encode_market_buy(items))
     }
 
+    /// Buys from an NPC point shop: the free points to spend, then (item, amount) pairs.
+    pub fn point_shop_buy(&mut self, free: u32, items: &[(u32, u16)]) -> io::Result<()> {
+        self.stream.write_all(&encode_point_shop_buy(free, items))
+    }
+
     pub fn barter_buy(&mut self, items: &[(u32, u32, u16, u32)]) -> io::Result<()> {
         self.stream.write_all(&encode_barter_buy(items))
     }

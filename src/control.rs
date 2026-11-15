@@ -1822,6 +1822,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         // Overcharge), for every offer, those all in the deal too.
         "shop_prices": game.shop.as_ref().map(|shop| shop.prices().into_iter().map(|(item, price)| (item.to_string(), json!(price))).collect::<serde_json::Map<_, _>>()),
         "shop_whole": game.shop.as_ref().map(|shop| shop.whole),
+        // An NPC point shop: the points and free points held (null for any other shop).
+        "shop_points": game.shop.as_ref().and_then(|shop| shop.points.as_ref()).map(|held| json!({"points": held.points, "free": held.free})),
         // The windows Esc closes, in the order it closes them (newest first).
         "esc_order": game.esc_order.iter().map(|id| id.name()).collect::<Vec<_>>(),
         // The game menu's buttons, when it is open (null when it isn't). `windows` names it GameMenu.
@@ -2495,6 +2497,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("shop_prices", Fair),
         ("shop_size", Fair),
         ("shop_whole", Fair),
+        ("shop_points", Fair),
         ("shortcuts", Fair),
         ("show_emblems", Fair),
         ("signs", Assist),

@@ -117,6 +117,12 @@ const GREY: [u8; 3] = [0x70, 0x70, 0x70];
 pub const SAME_EQUIPMENT: usize = 119;
 pub const OVER_30000: usize = 1704;
 pub const NOT_ENOUGH_ZENY: usize = 55;
+/// A point shop: " You do not have enough Kafra Credit Points.", "You can purchase up to 10 items." (how many kinds a
+/// purchase may hold), and the goods window's "[%s]'s Points: %d Points".
+pub const NOT_ENOUGH_POINTS: usize = 1254;
+pub const TOO_MANY_KINDS: usize = 1813;
+const POINT_KINDS: usize = 10;
+const POINTS_MESSAGE: usize = 1210;
 /// Buying from a player, past their stock: "Can purchase upto %d pieces of the same item at a time."
 pub const OVER_STOCK: usize = 1706;
 
@@ -249,6 +255,17 @@ pub struct Shop {
     pub zeny: u64,
     /// "Toggle Item Amount." is ticked: the game keeps it for the next shop (`kept_whole`).
     pub whole: bool,
+    /// An NPC point shop: its prices are points, not zeny.
+    pub points: Option<Points>,
+}
+
+/// What a point shop's buyer holds: points (an item shop's: the coins carried), free points, and the buyer's name for the
+/// goods window's "[name]'s Points" line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Points {
+    pub points: u32,
+    pub free: u32,
+    pub owner: String,
 }
 
 impl Shop {
@@ -274,6 +291,7 @@ impl Shop {
             clicks: Clicks::default(),
             zeny: u64::MAX,
             whole: false,
+            points: None,
         }
     }
 
@@ -290,9 +308,14 @@ impl Shop {
         if window == 1 && self.vendor.is_some() { VENDOR_DEAL_ROWS } else { LEAST_ROWS }
     }
 
-    /// A plain NPC shop (not a player's shop or store, a market or a barter).
+    /// A plain NPC shop (not a player's shop or store, a market or a barter); a point shop is one too.
     pub fn plain(&self) -> bool {
         self.vendor.is_none() && self.buying_store.is_none() && self.market.is_none()
+    }
+
+    /// What prices are in: a row's unit, and the total's and a tooltip's ("Z" and "Zeny"; a point shop's "Point").
+    fn units(&self) -> (&'static str, &'static str) {
+        if self.points.is_some() { ("Point", "Point") } else { ("Z", "Zeny") }
     }
 
     /// Windows held by their title bars follow the pointer; one held by its corner grip takes the size it asks
@@ -596,16 +619,21 @@ impl Shop {
             return None;
         }
         let single = matches!(self.offers[offer].kind, ITEM_WEAPON | ITEM_ARMOR | ITEM_PET_EGG | ITEM_PET_ARMOR);
-        // Buying from an NPC: one piece of each equipment, up to 30000 of a thing, no more than the zeny carried.
+        // Buying from an NPC: one piece of each equipment, up to 30000 of a thing, no more than the zeny carried (a
+        // point shop: the points held, and at most POINT_KINDS kinds a purchase).
         if self.plain() && !self.selling {
             let already = self.deal.iter().find(|(row, _)| *row == offer).map_or(0, |&(_, had)| had);
             if single && already > 0 {
                 return Some((SAME_EQUIPMENT, None));
             }
+            if self.points.is_some() && already == 0 && self.deal.len() >= POINT_KINDS {
+                return Some((TOO_MANY_KINDS, None));
+            }
             let wanted = if single { 1 } else { amount };
             let amount = wanted.min(30_000 - already.min(30_000));
-            if self.total() + u64::from(amount) * u64::from(self.offers[offer].price) > self.zeny {
-                return Some((NOT_ENOUGH_ZENY, None));
+            let (funds, short) = self.points.as_ref().map_or((self.zeny, NOT_ENOUGH_ZENY), |held| (u64::from(held.points), NOT_ENOUGH_POINTS));
+            if self.total() + u64::from(amount) * u64::from(self.offers[offer].price) > funds {
+                return Some((short, None));
             }
             match self.deal.iter_mut().find(|(row, _)| *row == offer) {
                 Some((_, had)) => *had += amount,
@@ -676,6 +704,10 @@ impl Shop {
         if let Some((vendor, shop, _)) = &self.vendor {
             let items: Vec<_> = self.deal.iter().map(|&(offer, amount)| (amount as u16, self.offers[offer].index)).collect();
             return session.buy_from_vendor(*vendor, *shop, &items);
+        }
+        // ponytail: no free points are spent (the game's edit box for them isn't here; rathena's item and point shops have none).
+        if self.points.is_some() {
+            return session.point_shop_buy(0, &self.deal.iter().map(|&(offer, amount)| (self.offers[offer].item, amount as u16)).collect::<Vec<_>>());
         }
         if self.selling {
             session.sell(&self.deal.iter().map(|&(offer, amount)| (self.offers[offer].index, amount as u16)).collect::<Vec<_>>())
@@ -837,7 +869,7 @@ impl Shop {
                     layer.texts.push((window::fit(font, &costs, width - name_x - 20.0), frame.at([name_x, top + 17.0]), GREY));
                     continue;
                 }
-                let (price, name_width) = price_text(offer.listed, offer.price);
+                let (price, name_width) = price_text(offer.listed, offer.price, self.units().0);
                 let name_width = if market_goods { MARKET_NAME_WIDTH } else { name_width };
                 layer.texts.push((window::fit(font, &name, name_width), frame.at([name_x, top + NAME[1]]), [0, 0, 0]));
                 layer.texts.push((price.clone(), frame.at([width - PRICE_RIGHT - font.width(&price), top + NAME[1]]), [0, 0, 0]));
@@ -857,13 +889,20 @@ impl Shop {
                 let text = rustnarok_client::messages::fill(message(LIMIT_MESSAGE), &[&group(u64::from(limit))]);
                 layer.texts.push((window::fit(font, &text, width - 20.0), frame.at([10.0, footer + 7.0]), [0, 0, 0]));
             }
+            // A point shop's goods: "[name]'s Points: N Points".
+            // ponytail: the game's "[name]'s Free Cash" line above it, 20 px more footer, isn't drawn (rathena's item and
+            // point shops have no free points).
+            if let (Some(held), 0) = (&self.points, window) {
+                let text = rustnarok_client::messages::fill(message(POINTS_MESSAGE), &[&held.owner, &held.points]);
+                layer.texts.push((window::fit(font, &text, width - 20.0), frame.at([12.0, height - 21.0]), [0, 0, 0]));
+            }
             if window == 1 {
                 let total = if barter {
                     window::fit(font, &self.costs_text(items, messages, &self.deal.iter().map(|&(offer, amount)| (offer, amount)).collect::<Vec<_>>()), 150.0)
                 } else if self.market.is_some() {
                     rustnarok_client::messages::fill(message(TOTAL_MESSAGE), &[&group(self.total())])
                 } else {
-                    format!("Total : {} Zeny", group(self.total()))
+                    format!("Total : {} {}", group(self.total()), self.units().1)
                 };
                 layer.texts.push((total, frame.at([12.0, height - 21.0]), [0, 0, 0]));
                 let (deal, cancel) = self.deal_button(1);
@@ -893,7 +932,7 @@ impl Shop {
             }
             let count = if window == 0 { self.left(row) } else { self.deal[row].1 };
             let item = offer.described();
-            let text = tooltip_text(&offer.name(items, naming, messages), offer, count, self.selling);
+            let text = tooltip_text(&offer.name(items, naming, messages), offer, count, self.selling, self.units().1);
             let place = if window == 0 { self.rows(0).iter().position(|&(offer, _)| offer == row).unwrap_or(row) } else { row };
             let top = TITLE_HEIGHT + place.saturating_sub(self.scroll[window]) as f32 * ROW - TIP_ABOVE;
             window::tooltip(layer.window(), chrome, font, &text, frame.at([TIP_STEP[0], top]), inventory::name_color(&item, items));
@@ -959,6 +998,14 @@ impl Shop {
     }
 }
 
+/// A point shop purchase's answer as a chat line: the message, and whether it went through. rathena's codes 0–8 in the
+/// order of their words: done (54), no NPC (1227), the shop system (1228), weight (56), trading (1229), the item (1230),
+/// too few points (1254), over 10 kinds (1813), some failed (1814); anything else "The deal has failed." (57).
+pub fn point_result(result: u16) -> (usize, bool) {
+    const LINES: [usize; 9] = [54, 1227, 1228, 56, 1229, 1230, 1254, 1813, 1814];
+    (LINES.get(usize::from(result)).copied().unwrap_or(57), result == 0)
+}
+
 /// "Toggle Item Amount." as the player last left it ("1" ticked; off when never saved).
 pub fn kept_whole(path: &std::path::Path) -> bool {
     std::fs::read_to_string(path).is_ok_and(|text| text.trim() == "1")
@@ -971,17 +1018,17 @@ pub fn keep_whole(path: &std::path::Path, on: bool) {
 /// An NPC shop row's tooltip: buying "name 1,200 Zeny" or "name 1500 -> 1,200 Zeny"; selling the count carried (or
 /// in the deal) after the name, "name 5 ea 1,200 Zeny".
 // ponytail: the spacing follows the random-option forms (2758–2761); those forms aren't used, offers carry no options.
-fn tooltip_text(name: &str, offer: &Offer, count: u32, selling: bool) -> String {
+fn tooltip_text(name: &str, offer: &Offer, count: u32, selling: bool, unit: &str) -> String {
     let price = group(u64::from(offer.price));
     let price = if offer.listed == 0 || offer.listed == offer.price { price } else { format!("{} -> {price}", offer.listed) };
-    if selling { format!("{name} {count} ea {price} Zeny") } else { format!("{name} {price} Zeny") }
+    if selling { format!("{name} {count} ea {price} {unit}") } else { format!("{name} {price} {unit}") }
 }
 
 /// A row's unit price, " 1,234 Z", or with a discount or overcharge " 1500 -> 1,200 Z" (the original not grouped); and
-/// how wide its name may be: 100 px, narrower for a longer original price.
-fn price_text(listed: u32, price: u32) -> (String, f32) {
+/// how wide its name may be: 100 px, narrower for a longer original price. A point shop's `unit` is "Point".
+fn price_text(listed: u32, price: u32, unit: &str) -> (String, f32) {
     if listed == 0 || listed == price {
-        return (format!(" {} Z", group(u64::from(price))), 100.0);
+        return (format!(" {} {unit}", group(u64::from(price))), 100.0);
     }
     let width = match listed.to_string().len() {
         0..=2 => 80.0,
@@ -989,7 +1036,7 @@ fn price_text(listed: u32, price: u32) -> (String, f32) {
         4 => 55.0,
         _ => 45.0,
     };
-    (format!(" {listed} -> {} Z", group(u64::from(price))), width)
+    (format!(" {listed} -> {} {unit}", group(u64::from(price))), width)
 }
 
 /// A number with thousands separated by commas, as the client shows prices.
@@ -1141,6 +1188,29 @@ mod tests {
     }
 
     #[test]
+    fn a_point_shop_spends_points_and_takes_ten_kinds() {
+        let goods = (0..12).map(|item| offer(50_100 + item, 2, 0, 2)).collect();
+        let mut shop = Shop::new(false, goods);
+        shop.points = Some(Points { points: 26, free: 0, owner: "Me".into() });
+        // No more than the points held (the zeny carried doesn't count).
+        shop.zeny = 0;
+        assert_eq!(shop.add_checked(0, 14), Some((NOT_ENOUGH_POINTS, None)));
+        assert_eq!(shop.add_checked(0, 3), None);
+        // Ten kinds at most; more of one already in is fine.
+        for row in 1..10 {
+            assert_eq!(shop.add_checked(row, 1), None);
+        }
+        assert_eq!(shop.add_checked(10, 1), Some((TOO_MANY_KINDS, None)));
+        assert_eq!(shop.add_checked(0, 1), None);
+        assert_eq!((shop.deal.len(), shop.total()), (10, 26));
+        assert_eq!(shop.add_checked(1, 1), Some((NOT_ENOUGH_POINTS, None)));
+        assert_eq!(shop.units(), ("Point", "Point"));
+        assert_eq!(Shop::new(false, Vec::new()).units(), ("Z", "Zeny"));
+        // The answers: done, too few points, over 10 kinds, and an unknown one.
+        assert_eq!([0, 6, 7, 99].map(point_result), [(54, true), (1254, false), (1813, false), (57, false)]);
+    }
+
+    #[test]
     fn prices_are_what_the_rows_show_also_once_all_are_in_the_deal() {
         // Selling with Overcharge: the shop lists 3 and 5 Zeny and pays 3 and 6.
         let overcharged = Offer { listed: 5, ..offer(501, 6, 3, 0) };
@@ -1202,10 +1272,11 @@ mod tests {
 
     #[test]
     fn shows_unit_and_discounted_prices() {
-        assert_eq!(price_text(0, 1200), (" 1,200 Z".to_owned(), 100.0));
-        assert_eq!(price_text(1200, 1200), (" 1,200 Z".to_owned(), 100.0));
-        assert_eq!(price_text(1500, 1200), (" 1500 -> 1,200 Z".to_owned(), 55.0));
-        assert_eq!(price_text(40, 30).1, 80.0);
+        assert_eq!(price_text(0, 1200, "Z"), (" 1,200 Z".to_owned(), 100.0));
+        assert_eq!(price_text(1200, 1200, "Z"), (" 1,200 Z".to_owned(), 100.0));
+        assert_eq!(price_text(1500, 1200, "Z"), (" 1500 -> 1,200 Z".to_owned(), 55.0));
+        assert_eq!(price_text(40, 30, "Z").1, 80.0);
+        assert_eq!(price_text(3, 2, "Point").0, " 3 -> 2 Point");
         // An NPC shop's Buy with nothing in the deal closes it.
         let mut shop = Shop::new(false, vec![offer(501, 50, 0, 0)]);
         assert_eq!(shop.click(Hit::Deal), Some(Action::Close));
@@ -1239,10 +1310,10 @@ mod tests {
     #[test]
     fn says_name_and_price_over_a_row() {
         let plain = offer(501, 1200, 5, 0);
-        assert_eq!(tooltip_text("Red Potion", &plain, 5, false), "Red Potion 1,200 Zeny");
+        assert_eq!(tooltip_text("Red Potion", &plain, 5, false, "Zeny"), "Red Potion 1,200 Zeny");
         let discounted = Offer { listed: 1500, ..plain.clone() };
-        assert_eq!(tooltip_text("Red Potion", &discounted, 5, false), "Red Potion 1500 -> 1,200 Zeny");
-        assert_eq!(tooltip_text("Red Potion", &plain, 5, true), "Red Potion 5 ea 1,200 Zeny");
+        assert_eq!(tooltip_text("Red Potion", &discounted, 5, false, "Zeny"), "Red Potion 1500 -> 1,200 Zeny");
+        assert_eq!(tooltip_text("Red Potion", &plain, 5, true, "Zeny"), "Red Potion 5 ea 1,200 Zeny");
     }
 
     #[test]

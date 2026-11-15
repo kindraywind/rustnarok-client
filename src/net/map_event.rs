@@ -222,6 +222,21 @@ pub enum MapEvent {
     },
     /// What the shop sells (ZC_PC_PURCHASE_ITEMLIST).
     ShopGoods(Vec<ShopGoods>),
+    /// An NPC point shop opens (ZC_PC_CASH_POINT_ITEMLIST): the points held (an item shop's: the coins carried), the free
+    /// points, and its goods priced in points.
+    PointShop {
+        points: u32,
+        free: u32,
+        goods: Vec<ShopGoods>,
+    },
+    /// A point shop purchase's answer (ZC_PC_CASH_POINT_UPDATE): the points now held, and 0 done, else why not (rathena's
+    /// e_CASHSHOP_ACK: 1 no NPC, 2 system, 3 weight, 4 trading, 5 wrong item, 6 too few points, 7 over 10 kinds, 8 some
+    /// failed).
+    PointShopBought {
+        points: u32,
+        free: u32,
+        result: u16,
+    },
     /// What the shop would buy from the inventory: index, price and the price it pays (ZC_PC_SELL_ITEMLIST).
     ShopWants(Vec<(u16, u32, u32)>),
     /// How buying or selling went: 0 done, else why not (ZC_PC_PURCHASE_RESULT, ZC_PC_SELL_RESULT).
