@@ -1274,8 +1274,14 @@ pub const HOMUNCULUS_SP: u16 = 7;
 const ZC_PET_ACT: u16 = 0x01AA;
 const CZ_PET_ACT: u16 = 0x01A9;
 const ZC_ACK_REQNAMEALL_NPC: u16 = 0x0ADF;
-/// ZC_UI_OPEN: a window by kind. Kind 1 is the stylist, kind 8 is grade enchanting.
+/// ZC_UI_OPEN: a window by kind. Kind 1 is the stylist, kind 7 the attendance check, kind 8 is grade enchanting.
 const ZC_UI_OPEN: u16 = 0x0AE2;
+/// CZ_OPEN_UI: asks for a window by the request's own kinds; 5 is the attendance check.
+const CZ_OPEN_UI: u16 = 0x0A68;
+const OPEN_ATTENDANCE: u8 = 5;
+/// Today's attendance reward: the request, and the answer with the days attended now (the reward comes by mail).
+const CZ_ATTENDANCE_REWARD: u16 = 0x0AEF;
+const ZC_ATTENDANCE_REWARD: u16 = 0x0AF0;
 const ZC_STYLE_CHANGE_RES: u16 = 0x0A47;
 /// The 16-byte style request. The 14-byte CZ_REQ_STYLE_CHANGE (0x0A46) is not what this version reads.
 const CZ_REQ_STYLE_CHANGE2: u16 = 0x0AFC;
@@ -2738,6 +2744,17 @@ fn encode_synthesis(box_id: u32, entries: &[(u16, u16)]) -> Vec<u8> {
 /// CZ_GRADE_ENCHANT_CLOSE_UI.
 fn encode_close_grade() -> [u8; 2] {
     CZ_GRADE_ENCHANT_CLOSE_UI.to_le_bytes()
+}
+
+/// CZ_OPEN_UI: the window's kind (`OPEN_ATTENDANCE`).
+fn encode_open_ui(kind: u8) -> [u8; 3] {
+    let [low, high] = CZ_OPEN_UI.to_le_bytes();
+    [low, high, kind]
+}
+
+/// CZ_ATTENDANCE_REWARD: the header alone.
+fn encode_attendance_reward() -> [u8; 2] {
+    CZ_ATTENDANCE_REWARD.to_le_bytes()
 }
 
 /// Rows of the styling shop to buy. 0 leaves that part unchanged. Body style is sent, and this version keeps it 0.

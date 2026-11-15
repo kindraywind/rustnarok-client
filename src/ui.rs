@@ -2,6 +2,7 @@
 
 pub(crate) mod achievement;
 pub(crate) mod announce;
+pub(crate) mod attendance;
 pub(crate) mod bank;
 pub(crate) mod basic_info;
 pub(crate) mod battle_queue;

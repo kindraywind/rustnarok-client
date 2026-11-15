@@ -248,7 +248,7 @@ pub fn visible() -> Vec<&'static str> {
 
 /// ponytail: the buttons whose windows the client doesn't have yet. They keep their place on the grid but show dimmed,
 /// and a click does nothing; take a name out when its window lands.
-pub const UNAVAILABLE: [&str; 6] = ["rec", "tip", "attendance", "adventurerAgency", "adventureguide", "probability"];
+pub const UNAVAILABLE: [&str; 5] = ["rec", "tip", "adventurerAgency", "adventureguide", "probability"];
 
 /// Doram have their own status button.
 pub fn doram(job: u16) -> bool {

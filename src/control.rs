@@ -1668,6 +1668,12 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
+            game.attendance
+                .iter()
+                .flat_map(|window| window.button_boxes(&app.attendance))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
+        .chain(
             game.stylist
                 .iter()
                 .flat_map(|window| {
@@ -2019,6 +2025,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "chat_mode_icon": game.chat_mode.icon(),
         // The basic info window: where it is, whether it's minimised, and the job name it shows.
         "basic_info": json!({"position": game.basic_info.frame.position, "width": game.basic_info.width, "minimized": game.basic_info.frame.minimized, "job_name": app.pc_job_names.get(&game.me.job)}),
+        // The attendance check, when open: the days attended and whether today's reward waits.
+        "attendance": game.attendance.as_ref().map(|window| json!({"claimed": window.claimed, "claimable": window.claimable})),
         // The chat room the player is in: its title and who owns it.
         "room": game.room.as_ref().map(|room| json!({
             "title": room.sign.title,
@@ -2484,6 +2492,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("refusing_party", Fair),
         ("reputation", Fair),
         ("room", Fair),
+        ("attendance", Fair),
         ("roulette", Fair),
         ("rsm1_moving", Test),
         ("rsm2_models", Test),

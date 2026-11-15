@@ -796,6 +796,7 @@ impl Game {
             esc(LaphineSynthesis, self.synthesis.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
             esc(Materials, self.materials.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
             esc(Stylist, self.stylist.as_ref().is_some_and(|window| window.covers(cursor))),
+            esc(Attendance, self.attendance.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
             esc(Enchant, self.enchant.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
             esc(GradeEnchant, self.grade.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
             esc(ItemReform, self.reform.as_ref().is_some_and(|window| window.hit(cursor, &self.inventory.items).is_some())),
@@ -3417,6 +3418,7 @@ impl Game {
         push(ItemReform, self.reform.is_some());
         push(Enchant, self.enchant.is_some());
         push(Stylist, self.stylist.is_some());
+        push(Attendance, self.attendance.is_some());
         push(Materials, self.materials.is_some());
         let docked = self.party_dialog.as_ref().map(|dialog| dialog.kind);
         push(PartySetup, docked == Some(party::DialogKind::Setup));
@@ -3780,6 +3782,7 @@ impl Game {
                 let _ = self.session.close_stylist();
                 self.stylist = None;
             }
+            Attendance => self.attendance = None,
             Materials => self.materials = None,
             PartySetup | PartyCreate | PartyInviteName => self.party_dialog = None,
             DressRoom => {
