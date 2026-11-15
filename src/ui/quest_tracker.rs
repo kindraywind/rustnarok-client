@@ -64,7 +64,7 @@ pub fn summary(text: &str) -> String {
         plain.push(character);
         rest = &rest[character.len_utf8()..];
     }
-    let bytes = |character: char| if character.is_ascii() { 1 } else { 2 };
+    let bytes = rustnarok_client::net::text_bytes;
     if plain.chars().map(bytes).sum::<usize>() <= SUMMARY_BYTES {
         return plain;
     }

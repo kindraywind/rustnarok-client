@@ -364,6 +364,24 @@ pub fn data_codepage() -> &'static encoding_rs::Encoding {
     }
 }
 
+/// The bytes a character takes in the data's code page, which is how the game measures a line's room: 2 for a Hangul
+/// letter in EUC-KR, 1 for ASCII and for every letter of a single-byte page (Thai's, its vowel and tone marks too).
+pub fn text_bytes(character: char) -> usize {
+    bytes_in(character, data_codepage())
+}
+
+fn bytes_in(character: char, codepage: &'static encoding_rs::Encoding) -> usize {
+    if character.is_ascii() || codepage.is_single_byte() { 1 } else { 2 }
+}
+
+#[test]
+fn counts_a_character_in_its_code_page() {
+    assert_eq!(bytes_in('가', encoding_rs::EUC_KR), 2);
+    assert_eq!(bytes_in('a', encoding_rs::EUC_KR), 1);
+    assert_eq!(bytes_in('ต', encoding_rs::WINDOWS_874), 1);
+    assert_eq!(bytes_in('\u{E48}', encoding_rs::WINDOWS_874), 1, "a tone mark");
+}
+
 /// The connection's langtype, for the few things that read a file by it.
 static LANGTYPE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
