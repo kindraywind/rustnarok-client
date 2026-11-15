@@ -24,11 +24,20 @@ pub const CANT_CARRY: usize = 53;
 
 /// Messages by ID, the line number. In the csv each line holds a base64 key name and base64 UTF-8 text.
 pub fn load(grf: &Grf) -> io::Result<Vec<String>> {
-    // The older plain table (one message a line, each ending in #) is what translations ship; it goes first.
-    if let Ok(bytes) = grf.read(PLAIN_TABLE) {
-        return Ok(plain(&bytes, crate::net::data_codepage()));
+    tables(grf.read(PLAIN_TABLE).ok(), grf.read(TABLE), crate::net::data_codepage())
+}
+
+/// The older plain table (one message a line, each ending in #) is what translations ship; it goes first, unless it
+/// still holds Korean lines in UTF-8 and the csv is there: then it is a stale half-translated copy and the csv is the
+/// table (a Thai server ships both, the txt with untranslated login labels, the csv translated in full).
+// ponytail: a translation with even one Korean UTF-8 line gives way to the csv entirely; merge per line if one does.
+fn tables(plain_table: Option<Vec<u8>>, csv: io::Result<Vec<u8>>, codepage: &'static encoding_rs::Encoding) -> io::Result<Vec<String>> {
+    if let Some(bytes) = plain_table
+        && (csv.is_err() || !korean_in_utf8(&bytes))
+    {
+        return Ok(plain(&bytes, codepage));
     }
-    let bytes = grf.read(TABLE)?;
+    let bytes = csv?;
     let table = std::str::from_utf8(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     Ok(table
         .lines()
@@ -43,6 +52,11 @@ pub fn load(grf: &Grf) -> io::Result<Vec<String>> {
 fn plain(bytes: &[u8], codepage: &'static encoding_rs::Encoding) -> Vec<String> {
     let text = codepage.decode_without_bom_handling(bytes).0;
     text.lines().map(|line| line.trim_end_matches('\r').trim_end_matches('#').to_owned()).collect()
+}
+
+/// A line of the plain table is Hangul in UTF-8: left untranslated from the Korean original.
+fn korean_in_utf8(bytes: &[u8]) -> bool {
+    bytes.split(|&byte| byte == b'\n').any(|line| std::str::from_utf8(line).is_ok_and(|text| text.chars().any(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c))))
 }
 
 fn base64(text: &str) -> Option<Vec<u8>> {
@@ -131,6 +145,21 @@ mod tests {
         // A Thai client's msgstringtable.txt: "ยอมรับ#" then "ID#".
         let table = [0xC2, 0xCD, 0xC1, 0xC3, 0xD1, 0xBA, b'#', b'\r', b'\n', b'I', b'D', b'#'];
         assert_eq!(plain(&table, encoding_rs::WINDOWS_874), ["ยอมรับ", "ID"]);
+    }
+
+    #[test]
+    fn a_plain_table_with_korean_left_in_utf8_gives_way_to_the_csv() {
+        let thai = vec![0xC2, 0xCD, 0xC1, 0xC3, 0xD1, 0xBA, b'#', b'\n'];
+        // "아이디 저장#" in UTF-8 after the Thai line; the csv has "MSI_A,จำไอดี".
+        let mut stale = thai.clone();
+        stale.extend("아이디 저장#\n".as_bytes());
+        let csv = || Ok(format!("TVNJX0E=,{}\n", "4LiI4Liz4LmE4Lit4LiU4Li1").into_bytes());
+        let cp874 = encoding_rs::WINDOWS_874;
+        assert_eq!(tables(Some(stale.clone()), csv(), cp874).unwrap(), ["จำไอดี"]);
+        // Without a csv, or with a plain table all in its code page, the plain table stays.
+        assert_eq!(tables(Some(stale), Err(io::ErrorKind::NotFound.into()), cp874).unwrap().len(), 2);
+        assert_eq!(tables(Some(thai), csv(), cp874).unwrap(), ["ยอมรับ"]);
+        assert_eq!(tables(None, csv(), cp874).unwrap(), ["จำไอดี"]);
     }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.
