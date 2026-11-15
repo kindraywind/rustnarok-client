@@ -23,8 +23,9 @@ const STYLING_SHOP: &str = "data\\luafiles514\\lua files\\stylingshop\\stylingsh
 /// The same table under the name older data (kRO 2022, its translations) gives it.
 const ACHIEVEMENT_LIST: &str = "system\\achievement_list.lub";
 const ITEM_INFO: &str = "data\\luafiles514\\lua files\\datainfo\\iteminfo.lub";
-/// A translation's item table: under LuaFiles514, or (older translations) straight in System.
-const TRANSLATED_ITEM_INFO: [&str; 2] = ["system\\luafiles514\\iteminfo.lua", "system\\iteminfo.lua"];
+/// A translation's item table: the file the game runs, `System\itemInfo.lua` (an older translation's table itself, or a loader
+/// that `dofile`s the table under LuaFiles514 and merges a server's custom tables over it); else that table alone.
+const TRANSLATED_ITEM_INFO: [&str; 2] = ["system\\iteminfo.lua", "system\\luafiles514\\iteminfo.lua"];
 const ACCESSORY_ID: &str = "data\\luafiles514\\lua files\\datainfo\\accessoryid.lub";
 const ACCESSORY_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\accname.lub";
 const WEAPON_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\weapontable.lub";
@@ -968,8 +969,31 @@ impl ItemInfo {
 /// over it (a translation older than the data lacks the newer items, which keep the client's names).
 pub fn item_info(grf: &Grf) -> io::Result<HashMap<u32, ItemInfo>> {
     let own = run(grf, &[ITEM_INFO]).and_then(|lua| items_in(&lua));
-    let translated = TRANSLATED_ITEM_INFO.iter().find_map(|path| run(grf, &[path]).and_then(|lua| items_in(&lua)).ok());
+    let translated = TRANSLATED_ITEM_INFO.iter().find_map(|path| run_loader(&|file| grf.read(file), path).and_then(|lua| items_in(&lua)).ok());
     layered(own, translated)
+}
+
+/// Runs a Lua file that loads others the way the game runs it from its folder: its `dofile` and `require` read through
+/// `read`, with `System/...` and a translation's `SystemEN/...` as `system\...` and `require` adding `.lua` (or `.lub`).
+fn run_loader(read: &dyn Fn(&str) -> io::Result<Vec<u8>>, file: &str) -> io::Result<Lua> {
+    let lua = new_lua()?;
+    let load = |lua: &Lua, path: String, module: bool| -> mlua::Result<()> {
+        let path = path.replace('/', "\\").to_lowercase();
+        let path = path.strip_prefix("systemen\\").map_or(path.clone(), |rest| format!("system\\{rest}"));
+        let tries = if module && !path.ends_with(".lua") && !path.ends_with(".lub") { vec![format!("{path}.lua"), format!("{path}.lub")] } else { vec![path] };
+        let (name, bytes) = tries
+            .iter()
+            .find_map(|name| read(name).ok().map(|bytes| (name, bytes)))
+            .ok_or_else(|| mlua::Error::RuntimeError(format!("{} not found", tries[0])))?;
+        exec_bytes(lua, name, bytes).map_err(mlua::Error::external)
+    };
+    lua.scope(|scope| {
+        lua.globals().set("dofile", scope.create_function(move |lua, path: String| load(lua, path, false))?)?;
+        lua.globals().set("require", scope.create_function(move |lua, path: String| load(lua, path, true))?)?;
+        exec_bytes(&lua, file, read(file).map_err(mlua::Error::external)?).map_err(mlua::Error::external)
+    })
+    .map_err(lua_error)?;
+    Ok(lua)
 }
 
 /// The client's items with a translation's over them; either alone when the other is missing.
@@ -2157,6 +2181,27 @@ fn hotkey_table(lua: &Lua, name: &str, table: u8, user: bool) -> io::Result<Vec<
 #[cfg(test)]
 mod tests {
     use crate::grf::Grf;
+
+    #[test]
+    fn runs_a_translation_loader_with_its_custom_items() {
+        // A loader as translations ship it: the table under LuaFiles514, a merge function, and a server's custom table.
+        let files: std::collections::HashMap<&str, &str> = [
+            (
+                "system\\iteminfo.lua",
+                "require('SystemEN/LuaFiles514/merge_f')\ndofile('System/LuaFiles514/itemInfo.lua')\nImportFiles = { 'itemInfo_C.lua' }\n\
+                 for _, v in ipairs(ImportFiles) do dofile('System/' .. v) end\nMerge(tbl_custom)",
+            ),
+            ("system\\luafiles514\\merge_f.lua", "function Merge(t) for k, v in pairs(t) do tbl[k] = v end end"),
+            ("system\\luafiles514\\iteminfo.lua", "tbl = { [501] = { identifiedDisplayName = 'Red Potion' } }"),
+            ("system\\iteminfo_c.lua", "tbl_custom = { [50118] = { identifiedDisplayName = 'Bubble Gum', identifiedResourceName = 'gum' } }"),
+        ]
+        .into();
+        let read = |file: &str| files.get(file).map(|text| text.as_bytes().to_vec()).ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound));
+        let items = super::items_in(&super::run_loader(&read, "system\\iteminfo.lua").unwrap()).unwrap();
+        assert_eq!((items[&501].name.as_str(), items[&50118].name.as_str(), items[&50118].resource.as_str()), ("Red Potion", "Bubble Gum", "gum"));
+        // A file it can't find fails the run (the plain table is used then).
+        assert!(super::run_loader(&read, "system\\nothing.lua").is_err());
+    }
 
     #[test]
     fn reads_the_sky_effects() {
