@@ -2510,6 +2510,8 @@ impl App {
                 _ if game.chat.settings.as_ref().is_some_and(|settings| settings.hit(self.cursor).is_some()) => {
                     game.chat.settings.as_mut().unwrap().scroll(rows)
                 }
+                // Over Game Settings' open skin list, the wheel scrolls it.
+                _ if game.settings_window.as_mut().is_some_and(|window| window.wheel(self.cursor, rows)) => {}
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
                 _ if on_npc_menu => game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()).unwrap().wheel(rows),

@@ -5670,7 +5670,12 @@ fn main() {
     let quest_texts = quest::texts(&grf);
     let quest_filters = quest::Filters::load(&grf);
     let sound = sound::Settings::load();
-    let graphics = options::GraphicsSettings::load();
+    let mut graphics = options::GraphicsSettings::load();
+    // A saved skin no longer there (or named in another case) is the basic look again, and forgotten.
+    if !game_settings::skins().contains(&graphics.skin) {
+        graphics.skin.clear();
+    }
+    grf.set_skin(&graphics.skin, &game_settings::skin_folder(&graphics.skin));
     set_ui_rows(graphics.ui_rows());
     let font = Font::named(&graphics.font);
     let keybinds = shortcuts::Shortcuts::load(&grf);

@@ -21,6 +21,9 @@ pub type Decrypt = Box<dyn Fn(&mut [u8], u32) + Send + Sync>;
 /// The entry that tools encrypting an archive's file data add to it.
 const ENCRYPTED_MARK: &str = "__encryption.info";
 
+/// The interface's images, which a UI skin stands in for.
+const SKINNED: &str = "data\\texture\\유저인터페이스\\";
+
 struct Entry {
     /// Which of the archives it's in.
     archive: usize,
@@ -38,6 +41,9 @@ pub struct Grf {
     /// Loose files read before the archive (the client's data folder), by client path.
     overlay: HashMap<String, PathBuf>,
     decrypt: Option<Decrypt>,
+    /// The UI skin picked (its folder's name, empty for the basic look) and its images, by the client path under
+    /// `data\texture\유저인터페이스\` each stands in for.
+    skin: (String, HashMap<String, PathBuf>),
     /// `data\resnametable.txt`: files stored under another name (`lhz_airport.rsw` → `airport.rsw`), by path under
     /// `data\` (maps) or `data\texture\` (minimaps).
     aliases: HashMap<String, String>,
@@ -58,7 +64,8 @@ impl Grf {
     }
 
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
-        let mut grf = Self { archives: Vec::new(), entries: HashMap::new(), overlay: HashMap::new(), decrypt: None, aliases: HashMap::new() };
+        let mut grf =
+            Self { archives: Vec::new(), entries: HashMap::new(), overlay: HashMap::new(), decrypt: None, skin: Default::default(), aliases: HashMap::new() };
         grf.add_archive(path.as_ref())?;
         grf.load_aliases();
         Ok(grf)
@@ -78,7 +85,8 @@ impl Grf {
             .collect();
         listed.sort();
         let folder = ini.parent().unwrap_or(Path::new("."));
-        let mut grf = Self { archives: Vec::new(), entries: HashMap::new(), overlay: HashMap::new(), decrypt, aliases: HashMap::new() };
+        let mut grf =
+            Self { archives: Vec::new(), entries: HashMap::new(), overlay: HashMap::new(), decrypt, skin: Default::default(), aliases: HashMap::new() };
         for (_, name) in listed {
             if let Err(error) = grf.add_archive(&folder.join(&name)) {
                 eprintln!("{name}: {error}");
@@ -157,6 +165,28 @@ impl Grf {
         self.overlay.len() - before
     }
 
+    /// The UI skin picked: its folder's name, empty for the basic look.
+    pub fn skin(&self) -> &str {
+        &self.skin.0
+    }
+
+    /// How many images the UI skin has.
+    pub fn skin_images(&self) -> usize {
+        self.skin.1.len()
+    }
+
+    /// Puts a skin's images before the interface's own: `folder/basic_interface/x.bmp` is read for
+    /// `data\texture\유저인터페이스\basic_interface\x.bmp`, and what the skin lacks still comes from the data. An empty
+    /// `name` takes the skin off. Returns how many images it has.
+    pub fn set_skin(&mut self, name: &str, folder: &Path) -> usize {
+        let mut images = HashMap::new();
+        if !name.is_empty() {
+            walk(folder, SKINNED.trim_end_matches('\\'), &mut images);
+        }
+        self.skin = (name.to_owned(), images);
+        self.skin.1.len()
+    }
+
     /// Reads `data\resnametable.txt` (EUC-KR, `from#to#` a line, `//` comments), as the official client does.
     fn load_aliases(&mut self) {
         let Ok(text) = self.read("data\\resnametable.txt") else { return };
@@ -174,7 +204,7 @@ impl Grf {
     /// A path as stored: itself when it's there, else what resnametable.txt names for it.
     fn real_path(&self, path: &str) -> String {
         let path = normalize(path);
-        if self.overlay.contains_key(&path) || self.entries.contains_key(&path) {
+        if self.skin.1.contains_key(&path) || self.overlay.contains_key(&path) || self.entries.contains_key(&path) {
             return path;
         }
         for base in ["data\\texture\\", "data\\"] {
@@ -200,13 +230,13 @@ impl Grf {
     /// Whether a file is there (in the archive or the data folder), by its client path.
     pub fn contains(&self, path: &str) -> bool {
         let path = self.real_path(path);
-        self.overlay.contains_key(&path) || self.entries.contains_key(&path)
+        self.skin.1.contains_key(&path) || self.overlay.contains_key(&path) || self.entries.contains_key(&path)
     }
 
     /// Reads a file by its client path, e.g. `data\texture\...`; case and slash direction don't matter.
     pub fn read(&self, path: &str) -> io::Result<Vec<u8>> {
         let real = self.real_path(path);
-        if let Some(file) = self.overlay.get(&real) {
+        if let Some(file) = self.skin.1.get(&real).or_else(|| self.overlay.get(&real)) {
             return std::fs::read(file);
         }
         let entry = self.entries.get(&real).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, path.to_owned()))?;
@@ -412,6 +442,33 @@ mod tests {
         assert_eq!(with.read("data\\secret.txt").unwrap(), b"secret text");
         assert_eq!(with.read("data\\open.txt").unwrap(), b"open");
         assert_eq!(with.read("data\\base.txt").unwrap(), b"base");
+    }
+
+    /// A skin's images go before the interface's own, whatever their names' case; what it lacks still comes from the
+    /// archive, and an empty name takes it off.
+    #[test]
+    fn a_skin_goes_before_the_interface_images() {
+        let folder = folder("skin");
+        let ui = "data\\texture\\유저인터페이스\\";
+        let files = [plain(&format!("{ui}btn_ok.bmp"), b"basic ok"), plain(&format!("{ui}basic_interface\\itemwin_mid.bmp"), b"basic slot")];
+        write(&folder, "data.grf", 0x200, &files);
+        let skin = folder.join("Skin").join("Blue");
+        std::fs::create_dir_all(skin.join("Basic_Interface")).unwrap();
+        std::fs::write(skin.join("BTN_OK.bmp"), b"blue ok").unwrap();
+        std::fs::write(skin.join("Basic_Interface").join("new.bmp"), b"blue new").unwrap();
+        let mut grf = super::Grf::open(folder.join("data.grf")).unwrap();
+        assert_eq!(grf.set_skin("Blue", &skin), 2);
+        assert_eq!(grf.skin(), "Blue");
+        assert_eq!(grf.read(&format!("{ui}btn_ok.bmp")).unwrap(), b"blue ok");
+        assert_eq!(grf.read(&format!("{ui}basic_interface\\itemwin_mid.bmp")).unwrap(), b"basic slot", "not in the skin");
+        assert!(grf.contains(&format!("{ui}basic_interface\\new.bmp")));
+        assert_eq!(grf.set_skin("", &skin), 0);
+        assert_eq!(grf.read(&format!("{ui}btn_ok.bmp")).unwrap(), b"basic ok");
+        assert!(!grf.contains(&format!("{ui}basic_interface\\new.bmp")));
+        // A skin whose folder is gone draws the basic look.
+        assert_eq!(grf.set_skin("Gone", &folder.join("Skin").join("Gone")), 0);
+        std::fs::remove_dir_all(&folder).unwrap();
+        assert_eq!(grf.read(&format!("{ui}btn_ok.bmp")).unwrap(), b"basic ok");
     }
 
     /// Needs a 0x300 archive (the newer clients' data.grf) at `RUSTNAROK_CLIENT_GRF_0X300`.

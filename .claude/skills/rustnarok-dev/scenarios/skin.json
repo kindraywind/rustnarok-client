@@ -1,0 +1,169 @@
+{
+  "about": "Game Settings' Basic tab: the Skin box at its top lists <Basic Skin>, then each folder in the client folder's Skin folder (needs at least one skin there). Picking the first skin draws the interface (the open inventory, the basic info window, the settings window itself) in its images at once; picking <Basic Skin> puts the usual look back. Main has no Skin box: its sound rows sit lower under an empty space.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+E"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Inventory"
+        ]
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.tab": 0,
+          "settings.skin": "",
+          "settings.skin_index": 0,
+          "settings.skin_images": 0
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "skin-basic",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "skin_box"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": {
+        "button": "skin:1"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "skin-list",
+      "crop": [
+        302,
+        199,
+        420,
+        370
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "skin:1"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.skin_index": 1
+        },
+        "state_at_least": {
+          "settings.skin_images": 1
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "skin-picked",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "skin_box"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "skin:0"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.skin": "",
+          "settings.skin_index": 0,
+          "settings.skin_images": 0
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "shot": "skin-basic-again",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "settings_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Escape"
+    }
+  ]
+}

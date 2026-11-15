@@ -3,6 +3,8 @@
 //! Control the Quick Slots switch, Graphics the screen mode; Other stays empty here. Extras has switches the game
 //! doesn't have, all off at first, the UI scale's size and the font the text is drawn in.
 
+use std::path::{Path, PathBuf};
+
 use rustnarok_client::grf::Grf;
 use rustnarok_client::text::{self, Font};
 
@@ -41,6 +43,24 @@ const BUTTON: [f32; 2] = [42.0, 20.0];
 const BUTTON_TOP: f32 = 326.0;
 /// Every group's heading at (19, 12) inside it.
 const HEADING: [f32; 2] = [19.0, 12.0];
+/// The skin group, page y 0: "Skin" and the combo box at (110, 9), 182×18 in all: white in a 1 px edge, the skin in
+/// use from x 4, and the drop button 18×18 at x 164 (the box opens the list too). The list opens 1 px over the box's
+/// bottom (at y 17): 177 wide, white in the same edge, rows 16 high from (1, 1), 5 shown: "<Basic Skin>", then the
+/// skins.
+const SKIN_TITLE: usize = 1497;
+const BASIC_SKIN: usize = 3090;
+const COMBO: [f32; 2] = [110.0, 9.0];
+const COMBO_SIZE: [f32; 2] = [182.0, 18.0];
+const DROP: [f32; 2] = [164.0, 0.0];
+const COMBO_TEXT: f32 = 4.0;
+const LIST_TOP: f32 = 17.0;
+const LIST_WIDTH: f32 = 177.0;
+const LIST_ROW: f32 = 16.0;
+const LIST_ROWS: usize = 5;
+/// The box's and the list's edge, the row of the skin in use, the row under the pointer (but on the one in use).
+const COMBO_EDGE: [u8; 4] = [0xC6, 0xC6, 0xC6, 0xFF];
+const LIST_IN_USE: [u8; 4] = [0xCE, 0xDE, 0xFF, 0xFF];
+const LIST_HOVER: [u8; 4] = [0x73, 0x9C, 0xEF, 0xFF];
 /// The sound group, page y 36: "Audio Settings"; rows at y 12 and 36, each with its label (BGM, SFX) at x 110, a
 /// slider 174×13 at (152, y − 1), the Off box at (334, y + 1) and "Off" at (348, y).
 const SOUND_TOP: f32 = 36.0;
@@ -109,6 +129,12 @@ pub const RESET_ASKS: usize = 3166;
 
 pub struct Assets {
     radio: [Texture; 2],
+    /// The skin box's drop button (one look whatever the pointer does).
+    drop: Texture,
+    /// The skin box's and list's edge, the row in use, the row under the pointer.
+    edge: Texture,
+    in_use: Texture,
+    hover: Texture,
     reset: [Texture; 3],
     apply: [Texture; 3],
     close: [Texture; 3],
@@ -118,7 +144,16 @@ impl Assets {
     pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
         let image = |name: String| gpu.load_texture(grf, &format!("{UI}{name}.bmp"), false);
         let button = |name: &str| ["", "_a", "_b"].map(|look| image(format!("btn_{name}{look}")));
-        Self { radio: ["radiobtn_off", "radiobtn_on"].map(|name| image(name.into())), reset: button("reset"), apply: button("apply"), close: button("close") }
+        Self {
+            radio: ["radiobtn_off", "radiobtn_on"].map(|name| image(name.into())),
+            drop: image("basic_interface\\txtbox_btn_a".into()),
+            edge: gpu.solid(COMBO_EDGE),
+            in_use: gpu.solid(LIST_IN_USE),
+            hover: gpu.solid(LIST_HOVER),
+            reset: button("reset"),
+            apply: button("apply"),
+            close: button("close"),
+        }
     }
 }
 
@@ -142,6 +177,10 @@ pub enum Hit {
     Font(isize),
     /// The UI size row's left (-1, smaller) or right (1, bigger) arrow.
     Size(isize),
+    /// The skin's combo box, which opens and shuts its list, and a row of the open list (0 the basic look, then the
+    /// skins).
+    SkinBox,
+    Skin(usize),
     Title,
     Window,
 }
@@ -167,6 +206,10 @@ pub struct GameSettings {
     dragging: Option<usize>,
     /// The screen mode picked on the Graphics page, until Apply.
     pub fullscreen: bool,
+    /// The skins the list offers after the basic look, found when the window opens.
+    skins: Vec<String>,
+    /// The skin list while it's open: the rows scrolled past.
+    list: Option<usize>,
 }
 
 impl GameSettings {
@@ -174,7 +217,7 @@ impl GameSettings {
     pub fn new(screen: [f32; 2], fullscreen: bool) -> Self {
         let mut frame = Frame::new([((screen[0] - SIZE[0]) / 2.0).floor(), ((screen[1] - SIZE[1]) / 2.0).floor()], SIZE[0]);
         frame.open = true;
-        Self { frame, tab: BASIC, dragging: None, fullscreen }
+        Self { frame, tab: BASIC, dragging: None, fullscreen, skins: skins().to_vec(), list: None }
     }
 
     /// The screen changed size under the window (the Extras' UI scale) and the pointer went from `pointer[0]` to
@@ -208,6 +251,14 @@ impl GameSettings {
             }
         }
         let [x, y] = [local[0], local[1] - PAGE_TOP];
+        if self.tab == BASIC {
+            if let Some(row) = self.list_row([x, y]) {
+                return Some(Hit::Skin(row));
+            }
+            if contains(COMBO, COMBO_SIZE, [x, y]) {
+                return Some(Hit::SkinBox);
+            }
+        }
         Some(match self.tab {
             BASIC => SOUND_ROWS
                 .iter()
@@ -242,6 +293,48 @@ impl GameSettings {
         })
     }
 
+    /// The open skin list's row (0 the basic look) at a point on the page.
+    fn list_row(&self, [x, y]: [f32; 2]) -> Option<usize> {
+        let scroll = self.list?;
+        let line = ((y - list_row_top(0)) / LIST_ROW).floor();
+        let shown = self.list_len().saturating_sub(scroll).min(LIST_ROWS);
+        ((COMBO[0] + 1.0..COMBO[0] + LIST_WIDTH - 1.0).contains(&x) && (0.0..shown as f32).contains(&line)).then(|| scroll + line as usize)
+    }
+
+    /// The open list's rows on screen: (row, line).
+    fn shown_rows(&self) -> impl Iterator<Item = (usize, usize)> {
+        let scroll = self.list.unwrap_or(usize::MAX);
+        (scroll..self.list_len().min(scroll.saturating_add(LIST_ROWS))).map(move |row| (row, row - scroll))
+    }
+
+    /// The row of the skin in use: 0 for the basic look, or a skin not in the list.
+    fn in_use(&self, graphics: &GraphicsSettings) -> usize {
+        self.skins.iter().position(|skin| *skin == graphics.skin).map_or(0, |row| row + 1)
+    }
+
+    /// A row of the skin list: the basic look's words (`basic`), then the skins' names.
+    fn row_name<'a>(&'a self, row: usize, basic: &'a str) -> &'a str {
+        row.checked_sub(1).and_then(|row| self.skins.get(row)).map_or(basic, String::as_str)
+    }
+
+    /// The list's rows: the basic look, then the skins.
+    fn list_len(&self) -> usize {
+        1 + self.skins.len()
+    }
+
+    /// The mouse wheel over the open skin list scrolls it; returns whether it took the wheel.
+    pub fn wheel(&mut self, cursor: [f32; 2], rows: i32) -> bool {
+        let over = self.frame.local(cursor, SIZE[1]).is_some_and(|local| self.list_row([local[0], local[1] - PAGE_TOP]).is_some());
+        let most = self.list_len().saturating_sub(LIST_ROWS);
+        match &mut self.list {
+            Some(scroll) if over => {
+                *scroll = scroll.saturating_add_signed(rows as isize).min(most);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// A press: the title bar grabs the window, a track the thumb there. Returns whether the sound changed.
     pub fn press(&mut self, hit: Hit, cursor: [f32; 2], sound: &mut Settings) -> bool {
         match hit {
@@ -259,7 +352,17 @@ impl GameSettings {
 
     /// A click. The sound and the switches change at once; the screen mode waits for Apply.
     pub fn click(&mut self, hit: Hit, sound: &mut Settings, graphics: &mut GraphicsSettings) -> Option<Action> {
+        // The skin list shuts at any click but on itself.
+        let list = self.list.take();
         match hit {
+            Hit::SkinBox if list.is_none() => {
+                self.list = Some(0);
+                None
+            }
+            Hit::Skin(row) => {
+                graphics.skin = self.row_name(row, "").to_owned();
+                Some(Action::Graphics)
+            }
             Hit::Close | Hit::CloseButton => {
                 self.frame.open = false;
                 Some(Action::Close)
@@ -343,9 +446,17 @@ impl GameSettings {
             ["settings_reset", "settings_apply", "settings_close"].into_iter().zip(BUTTONS).map(|(name, x)| (name.to_owned(), place([x, BUTTON_TOP], BUTTON))),
         );
         match self.tab {
-            BASIC => boxes.extend(
-                SOUND_ROWS.iter().enumerate().map(|(row, &y)| (format!("sound_off:{row}"), place([OFF_BOX, PAGE_TOP + SOUND_TOP + y + 1.0], [10.0, 10.0]))),
-            ),
+            BASIC => {
+                boxes.extend(
+                    SOUND_ROWS.iter().enumerate().map(|(row, &y)| (format!("sound_off:{row}"), place([OFF_BOX, PAGE_TOP + SOUND_TOP + y + 1.0], [10.0, 10.0]))),
+                );
+                // The skin's box (`skin_box`) and the open list's rows (`skin:<row>`, 0 the basic look).
+                boxes.push(("skin_box".into(), place([COMBO[0], PAGE_TOP + COMBO[1]], COMBO_SIZE)));
+                boxes.extend(
+                    self.shown_rows()
+                        .map(|(row, line)| (format!("skin:{row}"), place([COMBO[0] + 1.0, PAGE_TOP + list_row_top(line)], [LIST_WIDTH - 2.0, LIST_ROW]))),
+                );
+            }
             EFFECT | CONTROL | EXTRAS => {
                 boxes.extend(
                     (0..row_count(self.tab))
@@ -409,6 +520,12 @@ impl GameSettings {
         let hit = self.hit(pointer.0);
         match self.tab {
             BASIC => {
+                // The skin's box: the skin in use, the drop button over its right end.
+                layer.texts.push((message(SKIN_TITLE).to_owned(), page(HEADING), black));
+                outlined(layer, page(COMBO), COMBO_SIZE, &assets.edge, &chrome.white);
+                let text = window::fit(font, self.row_name(self.in_use(graphics), message(BASIC_SKIN)), DROP[0] - COMBO_TEXT - 5.0);
+                layer.texts.push((text, page([COMBO[0] + COMBO_TEXT, COMBO[1] + 1.0 + ((LIST_ROW - font.line_height()) / 2.0).trunc()]), black));
+                layer.sprites.push((&assets.drop, page([COMBO[0] + DROP[0], COMBO[1] + DROP[1]]), assets.drop.size));
                 let group = |local: [f32; 2]| page([local[0], SOUND_TOP + local[1]]);
                 layer.texts.push((message(SOUND_TITLE).to_owned(), group(HEADING), black));
                 for (row, (&y, &label)) in SOUND_ROWS.iter().zip(&SOUND_LABELS).enumerate() {
@@ -477,11 +594,69 @@ impl GameSettings {
             }
             _ => {}
         }
+        // The open skin list, over the page: the row in use and the one under the pointer filled.
+        // ponytail: more than 5 rows scroll by the wheel alone; the game also has a 13 px scroll bar at the list's right.
+        if self.tab == BASIC && self.list.is_some() {
+            let shown = self.shown_rows().count() as f32;
+            outlined(layer, page([COMBO[0], COMBO[1] + LIST_TOP]), [LIST_WIDTH, shown * LIST_ROW + 2.0], &assets.edge, &chrome.white);
+            let in_use = self.in_use(graphics);
+            for (row, line) in self.shown_rows() {
+                let top = list_row_top(line);
+                let fill = if row == in_use { Some(&assets.in_use) } else { (hit == Some(Hit::Skin(row))).then_some(&assets.hover) };
+                if let Some(fill) = fill {
+                    layer.sprites.push((fill, page([COMBO[0] + 1.0, top]), [LIST_WIDTH - 2.0, LIST_ROW]));
+                }
+                let text = window::fit(font, self.row_name(row, message(BASIC_SKIN)), LIST_WIDTH - COMBO_TEXT - 4.0);
+                layer.texts.push((text, page([COMBO[0] + COMBO_TEXT, top + ((LIST_ROW - font.line_height()) / 2.0).trunc()]), black));
+            }
+        }
         for ((images, x), target) in [&assets.reset, &assets.apply, &assets.close].into_iter().zip(BUTTONS).zip([Hit::Reset, Hit::Apply, Hit::CloseButton]) {
             let look = if hit == Some(target) { 1 + usize::from(pointer.1) } else { 0 };
             layer.sprites.push((&images[look], at([x, BUTTON_TOP]), BUTTON));
         }
     }
+}
+
+/// The page y of the open skin list's `line`th row.
+fn list_row_top(line: usize) -> f32 {
+    COMBO[1] + LIST_TOP + 1.0 + line as f32 * LIST_ROW
+}
+
+/// A box `size` at `corner`: `fill` inside a 1 px `edge`.
+fn outlined<'a>(layer: &mut Layer<'a>, corner: [f32; 2], size: [f32; 2], edge: &'a Texture, fill: &'a Texture) {
+    layer.sprites.push((edge, corner, size));
+    layer.sprites.push((fill, [corner[0] + 1.0, corner[1] + 1.0], [size[0] - 2.0, size[1] - 2.0]));
+}
+
+/// The client folder's `Skin` folder, beside the data folder (`RUSTNAROK_CLIENT_DATA`): each folder in it is a skin.
+fn skins_root() -> PathBuf {
+    let root = std::env::var("RUSTNAROK_CLIENT_DATA").ok().filter(|root| root != "none").unwrap_or_else(|| ".".into());
+    Path::new(&root).join("Skin")
+}
+
+/// Where the skin named `name` keeps its images.
+pub fn skin_folder(name: &str) -> PathBuf {
+    skins_root().join(name)
+}
+
+/// The skins the list offers after the basic look: the folders in `Skin`, found once (new ones show after a restart).
+// ponytail: folders only; the game also takes a skin packed in a .zip there.
+pub fn skins() -> &'static [String] {
+    static SKINS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    SKINS.get_or_init(|| skins_in(&skins_root()))
+}
+
+fn skins_in(root: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    // By name, as Windows lists them.
+    names.sort_by_key(|name| name.to_lowercase());
+    names
 }
 
 /// Reset: the sound and the effect switches back to their defaults (the screen mode stays).
@@ -715,6 +890,62 @@ mod tests {
         assert_eq!(window.frame.position, [1228.0 - SIZE[0], 768.0 - SIZE[1]]);
         reset(&mut sound, &mut graphics);
         assert_eq!((graphics.ui_scale, graphics.ui_size), (false, 768));
+    }
+
+    /// Basic's skin box opens a list of the basic look then the skins (the folders in `Skin`, by name); a row picks
+    /// one, any click shuts the list, and Reset puts the basic look back.
+    #[test]
+    fn the_skin_box_lists_the_skins_and_picks_one() {
+        let root = std::env::temp_dir().join(format!("rustnarok-skins-{}", std::process::id()));
+        for name in ["Spring", "Autumn", "dusk"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        std::fs::write(root.join("colorchip.bmp"), b"not a skin").unwrap();
+        let found = skins_in(&root);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(found, ["Autumn", "dusk", "Spring"]);
+        assert!(skins_in(&root).is_empty(), "no Skin folder, no skins");
+
+        let mut window = GameSettings::new([1024.0, 768.0], false);
+        window.skins = (1..=6).map(|n| format!("skin {n}")).collect();
+        let (mut sound, mut graphics) = (Settings::default(), GraphicsSettings::default());
+        assert_eq!(graphics.skin, "", "the basic look at first");
+        let corner = window.frame.position;
+        let at = |local: [f32; 2]| [corner[0] + local[0], corner[1] + local[1]];
+        let [x, y] = [COMBO[0] + DROP[0] + 5.0, PAGE_TOP + COMBO[1] + 5.0];
+        assert_eq!(window.hit(at([x, y])), Some(Hit::SkinBox), "the drop button");
+        assert_eq!(window.hit(at([COMBO[0] + 5.0, y])), Some(Hit::SkinBox), "the box");
+        assert_eq!(window.hit(at([x, y + 2.0 * LIST_ROW])), Some(Hit::Window), "no list yet");
+        assert_eq!(window.click(Hit::SkinBox, &mut sound, &mut graphics), None);
+        // Five rows under the box: the basic look, then the first four skins; the wheel shows the rest.
+        assert_eq!(window.hit(at([x, y + LIST_ROW])), Some(Hit::Skin(0)));
+        assert_eq!(window.hit(at([x, y + 5.0 * LIST_ROW])), Some(Hit::Skin(4)));
+        assert_eq!(window.hit(at([x, y + 6.0 * LIST_ROW])), Some(Hit::Window), "five rows shown");
+        assert!(window.wheel(at([x, y + LIST_ROW]), 9));
+        assert_eq!(window.hit(at([x, y + 5.0 * LIST_ROW])), Some(Hit::Skin(6)), "scrolled to the end");
+        assert!(!window.wheel(at([x, y + 9.0 * LIST_ROW]), 1), "not over the list");
+        let names: Vec<_> = window.button_boxes().into_iter().map(|(name, _)| name).filter(|name| name.starts_with("skin")).collect();
+        assert_eq!(names, ["skin_box", "skin:2", "skin:3", "skin:4", "skin:5", "skin:6"]);
+        assert_eq!(window.click(Hit::Skin(3), &mut sound, &mut graphics), Some(Action::Graphics));
+        assert_eq!(graphics.skin, "skin 3");
+        assert_eq!(window.hit(at([x, y + LIST_ROW])), Some(Hit::Window), "the list shut");
+        assert_eq!(graphics, GraphicsSettings { skin: "skin 3".into(), ..GraphicsSettings::default() }, "nothing else moved");
+        // A click on the box shuts an open list; one elsewhere does too.
+        window.click(Hit::SkinBox, &mut sound, &mut graphics);
+        window.click(Hit::SkinBox, &mut sound, &mut graphics);
+        assert_eq!(window.hit(at([x, y + LIST_ROW])), Some(Hit::Window));
+        window.click(Hit::SkinBox, &mut sound, &mut graphics);
+        window.click(Hit::Window, &mut sound, &mut graphics);
+        assert_eq!(window.hit(at([x, y + LIST_ROW])), Some(Hit::Window));
+        window.click(Hit::SkinBox, &mut sound, &mut graphics);
+        window.click(Hit::Skin(0), &mut sound, &mut graphics);
+        assert_eq!(graphics.skin, "", "the basic look again");
+        graphics.skin = "skin 1".into();
+        reset(&mut sound, &mut graphics);
+        assert_eq!(graphics.skin, "");
+        // Only on Basic.
+        window.click(Hit::Tab(EFFECT), &mut sound, &mut graphics);
+        assert_eq!(window.hit(at([x, y])), Some(Hit::Window));
     }
 
     #[test]
