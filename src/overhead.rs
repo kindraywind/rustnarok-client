@@ -163,10 +163,10 @@ pub const LINE_STEP: f32 = 16.0;
 /// How far a balloon may stick out past the screen's edges.
 const OVER_EDGE: f32 = 3.0;
 
-/// A balloon's lines: broken at newlines and spaces to at most `LINE_BYTES` bytes, counting a character beyond ASCII
-/// as two; a longer word is cut.
+/// A balloon's lines: broken at newlines and spaces to at most `LINE_BYTES` bytes, counting a character by its bytes in
+/// the data's code page; a longer word is cut.
 pub fn lines(text: &str) -> Vec<String> {
-    let width = |text: &str| text.chars().map(|character| if character.is_ascii() { 1 } else { 2 }).sum::<usize>();
+    let width = |text: &str| text.chars().map(rustnarok_client::net::text_bytes).sum::<usize>();
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
         let mut line = String::new();

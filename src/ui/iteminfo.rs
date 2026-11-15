@@ -270,8 +270,8 @@ pub fn rental_line(template: &str, expires: u32, now: u64) -> Option<String> {
     (expires > 0).then(|| format!("^ff0000{}^000000", rustnarok_client::messages::fill(template, &[&(left / 3600), &(left % 3600 / 60)])))
 }
 
-/// A description line cut every `columns` characters, not at word ends: ^RRGGBB codes take none, a Korean (non-ASCII)
-/// character takes two and is never split, and "\r\n" breaks it too. `color` carries from line to line.
+/// A description line cut every `columns` characters, not at word ends: ^RRGGBB codes take none, a character its bytes in
+/// the data's code page (two for Korean, one for Thai) and is never split, and "\r\n" breaks it too. `color` carries from line to line.
 pub fn cut(line: &str, columns: usize, color: &mut [u8; 3]) -> ColoredLines {
     let mut lines: ColoredLines = vec![Vec::new()];
     let mut used = 0;
@@ -289,7 +289,7 @@ pub fn cut(line: &str, columns: usize, color: &mut [u8; 3]) -> ColoredLines {
         if character == '\r' {
             continue;
         }
-        let width = if character.is_ascii() { 1 } else { 2 };
+        let width = net::text_bytes(character);
         if character == '\n' || used + width > columns {
             lines.push(Vec::new());
             used = 0;

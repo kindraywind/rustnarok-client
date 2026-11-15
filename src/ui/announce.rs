@@ -41,12 +41,12 @@ pub struct Bar {
     background: Option<[Texture; 2]>,
 }
 
-/// `text` cut into lines of at most `LINE_BYTES` bytes as EUC-KR counts them (2 for a Hangul letter), whole letters.
+/// `text` cut into lines of at most `LINE_BYTES` bytes in the data's code page (2 for a Hangul letter), whole letters.
 pub fn wrap(text: &str) -> Vec<String> {
     let mut lines = vec![String::new()];
     let mut bytes = 0;
     for character in text.chars() {
-        let width = if character.is_ascii() { 1 } else { 2 };
+        let width = rustnarok_client::net::text_bytes(character);
         if bytes + width > LINE_BYTES {
             lines.push(String::new());
             bytes = 0;
