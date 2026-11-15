@@ -21,7 +21,8 @@ pub const NPC_COLOR: [u8; 3] = [0x4A, 0x93, 0xF4];
 
 /// What a link opens: an item's information, a navigation to a place (with the numbers that follow its x and y, when
 /// there are any: `navigation::linked` reads them), a web page (the address as the script gave it), a quest in the
-/// quest window, or nothing yet (`<TIPBOX>`, a `<QUEST>` without an id).
+/// quest window, or nothing yet (`<TIPBOX>`, a `<QUEST>` without an id). An item's picture in NPC text (`^i[id]`) is a
+/// run too: one without words, that a left click does nothing with.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Item(ItemLink),
@@ -39,6 +40,8 @@ pub enum Target {
     Quest(u32),
     // ponytail: a tip link does nothing when clicked until that window exists.
     Tip,
+    /// The item whose picture is drawn here.
+    Picture(u32),
 }
 
 impl Target {
@@ -48,7 +51,7 @@ impl Target {
             Target::Item(_) => COLOR,
             Target::Navi { .. } | Target::Place { .. } => NAVI_COLOR,
             Target::Url(_) => URL_COLOR,
-            Target::Quest(_) | Target::Tip => NPC_COLOR,
+            Target::Quest(_) | Target::Tip | Target::Picture(_) => NPC_COLOR,
         }
     }
 
@@ -75,6 +78,7 @@ impl Target {
             Target::Url(address) => format!("u {address}"),
             Target::Quest(id) => format!("q {id}"),
             Target::Tip => "t -".into(),
+            Target::Picture(id) => format!("c {id}"),
         }
     }
 
@@ -97,6 +101,7 @@ impl Target {
             ("u", address) => Some(Target::Url(address.to_owned())),
             ("q", id) => id.parse().ok().map(Target::Quest),
             ("t", _) => Some(Target::Tip),
+            ("c", id) => id.parse().ok().map(Target::Picture),
             _ => None,
         }
     }

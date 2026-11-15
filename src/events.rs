@@ -1589,7 +1589,7 @@ impl App {
             // Each text starts a line, and so does each LF in it; the first after Next wipes the old page.
             MapEvent::NpcSay { npc, text } => {
                 let name_of = |item: &links::ItemLink| inventory::item_name(&self.items, item.id, true, item.refine);
-                let text = links::mark(&npc_say::unescape(&text), &name_of);
+                let text = npc_say::item_pictures(&links::mark(&npc_say::unescape(&text), &name_of));
                 let dialog = game.dialog_for(npc);
                 if std::mem::take(&mut dialog.wipe) {
                     dialog.lines.clear();

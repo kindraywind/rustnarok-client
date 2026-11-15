@@ -1671,55 +1671,6 @@ impl App {
             }
         }
 
-        // NPC windows: a window like the others (`front`).
-        let mut overlay = Layer::of(Top::NpcDialog);
-        let mut dialog_links = Vec::new();
-        if let Some(dialog) = &game.dialog {
-            // A warp list is the menu alone.
-            if dialog.warp.is_none() {
-                let lines: links::LinkedLines = dialog
-                    .lines
-                    .iter()
-                    .flat_map(|line| wrap_linked_by(font, &npc_say::font_tags(line), game.say.wrap_width(), true, links::Target::npc_color))
-                    .collect();
-                let pitch = font.line_height() + npc_say::LINE_GAP;
-                game.say.text_height = lines.len() as f32 * pitch;
-                game.say.scroll_by(0.0);
-                game.say.draw(&mut overlay, &assets.chrome, &assets.pickup, &assets.say);
-                for (row, pieces) in lines.iter().enumerate() {
-                    let Some([mut x, y]) = game.say.line_at(row, pitch, font.line_height()) else { continue };
-                    for (color, piece, item) in pieces {
-                        let width = font.width(piece);
-                        overlay.texts.push((piece.clone(), [x, y], *color));
-                        // Links underlined in their colour, and clickable.
-                        if let Some(item) = item {
-                            let line = if matches!(item, links::Target::Url(_)) { &assets.url_line } else { &assets.link_line };
-                            overlay.sprites.push((line, [x, y + font.line_height() - 1.0], [width, 1.0]));
-                            dialog_links.push(([x, y, width, font.line_height()], item.clone()));
-                        }
-                        x += width;
-                    }
-                }
-                let [x, y, _, _] = game.say.button_box();
-                match dialog.button {
-                    DialogButton::Next => overlay.sprites.push(button_sprite(pointer, [x, y], &assets.next)),
-                    DialogButton::Close => overlay.sprites.push(button_sprite(pointer, [x, y], &assets.close)),
-                    DialogButton::None => {}
-                }
-            }
-            if let Some(menu) = &dialog.menu {
-                let corner = game.npc_menu.position;
-                menu.draw(overlay.window(), &assets.chrome, &assets.pickup, &assets.npc_menu, corner, font);
-                let [ok, cancel] = npc_menu::buttons(menu.items.len()).map(|place| offset(corner, place));
-                overlay.sprites.push(button_sprite(pointer, ok, &assets.ok));
-                overlay.sprites.push(button_sprite(pointer, cancel, &assets.cancel));
-            }
-            if let Some(input) = &dialog.input {
-                input.draw(overlay.window(), &assets.chrome, &assets.pickup, &assets.npc_input, screen());
-                overlay.sprites.push(button_sprite(pointer, input.ok_on(screen()), &assets.ok));
-            }
-        }
-
         // Windows over the world, NPC conversations over windows, tooltips over everything.
         let shown_items = game
             .inventory
@@ -1798,6 +1749,8 @@ impl App {
         trade_icons.extend(game.mail.icons(items));
         trade_icons.extend(game.pickup_popup.as_ref().map(|popup| popup.icon.clone()).filter(|icon| !icon.is_empty()));
         trade_icons.extend(game.catalog.as_ref().map(|catalog| catalog.icons(items)).unwrap_or_default());
+        let said = game.dialog.iter().flat_map(|dialog| npc_say::pictures(&dialog.lines));
+        trade_icons.extend(said.filter_map(|id| items.get(&id)).map(|info| inventory::icon_path(info, true)));
         for path in skill_icons.chain(status_paths).chain(shop_icons).chain(pick_icons).chain(game.storage.icons(items)).chain(trade_icons) {
             icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
         }
@@ -1811,7 +1764,78 @@ impl App {
                 });
             }
         }
+        // NPC windows: a window like the others (`front`).
+        let mut overlay = Layer::of(Top::NpcDialog);
+        let mut dialog_links = Vec::new();
+        if let Some(dialog) = &game.dialog {
+            // A warp list is the menu alone.
+            if dialog.warp.is_none() {
+                let lines: links::LinkedLines = dialog
+                    .lines
+                    .iter()
+                    .flat_map(|line| wrap_linked_by(font, &npc_say::font_tags(line), game.say.wrap_width(), true, links::Target::npc_color))
+                    .collect();
+                let heights: Vec<f32> = lines.iter().map(|pieces| npc_say::line_height(font.line_height(), pieces)).collect();
+                game.say.text_height = heights.iter().map(|height| height + npc_say::LINE_GAP).sum();
+                game.say.scroll_by(0.0);
+                game.say.draw(&mut overlay, &assets.chrome, &assets.pickup, &assets.say);
+                let mut above = 0.0;
+                for (pieces, height) in lines.iter().zip(heights) {
+                    let place = game.say.line_at(above, height);
+                    above += height + npc_say::LINE_GAP;
+                    let Some([mut x, top]) = place else { continue };
+                    let y = top + height - font.line_height();
+                    for (color, piece, item) in pieces {
+                        // An item's picture: its icon in a box of its own, pointed and right-clicked like an item.
+                        if let Some(links::Target::Picture(id)) = item {
+                            let corner = [x, top + height - npc_say::PICTURE];
+                            if let Some(icon) = items.get(id).and_then(|info| icons.get(&inventory::icon_path(info, true))).and_then(Option::as_ref) {
+                                overlay.sprites.push((icon, corner, icon.size));
+                            }
+                            dialog_links.push(([corner[0], corner[1], npc_say::PICTURE, npc_say::PICTURE], links::Target::Picture(*id)));
+                            x += npc_say::PICTURE;
+                            continue;
+                        }
+                        let width = font.width(piece);
+                        overlay.texts.push((piece.clone(), [x, y], *color));
+                        // Links underlined in their colour, and clickable.
+                        if let Some(item) = item {
+                            let line = if matches!(item, links::Target::Url(_)) { &assets.url_line } else { &assets.link_line };
+                            overlay.sprites.push((line, [x, y + font.line_height() - 1.0], [width, 1.0]));
+                            dialog_links.push(([x, y, width, font.line_height()], item.clone()));
+                        }
+                        x += width;
+                    }
+                }
+                let [x, y, _, _] = game.say.button_box();
+                match dialog.button {
+                    DialogButton::Next => overlay.sprites.push(button_sprite(pointer, [x, y], &assets.next)),
+                    DialogButton::Close => overlay.sprites.push(button_sprite(pointer, [x, y], &assets.close)),
+                    DialogButton::None => {}
+                }
+            }
+            if let Some(menu) = &dialog.menu {
+                let corner = game.npc_menu.position;
+                menu.draw(overlay.window(), &assets.chrome, &assets.pickup, &assets.npc_menu, corner, font);
+                let [ok, cancel] = npc_menu::buttons(menu.items.len()).map(|place| offset(corner, place));
+                overlay.sprites.push(button_sprite(pointer, ok, &assets.ok));
+                overlay.sprites.push(button_sprite(pointer, cancel, &assets.cancel));
+            }
+            if let Some(input) = &dialog.input {
+                input.draw(overlay.window(), &assets.chrome, &assets.pickup, &assets.npc_input, screen());
+                overlay.sprites.push(button_sprite(pointer, input.ok_on(screen()), &assets.ok));
+            }
+        }
+
         let mut tooltip = Layer::over();
+        // A pointed item picture in the NPC window: the item's name over it.
+        if let Some((area, links::Target::Picture(id))) =
+            dialog_links.iter().rev().find(|(area, _)| contains([area[0], area[1]], [area[2], area[3]], pointer.0))
+            && items.contains_key(id)
+        {
+            let name = inventory::item_name(items, *id, true, 0);
+            window::tooltip(&mut tooltip, &assets.chrome, font, &name, offset([area[0], area[1]], npc_say::PICTURE_NAME_AT), [255; 3]);
+        }
         // A sign's cut words show whole while the pointer is on its text: a darker speech balloon over the text, the
         // words starting where they were (the topmost sign, as a press takes it); not through a window over it.
         if !game.on_window(pointer.0, assets.message.size)
@@ -2992,7 +3016,8 @@ impl App {
             cursor::Kind::Attack
         } else if (game.targeting.is_some() || game.capturing) && !on_window {
             if game.aim_valid(pointer.0, self.modifiers.shift_key()) { cursor::Kind::TargetValid } else { cursor::Kind::Target }
-        } else if game.link_at(pointer.0).is_some() {
+        // A link's hand; an item's picture keeps the arrow.
+        } else if game.link_at(pointer.0).is_some_and(|target| !matches!(target, links::Target::Picture(_))) {
             cursor::Kind::Clickable
         } else if on_window {
             if game.on_control(pointer.0) { cursor::Kind::Clickable } else { cursor::Kind::Default }

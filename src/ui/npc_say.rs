@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::render::{Gpu, Texture};
 use crate::window::{Chrome, Frame};
-use crate::{Layer, contains, pickup};
+use crate::{Layer, contains, links, pickup};
 
 pub const SIZE: [f32; 2] = [280.0, 180.0];
 /// Where it first opens, at every screen size; then where it was left.
@@ -19,6 +19,10 @@ pub const TEXT_AT: [f32; 2] = [13.0, 10.0];
 pub const WRAP_WIDTH: f32 = 215.0;
 /// Lines are the font's line height plus this apart.
 pub const LINE_GAP: f32 = 6.0;
+/// An item's picture in the text (`^i[id]`): a box this wide and tall on the line, the item's icon at its top left.
+pub const PICTURE: f32 = 25.0;
+/// A pointed picture's item name shows this far from the picture's corner.
+pub const PICTURE_NAME_AT: [f32; 2] = [0.0, -17.0];
 /// The scrollbar, while the text is taller than the panel.
 pub const SCROLLBAR: [f32; 4] = [257.0, 10.0, 13.0, 140.0];
 /// The wheel and Up/Down scroll this much.
@@ -36,6 +40,52 @@ pub const THROTTLE: Duration = Duration::from_millis(300);
 /// The server's text: the two-character `\r`, `\n` and `\"` as CR, LF and `"`.
 pub fn unescape(text: &str) -> String {
     text.replace("\\r", "\r").replace("\\n", "\n").replace("\\\"", "\"")
+}
+
+/// A `^i` code at the start of `text`: how many bytes it takes (the `^i` and every `[1 to 7 digits]` group right after
+/// it) and the item its picture shows, the first group's. Without a group the two characters are still taken, and
+/// nothing is drawn for them.
+pub fn picture_code(text: &str) -> Option<(usize, Option<u32>)> {
+    let mut rest = text.strip_prefix("^i")?;
+    let mut id = None;
+    while let Some(group) = rest.strip_prefix('[') {
+        let digits = group.bytes().take_while(u8::is_ascii_digit).count();
+        if !(1..=7).contains(&digits) || group.as_bytes().get(digits) != Some(&b']') {
+            break;
+        }
+        id = id.or(group[..digits].parse().ok());
+        rest = &group[digits + 1..];
+    }
+    Some((text.len() - rest.len(), id))
+}
+
+/// NPC text with its `^i[id]` codes (rathena's `mesitemicon`) made into picture runs for the layout.
+pub fn item_pictures(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some((at, (taken, id))) = rest.find("^i").and_then(|at| Some((at, picture_code(&rest[at..])?))) {
+        out.push_str(&rest[..at]);
+        if let Some(id) = id {
+            out.push_str(&links::marked("", &links::Target::Picture(id)));
+        }
+        rest = &rest[at + taken..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The items whose pictures the text shows.
+pub fn pictures(lines: &[String]) -> impl Iterator<Item = u32> + '_ {
+    lines.iter().flat_map(|line| links::pieces(line)).filter_map(|(_, target)| match target {
+        Some(links::Target::Picture(id)) => Some(id),
+        _ => None,
+    })
+}
+
+/// How tall a line is: its text, or a picture on it when that is taller. Text and pictures sit on the line's bottom.
+pub fn line_height(text: f32, pieces: &[([u8; 3], String, Option<links::Target>)]) -> f32 {
+    let picture = pieces.iter().any(|(_, _, target)| matches!(target, Some(links::Target::Picture(_))));
+    if picture { text.max(PICTURE) } else { text }
 }
 
 /// The game's font tags in NPC text as the `^RRGGBB` codes the layout already reads: `<FONT COLOR=RRGGBB>` sets the
@@ -267,11 +317,11 @@ impl SayWindow {
         self.scroll = self.range() * ((cursor[1] - top) / track[3]).clamp(0.0, 1.0);
     }
 
-    /// Where text line `row` goes on screen, lines `pitch` apart and `line_height` tall: only lines wholly inside
-    /// the panel show.
+    /// Where a text line goes on screen, `above` under the text's top and `line_height` tall: only lines wholly
+    /// inside the panel show.
     // ponytail: whole lines only, as the renderer has no clipping; a line half out of the panel is hidden.
-    pub fn line_at(&self, row: usize, pitch: f32, line_height: f32) -> Option<[f32; 2]> {
-        let top = TEXT_AT[1] + row as f32 * pitch - self.scroll;
+    pub fn line_at(&self, above: f32, line_height: f32) -> Option<[f32; 2]> {
+        let top = TEXT_AT[1] + above - self.scroll;
         (top >= PANEL[1] && top + line_height <= PANEL[1] + self.panel_height()).then(|| self.at([TEXT_AT[0], top]))
     }
 
@@ -348,11 +398,11 @@ mod tests {
         assert!(window.on_button([440.0, 260.0]) && !window.on_button([430.0, 260.0]));
         // Lines 20 apart and 14 tall: rows 0 to 6 show from the panel's top; scrolled 30, row 1 is half out.
         window.scroll = 0.0;
-        assert_eq!(window.line_at(0, 20.0, 14.0), Some([213.0, 110.0]));
-        assert_eq!(window.line_at(6, 20.0, 14.0), Some([213.0, 230.0]));
-        assert_eq!(window.line_at(7, 20.0, 14.0), None);
+        assert_eq!(window.line_at(0.0, 14.0), Some([213.0, 110.0]));
+        assert_eq!(window.line_at(120.0, 14.0), Some([213.0, 230.0]));
+        assert_eq!(window.line_at(140.0, 14.0), None);
         window.scroll_by(SCROLL_STEP);
-        assert_eq!((window.line_at(1, 20.0, 14.0), window.line_at(2, 20.0, 14.0)), (None, Some([213.0, 120.0])));
+        assert_eq!((window.line_at(20.0, 14.0), window.line_at(40.0, 14.0)), (None, Some([213.0, 120.0])));
         // A press on the scrollbar's middle scrolls halfway.
         window.press_scrollbar([460.0, 180.0]);
         assert_eq!(window.scroll, 30.0);
@@ -444,6 +494,43 @@ mod tests {
     #[test]
     fn reads_the_servers_escapes() {
         assert_eq!(unescape(r#"one\ntwo \"three\""#), "one\ntwo \"three\"");
+    }
+
+    #[test]
+    fn reads_item_picture_codes() {
+        assert_eq!(picture_code("^i[501] - Red Potion"), Some((7, Some(501))));
+        assert_eq!(picture_code("^i[1234567]"), Some((11, Some(1234567))));
+        // Every group right after it is taken; the picture is the first's.
+        assert_eq!(picture_code("^i[501][502] x"), Some((12, Some(501))));
+        // No group, more than 7 digits, no digits or no closing bracket: the `^i` alone is taken, and draws nothing.
+        for text in ["^i", "^i 501", "^i[12345678]", "^i[]", "^i[50a]", "^i[501"] {
+            assert_eq!(picture_code(text), Some((2, None)), "{text}");
+        }
+        // Not the code: a colour, another letter, a capital.
+        for text in ["^0000FF", "^e[1]", "^I[501]", "i[501]"] {
+            assert_eq!(picture_code(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn makes_item_picture_codes_into_picture_runs() {
+        let apple = links::Target::Item(links::ItemLink { id: 512, ..links::ItemLink::default() });
+        let line = format!("^i[512] - {}^i[7]^i", links::marked("Apple", &apple));
+        let pieces = links::pieces(&item_pictures(&line));
+        let picture = |id| (String::new(), Some(links::Target::Picture(id)));
+        assert_eq!(pieces, [picture(512), (" - ".into(), None), ("Apple".into(), Some(apple)), picture(7)]);
+        assert_eq!(pictures(&[item_pictures("a ^i[501] b"), "c".into(), item_pictures("^i[99999999]^i[502]")]).collect::<Vec<_>>(), [501, 502]);
+        // Text without the code, colour codes included, is left as it is.
+        assert_eq!(item_pictures("^FF0000red^000000 ^e[1] i[501]"), "^FF0000red^000000 ^e[1] i[501]");
+    }
+
+    #[test]
+    fn a_line_with_a_picture_is_as_tall_as_the_picture() {
+        let text = ([0; 3], "Red Potion".to_owned(), None);
+        let picture = ([0; 3], String::new(), Some(links::Target::Picture(501)));
+        assert_eq!(line_height(15.0, std::slice::from_ref(&text)), 15.0);
+        assert_eq!(line_height(30.0, std::slice::from_ref(&picture)), 30.0);
+        assert_eq!(line_height(15.0, &[picture, text]), PICTURE);
     }
 
     #[test]
