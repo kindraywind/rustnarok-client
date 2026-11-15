@@ -2209,6 +2209,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["sounds_recent"] = recent_sounds().into();
     state["battle_mode"] = game.chat_mode.enabled().into();
     // The settings Game Settings changes, its open tab, and the canvas the Extras' UI scale sizes.
+    let skins = crate::game_settings::skins();
     state["settings"] = json!({
         "canvas": crate::screen(),
         "music": app.sound.on[0], "music_volume": app.sound.volume[0], "effects_sound": app.sound.on[1], "effects": app.graphics.effects_on,
@@ -2219,6 +2220,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         "navi_icons": app.graphics.navi_icons,
         "extended_damage": app.graphics.extended_damage, "font": app.graphics.font,
         "font_index": rustnarok_client::text::index_of(rustnarok_client::text::choices(), &app.graphics.font),
+        // The skin picked ("" for the basic look) and its row in Basic's list (0 for the basic look), the ones the list
+        // offers after it, the one the interface is drawn in and how many images that one has.
+        "skin": app.graphics.skin, "skin_index": skins.iter().position(|name| *name == app.graphics.skin).map_or(0, |row| row + 1), "skins": skins,
+        "skin_drawn": app.grf.skin(), "skin_images": app.grf.skin_images(),
     });
     // The storage's rows and an NPC shop's sizes (goods width, goods and deal rows), as the corner grips leave them.
     state["storage_rows"] = game.storage.rows().into();

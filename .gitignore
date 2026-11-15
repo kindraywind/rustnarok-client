@@ -14,3 +14,6 @@ __pycache__/
 
 # Screenshots the client saves (Print Screen): game images never go in the repository.
 /ScreenShot/
+
+# A UI skin folder (Game Settings, Basic, Skin): game images.
+/Skin

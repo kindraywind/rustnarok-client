@@ -78,6 +78,15 @@ impl App {
                 gpu.forget_texts();
             }
         }
+        // A skin picked in Game Settings (or put back by Reset) dresses the interface from this frame on: its images are
+        // loaded again, through the skin.
+        if self.grf.skin() != self.graphics.skin {
+            self.grf.set_skin(&self.graphics.skin, &game_settings::skin_folder(&self.graphics.skin));
+            self.icons.clear();
+            if let Some(gpu) = &self.gpu {
+                self.assets = Some(Assets::load(gpu, &self.grf, &self.font, &self.messages));
+            }
+        }
         // The Extras' UI scale, switched or set to another size (or Reset), refits the canvas from this frame on: the
         // pointer stays where it is in the window, and the game's windows by the edges they were at.
         if ui_rows() != self.graphics.ui_rows() {

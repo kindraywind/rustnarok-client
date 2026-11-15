@@ -60,6 +60,8 @@ pub struct GraphicsSettings {
     pub ui_size: u16,
     /// The font the text is drawn in (Extras; `text::choices`), Tahoma at first.
     pub font: String,
+    /// The UI skin (Basic's Skin): a folder's name under `Skin`, empty for the basic look (at first).
+    pub skin: String,
 }
 
 impl Default for GraphicsSettings {
@@ -86,6 +88,7 @@ impl Default for GraphicsSettings {
             navi_icons: 1,
             ui_size: 768,
             font: DEFAULT_FONT.into(),
+            skin: String::new(),
         }
     }
 }
@@ -114,9 +117,10 @@ impl GraphicsSettings {
 
     pub fn load_from(path: &Path) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
-        // The switches, the UI size and the navigation's arrow set, then the font's name on a line of its own. (A file
-        // from when a switch followed the size reads as the first set.)
-        let (switches, font) = text.split_once('\n').unwrap_or((&text, ""));
+        // The switches, the UI size and the navigation's arrow set, then the font's name and the skin's, each on a line
+        // of its own. (A file from when a switch followed the size reads as the first set.)
+        let mut lines = text.split('\n');
+        let (switches, font, skin) = (lines.next().unwrap_or(""), lines.next().unwrap_or(""), lines.next().unwrap_or(""));
         let mut words = switches.split_whitespace();
         let mut next = |default: bool| words.next().map_or(default, |value| value != "0");
         Self {
@@ -141,6 +145,7 @@ impl GraphicsSettings {
             ui_size: words.next().and_then(|rows| rows.parse().ok()).filter(|rows| UI_SIZES.contains(rows)).unwrap_or(768),
             navi_icons: words.next().and_then(|set| set.parse().ok()).filter(|set| (1..=8).contains(set)).unwrap_or(1),
             font: Some(font.trim()).filter(|font| !font.is_empty()).unwrap_or(DEFAULT_FONT).to_owned(),
+            skin: skin.trim_end_matches('\r').to_owned(),
         }
     }
 
@@ -172,7 +177,9 @@ impl GraphicsSettings {
             + " "
             + &self.navi_icons.to_string()
             + "\n"
-            + &self.font;
+            + &self.font
+            + "\n"
+            + &self.skin;
         let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, text));
     }
 }
@@ -234,6 +241,7 @@ mod tests {
             navi_icons: 5,
             ui_size: 960,
             font: "MS Gothic (Japan)".into(),
+            skin: "Blue sky".into(),
         };
         settings.save_to(&path);
         assert_eq!(GraphicsSettings::load_from(&path), settings);
