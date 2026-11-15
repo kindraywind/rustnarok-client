@@ -61,7 +61,8 @@ pub fn colored(lines: &[String]) -> Vec<Line> {
                     rest = &code[6..];
                     continue;
                 }
-                let end = rest[1..].find('^').map_or(rest.len(), |index| index + 1);
+                // Up to the next '^' after the first character, by chars: Thai (langtype 5) lines start with 3-byte ones.
+                let end = rest.char_indices().skip(1).find(|&(_, c)| c == '^').map_or(rest.len(), |(at, _)| at);
                 runs.push((color, rest[..end].to_owned()));
                 rest = &rest[end..];
             }
@@ -250,6 +251,10 @@ mod tests {
         assert_eq!(shown[1], [([0, 0, 0], "Description: ".to_owned()), ([0x77, 0x77, 0x77], "Hits".to_owned())]);
         assert_eq!(shown[2], [([0x77, 0x77, 0x77], "hard.".to_owned()), ([0, 0, 0], " More".to_owned())]);
         assert_eq!(colored(&[]), [vec![([0, 0, 0], UNKNOWN.to_owned())]]);
+        // A line starting with a multi-byte character (Thai data crashed the client on a right click).
+        let thai = colored(&["รายละเอียด : ^777777เมื่อโจมตี^000000  ".to_owned(), "^7^".to_owned()]);
+        assert_eq!(thai[0], [([0, 0, 0], "รายละเอียด : ".to_owned()), ([0x77; 3], "เมื่อโจมตี".to_owned()), ([0, 0, 0], "  ".to_owned())]);
+        assert_eq!(thai[1], [([0, 0, 0], "^7".to_owned()), ([0, 0, 0], "^".to_owned())]);
     }
 
     #[test]
