@@ -708,10 +708,17 @@ pub enum MapEvent {
         index: u16,
         refine: u16,
     },
-    /// ZC_UI_OPEN: a window by kind (1 is the stylist, 8 is grade enchanting) and the data it carries.
+    /// ZC_UI_OPEN: a window by kind (1 is the stylist, 7 the attendance check, 8 is grade enchanting) and the data it
+    /// carries.
     UiOpen {
         kind: u8,
         data: u32,
+    },
+    /// The answer to asking for today's attendance reward: whether it failed (rathena answers only when it gave it,
+    /// by mail), and the days attended now.
+    AttendanceRewarded {
+        failed: bool,
+        days: u32,
     },
     /// What grades an item, or index −1 when its level has none. Chance is a percent. Blessing steps add `chance`
     /// each, up to `most`. Each material row is one option, in the order the request numbers them.

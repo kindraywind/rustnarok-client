@@ -450,6 +450,8 @@ impl App {
                     reform: None,
                     enchant: None,
                     stylist: None,
+                    attendance: None,
+                    attendance_asked: false,
                     materials: None,
                     roulette: None,
                     monster_window: None,
@@ -1147,9 +1149,19 @@ impl App {
                 game.refine = Some(window);
                 game.raise(Panel::Inventory);
             }
-            // Kind 8 is grade enchanting and opens the inventory beside it. Kind 1 is the stylist.
-            MapEvent::UiOpen { kind, .. } => {
-                if kind == grade::UI_KIND {
+            // Kind 8 is grade enchanting and opens the inventory beside it. Kind 1 is the stylist. Kind 7 is the
+            // attendance check, with the days attended: at login while today's reward waits, or when the menu asks.
+            MapEvent::UiOpen { kind, data } => {
+                if kind == attendance::UI_KIND {
+                    // ponytail: a driven client keeps the login's own window shut, so a server with an event doesn't
+                    // put the calendar into every scenario's shots; the menu's button still opens it.
+                    let asked = std::mem::take(&mut game.attendance_asked);
+                    if self.assets.as_ref().is_some_and(|assets| assets.attendance.is_some()) && (asked || !control::driven()) {
+                        let today = rustnarok_client::lua::local_date("%Y%m%d", memorial::unix_now() as i64).parse().unwrap_or(0);
+                        game.attendance = Some(attendance::Window::open(data, &self.attendance, today, control::now()));
+                        escape::touch(&mut game.esc_order, escape::WindowId::Attendance);
+                    }
+                } else if kind == grade::UI_KIND {
                     game.grade = Some(grade::GradeEnchant::new());
                     game.inventory.frame.open = true;
                     game.raise(Panel::Inventory);
@@ -1160,6 +1172,17 @@ impl App {
                         dress_stylist(window, grf, look_tables, &look, &self.items, &self.styling_shop);
                     }
                 }
+            }
+            // Today's reward is on its way by mail: the calendar marks the day. A failure says so and shuts it.
+            MapEvent::AttendanceRewarded { failed: false, days } => {
+                if let Some(window) = &mut game.attendance {
+                    window.rewarded(days);
+                }
+            }
+            MapEvent::AttendanceRewarded { failed: true, .. } => {
+                game.chat_line(self.messages.get(attendance::FAILED).cloned().unwrap_or_default(), CHAT_ERROR);
+                game.attendance = None;
+                game.sync_esc();
             }
             MapEvent::GradeMaterials { index, chance, blessing, materials } => {
                 if index < 0 {

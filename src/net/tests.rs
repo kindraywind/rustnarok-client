@@ -2316,6 +2316,18 @@ fn decodes_memorial_dungeon() {
 }
 
 #[test]
+fn asks_for_and_decodes_the_attendance_check() {
+    assert_eq!(encode_open_ui(OPEN_ATTENDANCE), [0x68, 0x0A, 5]);
+    assert_eq!(encode_attendance_reward(), [0xEF, 0x0A]);
+    // ZC_UI_OPEN kind 7: ten times the days attended, plus one when today's reward was taken.
+    assert!(matches!(decode_map_packet(&[0xE2, 0x0A, 7, 31, 0, 0, 0]), Some(MapEvent::UiOpen { kind: 7, data: 31 })));
+    // The reward's answer: the result (0 given), then the days attended now.
+    assert!(matches!(decode_map_packet(&[0xF0, 0x0A, 0, 0, 0, 0, 4, 0, 0, 0]), Some(MapEvent::AttendanceRewarded { failed: false, days: 4 })));
+    assert!(matches!(decode_map_packet(&[0xF0, 0x0A, 1, 0, 0, 0, 0, 0, 0, 0]), Some(MapEvent::AttendanceRewarded { failed: true, .. })));
+    assert_eq!([CZ_OPEN_UI, CZ_ATTENDANCE_REWARD, ZC_ATTENDANCE_REWARD].map(packet_length), [Some(3), Some(2), Some(10)]);
+}
+
+#[test]
 fn decodes_the_stylist() {
     // ZC_UI_OPEN: kind at 2, data u32 at 3. Kind 1 is the stylist; 8 is grade enchant, decoded the same way.
     assert!(matches!(decode_map_packet(&[0xE2, 0x0A, 1, 0, 0, 0, 0]), Some(MapEvent::UiOpen { kind: 1, data: 0 })));

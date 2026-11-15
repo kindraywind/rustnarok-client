@@ -15,6 +15,7 @@
 //! `RUSTNAROK_CLIENT_CAMERA=yaw,pitch,zoom` (the camera turned, in degrees and zoom units, on every map),
 //! `RUSTNAROK_CLIENT_WEAR=1` (put on every piece of equipment carried, once the inventory is in), `RUSTNAROK_CLIENT_EQUIPMENT=1` (open
 //! the equipment window), `RUSTNAROK_CLIENT_SHOT_LOADING=1` (screenshot the loading screen instead of the game),
+//! `RUSTNAROK_CLIENT_ATTENDANCE=<file>` (the attendance check's event from that Lua file, not the data's CheckAttendance.lub),
 //! `RUSTNAROK_CLIENT_WINDOW=<width>x<height>` (the window's size at start in points, which is also the canvas, e.g. 1365x768 for 16:9),
 //! `RUSTNAROK_CLIENT_SKILLS=1` (open the skill window), `RUSTNAROK_CLIENT_SKILL=<id>:<level>` (use a skill 3 seconds in, on oneself
 //! if it needs a target), `RUSTNAROK_CLIENT_HOTKEYS=<slot>[,<slot>...]` (press those hotkeys, one a second from 3 seconds in),
@@ -1360,6 +1361,10 @@ struct Game {
     enchant: Option<enchant::Enchant>,
     /// The stylist (`@stylist`). The preview is its own figure; the player's look waits for the server.
     stylist: Option<stylist::Window>,
+    /// The attendance check's calendar, and whether the menu's button asked for it (a driven client keeps the one
+    /// the server opens at login shut).
+    attendance: Option<attendance::Window>,
+    attendance_asked: bool,
     /// The material window (Change Material, Four Spirit Analysis).
     materials: Option<material::Materials>,
     /// The Lucky Roulette's window.
@@ -2999,6 +3004,8 @@ struct Assets {
     reform: reform::Assets,
     enchant: enchant::Assets,
     stylist: stylist::Assets,
+    /// None when the data has no attendance check.
+    attendance: Option<attendance::Assets>,
     bank: bank::Assets,
     cashshop: cashshop::Assets,
     context_menu: menu::Assets,
@@ -3137,6 +3144,7 @@ impl Assets {
             reform: reform::Assets::load(gpu, grf),
             enchant: enchant::Assets::load(gpu, grf),
             stylist: stylist::Assets::load(gpu, grf),
+            attendance: attendance::Assets::load(gpu, grf),
             bank: bank::Assets::load(gpu, grf),
             cashshop: cashshop::Assets::load(gpu, grf),
             context_menu: menu::Assets::load(gpu),
@@ -4504,6 +4512,8 @@ struct App {
     enchant_tables: HashMap<u64, lua::EnchantTable>,
     /// The styling shop's rows (stylingshopinfo). Empty when the files aren't in the data.
     styling_shop: lua::StylingShop,
+    /// The attendance check's event; no rewards when the data has none.
+    attendance: lua::Attendance,
     messages: Vec<String>,
     /// Item icons by file, loaded when first shown.
     icons: HashMap<String, Option<Texture>>,
@@ -5626,6 +5636,12 @@ fn main() {
         eprintln!("no styling shop: {error}");
         lua::StylingShop::default()
     });
+    // RUSTNAROK_CLIENT_ATTENDANCE=<file> reads the attendance check's event from that file (a scenario's own).
+    let attendance = match std::env::var("RUSTNAROK_CLIENT_ATTENDANCE") {
+        Ok(path) => std::fs::read(path).and_then(lua::attendance_table),
+        Err(_) => lua::attendance(&grf),
+    }
+    .unwrap_or_default();
     let messages = messages::load(&grf).unwrap_or_else(|error| {
         eprintln!("no client messages: {error}");
         Vec::new()
@@ -5705,6 +5721,7 @@ fn main() {
         reforms,
         enchant_tables,
         styling_shop,
+        attendance,
         messages,
         icons: HashMap::new(),
         modifiers: ModifiersState::empty(),

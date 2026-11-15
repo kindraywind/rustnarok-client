@@ -1728,7 +1728,8 @@ impl App {
             .chain(game.cart.items.iter().filter(|_| game.cart.frame.open))
             .map(|item| (item.id, item.identified))
             .chain(game.hotkeys.keys.iter().flatten().filter(|key| !key.skill).map(|key| (key.id, true)))
-            .chain(game.viewing.iter().flat_map(|viewed| viewed.items.iter()).map(|item| (item.id, item.identified)));
+            .chain(game.viewing.iter().flat_map(|viewed| viewed.items.iter()).map(|item| (item.id, item.identified)))
+            .chain(game.attendance.iter().flat_map(|_| self.attendance.rewards.iter()).map(|&(item, _)| (item, true)));
         for (id, identified) in shown_items {
             if let Some(info) = items.get(&id) {
                 let path = inventory::icon_path(info, identified);
@@ -2006,6 +2007,9 @@ impl App {
         // Announcements under the windows.
         game.announcements.expire(now);
         game.announcements.prepare(gpu, font);
+        if let Some(window) = &mut game.attendance {
+            window.prepare(gpu, font);
+        }
         let mut announce_layer = Layer::default();
         game.announcements.draw(&mut announce_layer);
         game.level_ups.draw(&mut announce_layer, &assets.level_up, pointer);
@@ -2675,6 +2679,17 @@ impl App {
             let question = messages::fill(message(FRIEND_ASKS), &[name]);
             for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
+        if let (Some(window), Some(images)) = (&game.attendance, &assets.attendance) {
+            let server = self.account.as_ref().and_then(|account| account.char_servers.get(self.char_server)).map_or("", |server| server.name.as_str());
+            window.draw(shop_layer.esc(W::Attendance), images, icons, items, font, messages, &self.attendance, server, pointer, now);
+            window.draw_taken(shop_layer.esc(W::Attendance), images, &self.attendance);
+            // A slot's reward by name, over the pointer.
+            if game.top_at(pointer.0, assets.message.size) == Some(Top::Esc(W::Attendance))
+                && let Some(name) = window.reward_at(pointer.0, &self.attendance).and_then(|(item, _)| items.get(&item)).map(|info| info.name(true))
+            {
+                window::tooltip(&mut tooltip, &assets.chrome, font, name, offset(pointer.0, [0.0, -20.0]), [255; 3]);
             }
         }
         if game.memorial.frame.open {

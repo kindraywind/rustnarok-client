@@ -551,6 +551,8 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         },
         ZC_ACK_ITEMREFINING => MapEvent::Refined { result: u16_at(2), index: u16_at(4), refine: u16_at(6) },
         ZC_UI_OPEN => MapEvent::UiOpen { kind: packet[2], data: u32_at(3) },
+        // The result (0 given), then the days.
+        ZC_ATTENDANCE_REWARD => MapEvent::AttendanceRewarded { failed: u32_at(2) != 0, days: u32_at(6) },
         // Index −1: this level has no grades. Rows of 17 bytes start at 34.
         ZC_GRADE_ENCHANT_MATERIAL_LIST => {
             if packet.len() < 34 {

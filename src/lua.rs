@@ -670,6 +670,38 @@ pub fn auto_feeding(source: Vec<u8>) -> io::Result<HashSet<u32>> {
     Ok(eggs)
 }
 
+/// The attendance check's event, from the System folder's CheckAttendance.lub: the days it runs (YYYYMMDD, both
+/// included) and each day's reward (an item and how many), day 1 first.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Attendance {
+    pub start: u32,
+    pub end: u32,
+    pub rewards: Vec<(u32, u32)>,
+}
+
+const ATTENDANCE: &str = "system\\CheckAttendance.lub";
+
+/// The attendance event (the file may be missing: a server without one ships none).
+pub fn attendance(grf: &Grf) -> io::Result<Attendance> {
+    attendance_table(grf.read(ATTENDANCE)?)
+}
+
+/// Runs the file and reads its `Config` (`StartDate`, `EndDate`) and its `Reward` rows of {day, item, amount}.
+pub fn attendance_table(source: Vec<u8>) -> io::Result<Attendance> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, ATTENDANCE, source)?;
+    let config: mlua::Table = lua.globals().get("Config").map_err(lua_error)?;
+    let date = |key: &str| config.get::<f64>(key).map(|date| date as u32).map_err(lua_error);
+    let rows: mlua::Table = lua.globals().get("Reward").map_err(lua_error)?;
+    let mut rewards: Vec<(u32, (u32, u32))> = rows
+        .sequence_values::<mlua::Table>()
+        .flatten()
+        .filter_map(|row| Some((row.get::<f64>(1).ok()? as u32, (row.get::<f64>(2).ok()? as u32, row.get::<f64>(3).ok()? as u32))))
+        .collect();
+    rewards.sort_by_key(|&(day, _)| day);
+    Ok(Attendance { start: date("StartDate")?, end: date("EndDate")?, rewards: rewards.into_iter().map(|(_, reward)| reward).collect() })
+}
+
 /// An achievement as the client's table (achievements.lub) describes it.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct AchievementInfo {
@@ -2242,6 +2274,15 @@ mod tests {
         assert_eq!((items[&501].name.as_str(), items[&50118].name.as_str(), items[&50118].resource.as_str()), ("Red Potion", "Bubble Gum", "gum"));
         // A file it can't find fails the run (the plain table is used then).
         assert!(super::run_loader(&read, "system\\nothing.lua").is_err());
+    }
+
+    #[test]
+    fn reads_the_attendance_event() {
+        let source = b"Config = { StartDate = 20261101, EndDate = 20271231 }\nReward = { {2, 502, 5}, {1, 501, 3}, {3, 616, 1} }".to_vec();
+        let event = super::attendance_table(source).unwrap();
+        assert_eq!((event.start, event.end), (20261101, 20271231));
+        assert_eq!(event.rewards, [(501, 3), (502, 5), (616, 1)], "by day");
+        assert!(super::attendance_table(b"Config = {}".to_vec()).is_err(), "no dates, no rewards");
     }
 
     #[test]

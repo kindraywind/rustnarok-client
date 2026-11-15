@@ -299,6 +299,16 @@ impl MapSession {
         self.stream.write_all(&encode_bank_move(deposit, account, zeny))
     }
 
+    /// Asks for the attendance check's window; the server opens it (`MapEvent::UiOpen`) or says there is no event.
+    pub fn open_attendance(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_open_ui(OPEN_ATTENDANCE))
+    }
+
+    /// Asks for today's attendance reward.
+    pub fn attendance_reward(&mut self) -> io::Result<()> {
+        self.stream.write_all(&encode_attendance_reward())
+    }
+
     /// Asks to see a player's equipment (by account ID); they must be on the same map.
     pub fn view_equipment(&mut self, account: u32) -> io::Result<()> {
         self.send_id(CZ_EQUIPWIN_MICROSCOPE, account)

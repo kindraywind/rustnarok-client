@@ -58,6 +58,8 @@ pub enum WindowId {
     ItemReform,
     Enchant,
     Stylist,
+    /// The attendance check's calendar.
+    Attendance,
     Materials,
     PartySetup,
     PartyCreate,
@@ -175,6 +177,7 @@ impl WindowId {
             Self::ItemReform => "ItemReform",
             Self::Enchant => "Enchant",
             Self::Stylist => "Stylist",
+            Self::Attendance => "Attendance",
             Self::Materials => "Materials",
             Self::PartySetup => "PartySetup",
             Self::PartyCreate => "PartyCreate",

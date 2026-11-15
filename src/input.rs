@@ -719,6 +719,20 @@ impl App {
                     }
                 }
             }
+            // The attendance check: today's slot asks for its reward; the button closes.
+            Scene::Game(game) if on(Esc(W::Attendance)) => {
+                let Some(window) = &game.attendance else { return };
+                match window.hit(cursor) {
+                    Some(hit) if window.claims(hit) => {
+                        let _ = game.session.attendance_reward();
+                    }
+                    Some(attendance::Hit::Close) => {
+                        game.attendance = None;
+                        game.sync_esc();
+                    }
+                    _ => {}
+                }
+            }
             // The memorial window: drag is a press; a click closes, or asks before Destroy.
             Scene::Game(game) if on(Esc(W::Memorial)) => match game.memorial.hit(cursor) {
                 Some(memorial::Hit::Title(title)) => {
@@ -1410,6 +1424,16 @@ impl App {
                                 let _ = game.session.open_bank(game.account_id);
                             }
                             Some("achievement") => game.achievement_window.frame.toggle(),
+                            // The attendance check opens when the server says so (it answers in its own words when no
+                            // event runs).
+                            Some("attendance") => {
+                                if game.attendance.take().is_some() {
+                                    game.sync_esc();
+                                } else {
+                                    game.attendance_asked = true;
+                                    let _ = game.session.open_attendance();
+                                }
+                            }
                             Some("mail") => {
                                 let action = game.mail.toggle();
                                 game.mail_action(action);
@@ -2410,8 +2434,14 @@ impl App {
                 Some(equipment::Hit::Slot(index) | equipment::Hit::Name(index)) => viewed.items.iter().find(|item| item.index == index).cloned(),
                 _ => None,
             });
-            // A trade's, a letter's, a vending window's or a catalog result's item.
-            let listed = game.listed_item_at(self.cursor);
+            // A trade's, a letter's, a vending window's or a catalog result's item; an attendance slot's reward.
+            let reward = game.attendance.as_ref().and_then(|window| window.reward_at(self.cursor, &self.attendance));
+            let listed = game.listed_item_at(self.cursor).or(reward.map(|(id, amount)| net::InventoryItem {
+                id,
+                amount: amount as u16,
+                identified: true,
+                ..Default::default()
+            }));
             let names = (&self.messages[..], &self.card_names, &game.char_names);
             let on_enchant = assets.is_some_and(|assets| game.top_at(self.cursor, assets.message.size) == Some(Top::Esc(escape::WindowId::Enchant)));
             let described = match game.window_at(self.cursor) {
@@ -3129,6 +3159,17 @@ impl App {
         {
             if let Some(window) = &mut game.navi_window {
                 window.start_drag(cursor);
+            }
+            return;
+        }
+        // The attendance check can't be moved; a press on today's slot leaves it pressed.
+        if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::Attendance))
+        {
+            if let Some(window) = &mut game.attendance
+                && let Some(hit) = window.hit(cursor)
+            {
+                window.press(hit);
             }
             return;
         }
