@@ -354,6 +354,16 @@ pub fn codepage() -> &'static encoding_rs::Encoding {
     *CODEPAGE.read().unwrap()
 }
 
+/// The code page of the data's own words (messages, item, map and skill names): the langtype's, as a Thai client's
+/// tables are Thai. File names in the data stay EUC-KR whatever the langtype.
+pub fn data_codepage() -> &'static encoding_rs::Encoding {
+    // ponytail: a UTF-8 langtype's data is read as the Korean original's, as before; none seen in UTF-8 yet.
+    match codepage() {
+        page if page == encoding_rs::UTF_8 => encoding_rs::EUC_KR,
+        page => page,
+    }
+}
+
 /// The connection's langtype, for the few things that read a file by it.
 static LANGTYPE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 

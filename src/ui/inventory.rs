@@ -424,7 +424,8 @@ const BELOVED: usize = 756;
 
 impl CardNames {
     pub fn load(grf: &Grf) -> Self {
-        let text = |path: &str| grf.read(path).map(|bytes| encoding_rs::EUC_KR.decode_without_bom_handling(&bytes).0.into_owned()).unwrap_or_default();
+        let codepage = rustnarok_client::net::data_codepage();
+        let text = |path: &str| grf.read(path).map(|bytes| codepage.decode_without_bom_handling(&bytes).0.into_owned()).unwrap_or_default();
         Self::parse(&text(CARD_WORDS), &text(CARDS_AFTER))
     }
 

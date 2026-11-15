@@ -26,7 +26,7 @@ pub const CANT_CARRY: usize = 53;
 pub fn load(grf: &Grf) -> io::Result<Vec<String>> {
     // The older plain table (one message a line, each ending in #) is what translations ship; it goes first.
     if let Ok(bytes) = grf.read(PLAIN_TABLE) {
-        return Ok(plain(&bytes));
+        return Ok(plain(&bytes, crate::net::data_codepage()));
     }
     let bytes = grf.read(TABLE)?;
     let table = std::str::from_utf8(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -39,9 +39,9 @@ pub fn load(grf: &Grf) -> io::Result<Vec<String>> {
         .collect())
 }
 
-/// Messages from msgstringtable.txt: EUC-KR lines ending in `#`.
-fn plain(bytes: &[u8]) -> Vec<String> {
-    let text = encoding_rs::EUC_KR.decode_without_bom_handling(bytes).0;
+/// Messages from msgstringtable.txt: lines in the data's code page, each ending in `#`.
+fn plain(bytes: &[u8], codepage: &'static encoding_rs::Encoding) -> Vec<String> {
+    let text = codepage.decode_without_bom_handling(bytes).0;
     text.lines().map(|line| line.trim_end_matches('\r').trim_end_matches('#').to_owned()).collect()
 }
 
@@ -124,6 +124,13 @@ mod tests {
         assert_eq!(fill("Deletable on: %02d/%02d", &[&11, &1]), "Deletable on: 11/01");
         assert_eq!(fill("%02d:%02d:%02d", &[&17, &22, &4]), "17:22:04");
         assert_eq!(fill("%04d|%02d|%2d/%2d", &[&-5, &123, &3, &1]), "-005|123| 3/ 1");
+    }
+
+    #[test]
+    fn reads_a_plain_table_in_its_code_page() {
+        // A Thai client's msgstringtable.txt: "ยอมรับ#" then "ID#".
+        let table = [0xC2, 0xCD, 0xC1, 0xC3, 0xD1, 0xBA, b'#', b'\r', b'\n', b'I', b'D', b'#'];
+        assert_eq!(plain(&table, encoding_rs::WINDOWS_874), ["ยอมรับ", "ID"]);
     }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.

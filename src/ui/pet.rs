@@ -311,7 +311,8 @@ impl Data {
             eprintln!("no pet tables: {error}");
             PetTables::default()
         });
-        let talk = grf.read("data\\pettalktable.xml").map(|bytes| encoding_rs::EUC_KR.decode_without_bom_handling(&bytes).0.into_owned());
+        let codepage = rustnarok_client::net::data_codepage();
+        let talk = grf.read("data\\pettalktable.xml").map(|bytes| codepage.decode_without_bom_handling(&bytes).0.into_owned());
         Self { tables, talk: talk.unwrap_or_default(), auto_eggs: auto_feeding_eggs(grf) }
     }
 

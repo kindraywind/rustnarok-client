@@ -4674,11 +4674,7 @@ impl App {
         let proxy = self.proxy.clone();
         let [id, password] = self.fields.clone();
         let (server, version) = self.login_server();
-        // The connection's langtype (RUSTNAROK_CLIENT_LANGTYPE overrides it) picks the code page of chat and names.
-        let langtype = std::env::var("RUSTNAROK_CLIENT_LANGTYPE").ok().and_then(|langtype| langtype.parse().ok());
-        let langtype = langtype.unwrap_or_else(|| self.connections.get(self.connection).map_or(0, |connection| connection.langtype));
-        net::set_codepage(rustnarok_client::clientinfo::codepage(langtype));
-        net::set_langtype(langtype);
+        set_langtype(self.connections.get(self.connection));
         std::thread::spawn(move || {
             let _ = proxy.send_event(NetEvent::Login(net::login(&server, version, &id, &password)));
         });
@@ -5519,6 +5515,15 @@ fn append_crash(path: &std::path::Path, text: &str, cap: u64) {
     }
 }
 
+/// The connection's langtype (RUSTNAROK_CLIENT_LANGTYPE overrides it) picks the code page of chat, names and the data's
+/// own words.
+fn set_langtype(connection: Option<&rustnarok_client::clientinfo::Connection>) {
+    let langtype = std::env::var("RUSTNAROK_CLIENT_LANGTYPE").ok().and_then(|langtype| langtype.parse().ok());
+    let langtype = langtype.unwrap_or_else(|| connection.map_or(0, |connection| connection.langtype));
+    net::set_codepage(rustnarok_client::clientinfo::codepage(langtype));
+    net::set_langtype(langtype);
+}
+
 fn main() {
     std::sync::LazyLock::force(&START);
     // Every panic, also a caught one (a packet skipped), goes to crash.log in the settings folder with its backtrace:
@@ -5555,6 +5560,9 @@ fn main() {
             eprintln!("{found} files from the data folder at {overlay}");
         }
     }
+    // Before any table loads, as a Thai client's tables are in Thai; the login sets it again for the connection picked.
+    let connections = rustnarok_client::clientinfo::load(&grf);
+    set_langtype(connections.first());
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut event_loop = EventLoop::<NetEvent>::with_user_event();
     // A client driven over the control socket opens without taking the keyboard from the app in use.
@@ -5664,7 +5672,6 @@ fn main() {
     loading_images.sort();
     let music = sound::music_table(&grf);
     let worlds = rustnarok_client::lua::worlds(&grf).unwrap_or_default();
-    let connections = rustnarok_client::clientinfo::load(&grf);
     // Several servers: the list comes first, as in the official client (dev logins take the first).
     let picking = connections.len() > 1 && std::env::var_os("RUSTNAROK_CLIENT_SERVER").is_none() && std::env::var_os("RUSTNAROK_CLIENT_LOGIN").is_none();
     let quest_texts = quest::texts(&grf);
