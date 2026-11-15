@@ -4265,6 +4265,16 @@ fn wrap_linked_by(font: &text::Font, text: &str, width: f32, by_char: bool, colo
     let mut line_width = 0.0;
     let mut color = [0, 0, 0];
     for (part, item) in links::pieces(text) {
+        // An item's picture is one piece, never split: it starts the next line when it doesn't fit on this one.
+        if let Some(links::Target::Picture(_)) = item {
+            if line_width + npc_say::PICTURE > width {
+                wrapped.push(Vec::new());
+                line_width = 0.0;
+            }
+            line_width += npc_say::PICTURE;
+            wrapped.last_mut().unwrap().push((color, part, item));
+            continue;
+        }
         for (row, pieces) in wrap_plain(font, &part, width, line_width, &mut color, by_char).into_iter().enumerate() {
             if row > 0 {
                 wrapped.push(Vec::new());
@@ -7342,6 +7352,26 @@ mod tests {
         assert_eq!(text[1][1].0, [0, 0, 0]);
         // Between words it would have moved "world" down whole.
         assert_eq!(wrap_linked(&font, "Hello world", width)[0].iter().map(|(_, piece, _)| piece.as_str()).collect::<String>(), "Hello");
+    }
+
+    #[test]
+    fn an_item_picture_takes_its_width_on_the_line() {
+        let font = Font::load();
+        let text = npc_say::item_pictures("^i[501]ab^i[502]");
+        let shape = |width: f32| -> Vec<Vec<String>> {
+            let lines = wrap_linked_by(&font, &text, width, true, links::Target::npc_color);
+            let name = |(_, piece, item): &([u8; 3], String, Option<links::Target>)| match item {
+                Some(links::Target::Picture(id)) => id.to_string(),
+                _ => piece.clone(),
+            };
+            lines.iter().map(|pieces| pieces.iter().map(name).collect()).collect()
+        };
+        let letters = font.width("ab");
+        // Room for all of it: one line. A pixel short: the second picture goes down whole.
+        assert_eq!(shape(2.0 * npc_say::PICTURE + letters), [["501", "ab", "502"]]);
+        assert_eq!(shape(2.0 * npc_say::PICTURE + letters - 1.0), [vec!["501", "ab"], vec!["502"]]);
+        // The text after a picture starts where the picture ends.
+        assert_eq!(shape(npc_say::PICTURE + font.width("a") + 0.5), [vec!["501", "a"], vec!["b", "502"]]);
     }
 
     #[test]

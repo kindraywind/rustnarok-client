@@ -1,0 +1,8 @@
+// NPC text with item pictures: the ^i[<item id>] code (rathena's mesitemicon writes it). Loaded and unloaded by scenarios/npc-item-pictures.json.
+morocc,157,122,4	script	Icon Clerk	4_M_01,{
+	mes "[Icon Clerk]";
+	mes "^i[501] - <ITEM>Red Potion<INFO>501</INFO></ITEM>";
+	mes "A ^i[1201] Knife, no such item ^i[9999999] and a bare ^i code.";
+	mes "Three in a row ^i[502]^i[503]^i[504] then plain text to the end of the line and past it.";
+	close;
+}

@@ -1,0 +1,154 @@
+{
+  "about": "Item pictures in NPC text: the `^i[<item id>]` code (rathena's mesitemicon) is drawn as the item's icon in a 25 px box on the line, the text after it following on and the line as tall as the picture. A Red Potion's picture before its item link, a Knife's inside a sentence, an id no item has (an empty box) and a bare `^i` (nothing), then three pictures in a row on a line that wraps. Pointing a picture shows the item's name over it, a left click does nothing and a right click opens the item's information. The NPC (npc/item-pictures.txt) is loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/item-pictures.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/item-pictures.txt"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "click_unit": {
+        "kind": "npc",
+        "name": "Icon Clerk"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x00b4",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "NpcDialog"
+        ],
+        "state": {
+          "dialog.pointed_item": null
+        }
+      }
+    },
+    {
+      "shot": "npc-item-pictures",
+      "crop": [
+        190,
+        90,
+        300,
+        200
+      ],
+      "threshold": 5
+    },
+    {
+      "move": {
+        "item_picture": 501
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "dialog.pointed_item": "Red Potion"
+        }
+      }
+    },
+    {
+      "shot": "npc-item-picture-name",
+      "crop": [
+        190,
+        70,
+        300,
+        220
+      ],
+      "threshold": 5
+    },
+    {
+      "move": {
+        "item_picture": 9999999
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "dialog.pointed_item": null
+        }
+      }
+    },
+    {
+      "click_on": {
+        "item_picture": 1201
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "state": {
+          "item_window": null,
+          "dialog.pointed_item": "Knife [3]"
+        }
+      }
+    },
+    {
+      "click_on": {
+        "item_picture": 1201
+      },
+      "button": "right"
+    },
+    {
+      "wait": 600
+    },
+    {
+      "expect": {
+        "state": {
+          "item_window": 1201
+        }
+      }
+    },
+    {
+      "shot": "npc-item-picture-opened",
+      "threshold": 10
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/item-pictures.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

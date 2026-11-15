@@ -51,7 +51,8 @@
 //!   clothes color, head top, mid and bottom, and `body` for the 2nd outfit). The stylist's buttons are targets (`hair_style_<row>`, `hair_color_<row>`,
 //!   `clothes_color_<row>`, `tab_hair`, `tab_accessory`, `buy`, `refresh`, `rotate_left`, `rotate_right`, `close`).
 //!   An NPC dialog's buttons are targets while they show: `npc_next` or `npc_close`, `npc_menu:<index>` for each menu row
-//!   in view, `npc_menu_ok`, `npc_menu_cancel` and `npc_input_ok`.
+//!   in view, `npc_menu_ok`, `npc_menu_cancel` and `npc_input_ok`. An item's picture in its text is a target of kind
+//!   `item_picture` with the item's `id`, and `dialog.pointed_item` is the name shown for the one under the pointer.
 //! - `wait` `{ms?, packet?, event?, fresh?, pause?, do?}`: sleeps `ms`; with a `packet` id ("0x08c8") or an `event`
 //!   (a `MapEvent`/`CharEvent` variant like "Act", "LoginAccepted"/"LoginRefused", or "Sound <file>" for an effect
 //!   sound played, e.g. "Sound _hit_sword.wav"), waits up to `ms` (10 s by
@@ -1525,6 +1526,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             crate::links::Target::Url(address) => json!({"kind": "url_link", "address": address, "box": area}),
             crate::links::Target::Quest(id) => json!({"kind": "quest_link", "id": id, "box": area}),
             crate::links::Target::Tip => json!({"kind": "tip_link", "box": area}),
+            crate::links::Target::Picture(id) => json!({"kind": "item_picture", "id": id, "box": area}),
         }))
         .chain(
             // The navigation window's controls; a row comes with its words and the place it stands for.
@@ -1714,6 +1716,10 @@ fn game_state(app: &App, game: &Game) -> Value {
             "npc": dialog.npc,
             "talking": dialog.talking,
             "lines": dialog.lines,
+            "pointed_item": match crate::links::at(&game.dialog_links, app.cursor) {
+                Some(crate::links::Target::Picture(id)) if app.items.contains_key(id) => Some(crate::inventory::item_name(&app.items, *id, true, 0)),
+                _ => None,
+            },
             "button": match dialog.button {
                 DialogButton::Next => "next",
                 DialogButton::Close => "close",

@@ -160,7 +160,7 @@ impl App {
                             game.question_box = Some(BoxQuestion::Said(format!("Not found Quest Info = {id}")));
                         }
                     }
-                    links::Target::Tip => {}
+                    links::Target::Tip | links::Target::Picture(_) => {}
                 }
             }
             Scene::Game(game) if game.deal_choice.is_some() => match shop::deal_hit(game.deal_frame.position, cursor) {
@@ -2092,6 +2092,14 @@ impl App {
             if dropped || closed {
                 return;
             }
+        }
+        // A right press on an item's picture in the NPC window describes the item.
+        if let (Scene::Game(game), ElementState::Pressed) = (&mut self.scene, state)
+            && let Some(&links::Target::Picture(id)) = game.link_at(self.cursor)
+        {
+            let card = self.card_pictures.name(id).is_some();
+            game.show_item(iteminfo::Shown::of_link(id, 0, [0; 4], card, &self.items));
+            return;
         }
         // A right press on an ore, the blessing or the item in the refine window describes it.
         if let (Scene::Game(game), ElementState::Pressed) = (&mut self.scene, state)
