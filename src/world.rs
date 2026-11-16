@@ -762,7 +762,8 @@ pub struct World {
     pub map_effects: crate::map_effects::MapEffects,
     textures: Vec<Texture>,
     lightmap: Texture,
-    vertices: wgpu::Buffer,
+    /// None for a ground with no surfaces (a map that is all models): wgpu can't bind an empty buffer.
+    vertices: Option<wgpu::Buffer>,
     /// Ground triangles per texture: texture index, vertex range.
     draws: Vec<(usize, Range<u32>)>,
     model_textures: Vec<Texture>,
@@ -843,10 +844,12 @@ impl World {
         // Toward the light: x east, y up, z north. Latitude is measured from the zenith. Models use this same vector.
         let direction = light_direction(rsw.light.longitude as f32, rsw.light.latitude as f32);
         let (vertices, draws) = ground_mesh(&gnd, columns, [atlas.width() as f32, atlas.height() as f32], direction, rsw.light.ambient, rsw.light.diffuse);
-        let vertices = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("ground"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
+        let vertices = (!vertices.is_empty()).then(|| {
+            gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("ground"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
         });
 
         // Each model texture decoded once: its image keyed, and whether it has an alpha channel of its own.
@@ -1784,11 +1787,13 @@ impl WorldPass for WorldFrame<'_> {
         pass.set_viewport(x, y, width, height, 0.0, 1.0);
         pass.set_bind_group(0, &world.globals_bind_group, &[]);
         pass.set_bind_group(2, world.lightmap.bind_group(), &[]);
-        pass.set_pipeline(&world.ground_pipeline);
-        pass.set_vertex_buffer(0, world.vertices.slice(..));
-        for (texture, range) in &world.draws {
-            pass.set_bind_group(1, world.textures[*texture].bind_group(), &[]);
-            pass.draw(range.clone(), 0..1);
+        if let Some(vertices) = &world.vertices {
+            pass.set_pipeline(&world.ground_pipeline);
+            pass.set_vertex_buffer(0, vertices.slice(..));
+            for (texture, range) in &world.draws {
+                pass.set_bind_group(1, world.textures[*texture].bind_group(), &[]);
+                pass.draw(range.clone(), 0..1);
+            }
         }
         let moving = world.animated.iter().flat_map(|instance| &instance.draws);
         for (buffer, draws) in [(&world.model_vertices, world.model_draws.iter().collect::<Vec<_>>()), (&world.animated_buffer, moving.collect())] {
