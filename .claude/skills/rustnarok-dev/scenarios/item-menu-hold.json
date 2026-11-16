@@ -1,0 +1,18 @@
+{
+  "about": "A box item's menu doesn't hold the player. rathena runs an item's script through a stand-in hidden NPC and frees the script as soon as it pauses, so the Dungeon Ticket's menu (select in its item script) comes with the stand-in's vanish, and no answer or close ever follows. Main kept the player held for good (no walking) with the menu, or after OK an invisible dialog; now the dialog goes with the stand-in and the player walks.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 150 150"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 14506 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"click_on": {"button": "tab:item"}}, {"wait": 300},
+    {"click_on": {"inventory_item": 14506}, "count": 2}, {"wait_for": {"packet": "0x00b7", "ms": 5000}},
+    {"wait": 500},
+    {"expect": {"windows_closed": ["NpcDialog"], "state": {"dialog": null}}},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"click_on": {"cell": [153, 150]}}, {"wait": 2000},
+    {"expect": {"state": {"player.cell": [153, 150]}}}
+  ]
+}
