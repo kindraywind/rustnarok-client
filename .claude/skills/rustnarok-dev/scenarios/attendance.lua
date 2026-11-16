@@ -1,5 +1,5 @@
 -- The attendance scenario's own event (not game data): the days it runs and each day's reward, as the client's
--- CheckAttendance file gives them. It mirrors the period the scenario asks for in the server's db/import/attendance.yml.
+-- CheckAttendance file gives them, in kRO's shape (the client runs its main()). It mirrors the period the scenario asks for in the server's db/import/attendance.yml.
 Config = { StartDate = 20261101, EndDate = 20271231 }
 Reward = {
 	{ 1, 501, 5 }, { 2, 502, 5 }, { 3, 503, 3 }, { 4, 504, 2 }, { 5, 505, 1 },
@@ -7,3 +7,17 @@ Reward = {
 	{ 11, 602, 3 }, { 12, 603, 1 }, { 13, 604, 3 }, { 14, 607, 1 }, { 15, 608, 1 },
 	{ 16, 610, 2 }, { 17, 12016, 3 }, { 18, 12202, 1 }, { 19, 12208, 1 }, { 20, 616, 1 },
 }
+
+function main()
+	local result, msg = InsertCheckAttendanceConfig(Config.EvendOnOff, Config.StartDate, Config.EndDate)
+	if not result then
+		return false, msg
+	end
+	for k, rewardtbl in pairs(Reward) do
+		result, msg = InsertCheckAttendanceReward(rewardtbl[1], rewardtbl[2], rewardtbl[3])
+		if not result then
+			return false, msg
+		end
+	end
+	return true, "success"
+end

@@ -686,20 +686,38 @@ pub fn attendance(grf: &Grf) -> io::Result<Attendance> {
     attendance_table(grf.read(ATTENDANCE)?)
 }
 
-/// Runs the file and reads its `Config` (`StartDate`, `EndDate`) and its `Reward` rows of {day, item, amount}.
+/// Runs the file's `main()` as the game does: its `InsertCheckAttendanceConfig(_, start, end)` and
+/// `InsertCheckAttendanceReward(day, item, amount)` calls make the event. Only the calls count: kRO's tables are a global
+/// `Reward` of {day, item, amount} rows, other servers keep `Config.Reward[day] = {item, amount}`.
+// ponytail: the game's checks (item 0, amount 0, a day twice) aren't made; no data seen breaks them.
 pub fn attendance_table(source: Vec<u8>) -> io::Result<Attendance> {
     let lua = new_lua()?;
+    let event = std::rc::Rc::new(std::cell::RefCell::new((Attendance::default(), BTreeMap::new())));
+    let (dated, rewarded) = (event.clone(), event.clone());
+    let config = lua
+        .create_function(move |_, (_, start, end): (mlua::Value, f64, f64)| {
+            let event = &mut dated.borrow_mut().0;
+            (event.start, event.end) = (start as u32, end as u32);
+            Ok((true, "good"))
+        })
+        .map_err(lua_error)?;
+    let reward = lua
+        .create_function(move |_, (day, item, amount): (i64, f64, f64)| {
+            rewarded.borrow_mut().1.insert(day, (item as u32, amount as u32));
+            Ok((true, "good"))
+        })
+        .map_err(lua_error)?;
+    lua.globals().set("InsertCheckAttendanceConfig", config).map_err(lua_error)?;
+    lua.globals().set("InsertCheckAttendanceReward", reward).map_err(lua_error)?;
     exec_bytes(&lua, ATTENDANCE, source)?;
-    let config: mlua::Table = lua.globals().get("Config").map_err(lua_error)?;
-    let date = |key: &str| config.get::<f64>(key).map(|date| date as u32).map_err(lua_error);
-    let rows: mlua::Table = lua.globals().get("Reward").map_err(lua_error)?;
-    let mut rewards: Vec<(u32, (u32, u32))> = rows
-        .sequence_values::<mlua::Table>()
-        .flatten()
-        .filter_map(|row| Some((row.get::<f64>(1).ok()? as u32, (row.get::<f64>(2).ok()? as u32, row.get::<f64>(3).ok()? as u32))))
-        .collect();
-    rewards.sort_by_key(|&(day, _)| day);
-    Ok(Attendance { start: date("StartDate")?, end: date("EndDate")?, rewards: rewards.into_iter().map(|(_, reward)| reward).collect() })
+    let main: mlua::Function = lua.globals().get("main").map_err(lua_error)?;
+    let (done, message): (bool, Option<String>) = main.call(()).map_err(lua_error)?;
+    if !done {
+        return Err(io::Error::other(format!("{ATTENDANCE}: {}", message.unwrap_or_default())));
+    }
+    let (mut attendance, rewards) = event.take();
+    attendance.rewards = rewards.into_values().collect();
+    Ok(attendance)
 }
 
 /// An achievement as the client's table (achievements.lub) describes it.
@@ -2278,11 +2296,29 @@ mod tests {
 
     #[test]
     fn reads_the_attendance_event() {
-        let source = b"Config = { StartDate = 20261101, EndDate = 20271231 }\nReward = { {2, 502, 5}, {1, 501, 3}, {3, 616, 1} }".to_vec();
-        let event = super::attendance_table(source).unwrap();
+        // kRO's shape: {day, item, amount} rows, the config's switch missing.
+        let main = "function main()
+            local result, msg = InsertCheckAttendanceConfig(Config.EvendOnOff, Config.StartDate, Config.EndDate)
+            if not result then return false, msg end
+            for k, row in pairs(Reward) do InsertCheckAttendanceReward(row[1], row[2], row[3]) end
+            return true, \"success\"
+        end";
+        let source = format!("Config = {{ StartDate = 20261101, EndDate = 20271231 }}\nReward = {{ {{2, 502, 5}}, {{1, 501, 3}}, {{3, 616, 1}} }}\n{main}");
+        let event = super::attendance_table(source.into_bytes()).unwrap();
         assert_eq!((event.start, event.end), (20261101, 20271231));
         assert_eq!(event.rewards, [(501, 3), (502, 5), (616, 1)], "by day");
-        assert!(super::attendance_table(b"Config = {}".to_vec()).is_err(), "no dates, no rewards");
+        // Another server's: the rewards inside Config, keyed by day.
+        let main = "function main()
+            InsertCheckAttendanceConfig(Config.EvendOnOff, Config.StartDate, Config.EndDate)
+            for k, row in pairs(Config.Reward) do InsertCheckAttendanceReward(k, row[1], row[2]) end
+            return true, \"success\"
+        end";
+        let source =
+            format!("Config = {{ EvendOnOff = 1, StartDate = 20260730, EndDate = 20260831, Reward = {{ [2] = {{12263, 3}}, [1] = {{12264, 3}} }} }}\n{main}");
+        let event = super::attendance_table(source.into_bytes()).unwrap();
+        assert_eq!((event.start, event.end, event.rewards), (20260730, 20260831, vec![(12264, 3), (12263, 3)]));
+        assert!(super::attendance_table(b"Config = {}".to_vec()).is_err(), "no main");
+        assert!(super::attendance_table(b"function main() return false, 'bad' end".to_vec()).is_err(), "main refused");
     }
 
     #[test]
