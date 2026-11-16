@@ -16,10 +16,13 @@ impl MapSession {
         stream.write_all(&enter)?;
 
         let mut reader = stream.0.try_clone()?;
+        let heard = Arc::new(Mutex::new(Instant::now()));
+        let reader_heard = heard.clone();
         std::thread::spawn(move || {
             let error = loop {
                 match read_packet(&mut reader) {
                     Ok(packet) => {
+                        *reader_heard.lock().unwrap() = Instant::now();
                         if let Some(event) = decode_or_skip(&packet, decode_map_packet) {
                             on_event(event);
                         }
@@ -32,12 +35,32 @@ impl MapSession {
             }
             on_event(MapEvent::Disconnected(error));
         });
-        Ok(Self { stream })
+        Ok(Self { stream, heard, beats: Beats::new(Instant::now()) })
     }
 
-    /// Tells the server the map is loaded; it then sends everything in view.
-    pub fn loaded(&mut self) -> io::Result<()> {
-        self.stream.write_all(&CZ_NOTIFY_ACTORINIT.to_le_bytes())
+    /// Tells the server the map is loaded; it then sends everything in view. The game follows it with a
+    /// CZ_REQUEST_TIME, and the 12 s count starts again from there.
+    pub fn loaded(&mut self, client_tick: u32) -> io::Result<()> {
+        self.stream.write_all(&CZ_NOTIFY_ACTORINIT.to_le_bytes())?;
+        self.beats.request_time = Instant::now();
+        self.tick(client_tick)
+    }
+
+    /// Sends the keepalives that are due (see `REQUEST_TIME_EVERY`). After a minute with nothing from the server it
+    /// drops the link instead, and the reader thread reports `Disconnected`.
+    pub fn keep_alive(&mut self, now: Instant, client_tick: u32) -> io::Result<()> {
+        let heard = *self.heard.lock().unwrap();
+        let due = self.beats.due(now, heard);
+        if due.silent {
+            return self.stream.0.shutdown(std::net::Shutdown::Both);
+        }
+        if due.request_time {
+            self.tick(client_tick)?;
+        }
+        if due.ping_live {
+            self.stream.write_all(&CZ_PING_LIVE.to_le_bytes())?;
+        }
+        Ok(())
     }
 
     pub fn walk(&mut self, to: [u16; 2]) -> io::Result<()> {
@@ -66,8 +89,8 @@ impl MapSession {
         self.stream.write_all(&encode_direction(direction, head))
     }
 
-    /// Keeps the connection alive; the client sends this every few seconds.
-    pub fn tick(&mut self, client_tick: u32) -> io::Result<()> {
+    /// CZ_REQUEST_TIME: the client's tick; the server answers with its own.
+    fn tick(&mut self, client_tick: u32) -> io::Result<()> {
         let mut packet = CZ_REQUEST_TIME.to_le_bytes().to_vec();
         packet.extend_from_slice(&client_tick.to_le_bytes());
         self.stream.write_all(&packet)
