@@ -809,20 +809,30 @@ fn read_packet(reader: &mut impl Read) -> io::Result<Vec<u8>> {
     let received = packet.len();
     packet.resize(size.max(received), 0);
     reader.read_exact(&mut packet[received..])?;
-    if let Some(full) = crate::play::trace() {
-        let now = u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(0);
-        if trace_marks(now, TRACED_AT.swap(now, Ordering::Relaxed), MARKED_AT.load(Ordering::Relaxed)) {
-            MARKED_AT.store(now, Ordering::Relaxed);
-            eprintln!("# t {now}");
-        }
-        let ms = now % 100_000;
-        let shown = if full { packet.len() } else { packet.len().min(32) };
-        eprintln!("{ms:05} <- {id:#06x} {} {:02x?}", packet.len(), &packet[..shown]);
-    }
+    trace_packet("<-", &packet);
     if let Some(hook) = PACKET_HOOK.get() {
         hook(&packet);
     }
     Ok(packet)
+}
+
+/// Prints a packet in the trace (`RUSTNAROK_CLIENT_TRACE`): `<-` one the server sent, `->` one the client sent to the
+/// map server. With both, a dropped connection shows what the client said last.
+fn trace_packet(arrow: &str, packet: &[u8]) {
+    let Some(full) = crate::play::trace() else { return };
+    let now = u64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()).unwrap_or(0);
+    if trace_marks(now, TRACED_AT.swap(now, Ordering::Relaxed), MARKED_AT.load(Ordering::Relaxed)) {
+        MARKED_AT.store(now, Ordering::Relaxed);
+        eprintln!("# t {now}");
+    }
+    eprintln!("{}", trace_line(now % 100_000, arrow, packet, full));
+}
+
+/// One trace line: the time column, the arrow, the packet ID, its length and its bytes (only the first 32 unless `full`).
+pub fn trace_line(ms: u64, arrow: &str, packet: &[u8], full: bool) -> String {
+    let id = packet.get(..2).map_or(0, |id| u16::from_le_bytes([id[0], id[1]]));
+    let shown = if full { packet.len() } else { packet.len().min(32) };
+    format!("{ms:05} {arrow} {id:#06x} {} {:02x?}", packet.len(), &packet[..shown])
 }
 
 /// Decodes a packet; one the decoder can't read (shorter than its fields) is skipped. A panic would end the reader
@@ -2437,11 +2447,12 @@ pub struct MapSession {
     stream: Wire,
 }
 
-/// The map server's socket: every packet written is shown to `SENT_HOOK` first.
+/// The map server's socket: every packet written is traced and shown to `SENT_HOOK` first.
 struct Wire(TcpStream);
 
 impl Wire {
     fn write_all(&mut self, packet: &[u8]) -> io::Result<()> {
+        trace_packet("->", packet);
         if let Some(hook) = SENT_HOOK.get() {
             hook(packet);
         }

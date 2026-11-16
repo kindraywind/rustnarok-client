@@ -506,18 +506,18 @@ fn record(seen: Seen, text: String) {
 /// Every packet from the char and map servers (on their reader threads), in the `RUSTNAROK_CLIENT_TRACE` format.
 fn packet_seen(packet: &[u8]) {
     let id = u16::from_le_bytes([packet[0], packet[1]]);
-    record(Seen::Packet(id), format!("{:05} <- {id:#06x} {} {:02x?}", trace_ms(), packet.len(), &packet[..packet.len().min(32)]));
+    record(Seen::Packet(id), net::trace_line(trace_ms(), "<-", packet, false));
 }
 
 /// Every packet the client writes to the map server, as `->` lines.
 fn packet_sent(packet: &[u8]) {
     let id = u16::from_le_bytes([packet[0], packet[1]]);
-    record(Seen::Sent(id), format!("{:05} -> {id:#06x} {} {:02x?}", trace_ms(), packet.len(), &packet[..packet.len().min(32)]));
+    record(Seen::Sent(id), net::trace_line(trace_ms(), "->", packet, false));
 }
 
 /// The `RUSTNAROK_CLIENT_TRACE` timestamp: wall-clock milliseconds, the last five digits.
-fn trace_ms() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() % 100_000
+fn trace_ms() -> u64 {
+    (SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() % 100_000) as u64
 }
 
 /// Whether the client takes commands from the socket and is the driver's alone. Then the real mouse and keyboard are

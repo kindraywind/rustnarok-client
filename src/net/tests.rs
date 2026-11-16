@@ -3067,6 +3067,16 @@ fn keeps_random_options() {
 }
 
 #[test]
+fn trace_lines_show_the_direction_and_cut_at_32_bytes_unless_full() {
+    let enter = [0x36, 0x04, 1, 2, 3];
+    assert_eq!(trace_line(42, "->", &enter, false), "00042 -> 0x0436 5 [36, 04, 01, 02, 03]");
+    let long: Vec<u8> = (0..40).collect();
+    assert!(trace_line(99_999, "<-", &long, false).starts_with("99999 <- 0x0100 40 [00, 01,"));
+    assert!(trace_line(0, "<-", &long, false).ends_with("1e, 1f]"));
+    assert!(trace_line(0, "<-", &long, true).ends_with("26, 27]"));
+}
+
+#[test]
 fn trace_marks_the_full_time_first_each_minute_and_after_a_gap() {
     let t = 1_794_016_087_321;
     // The first traced packet: nothing to count wraps from yet.
