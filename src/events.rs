@@ -1388,6 +1388,13 @@ impl App {
                 }
             }
             MapEvent::Vanish { id, reason } => {
+                // An item's script talks through a stand-in (clif_sendfakenpc: JT_HIDDEN_NPC, sent as object type 1),
+                // which rathena takes away when the script ends. It ends a box's menu at once (pc_useitem frees the
+                // script as soon as it pauses), so no answer and no close would come: the dialog goes with the
+                // stand-in and the player is free. (The game's vanish leaves the dialog alone, so it stays held.)
+                if game.dialog.as_ref().is_some_and(|dialog| dialog.npc == id) && game.units.get(&id).is_some_and(|unit| unit.job == HIDDEN_NPC_JOB) {
+                    game.dialog = None;
+                }
                 if id != game.account_id {
                     game.spirits.remove(&Some(id));
                     game.shadow_scars.remove(&id);
