@@ -1,6 +1,6 @@
 # Which effect files the client plays for effect, skill and item IDs:
 # str <effect id> <file under data\texture\effect\ without .str> <texture folder or -> <follows the unit 1/0> [random from to] [once]
-#   (once: plays once on a skill's ground unit, where the rest of the effect starts again until the unit goes;
+#   (once: plays once on a skill's ground unit or for a status, where the rest of the effect starts again until the unit or the status goes;
 #   hold: after the file's last key its last frame stays drawn until the effect's length, which may be longer than the file)
 # misc <ZC_NOTIFY_EFFECT type> <effect id>; skill <skill id> <when> <effect id>; item <item id> <effect id>
 # part <effect id> <2D|3D> <name=value;...>: a texture (or a sprite) moving from a start to an end over its duration
@@ -153,7 +153,7 @@ str	306	p_failed	-	1
 str	311	loud	-	1
 str	315	safetywall	-	1	once
 str	337	joblvup	-	1
-str	369	twohand	-	1
+str	369	twohand	-	1	once
 str	371	angel	-	1
 str	372	devil	-	1
 str	390	melt	-	1
