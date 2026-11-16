@@ -1,0 +1,5 @@
+// An NPC whose script ends in `close` without saying anything, as event scripts on some servers do on every kill.
+// Loaded and unloaded by scenarios/npc-close-no-reply.json.
+iz_int01,20,24,4	script	Quiet Clerk	4_M_01,{
+	close;
+}
