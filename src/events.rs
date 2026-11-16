@@ -1610,11 +1610,11 @@ impl App {
             MapEvent::NpcWindowSize { width, height } => game.say.resize(width, height),
             MapEvent::NpcWindowPos { x, y, percent } => game.say.move_to(x, y, percent),
             MapEvent::SpecialPopup(id) => game.special_popup = Some(id),
-            // A script may end in `close` without having said anything (rathena's item scripts do): no box for
-            // that, but answer it so the script doesn't keep the player.
-            MapEvent::NpcClose { npc } if game.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) => {
-                let _ = game.session.close_dialog(npc);
-            }
+            // A script may end in `close` without having said anything (rathena's item and event scripts do): no box
+            // for that, and no answer, as in the game. rathena ends such a script at once (buildin_close without
+            // mes_active), and a server whose event scripts close on every kill sends hundreds when an area skill
+            // kills a pack: answering each one flooded the server, which dropped the connection.
+            MapEvent::NpcClose { npc } if game.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) => {}
             // The script is done: Close shows, and the player is free while it does.
             MapEvent::NpcClose { npc } => game.dialog_for(npc).button = DialogButton::Close,
             // The text goes and the view is back at the top; the window, its button, the menu and the cut-in stay.

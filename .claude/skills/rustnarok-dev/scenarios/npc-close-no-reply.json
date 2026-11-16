@@ -1,0 +1,14 @@
+{
+  "about": "A script's close with no dialog gets no answer, as in the game. Quiet Clerk's script is only `close`: rathena sends ZC_CLOSE_DIALOG and ends the script. Main answered every such close with CZ_CLOSE_DIALOG; on a server whose event scripts close on every kill, an area skill's kills made hundreds of answers at once, and the server dropped the connection.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/quiet-close.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/quiet-close.txt"}, {"wait": 1000},
+    {"click_unit": {"kind": "npc", "name": "Quiet Clerk"}}, {"wait_for": {"packet": "0x00b6", "ms": 3000}},
+    {"wait_for": {"sent": "0x0146", "ms": 1500}, "none": true},
+    {"expect": {"windows_closed": ["NpcDialog"], "state": {"dialog": null}}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/quiet-close.txt"}, {"wait": 500}
+  ]
+}
