@@ -1,0 +1,23 @@
+{
+  "about": "Names are asked one at a time, as in the game: whatever the pointer is on once per appearance (rathena sends monsters' names as they appear, so those aren't asked), and item makers' names through one queue, a frame apart. Main asked a player's name block each time the pointer came onto them and every missing maker's name in the same frame, bursts a server can drop a client for.",
+  "account": "",
+  "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_TRACE": "1"},
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@killmonster2"}, {"say": "@itemreset"}, {"wait": 500},
+    {"say": "@monster 1078 1"}, {"wait": 1500},
+    {"expect": {"units_at_least": {"monster": 1}}},
+    {"move": {"unit": "Red Plant"}}, {"wait_for": {"sent": "0x0368", "ms": 1000}, "none": true},
+    {"move": {"cell": [18, 26]}}, {"wait_for": {"sent": "0x0368", "ms": 1500}},
+    {"move": {"point": [20, 700]}}, {"wait": 300},
+    {"move": {"cell": [18, 26]}}, {"wait_for": {"sent": "0x0368", "ms": 1500}, "none": true},
+    {"move": {"point": [20, 700]}},
+    {"say": "@item2 1201 1 1 0 0 255 0 18929 2"}, {"say": "@item2 1201 1 1 0 0 255 0 18930 2"},
+    {"say": "@item2 1201 1 1 0 0 255 0 18931 2"}, {"say": "@item2 1201 1 1 0 0 255 0 18932 2"},
+    {"say": "@item2 1201 1 1 0 0 255 0 18933 2"}, {"say": "@item2 1201 1 1 0 0 255 0 18934 2"},
+    {"wait_for": {"sent": "0x0369", "ms": 3000}}, {"wait": 1500},
+    {"expect": {"inventory_items": 6}},
+    {"say": "@killmonster2"}, {"say": "@itemreset"}, {"wait": 500}
+  ]
+}
