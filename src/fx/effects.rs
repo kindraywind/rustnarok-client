@@ -2948,6 +2948,8 @@ const PHANTOM_RIBBONS: u32 = 773;
 const CAST_SPIN2: u32 = 775;
 const ACCELERATION: u32 = 777;
 const SHAPE_SHIFT: u32 = 779;
+/// Lord Knight's Concentration (EFST 105, skill 357): TwoHand.str once, then the body's tint while the status lasts.
+const LK_CONCENTRATION: u32 = 369;
 /// Detonator's flush, Release's spheres, Oratio's status circle, Enchant Blade's tint, the poisons' magenta and Weapon Crush's weapons.
 const CONCENTRATION2: u32 = 750;
 const RELEASE: u32 = 751;
@@ -4010,6 +4012,11 @@ impl Effects {
         // Oratio's ring is Detecting's.
         if id == ORATIO {
             return self.show(gpu, grf, table, first::DETECTING, target, at, now);
+        }
+        // Lord Knight's Concentration comes from its status and from the skill's use, each taking the unit's running copy
+        // away first: one burst plays, from the latest.
+        if let (LK_CONCENTRATION, Target::Unit(unit) | Target::Status(unit, _)) = (id, target) {
+            self.forget_effect(unit, id);
         }
         // Poem of Netherworld's blot: one to a unit, standing for its status however it is played.
         if let (NPC_STOP, Target::Unit(unit) | Target::Status(unit, _)) = (id, target) {
@@ -9130,6 +9137,17 @@ mod tests {
         // Concentration tints the body #FFFFA0, drawn as it is.
         assert_eq!(crate::actor::status_body(369), Some((0, Some([0xFF, 0xFF, 0xA0]))));
         assert_eq!(table.status(379), &[744][..]);
+    }
+
+    #[test]
+    fn lk_concentration_bursts_once_and_keeps_the_tint() {
+        let table = Table::load();
+        // The status and the skill's use both play 369; its TwoHand.str plays out once (21 ticks) and never starts again,
+        // while the body's tint lasts with the status.
+        assert_eq!((table.status(105), table.used(357)), (&[LK_CONCENTRATION][..], Some(&[(Who::Caster, LK_CONCENTRATION)][..])));
+        let parts = &table.parts[&LK_CONCENTRATION];
+        assert!(!parts.is_empty() && parts.iter().all(|part| part.once));
+        assert_eq!(crate::actor::status_body(LK_CONCENTRATION), Some((0, Some([0xFF, 0xFF, 0xA0]))));
     }
 
     #[test]
