@@ -4,7 +4,7 @@ use super::*;
 
 impl MapSession {
     pub fn connect(ticket: &MapTicket, client_tick: u32, mut on_event: impl FnMut(MapEvent) + Send + 'static) -> io::Result<Self> {
-        let mut stream = TcpStream::connect_timeout(&(Ipv4Addr::from(ticket.address.0), ticket.address.1).into(), CONNECT_TIMEOUT)?;
+        let stream = TcpStream::connect_timeout(&(Ipv4Addr::from(ticket.address.0), ticket.address.1).into(), CONNECT_TIMEOUT)?;
         stream.set_nodelay(true)?;
         let mut enter = Vec::with_capacity(23);
         enter.extend_from_slice(&CZ_ENTER.to_le_bytes());
@@ -12,9 +12,10 @@ impl MapSession {
             enter.extend_from_slice(&value.to_le_bytes());
         }
         enter.push(ticket.sex);
+        let mut stream = Wire(stream);
         stream.write_all(&enter)?;
 
-        let mut reader = stream.try_clone()?;
+        let mut reader = stream.0.try_clone()?;
         std::thread::spawn(move || {
             let error = loop {
                 match read_packet(&mut reader) {
@@ -31,7 +32,7 @@ impl MapSession {
             }
             on_event(MapEvent::Disconnected(error));
         });
-        Ok(Self { stream: Wire(stream) })
+        Ok(Self { stream })
     }
 
     /// Tells the server the map is loaded; it then sends everything in view.

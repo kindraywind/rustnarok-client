@@ -375,9 +375,10 @@ before/after/diff sheets of every screenshot.
   client (`claude mcp add rustnarok-client-dev -- <repo>/target/release/rustnarok-client-mcp`).
 - `RUSTNAROK_CLIENT_SCREENSHOT=out.png` renders headlessly, saves a settled frame and quits; in the game after
   `RUSTNAROK_CLIENT_SHOT_DELAY` seconds.
-- `RUSTNAROK_CLIENT_TRACE=1` prints received packets; `=full` dumps them whole. Only in play mode `all`: a trace shows
-  more than the screen. A line starts with the wall clock's last five millisecond digits, which wrap every 100 s; a
-  `# t <epoch ms>` line with the full time comes first, then once a minute and after more than 50 s with no packet.
+- `RUSTNAROK_CLIENT_TRACE=1` prints received packets (`<-`) and those sent to the map server (`->`); `=full` dumps them
+  whole. Only in play mode `all`: a trace shows more than the screen. A line starts with the wall clock's last five
+  millisecond digits, which wrap every 100 s; a `# t <epoch ms>` line with the full time comes first, then once a minute
+  and after more than 50 s with no packet.
 
 <details>
 <summary><b>More dev switches and tools</b></summary>

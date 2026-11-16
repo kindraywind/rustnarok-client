@@ -42,9 +42,9 @@ pub fn mode() -> Grade {
     *MODE.get_or_init(|| std::env::var("RUSTNAROK_CLIENT_PLAY").ok().and_then(|mode| Grade::parse(&mode)).unwrap_or(Grade::Test))
 }
 
-/// How the packets the servers send are printed (`RUSTNAROK_CLIENT_TRACE`): None for not at all, else whether whole
-/// (`full`) or just their first bytes. A trace holds everything the server sends, far more than the screen shows, so it
-/// is for play mode all: below that it stays off (#1226).
+/// How the packets the servers send, and those the client sends the map server, are printed (`RUSTNAROK_CLIENT_TRACE`):
+/// None for not at all, else whether whole (`full`) or just their first bytes. A trace holds everything the server
+/// sends, far more than the screen shows, so it is for play mode all: below that it stays off (#1226).
 pub fn trace() -> Option<bool> {
     static TRACE: OnceLock<Option<bool>> = OnceLock::new();
     *TRACE.get_or_init(|| {
