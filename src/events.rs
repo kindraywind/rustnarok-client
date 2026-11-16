@@ -4,6 +4,7 @@ use super::*;
 
 impl App {
     pub(crate) fn net_event(&mut self, event: NetEvent) {
+        addon::observe(&event);
         match event {
             // An answer after Cancel or the time limit.
             NetEvent::Login(_) if !matches!(self.scene, Scene::Waiting(Wait::Login, _)) => {}
@@ -243,7 +244,7 @@ impl App {
                 self.message(self.messages.get(DISCONNECTED_MESSAGE).cloned().unwrap_or_default(), Scene::Login);
             }
             NetEvent::Map(event) => self.map_event(event),
-            NetEvent::Control(_) => unreachable!("user_event runs commands"),
+            NetEvent::Control(_) | NetEvent::Addon(_) => unreachable!("user_event runs commands"),
         }
     }
 

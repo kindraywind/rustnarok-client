@@ -54,6 +54,7 @@ mod ui;
 use fx::*;
 use ui::*;
 mod actor;
+mod addon;
 mod ambient;
 mod autohunt;
 mod battle_mode;
@@ -1126,6 +1127,8 @@ enum NetEvent {
     Map(MapEvent),
     /// A command from the control socket (dev).
     Control(control::Request),
+    /// What the server's add-on asks for (see addon.rs).
+    Addon(addon::Action),
 }
 
 /// On a map: the connection, the world and everyone in view.
@@ -5187,6 +5190,11 @@ impl ApplicationHandler<NetEvent> for App {
         }
         match event {
             NetEvent::Control(request) => control::run(self, event_loop, request),
+            NetEvent::Addon(addon::Action::Whisper { to, text }) => {
+                if let Scene::Game(game) = &mut self.scene {
+                    let _ = game.session.whisper(&to, &text);
+                }
+            }
             // ponytail: in the game every map packet waits for the next frame, so none overtakes a move queued before
             // it; only the moves, the stops and the clock need to. They wait as long as frames do.
             NetEvent::Map(event) if matches!(self.scene, Scene::Game(_)) => self.frame_events.push(event),
@@ -5590,6 +5598,9 @@ fn main() {
     winit::platform::macos::EventLoopBuilderExtMacOS::with_activate_ignoring_other_apps(&mut event_loop, !mcp::scripted());
     let event_loop = event_loop.build().expect("event loop");
     control::listen(event_loop.create_proxy());
+    if overlay != "none" {
+        addon::start(std::path::Path::new(&overlay), event_loop.create_proxy());
+    }
     let pets = pet::Data::load(&grf);
     // ponytail: without the translation's achievements.lub the window lists nothing and names achievements by ID.
     let achievement_info = lua::achievements(&grf).unwrap_or_default();

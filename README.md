@@ -303,6 +303,15 @@ Test accounts live in that server's database; their passwords never go in this r
 outside it with `username:`/`password:` lines (`username2:`/`password2:` and so on for more), which the dev tools
 read.
 
+### Server add-ons
+
+What a server's own DLL is to the official client: a server that needs client-side code of its own (a client check,
+say) ships a program in its client folder at `rustnarok-addon/<os>-<arch>/addon` (`addon.exe` on Windows; e.g.
+`macos-aarch64`, `windows-x86_64`). The client starts it, says hello with the protocol's version, and passes it each
+NPC's coloured chat line as JSON on its stdin; the add-on answers with whispers on its stdout (`{"cmd": "whisper",
+"to": "NPC:name", "text": "..."}`), which reach the server's scripts. It gets nothing else from the game. The protocol
+is at the top of `src/addon.rs`.
+
 ## 🔧 Development
 
 ```mermaid
