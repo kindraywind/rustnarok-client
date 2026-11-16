@@ -256,7 +256,7 @@ impl App {
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
                 let sky = sky::for_map(&self.grf, &map, &world, position);
-                let _ = session.loaded();
+                let _ = session.loaded(self.client_tick());
                 let look = character_look(&me);
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 // The character list's speed until the map server sends one.
@@ -320,7 +320,6 @@ impl App {
                     walk_clock: now,
                     chat: chat::Chat::default(),
                     entered: now,
-                    last_keepalive: now,
                     shadow: SpriteSet::at(&self.grf, "data\\sprite\\shadow"),
                     emotion_sprite: SpriteSet::at(&self.grf, "data\\sprite\\이팩트\\emotion"),
                     emotions: HashMap::new(),
@@ -747,6 +746,7 @@ impl App {
 
     /// Loads another map on the same map server.
     pub(crate) fn change_map(&mut self, map: String, position: [u16; 2]) {
+        let tick = self.client_tick();
         let (Scene::Game(game), Some(gpu)) = (&mut self.scene, &self.gpu) else { return };
         match World::load(gpu, &self.grf, &map) {
             Ok(world) => {
@@ -803,7 +803,7 @@ impl App {
                 game.put_after_warp(position);
                 game.navigation_loaded(&self.navi_tables, &self.messages, &self.grf);
                 game.unit_names = names::NameQueue::default();
-                let _ = game.session.loaded();
+                let _ = game.session.loaded(tick);
                 game.player.loaded_at = Some(Instant::now());
             }
             Err(error) => game.chat_line(format!("맵을 불러올 수 없습니다: {map} ({error})"), CHAT_ERROR),
@@ -854,6 +854,7 @@ impl App {
             return;
         }
 
+        let tick = self.client_tick();
         let Scene::Game(game) = &mut self.scene else {
             if self.entering.is_some() {
                 self.early_events.push(event);
@@ -1572,7 +1573,7 @@ impl App {
                     forget_view(&mut game.units, &mut game.skill_units, &mut game.effects);
                     game.ground.clear();
                     game.unit_names = names::NameQueue::default();
-                    let _ = game.session.loaded();
+                    let _ = game.session.loaded(tick);
                     game.player.loaded_at = Some(Instant::now());
                 } else {
                     self.show_loading(LoadTarget::Change { map, position });

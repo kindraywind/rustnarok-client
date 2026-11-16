@@ -51,7 +51,7 @@ fn main() {
         }
         let Ok(event) = receiver.recv_timeout(Duration::from_millis(100)) else { continue };
         if matches!(event, MapEvent::Entered { .. }) {
-            map.loaded().unwrap();
+            map.loaded(0).unwrap();
         }
         println!("{event:?}");
     }

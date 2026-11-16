@@ -2832,7 +2832,7 @@ fn logs_into_local_rathena() {
             _ => continue,
         }
     }
-    map.loaded().unwrap();
+    map.loaded(0).unwrap();
     // The server answers with what is in view; at least some packet must decode without breaking the stream.
     let first = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(!matches!(first, MapEvent::Disconnected(_)), "{first:?}");
@@ -3091,4 +3091,42 @@ fn trace_marks_the_full_time_first_each_minute_and_after_a_gap() {
     assert!(trace_marks(t + 50_001, t, t + 30_000));
     // A clock that went back marks nothing by itself.
     assert!(!trace_marks(t, t + 5_000, t + 1_000));
+}
+
+/// When each keepalive goes out over `until_ms`, a frame every 100 ms: (CZ_REQUEST_TIME, CZ_PING_LIVE, cutoff) times.
+fn beat_times(beats: &mut Beats, start: Instant, until_ms: u64, heard: impl Fn(u64) -> u64, load_at: Option<u64>) -> [Vec<u64>; 3] {
+    let mut times: [Vec<u64>; 3] = Default::default();
+    for ms in (100..=until_ms).step_by(100) {
+        let now = start + Duration::from_millis(ms);
+        if load_at == Some(ms) {
+            beats.request_time = now;
+        }
+        let due = beats.due(now, start + Duration::from_millis(heard(ms)));
+        for (list, fired) in times.iter_mut().zip([due.request_time, due.ping_live, due.silent]) {
+            if fired {
+                list.push(ms);
+            }
+        }
+    }
+    times
+}
+
+#[test]
+fn map_keepalives_keep_the_game_s_times() {
+    let start = Instant::now();
+    // The server answers all along: CZ_REQUEST_TIME 12 s apart, counted again from a map load at 30 s; CZ_PING_LIVE
+    // every 5 s; no cutoff.
+    let [time, ping, silent] = beat_times(&mut Beats::new(start), start, 60_000, |ms| ms, Some(30_000));
+    assert_eq!(time, [12_000, 24_000, 42_000, 54_000]);
+    assert_eq!(ping, (1..=12).map(|n| n * 5_000).collect::<Vec<_>>());
+    assert!(silent.is_empty());
+}
+
+#[test]
+fn map_link_drops_after_a_minute_of_silence() {
+    let start = Instant::now();
+    // Nothing after the start: the 5 s run at exactly 60 s still pings, the next one drops the link.
+    let [_, ping, silent] = beat_times(&mut Beats::new(start), start, 65_000, |_| 0, None);
+    assert_eq!(ping.last(), Some(&60_000));
+    assert_eq!(silent, [65_000]);
 }

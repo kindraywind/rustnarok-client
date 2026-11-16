@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 mod decode;
@@ -925,6 +925,7 @@ const CZ_INVENTORY_TAB: u16 = 0x0907;
 const ZC_INVENTORY_TAB: u16 = 0x0908;
 const CZ_REQ_ONECLICK_ITEMIDENTIFY: u16 = 0x0A35;
 const CZ_REQUEST_TIME: u16 = 0x0360;
+const CZ_PING_LIVE: u16 = 0x0B1C;
 const CZ_REQUEST_CHAT: u16 = 0x00F3;
 const CZ_WHISPER: u16 = 0x0096;
 const ZC_WHISPER: u16 = 0x09DE;
@@ -2445,6 +2446,52 @@ pub struct MapTicket {
 
 pub struct MapSession {
     stream: Wire,
+    /// When anything last came from the map server; the reader thread sets it.
+    heard: Arc<Mutex<Instant>>,
+    beats: Beats,
+}
+
+/// The map connection's keepalives, as the game's: CZ_REQUEST_TIME every 12 s (and one at each map load), CZ_PING_LIVE
+/// every 5 s, and on that 5 s schedule the link is dropped instead once the server has said nothing for a minute.
+const REQUEST_TIME_EVERY: Duration = Duration::from_millis(12_000);
+const PING_LIVE_EVERY: Duration = Duration::from_millis(5_000);
+const SILENCE_LIMIT: Duration = Duration::from_millis(60_000);
+
+/// When each keepalive last went out.
+struct Beats {
+    request_time: Instant,
+    ping_live: Instant,
+}
+
+/// What `Beats::due` wants done now.
+#[derive(Debug, Default, PartialEq)]
+struct Due {
+    request_time: bool,
+    ping_live: bool,
+    silent: bool,
+}
+
+impl Beats {
+    fn new(now: Instant) -> Self {
+        Self { request_time: now, ping_live: now }
+    }
+
+    /// `heard` is when the server last sent anything.
+    fn due(&mut self, now: Instant, heard: Instant) -> Due {
+        let mut due = Due::default();
+        if now.saturating_duration_since(self.request_time) >= REQUEST_TIME_EVERY {
+            (self.request_time, due.request_time) = (now, true);
+        }
+        if now.saturating_duration_since(self.ping_live) >= PING_LIVE_EVERY {
+            self.ping_live = now;
+            if now.saturating_duration_since(heard) > SILENCE_LIMIT {
+                due.silent = true;
+            } else {
+                due.ping_live = true;
+            }
+        }
+        due
+    }
 }
 
 /// The map server's socket: every packet written is traced and shown to `SENT_HOOK` first.

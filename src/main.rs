@@ -171,8 +171,6 @@ const DEFAULT_SERVER: &str = "127.0.0.1:6900";
 const CARET_BLINK: Duration = Duration::from_millis(500);
 const TEXT_COLOR: [u8; 3] = [0, 0, 0];
 const FRAME_TIME: Duration = Duration::from_millis(16);
-/// The client pings the map server so idle connections aren't dropped.
-const KEEPALIVE: Duration = Duration::from_secs(10);
 /// Chat colors: others, our own, item messages, errors.
 const CHAT_WHITE: [u8; 3] = [255, 255, 255];
 const CHAT_SELF: [u8; 3] = [0x00, 0xFF, 0x00];
@@ -1171,7 +1169,6 @@ struct Game {
     walk_clock: Instant,
     chat: chat::Chat,
     entered: Instant,
-    last_keepalive: Instant,
     /// Dev switch: a cell to walk to shortly after entering.
     auto_walk: Option<[u16; 2]>,
     /// Walking by the mouse: when the last walk was sent and where, how many were sent, whether the held button
@@ -5327,10 +5324,7 @@ impl ApplicationHandler<NetEvent> for App {
         match &mut self.scene {
             Scene::Game(game) => {
                 // Animate continuously and keep the map connection alive.
-                if game.last_keepalive.elapsed() >= KEEPALIVE {
-                    game.last_keepalive = Instant::now();
-                    let _ = game.session.tick(tick);
-                }
+                let _ = game.session.keep_alive(Instant::now(), tick);
                 // The view the player leaves is kept for the next map of its kind.
                 self.saved_view.follow(&game.camera_goal, Instant::now(), self.save_view);
                 // The held button follows the pointer: another walk each time more than MOVE_GAP_MS has passed since
