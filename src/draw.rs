@@ -1393,7 +1393,14 @@ impl App {
         // (nor asked for), as a click there doesn't reach the world either.
         let on_world = !game.on_ui(pointer.0, assets.message.size);
         // Ourselves count here (not for clicks): the game picks the own character too, and names it.
-        let pointed = match hovered_named(&game.hit_boxes, pointer.0, players_first).filter(|_| on_world) {
+        let under_pointer = hovered_named(&game.hit_boxes, pointer.0, players_first).filter(|_| on_world);
+        // Whatever the pointer is on has its name asked for, every kind but a warp portal.
+        match under_pointer {
+            Some(Owner::Unit(id)) if game.units.get(&id).is_some_and(|actor| actor.job != WARP_JOB) => game.unit_names.want(id),
+            Some(Owner::Player) => game.unit_names.want(game.account_id),
+            _ => {}
+        }
+        let pointed = match under_pointer {
             Some(Owner::Unit(id)) => game
                 .units
                 .get(&id)

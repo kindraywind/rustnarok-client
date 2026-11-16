@@ -257,8 +257,6 @@ impl App {
             Ok(world) => {
                 let sky = sky::for_map(&self.grf, &map, &world, position);
                 let _ = session.loaded();
-                // The player's own title comes with their own name tag.
-                let _ = session.ask_name(account.account_id);
                 let look = character_look(&me);
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 // The character list's speed until the map server sends one.
@@ -542,7 +540,7 @@ impl App {
                     quest_icon: false,
                     banners: quest_notice::Banners::default(),
                     char_names: HashMap::new(),
-                    names_asked: HashSet::new(),
+                    char_name_queue: names::NameQueue::default(),
                     dress_figure: None,
                     preview_figure: None,
                     head_emblems: Vec::new(),
@@ -639,7 +637,7 @@ impl App {
                     emblems: HashMap::new(),
                     name_tags: HashMap::new(),
                     pointed: None,
-                    last_pointed: None,
+                    unit_names: names::NameQueue::default(),
                     signs: HashMap::new(),
                     sign_rects: Vec::new(),
                     chat_links: Vec::new(),
@@ -804,6 +802,7 @@ impl App {
                 (game.pet_id, game.pet) = (None, None);
                 game.put_after_warp(position);
                 game.navigation_loaded(&self.navi_tables, &self.messages, &self.grf);
+                game.unit_names = names::NameQueue::default();
                 let _ = game.session.loaded();
                 game.player.loaded_at = Some(Instant::now());
             }
@@ -1395,6 +1394,8 @@ impl App {
                 if game.dialog.as_ref().is_some_and(|dialog| dialog.npc == id) && game.units.get(&id).is_some_and(|unit| unit.job == HIDDEN_NPC_JOB) {
                     game.dialog = None;
                 }
+                // Its name is asked again when it next comes into view.
+                game.unit_names.forget(id);
                 if id != game.account_id {
                     game.spirits.remove(&Some(id));
                     game.shadow_scars.remove(&id);
@@ -1570,6 +1571,7 @@ impl App {
                     game.navigation_loaded(&self.navi_tables, &self.messages, &self.grf);
                     forget_view(&mut game.units, &mut game.skill_units, &mut game.effects);
                     game.ground.clear();
+                    game.unit_names = names::NameQueue::default();
                     let _ = game.session.loaded();
                     game.player.loaded_at = Some(Instant::now());
                 } else {
@@ -1737,11 +1739,8 @@ impl App {
                 let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
                 let held = game.inventory.get(item.index).map_or(0, |held| held.amount);
                 // A forged or brewed item names its maker: asked for once.
-                if let Some(maker) = inventory::maker(&item.cards)
-                    && !game.char_names.contains_key(&maker)
-                    && game.names_asked.insert(maker)
-                {
-                    let _ = game.session.ask_char_name(maker);
+                if let Some(maker) = inventory::maker(&item.cards).filter(|maker| !game.char_names.contains_key(maker)) {
+                    game.char_name_queue.want(maker);
                 }
                 let name = |slots: bool| inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, &item, slots);
                 match pickup::obtained(result, item.amount, held) {
@@ -2496,6 +2495,7 @@ impl App {
                 game.want_emblem(guild, emblem);
             }
             MapEvent::NameTag(id, tag) => {
+                game.unit_names.answered(id);
                 if id == game.account_id {
                     game.equipment.title = tag.title;
                 }
@@ -2810,13 +2810,12 @@ impl App {
                     board.frame.position = position;
                 }
                 for id in ranking::missing_names(&ids, &game.char_names) {
-                    if game.names_asked.insert(id) {
-                        let _ = game.session.ask_char_name(id);
-                    }
+                    game.char_name_queue.want(id);
                 }
                 game.ranking = Some(board);
             }
             MapEvent::CharName { id, name } => {
+                game.char_name_queue.answered(id);
                 game.char_names.insert(id, name);
             }
             // ponytail: the point and mission lines' color is an estimate.
@@ -3146,6 +3145,7 @@ impl App {
                 }
             }
             MapEvent::UnitName { id, name } => {
+                game.unit_names.answered(id);
                 if let Some(actor) = game.units.get_mut(&id) {
                     actor.name = name;
                 }

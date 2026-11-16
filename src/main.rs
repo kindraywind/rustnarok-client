@@ -68,6 +68,7 @@ use game::Top;
 mod head_marks;
 mod input;
 mod mcp;
+mod names;
 mod navigation;
 mod overhead;
 mod picking;
@@ -1446,12 +1447,11 @@ struct Game {
     clan_window: clan::ClanWindow,
     /// Guild emblems by guild ID: the version last asked for, and the image that came.
     emblems: HashMap<u32, (u32, Option<Texture>)>,
-    /// What shows with players' names (party, guild, position) by account ID, and the unit last pointed at: a
-    /// player's tag is asked for each time the pointer comes onto them, as what the server sends unasked can be stale.
+    /// What shows with players' names (party, guild, position) by account ID, and the unit last pointed at.
     name_tags: HashMap<u32, net::NameTag>,
     pointed: Option<u32>,
-    /// `pointed` as the last tick saw it, so the tag is asked once each time.
-    last_pointed: Option<u32>,
+    /// Units' names (CZ_REQNAME), asked for whatever the pointer is on, once per unit's appearance.
+    unit_names: names::NameQueue,
     /// The friend list, and someone asking to be friends (account, character, name).
     friends: Vec<net::Friend>,
     friend_asked: Option<(u32, u32, String)>,
@@ -1501,7 +1501,8 @@ struct Game {
     /// The Universal Catalog's store search while it's open.
     catalog: Option<catalog::Catalog>,
     char_names: HashMap<u32, Option<String>>,
-    names_asked: HashSet<u32>,
+    /// Characters' names by ID (CZ_REQNAME_BYGID): item makers and ranking rows.
+    char_name_queue: names::NameQueue,
     /// The dress room's lists, the room while it's open, and its figure.
     dress_lists: dressroom::Lists,
     dressroom: Option<dressroom::Room>,

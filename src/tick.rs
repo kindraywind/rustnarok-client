@@ -12,13 +12,12 @@ impl App {
         game.hotkeys.quick_window.open = self.graphics.quick_slot;
         // A window that opened goes to the front of the Esc order the frame it shows, as the game puts it there when made.
         game.sync_esc();
-        // A player's name block is asked for each time the pointer comes onto them; the last frame found what it's on.
-        if game.pointed != game.last_pointed {
-            game.last_pointed = game.pointed;
-            let actor = |id| if id == game.account_id { Some(&game.player) } else { game.units.get(&id) };
-            if let Some(id) = game.pointed.filter(|&id| actor(id).is_some_and(|actor| actor.kind == PLAYER)) {
-                let _ = game.session.ask_name(id);
-            }
+        // Names go out one a frame each, as the game asks them: a burst can get a client dropped by a server.
+        if let Some(id) = game.unit_names.pump(now) {
+            let _ = game.session.ask_name(id);
+        }
+        if let Some(id) = game.char_name_queue.pump(now) {
+            let _ = game.session.ask_char_name(id);
         }
         game.poll_booking();
         // The makers of forged and brewed items anywhere on screen: each one's name asked for once, as the game does.
@@ -31,9 +30,7 @@ impl App {
         let makers: Vec<u32> =
             shown.map(|item| &item.cards).chain(found).filter_map(inventory::maker).filter(|maker| !game.char_names.contains_key(maker)).collect();
         for maker in makers {
-            if game.names_asked.insert(maker) {
-                let _ = game.session.ask_char_name(maker);
-            }
+            game.char_name_queue.want(maker);
         }
         // The refine window's hammering: its sounds as the frames pass, and at its end the result's sound and chat line.
         let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
