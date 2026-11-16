@@ -560,7 +560,7 @@ pub fn observe(event: &NetEvent) {
         NetEvent::Login(Err(error)) => ("LoginRefused".to_owned(), format!("LoginRefused({error:?})")),
         NetEvent::Char(event) => (String::new(), format!("{event:?}")),
         NetEvent::Map(event) => (String::new(), format!("{event:?}")),
-        NetEvent::Control(_) => return,
+        NetEvent::Control(_) | NetEvent::Addon(_) => return,
     };
     let name = if name.is_empty() { debug.split(|character: char| !character.is_alphanumeric()).next().unwrap_or_default().to_owned() } else { name };
     let end = debug.char_indices().nth(300).map_or(debug.len(), |(at, _)| at);
