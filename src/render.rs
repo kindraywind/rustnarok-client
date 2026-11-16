@@ -481,13 +481,13 @@ impl Gpu {
 /// A client image with its magenta background keyed out.
 pub fn load_image(grf: &Grf, path: &str) -> Result<RgbaImage, String> {
     let bytes = grf.read(path).map_err(|error| format!("{path}: {error}"))?;
-    // TGA has no magic number to recognize it by.
-    let decoded = if path.to_lowercase().ends_with(".tga") {
-        image::load_from_memory_with_format(&bytes, image::ImageFormat::Tga)
-    } else {
-        image::load_from_memory(&bytes)
-    };
-    Ok(key_out(decoded.map_err(|error| format!("{path}: {error}"))?.to_rgba8()))
+    Ok(key_out(decode_image(path, &bytes).map_err(|error| format!("{path}: {error}"))?.to_rgba8()))
+}
+
+/// Decodes an image file of the data by its contents, or, for TGA, which has no magic number to recognize it by, by
+/// its name.
+pub fn decode_image(path: &str, bytes: &[u8]) -> image::ImageResult<image::DynamicImage> {
+    if path.to_lowercase().ends_with(".tga") { image::load_from_memory_with_format(bytes, image::ImageFormat::Tga) } else { image::load_from_memory(bytes) }
 }
 
 /// A glow drawn on black (effect pictures): black becomes transparent, the brightest channel the opacity.
@@ -555,6 +555,14 @@ fn frame_floor(window: &Window) -> Duration {
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+
+    #[test]
+    fn decodes_a_tga_by_its_name() {
+        // An uncompressed 24-bit 1x1 TGA (the pixel stored blue, green, red): nothing in it says TGA.
+        let tga = [0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 24, 0, 0x30, 0x20, 0x10];
+        assert_eq!(super::decode_image("texture\\hero\\hero07.TGA", &tga).unwrap().to_rgba8().get_pixel(0, 0).0, [0x10, 0x20, 0x30, 255]);
+        assert!(super::decode_image("hero07.bmp", &tga).is_err());
+    }
 
     #[test]
     fn presented_frames_keep_a_floor_apart() {

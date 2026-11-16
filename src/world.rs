@@ -832,7 +832,7 @@ impl World {
                 let image = grf
                     .read(&format!("data\\texture\\{name}"))
                     .ok()
-                    .and_then(|bytes| image::load_from_memory(&bytes).ok())
+                    .and_then(|bytes| crate::render::decode_image(name, &bytes).ok())
                     .map(|image| image.to_rgba8())
                     .unwrap_or_else(|| RgbaImage::from_pixel(1, 1, Rgba([128, 128, 128, 255])));
                 gpu.texture_with_sampler(&key_out_magenta(image), &smooth)
@@ -2187,7 +2187,7 @@ fn back_to_front<T>(items: &mut [T], depth: impl Fn(&T) -> f32) {
 
 /// A model texture keyed (#FF00FF clear) and whether its file has an alpha channel of its own; grey when missing.
 fn model_image(grf: &Grf, name: &str) -> (RgbaImage, bool) {
-    let decoded = grf.read(&format!("data\\texture\\{name}")).ok().and_then(|bytes| image::load_from_memory(&bytes).ok());
+    let decoded = grf.read(&format!("data\\texture\\{name}")).ok().and_then(|bytes| crate::render::decode_image(name, &bytes).ok());
     match decoded {
         Some(image) => {
             let alpha = image.color().has_alpha();
