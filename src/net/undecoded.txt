@@ -1,0 +1,980 @@
+# The packet IDs of the length tables (packet_lengths*.txt) that no reader decodes, each with why. A test
+# (every_known_packet_is_decoded_or_listed) fails for an ID that is in neither, or decoded and still here; the trace
+# (RUSTNAROK_CLIENT_TRACE) ends a received one's line with "(not decoded)".
+#   client:  the client sends it; rathena reads it.
+#   unsent:  rathena at our PACKETVER (20220406) has no code that sends it.
+#   old:     an older server's form, kept so the link survives it.
+#   unasked: rathena's answer to a request the client never sends.
+#   ignored: sent, and left alone on purpose.
+#   todo:    sent, and not decoded yet.
+0x0064 client
+0x0065 client: CH_ENTER
+0x0066 client
+0x0067 unsent
+0x0068 unsent
+0x0069 unsent
+0x006A ignored: the map server refusing a malformed connect packet; it closes the link right after
+0x006D unsent
+0x006F unasked: the old character delete (CH_DELETE_CHAR); the client uses the timed delete
+0x0070 unasked: the old character delete's refusal; the client uses the timed delete
+0x0071 unsent
+0x0072 client
+0x0073 old: an older server's form
+0x0074 todo: the map server refusing our entry (clif_authrefuse)
+0x0075 unsent
+0x0076 unsent
+0x0077 unsent
+0x0078 old: an older server's form
+0x0079 unsent
+0x007A unsent
+0x007B unsent
+0x007C unsent
+0x007D client
+0x007E client
+0x0082 unsent
+0x0083 unsent
+0x0084 unsent
+0x0085 client
+0x0089 client
+0x008B unsent
+0x008C client
+0x0090 client
+0x0092 old: an older server's form
+0x0093 unsent
+0x0094 client
+0x0095 old: an older server's form
+0x0096 client
+0x0097 old: an older server's form
+0x0098 old: an older server's form
+0x0099 client
+0x009B client
+0x009E unsent
+0x009F client
+0x00A2 client
+0x00A3 old: an older server's form
+0x00A4 old: an older server's form
+0x00A5 old: an older server's form
+0x00A6 old: an older server's form
+0x00A7 client
+0x00A9 old: an older server's form
+0x00AA old: an older server's form
+0x00AB client
+0x00AC old: an older server's form
+0x00AE unsent
+0x00B2 client
+0x00B8 client
+0x00B9 client
+0x00BA unsent
+0x00BB client
+0x00BF client
+0x00C1 client
+0x00C3 unsent
+0x00C5 client
+0x00C6 unsent
+0x00C8 client
+0x00C9 client
+0x00CC client
+0x00CD unasked: a GM kick's answer
+0x00CE client
+0x00CF client
+0x00D0 client
+0x00D3 client
+0x00D5 client
+0x00D9 client
+0x00DE client
+0x00E0 client
+0x00E2 client
+0x00E3 client
+0x00E4 client
+0x00E5 unsent
+0x00E6 client
+0x00E8 client
+0x00E9 old: an older server's form
+0x00EB client
+0x00ED client
+0x00EF client
+0x00F1 todo: an item taken back out of a trade (clif_tradeundo)
+0x00F3 client
+0x00F5 client
+0x00F7 client
+0x00F9 client
+0x00FB unsent
+0x00FC client
+0x00FD unsent
+0x00FE old: an older server's form
+0x00FF client
+0x0100 client
+0x0101 unsent
+0x0102 client
+0x0103 client
+0x0104 unsent
+0x0106 old: an older server's form
+0x0108 client
+0x0112 client
+0x0113 client
+0x0114 unsent
+0x0115 unsent
+0x0116 client
+0x0118 client
+0x0119 unsent
+0x011A old: an older server's form
+0x011B client
+0x011C old: an older server's form
+0x011D client
+0x011F old: a skill unit; rathena sends 0x09CA at our PACKETVER (0x011F is only a switch arm)
+0x0122 old: an older server's form
+0x0123 old: an older server's form
+0x0126 client
+0x0127 client
+0x0128 client
+0x0129 client
+0x012A client
+0x012E client
+0x012F client
+0x0130 client
+0x0133 old: an older server's form
+0x0134 client
+0x0136 old: an older server's form
+0x0137 old: an older server's form
+0x0138 unsent
+0x013D old: an older server's form
+0x013E old: an older server's form
+0x013F client
+0x0140 client
+0x0143 client
+0x0145 unsent
+0x0146 client
+0x0149 client
+0x014A todo: manner messages: a GM's mute, a good point given (clif_manner_message)
+0x014B todo: a player muted or unmuted by a GM (clif_GM_silence)
+0x014D client
+0x014F client
+0x0150 unsent
+0x0151 client
+0x0153 client
+0x0154 unsent
+0x0155 client
+0x0157 unsent
+0x0158 unsent
+0x0159 client
+0x015B client
+0x015D client
+0x015F unsent
+0x0161 client
+0x0163 old: an older server's form
+0x0164 unsent
+0x0165 client
+0x0168 client
+0x016B client
+0x016C unsent
+0x016E client
+0x0170 client
+0x0172 client
+0x0175 unsent
+0x0176 unsent
+0x0178 client
+0x017A client
+0x017C client
+0x017E client
+0x0180 client
+0x0182 unsent
+0x0183 client
+0x0185 unsent
+0x0187 client
+0x018A client
+0x018E client
+0x0190 client
+0x0193 client
+0x0194 old: an older server's form
+0x0195 old: an older server's form
+0x0197 client
+0x0198 client
+0x0199 unsent
+0x019C client
+0x019D client
+0x019F client
+0x01A1 client
+0x01A5 client
+0x01A7 client
+0x01A8 unsent
+0x01A9 client
+0x01AB todo: a unit's manner (mute) state (clif_changemanner)
+0x01AE client
+0x01AF client
+0x01B1 todo: a script's showdigit counter (clif_showdigit)
+0x01B2 client
+0x01B4 old: an older server's form
+0x01B5 unsent
+0x01B6 unsent
+0x01B7 unsent
+0x01B8 unsent
+0x01BA client
+0x01BB client
+0x01BC client
+0x01BD client
+0x01BE unsent
+0x01BF unsent
+0x01C0 client
+0x01C1 unsent
+0x01C2 unsent
+0x01C4 old: an older server's form
+0x01C5 old: an older server's form
+0x01C6 unsent
+0x01C7 unsent
+0x01C9 unsent
+0x01CA unsent
+0x01CB unsent
+0x01CC unsent
+0x01CD old: an older server's form
+0x01CE client
+0x01CF todo: Devotion's links (clif_devotion)
+0x01D5 client
+0x01D8 unsent
+0x01D9 unsent
+0x01DA unsent
+0x01DB client
+0x01DC unasked: the login hash key; the client logs in with the plain password
+0x01DD client
+0x01DF client
+0x01E0 unasked: a GM's account-name lookup
+0x01E1 unsent
+0x01E2 unsent
+0x01E3 unsent
+0x01E4 unsent
+0x01E5 unsent
+0x01E7 client
+0x01E8 client
+0x01EC unsent
+0x01ED client
+0x01F0 unsent
+0x01F1 unsent
+0x01F7 client
+0x01F8 unsent
+0x01F9 client
+0x01FA client
+0x01FB client
+0x01FC unsent
+0x01FD client
+0x0200 client
+0x0202 client
+0x0203 client
+0x0204 client
+0x0208 client
+0x020D ignored: blocked characters at character select; not needed yet
+0x020F client
+0x0210 unasked: PvP points
+0x0212 client
+0x0213 client
+0x0214 unasked: a GM's /check
+0x0217 client
+0x0218 client
+0x0219 unsent
+0x021A unsent
+0x021B unsent
+0x021C unsent
+0x021D client
+0x021E unsent
+0x021F unsent
+0x0220 unsent
+0x0222 client
+0x0224 unsent
+0x0225 client
+0x0226 unsent
+0x0227 unsent
+0x0228 unsent
+0x022A unsent
+0x022B unsent
+0x022C unsent
+0x022D client
+0x022E unsent
+0x0231 client
+0x0232 client
+0x0233 client
+0x0234 client
+0x0236 unsent
+0x0237 client
+0x0238 unsent
+0x023A unsent: storage password; rathena never calls clif_storagepassword (non-kRO clients only)
+0x023B client
+0x023C unsent: storage password result; rathena never calls it
+0x023D unsent
+0x023E unsent
+0x023F client
+0x0240 unsent
+0x0241 client
+0x0242 unsent
+0x0243 client
+0x0244 client
+0x0245 unsent
+0x0246 client
+0x0247 client
+0x0248 client
+0x0249 unsent
+0x024A unsent
+0x024B client
+0x024C client
+0x024D client
+0x024E client
+0x024F client
+0x0250 unasked: auction messages; the client has no auction window
+0x0251 client
+0x0252 unasked: auction search results; the client has no auction window
+0x0253 todo: Feeling of the Sun, Moon and Stars asking for a place or target (clif_feel_req)
+0x0254 client
+0x0255 unsent
+0x0256 unasked: an auction item set; the client has no auction window
+0x0257 unsent
+0x0258 unsent
+0x0259 unsent
+0x025B client
+0x025C client
+0x025D client
+0x025E unasked: an auction closed; the client has no auction window
+0x025F todo: the auction window opened by @auction or a script (clif_Auction_openwindow)
+0x0260 todo: the old mail window opened or closed (clif_Mail_window)
+0x0261 unsent
+0x0262 unsent
+0x0263 unsent
+0x0264 unsent
+0x0265 unsent
+0x0266 unsent
+0x0267 unsent
+0x0268 unsent
+0x0269 unsent
+0x026A unsent
+0x026B unsent
+0x026C unsent
+0x026D unsent
+0x026F unsent
+0x0270 unsent
+0x0271 unsent
+0x0272 unsent
+0x0273 client
+0x0274 unasked: the old mail system's return
+0x0277 client
+0x0278 unsent
+0x0279 unsent
+0x027A unsent
+0x027B unsent
+0x027C client
+0x027D unsent
+0x027E unsent
+0x027F unsent
+0x0280 unsent
+0x0281 client
+0x0282 unsent
+0x0283 ignored: ZC_AID, our account id at connect, known from the login
+0x0285 unsent
+0x0286 unsent
+0x0288 client
+0x028A todo: a unit's look update (clif_changeoption2)
+0x028B unsent
+0x028C unsent
+0x028D client
+0x028E unasked: a new name's check before a rename
+0x028F unsent
+0x0290 unsent
+0x0292 client
+0x0294 todo: a book's page (clif_readbook, script readbook)
+0x029A old: an older server's form
+0x029C unsent
+0x029E unsent
+0x029F client
+0x02A0 unsent
+0x02A1 unsent
+0x02A3 unsent
+0x02A4 unsent
+0x02A5 unsent
+0x02A6 unsent
+0x02A7 unsent
+0x02A8 unsent
+0x02A9 unsent
+0x02AA unsent
+0x02AB unsent
+0x02AC unsent
+0x02AD unsent
+0x02B0 client
+0x02B1 unsent
+0x02B2 todo: the quest objectives list (clif_quest_send_mission)
+0x02B3 unsent
+0x02B5 unsent
+0x02B6 client
+0x02B8 old: an older server's form
+0x02B9 unsent
+0x02BA client
+0x02BB todo: a worn item damaged (clif_item_damaged)
+0x02BC unsent
+0x02BF unsent
+0x02C0 unsent
+0x02C2 unsent
+0x02C4 client
+0x02C7 client
+0x02C8 client
+0x02CA unsent
+0x02CF client
+0x02D5 unsent
+0x02D6 client
+0x02D8 client
+0x02DB client
+0x02E0 unsent
+0x02E2 unsent
+0x02E3 unsent
+0x02E4 unsent
+0x02E5 unsent
+0x02E6 unsent
+0x02E7 unsent
+0x02EC unsent
+0x02ED unsent
+0x02EE unsent
+0x02EF todo: a player's chat font (clif_font, @font)
+0x02F1 client
+0x02F3 unsent
+0x02F4 unsent
+0x02F5 unsent
+0x02F6 unsent
+0x02F8 unsent
+0x02F9 unsent
+0x02FA unsent
+0x02FB unsent
+0x02FC unsent
+0x02FD unsent
+0x02FE unsent
+0x02FF unsent
+0x0300 unsent: rathena has no code that sends it
+0x0301 unsent
+0x0302 unsent
+0x0303 unsent
+0x0304 unsent
+0x0305 unsent
+0x0306 unsent
+0x0307 unsent
+0x0308 unsent
+0x0309 unsent
+0x030A unsent
+0x030B unsent
+0x030C unsent
+0x030D unsent
+0x030E unsent
+0x030F unsent
+0x0310 unsent
+0x0311 unsent
+0x0312 unsent
+0x0313 unsent
+0x0314 unsent
+0x0315 unsent
+0x0316 unsent
+0x0317 unsent
+0x0318 unsent
+0x0319 unsent
+0x031A unsent
+0x031B unsent
+0x031C unsent
+0x031D unsent
+0x031E unsent
+0x031F unsent
+0x0320 unsent
+0x0321 unsent
+0x0322 unsent
+0x0323 unsent
+0x0324 unsent
+0x0325 unsent
+0x0326 unsent
+0x0327 unsent
+0x0328 unsent
+0x0329 unsent
+0x032A unsent
+0x032B unsent
+0x032C unsent
+0x032D unsent
+0x032E unsent
+0x032F unsent
+0x0330 unsent
+0x0331 unsent
+0x0332 unsent
+0x0333 unsent
+0x0334 unsent
+0x0335 unsent
+0x0336 unsent
+0x0337 unsent
+0x0338 unsent
+0x0339 unsent
+0x033A unsent
+0x033B unsent
+0x033C unsent
+0x033D unsent
+0x033E unsent
+0x033F unsent
+0x0340 unsent
+0x0341 unsent
+0x0342 unsent
+0x0343 unsent
+0x0344 unsent
+0x0345 unsent
+0x0346 unsent
+0x0347 unsent
+0x0348 unsent
+0x0349 unsent
+0x034A unsent
+0x034B unsent
+0x034C unsent
+0x034D unsent
+0x034E unsent
+0x034F unsent
+0x0350 unsent
+0x0351 unsent
+0x0352 unsent
+0x0353 unsent
+0x0354 unsent
+0x0355 unsent
+0x0356 unsent
+0x0357 unsent
+0x0358 unsent
+0x0359 unsent
+0x035A unsent
+0x035B unsent
+0x035C unsent
+0x035D unsent
+0x035E unsent
+0x035F client
+0x0360 client
+0x0361 client
+0x0362 client
+0x0363 client
+0x0364 client
+0x0365 client
+0x0366 client
+0x0367 client
+0x0368 client
+0x0369 client
+0x0389 unsent
+0x040C unsent
+0x040D unsent
+0x040E unsent
+0x040F unsent
+0x0410 unsent
+0x0411 unsent
+0x0412 unsent
+0x0413 unsent
+0x0414 unsent
+0x0415 unsent
+0x0416 unsent
+0x0417 unsent
+0x0418 unsent
+0x0419 unsent
+0x041A unsent
+0x041B unsent
+0x041C unsent
+0x041D unsent
+0x041E unsent
+0x041F unsent
+0x0420 unsent
+0x0421 unsent
+0x0422 unsent
+0x0423 unsent
+0x0424 unsent
+0x0425 unsent
+0x0426 unsent
+0x0427 unsent
+0x0428 unsent
+0x0429 unsent
+0x042A unsent
+0x042B unsent
+0x042C unsent
+0x042D unsent
+0x042E unsent
+0x042F unsent
+0x0430 unsent
+0x0431 unsent
+0x0432 unsent
+0x0433 unsent
+0x0434 unsent
+0x0435 unsent
+0x0436 client
+0x0437 client
+0x0438 client
+0x0439 client
+0x043E unsent
+0x0443 client
+0x0444 unsent
+0x0445 unsent
+0x0447 client
+0x0448 unsent
+0x0449 unsent
+0x044A client
+0x07D7 client
+0x07D9 unsent
+0x07DA client
+0x07DB old: an older server's form
+0x07E4 client
+0x07E5 unsent
+0x07E7 unsent
+0x07E8 unsent
+0x07E9 unsent
+0x07EC client
+0x07F5 client
+0x07F6 unsent
+0x07F7 unsent
+0x07F8 unsent
+0x07F9 unsent
+0x0800 old: an older server's form
+0x0801 client
+0x0802 client
+0x0803 unasked: party booking; the client has no booking window
+0x0804 client
+0x0805 unasked: party booking search; the client has no booking window
+0x0806 client
+0x0807 unasked: party booking delete; the client has no booking window
+0x0808 client
+0x0809 ignored: party booking notices to everyone; the client has no booking window
+0x080A ignored: party booking notices to everyone; the client has no booking window
+0x080B ignored: party booking notices to everyone; the client has no booking window
+0x0811 client
+0x0815 client
+0x0817 client
+0x0819 client
+0x081B unsent
+0x0820 unsent
+0x0825 client
+0x0827 client
+0x0829 client
+0x082B client
+0x082D ignored: character select's slot counts; not needed yet
+0x0835 client
+0x0836 old: an older server's form
+0x0838 client
+0x083B client
+0x083C client
+0x0840 todo: the maps to pick from when a character's map server is down (chclif_accessible_maps)
+0x0841 client
+0x0842 client
+0x0843 client
+0x0844 client
+0x0846 client
+0x0848 client
+0x084A client
+0x084B unsent
+0x0856 unsent
+0x0857 unsent
+0x0858 unsent
+0x085A client
+0x085D client
+0x0861 client
+0x0862 client
+0x0863 client
+0x0865 client
+0x0868 client
+0x086A client
+0x086C client
+0x086D client
+0x086F client
+0x0870 client
+0x0871 client
+0x0874 client
+0x0879 client
+0x0881 client
+0x0884 client
+0x0885 client
+0x0886 client
+0x0887 client
+0x0888 client
+0x0889 client
+0x088A client
+0x088B client
+0x088D client
+0x088E client
+0x0890 client
+0x0891 client
+0x0893 client
+0x0897 client
+0x0898 client
+0x089B client
+0x089C client
+0x089E client
+0x089F client
+0x08A0 client
+0x08A1 client
+0x08A2 client
+0x08A5 client
+0x08A6 client
+0x08A8 client
+0x08AA client
+0x08AB client
+0x08AC client
+0x08AD client
+0x08B3 todo: a script's showscript balloon over a unit (clif_showscript)
+0x08B8 client
+0x08BA client
+0x08BE client
+0x08C0 unsent
+0x08C5 client
+0x08C7 old: a skill unit; rathena sends 0x09CA at our PACKETVER (0x08C7 is only a switch arm)
+0x08C9 client
+0x08D4 client
+0x08D5 old: an older server's form
+0x08D7 client
+0x08DA client
+0x08DC unsent
+0x08DD client
+0x08DE unsent
+0x08E0 client
+0x08E3 unsent
+0x08E5 client
+0x08E6 unsent
+0x08E7 client
+0x08E8 unsent
+0x08E9 client
+0x08EA unsent
+0x08EB client
+0x08EC unsent
+0x08ED unsent
+0x08EE unsent
+0x08EF client
+0x08F0 unsent
+0x08F1 client
+0x08F2 unsent
+0x08F3 unsent
+0x08F4 unsent
+0x08F5 client
+0x08F6 unsent
+0x08F7 unsent
+0x08F8 unsent
+0x08F9 unsent
+0x08FA unsent
+0x08FB client
+0x08FC client
+0x08FF old: an older server's form
+0x0907 client
+0x090A client
+0x090F unsent
+0x0914 unsent
+0x0915 unsent
+0x0916 client
+0x091C client
+0x091D client
+0x0922 client
+0x0929 client
+0x0933 client
+0x0938 client
+0x093B client
+0x093F client
+0x0945 client
+0x0947 client
+0x094A client
+0x094B client
+0x094C client
+0x094E client
+0x0953 client
+0x0959 client
+0x0960 client
+0x0961 client
+0x0963 client
+0x096A client
+0x096E client
+0x0974 client
+0x0978 client
+0x0979 unasked: the world info
+0x097A unsent
+0x097B unsent
+0x097C client
+0x097D unsent
+0x097F todo: Decorate Cart's cart picker (clif_SelectCart)
+0x0980 client
+0x098D client
+0x0991 old: an older server's form
+0x0993 old: an older server's form
+0x0995 old: an older server's form
+0x0998 client
+0x099D old: an older server's form
+0x099F old: a skill unit; rathena sends 0x09CA at our PACKETVER (0x099F is only a switch arm)
+0x09A0 ignored: character select's page count; not needed yet
+0x09A1 client
+0x09A7 client
+0x09A9 client
+0x09AB client
+0x09AC client
+0x09AD unasked: the GM sale tool (@sale)
+0x09AE client
+0x09AF unasked: the GM sale tool (@sale)
+0x09B0 client
+0x09B1 unasked: the GM sale tool (@sale)
+0x09B2 todo: a cash shop sale starting (clif_sale_start)
+0x09B3 todo: a cash shop sale ending (clif_sale_end)
+0x09B4 client
+0x09B5 unasked: the GM sale tool (@sale)
+0x09B6 client
+0x09B7 unasked: the bank's open answer; the client never sends CZ_REQ_OPEN_BANKING
+0x09B8 client
+0x09B9 unasked: the bank's close; the client never sends CZ_REQ_CLOSE_BANKING
+0x09BC client
+0x09BD unasked: the GM sale tool (@sale)
+0x09C1 todo: Crimson Marker's marks (clif_crimson_marker)
+0x09C3 client
+0x09C4 unasked: the GM sale tool (@sale)
+0x09CE client
+0x09D4 client
+0x09D5 old: an older server's form
+0x09D6 client
+0x09D7 unsent
+0x09D8 client
+0x09DB unsent
+0x09DC unsent
+0x09DD unsent
+0x09E8 client
+0x09E9 client
+0x09EA client
+0x09EB old: an older server's form
+0x09EC client
+0x09EE client
+0x09EF client
+0x09F0 unsent
+0x09F1 client
+0x09F3 client
+0x09F5 client
+0x09F7 unsent
+0x09FB client
+0x09FC unasked: pet evolution's result; the client never asks to evolve a pet
+0x0A00 unsent
+0x0A01 client
+0x0A03 client
+0x0A04 client
+0x0A05 old: an older server's form
+0x0A06 client
+0x0A08 client
+0x0A0A old: an older server's form
+0x0A0B old: an older server's form
+0x0A0D old: an older server's form
+0x0A0F old: an older server's form
+0x0A10 old: an older server's form
+0x0A13 client
+0x0A14 unsent
+0x0A15 unsent
+0x0A16 client
+0x0A17 todo: a dynamic NPC's result (clif_dynamicnpc_result)
+0x0A19 client
+0x0A1B client
+0x0A1D client
+0x0A1E unsent
+0x0A1F client
+0x0A21 client
+0x0A25 client
+0x0A2B old: an older server's form
+0x0A2D old: an older server's form
+0x0A2E client
+0x0A32 unsent
+0x0A35 client
+0x0A37 old: an older server's form
+0x0A39 client
+0x0A3D client
+0x0A3F unsent
+0x0A44 unsent
+0x0A46 client
+0x0A48 client
+0x0A49 client
+0x0A4A unasked: the private airship
+0x0A4B unsent
+0x0A4C unsent
+0x0A4F client
+0x0A52 client
+0x0A53 unasked: a GM's captcha upload
+0x0A54 client
+0x0A55 unasked: a GM's captcha upload
+0x0A56 client
+0x0A57 unasked: a player report for the captcha check
+0x0A5A client
+0x0A5C client
+0x0A68 client
+0x0A69 client
+0x0A6A unasked: a GM's captcha preview
+0x0A6B unasked: a GM's captcha preview
+0x0A6C client
+0x0A6D unasked: a player report for the captcha check
+0x0A6E client
+0x0A70 client
+0x0A77 client
+0x0A78 todo: the camera set by a script or @camerainfo (clif_camerainfo)
+0x0A7D unsent
+0x0A84 old: an older server's form
+0x0A87 old: an older server's form
+0x0A88 client
+0x0A96 old: an older server's form
+0x0A97 client
+0x0A99 client
+0x0A9C client
+0x0AA1 client
+0x0AA3 client
+0x0AA4 client
+0x0AA5 unsent
+0x0AB5 client
+0x0AB6 client
+0x0AB9 old: an older server's form
+0x0AC0 client
+0x0AC1 client
+0x0ACE client
+0x0ACF client
+0x0ADB unsent
+0x0AE3 unasked: one-time password login
+0x0AE6 client
+0x0AE8 client
+0x0AEF client
+0x0AF4 client
+0x0AF8 client
+0x0AFC client
+0x0B0F client
+0x0B10 client
+0x0B11 client
+0x0B12 client
+0x0B14 client
+0x0B16 client
+0x0B19 client
+0x0B1B ignored: the game ignores it too
+0x0B1C client
+0x0B1D ignored: the game ignores it too; its receipt still counts for the keepalive
+0x0B1E client
+0x0B21 client
+0x0B22 client
+0x0B24 client
+0x0B25 unsent: rathena names the id but never sends it; the game's answer to a trait raise (6 bytes)
+0x0B28 client
+0x0B2C client
+0x0B2D unasked: a castle's investment info
+0x0B2E unasked: a castle teleport's answer
+0x0B35 client
+0x0B36 unsent
+0x0B46 client
+0x0B4C client
+0x0B57 client
+0x0B58 client
+0x0B59 client
+0x0B5B client
+0x0B5C client
+0x0B66 client
+0x0B69 unsent
+0x0B6B todo: a summoned monster's HP bar (clif_summon_init)
+0x0B6C todo: a summoned monster's HP bar (clif_summon_hp_bar)
+0x0B6D client
+0x0B72 unasked: the character list by pages; the client reads the full list
+0x0B90 client
+0x0B91 client
+0x0B93 client
+0x0B97 client
+0x0B98 client
+0x0B9A todo: the enchant window opened by a script (clif_enchantwindow_open)
+0x0B9B client
+0x0B9C client
+0x0B9D client
+0x0B9E client
+0x0BA0 client
+0x0BA1 todo: an NPC dialog's text alignment (clif_set_dialog_align)
+0x0BA8 client
+0x0BAD client
+0x0BAF client
+0x0BB0 client
+0x0BB1 client
+0x0BDD client
+0x0BE2 client
+0x0BE9 client
+0x0BF3 client
+0x0BF5 unsent: a PACKETVER 20250402 packet
+0x0C0B client
+0x0C0C unsent
+0x0C22 client
