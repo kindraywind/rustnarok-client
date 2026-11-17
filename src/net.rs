@@ -1117,6 +1117,10 @@ const ZC_ITEM_DELETE_BUYING_STORE: u16 = 0x081C;
 const ZC_FAILED_TRADE_BUYING_STORE_TO_SELLER: u16 = 0x0824;
 const ZC_UPDATE_ITEM_FROM_BUYING_STORE2: u16 = 0x09E6;
 const ZC_DELETE_ITEM_FROM_CART: u16 = 0x0125;
+/// The cart is gone, or about to be listed again (2 bytes).
+const ZC_CARTOFF: u16 = 0x012B;
+/// A move into the cart refused: result.B, 0 too heavy, 1 too many kinds (3 bytes).
+const ZC_ACK_ADDITEM_TO_CART: u16 = 0x012C;
 const CZ_MOVE_ITEM_FROM_BODY_TO_CART: u16 = 0x0126;
 const CZ_MOVE_ITEM_FROM_CART_TO_BODY: u16 = 0x0127;
 const ZC_ADD_ITEM_TO_CART: u16 = 0x0B45;

@@ -192,6 +192,8 @@ const BATTLE_RECEIVES: usize = 1607;
 const BATTLE_ATTACKS: usize = 1608;
 /// Out of ammunition, too heavy, ammunition equipped (ZC_ACTION_FAILURE).
 const ACTION_FAILURES: [usize; 4] = [242, 243, 244, 245];
+/// ZC_ACK_ADDITEM_TO_CART's results 0 (too heavy) and 1 (too many kinds); others say nothing.
+const CART_ADD_FAILURES: [usize; 2] = [56, 221];
 /// Saving a memo point: saved, Warp Portal's level too low, not learned.
 const MEMO_RESULTS: [usize; 3] = [217, 214, 216];
 /// Item news for everyone: a box's or a monster's special item, an NPC's, a high refine that took or didn't. rathena's

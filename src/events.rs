@@ -2275,6 +2275,16 @@ impl App {
             }
             MapEvent::CartCount { most, weight, max_weight, .. } => game.cart.cart = Some((most, [weight, max_weight])),
             MapEvent::CartAdded(item) => game.cart.add(item),
+            // The cart's list is emptied and its window closed.
+            MapEvent::CartOff => {
+                game.cart.clear();
+                game.cart.frame.open = false;
+            }
+            MapEvent::CartAddFailed(result) => {
+                if let Some(&id) = CART_ADD_FAILURES.get(usize::from(result)) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                }
+            }
             MapEvent::CartRemoved { index, amount } => game.cart.remove(index, amount.min(u32::from(u16::MAX)) as u16),
             MapEvent::StorageCount { amount, max } => {
                 game.storage.count = [amount, max];
