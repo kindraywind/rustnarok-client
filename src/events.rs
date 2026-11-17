@@ -1888,7 +1888,7 @@ impl App {
                     }
                 }
             }
-            // RODEX. Closing the window written in after sending lets the server know writing is over.
+            // RODEX. A send that failed tells the server again that writing is over.
             event @ (MapEvent::MailUnread(_)
             | MapEvent::MailList(_)
             | MapEvent::MailRead { .. }
@@ -1899,7 +1899,7 @@ impl App {
             | MapEvent::MailItemAdded { .. }
             | MapEvent::MailItemRemoved { .. }
             | MapEvent::MailSent(_)) => {
-                if matches!(event, MapEvent::MailSent(0)) {
+                if matches!(event, MapEvent::MailSent(1..=4)) {
                     let _ = game.session.cancel_mail();
                 }
                 if let Some((id, error)) = game.mail.event(event) {
