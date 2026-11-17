@@ -928,6 +928,8 @@ fn decodes_others_equipment() {
     assert_eq!(name, "Guild Storage");
     let Some(MapEvent::InventoryStart { kind: 2, name }) = start(b"\0") else { panic!() };
     assert!(name.is_empty());
+    // ZC_INVENTORY_END: the list's kind, then a flag.
+    let Some(MapEvent::InventoryEnd { kind: 2, flag: 0 }) = decode_map_packet(&[0x0B, 0x0B, 2, 0]) else { panic!() };
     // The View Costume box: {5, 0x3C00} hides costumes, {5, 0} shows them; the answer's non-zero means hidden.
     assert_eq!(encode_config_value(CONFIG_HIDE_COSTUMES, HIDE_COSTUMES), [0xD8, 0x02, 5, 0, 0, 0, 0x00, 0x3C, 0, 0]);
     assert_eq!(encode_config_value(CONFIG_HIDE_COSTUMES, 0), [0xD8, 0x02, 5, 0, 0, 0, 0, 0, 0, 0]);

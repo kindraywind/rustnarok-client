@@ -179,6 +179,11 @@ pub enum MapEvent {
         kind: u8,
         items: Vec<InventoryItem>,
     },
+    /// The list of that `kind` is complete (`flag` 0).
+    InventoryEnd {
+        kind: u8,
+        flag: u8,
+    },
     /// Inventory slots beyond the base 100.
     InventoryExpansion(u16),
     /// Fewer of an inventory item: dropped, used up or taken.

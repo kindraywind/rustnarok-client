@@ -2262,6 +2262,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["storage_categories_open"] =
         game.storage.categories.iter().enumerate().filter(|(_, category)| category.frame.open).map(|(tab, _)| tab).collect::<Vec<_>>().into();
     state["storage_title"] = game.storage.name.clone().into();
+    state["storage_loading"] = game.storage.loading.into();
     state["skill_list_rows"] = game.skill_window.list_rows().into();
     state["vend_size"] = json!({"width": game.vend_size.width, "rows": game.vend_size.rows});
     state["shop_size"] = game.shop.as_ref().and_then(crate::shop::Shop::sizes).map(|(width, rows)| json!({"width": width, "rows": rows})).into();
@@ -2535,6 +2536,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("storage_categories_open", Fair),
         ("storage_found", Fair),
         ("storage_list", Fair),
+        ("storage_loading", Fair),
         ("storage_log", Fair),
         ("storage_mask", Fair),
         ("storage_rows", Fair),

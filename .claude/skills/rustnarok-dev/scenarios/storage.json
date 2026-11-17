@@ -1,5 +1,5 @@
 {
-  "about": "The storage list (issue #508): @storeall fills the storage with a Knife, 1,500 Jellopy, a Cotton Shirt, one with two enchants and 10 Red Potions; @storage opens a 280 x 458 window at (360, 200) titled from ZC_INVENTORY_START, with one stack a row (icon, an amount on everything, the name in its enchants' colour) and leaves the inventory shut. The icon's name box sits 16 px above it without an amount; the name beside it shows none. The storage is emptied at the end.",
+  "about": "The storage list (issue #508): @storeall fills the storage with a Knife, 1,500 Jellopy, a Cotton Shirt, one with two enchants and 10 Red Potions; @storage opens a 280 x 458 window at (360, 200) titled from ZC_INVENTORY_START and loaded at ZC_INVENTORY_END (the loading panel gone), with one stack a row (icon, an amount on everything, the name in its enchants' colour) and leaves the inventory shut. The icon's name box sits 16 px above it without an amount; the name beside it shows none. The storage is emptied at the end.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -13,7 +13,7 @@
     {"say": "@item 501 10"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"say": "@storeall"}, {"wait": 1500},
     {"say": "@storage"}, {"wait_for": {"packet": "0x0b08", "ms": 8000}}, {"wait": 500},
-    {"expect": {"windows_open": ["Storage"], "windows_closed": ["Inventory"], "state": {"storage_rows": 12, "storage_title": "Storage"}}},
+    {"expect": {"windows_open": ["Storage"], "windows_closed": ["Inventory"], "state": {"storage_rows": 12, "storage_title": "Storage", "storage_loading": false}}},
     {"move": [1000, 750]},
     {"shot": "storage-usable", "crop": [350, 190, 300, 478]},
     {"click_on": {"button": "storage_tab:2"}}, {"wait": 300},
