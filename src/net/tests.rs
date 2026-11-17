@@ -1067,6 +1067,18 @@ fn decodes_making_lists() {
 }
 
 #[test]
+fn change_cart_packets() {
+    // Change Cart: CZ_REQ_CHANGECART with the type.
+    assert_eq!(encode_change_cart(5), [0xAF, 0x01, 5, 0]);
+    // Change Cart 2: ZC_SELECTCART as rathena sends it (account 2000014, types 10 to 12), answered with CZ_SELECTCART.
+    let select = [0x7F, 0x09, 11, 0, 0x8E, 0x84, 0x1E, 0x00, 10, 11, 12];
+    let Some(MapEvent::SelectCart { account: 2_000_014, kinds }) = decode_map_packet(&select) else { panic!() };
+    assert_eq!(kinds, [10, 11, 12]);
+    assert_eq!(encode_select_cart(2_000_014, 11), [0x80, 0x09, 0x8E, 0x84, 0x1E, 0x00, 11]);
+    assert_eq!([CZ_REQ_CHANGECART, ZC_SELECTCART, CZ_SELECTCART].map(packet_length), [Some(4), Some(-1), Some(7)]);
+}
+
+#[test]
 fn decodes_blacksmith_lists() {
     let mut repair = ZC_REPAIRITEMLIST.to_le_bytes().to_vec();
     repair.extend_from_slice(&28u16.to_le_bytes());

@@ -675,6 +675,11 @@ pub enum MapEvent {
     },
     /// Arrow Crafting's (or a converter's, a poison's) list: the items it can use.
     ArrowList(Vec<u32>),
+    /// Change Cart 2 (ZC_SELECTCART): the cart types to pick from, and the account ID the answer sends back.
+    SelectCart {
+        account: u32,
+        kinds: Vec<u8>,
+    },
     /// Something made, or not: even results succeeded, odd ones failed.
     Made {
         result: u16,

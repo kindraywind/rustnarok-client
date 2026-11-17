@@ -1110,6 +1110,16 @@ impl App {
             (Some((_, feet)), Some((_, Some(sprite)))) => sprite.frame(gpu, 0, 0, 0, Timing::Span(0.0)).into_iter().map(|placed| (placed, feet)).collect(),
             _ => Vec::new(),
         };
+        // The cart choice's carts: each sprite loaded once, its first frame.
+        let cart_frames = match &game.cart_choice {
+            Some(choice) => {
+                for &kind in &choice.kinds {
+                    game.cart_sprites.entry(kind).or_insert_with(|| cart_choice::load_sprite(grf, kind));
+                }
+                cart_choice::frames(gpu, &mut game.cart_sprites, &choice.kinds)
+            }
+            None => HashMap::new(),
+        };
         let slot_frame = match (&mut game.slot_sprite, game.slot.as_ref()) {
             (Some(sprite), Some(machine)) => match machine.frame(now, [0, 1].map(|action| sprite.frames(action))) {
                 Some((action, frame)) => {
@@ -2735,6 +2745,10 @@ impl App {
         if let Some(log) = &game.storage_log {
             let names = (&messages[..], card_names, &game.char_names);
             log.draw(shop_layer.window_of(Top::GuildStorageLog), &assets.chrome, &assets.storage_log, items, names, font, pointer);
+        }
+        if let Some(choice) = &game.cart_choice {
+            let sprites = (&game.cart_sprites, &cart_frames);
+            choice.draw(shop_layer.window_of(Top::CartChoice), &assets.chrome, &assets.cart_choice, sprites, messages, pointer.0);
         }
         // The battleground queue, and its question: applying, leaving, or entering with the time left.
         if game.queue_window.frame.open {

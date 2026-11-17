@@ -419,6 +419,16 @@ impl MapSession {
         self.stream.write_all(&encode_make_arrow(item))
     }
 
+    /// Change Cart's choice: the cart type.
+    pub fn change_cart(&mut self, kind: u16) -> io::Result<()> {
+        self.stream.write_all(&encode_change_cart(kind))
+    }
+
+    /// Change Cart 2's choice from ZC_SELECTCART's list.
+    pub fn select_cart(&mut self, account: u32, kind: u8) -> io::Result<()> {
+        self.stream.write_all(&encode_select_cart(account, kind))
+    }
+
     /// Answers Repair Weapon's list with an entry, or none.
     pub fn repair(&mut self, item: Option<&InventoryItem>) -> io::Result<()> {
         self.stream.write_all(&encode_repair(item))

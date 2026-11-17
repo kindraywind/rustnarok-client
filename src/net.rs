@@ -1428,6 +1428,9 @@ const ZC_MAKINGITEM_LIST: u16 = 0x025A;
 const CZ_REQ_MAKINGITEM: u16 = 0x025B;
 const ZC_MAKINGARROW_LIST: u16 = 0x01AD;
 const CZ_REQ_MAKINGARROW: u16 = 0x01AE;
+const CZ_REQ_CHANGECART: u16 = 0x01AF;
+const ZC_SELECTCART: u16 = 0x097F;
+const CZ_SELECTCART: u16 = 0x0980;
 const ZC_NPC_MARKET_OPEN: u16 = 0x0B7A;
 const CZ_NPC_MARKET_PURCHASE: u16 = 0x09D6;
 const ZC_NPC_MARKET_PURCHASE_RESULT: u16 = 0x0B4E;
@@ -2822,6 +2825,22 @@ fn encode_make_arrow(item: u32) -> [u8; 6] {
     let mut packet = [0u8; 6];
     packet[..2].copy_from_slice(&CZ_REQ_MAKINGARROW.to_le_bytes());
     packet[2..].copy_from_slice(&item.to_le_bytes());
+    packet
+}
+
+/// CZ_REQ_CHANGECART: Change Cart's choice, the cart type.
+fn encode_change_cart(kind: u16) -> [u8; 4] {
+    let [low, high] = CZ_REQ_CHANGECART.to_le_bytes();
+    let [kind_low, kind_high] = kind.to_le_bytes();
+    [low, high, kind_low, kind_high]
+}
+
+/// CZ_SELECTCART: Change Cart 2's choice, with the account ID ZC_SELECTCART came with.
+fn encode_select_cart(account: u32, kind: u8) -> [u8; 7] {
+    let mut packet = [0u8; 7];
+    packet[..2].copy_from_slice(&CZ_SELECTCART.to_le_bytes());
+    packet[2..6].copy_from_slice(&account.to_le_bytes());
+    packet[6] = kind;
     packet
 }
 

@@ -1,0 +1,319 @@
+{
+ "about": "Change Cart and Change Cart 2 (issue #1355): a base 99 Merchant with the plain cart uses Change Cart from the skill window; the Cart List offers carts 1 to 5, a click on the fifth sends CZ_REQ_CHANGECART and the cart behind the player changes. Change Cart 2 from a hotkey: the server's list (gift box, poring-loaded, poring), a click on the poring cart sends CZ_SELECTCART. Shots of each list and of the cart after each walk north or back south on open grass. Ends a Novice without the quest skills.",
+ "account": "",
+ "slot": 0,
+ "steps": [
+  {
+   "say": "@warp gef_fild07 61 229"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "say": "@set BaseLevel 99"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "say": "@job 5"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@allskill"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "say": "@questskill 154"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@questskill 2544"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@cart 0"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "say": "@cart 1"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "say": "@heal"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "cart-before",
+   "crop": [
+    362,
+    214,
+    300,
+    320
+   ],
+   "threshold": 5
+  },
+  {
+   "key": "Alt+S"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "drag_on": [
+    {
+     "skill": 2544
+    },
+    {
+     "hotkey": 0
+    }
+   ]
+  },
+  {
+   "wait": 300
+  },
+  {
+   "click_on": {
+    "skill": 154
+   }
+  },
+  {
+   "click_on": {
+    "skill": 154
+   }
+  },
+  {
+   "wait_for": {
+    "sent": "0x0438",
+    "ms": 3000
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "expect": {
+    "windows_open": [
+     "CartChoice"
+    ],
+    "state": {
+     "cart_choice.kinds": [
+      1,
+      2,
+      3,
+      4,
+      5
+     ]
+    }
+   }
+  },
+  {
+   "key": "Alt+S"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "change-cart-list",
+   "crop": [
+    392,
+    320,
+    385,
+    98
+   ]
+  },
+  {
+   "click_on": {
+    "button": "cart:5"
+   }
+  },
+  {
+   "wait_for": {
+    "sent": "0x01af",
+    "ms": 3000
+   }
+  },
+  {
+   "wait_for": {
+    "event": "StatusIcon",
+    "ms": 3000
+   }
+  },
+  {
+   "expect": {
+    "windows_closed": [
+     "CartChoice"
+    ]
+   }
+  },
+  {
+   "click_on": {
+    "cell": [
+     61,
+     236
+    ]
+   }
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "change-cart-5",
+   "crop": [
+    362,
+    214,
+    300,
+    320
+   ],
+   "threshold": 5
+  },
+  {
+   "key": "F1"
+  },
+  {
+   "wait_for": {
+    "packet": "0x097f",
+    "ms": 3000
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "expect": {
+    "windows_open": [
+     "CartChoice"
+    ],
+    "state": {
+     "cart_choice.kinds": [
+      10,
+      11,
+      12
+     ]
+    }
+   }
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "change-cart-2-list",
+   "crop": [
+    392,
+    320,
+    385,
+    98
+   ]
+  },
+  {
+   "click_on": {
+    "button": "cart:12"
+   }
+  },
+  {
+   "wait_for": {
+    "sent": "0x0980",
+    "ms": 3000
+   }
+  },
+  {
+   "wait_for": {
+    "event": "StatusIcon",
+    "ms": 3000
+   }
+  },
+  {
+   "expect": {
+    "windows_closed": [
+     "CartChoice"
+    ]
+   }
+  },
+  {
+   "click_on": {
+    "cell": [
+     61,
+     229
+    ]
+   }
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "change-cart-2-poring",
+   "crop": [
+    362,
+    214,
+    300,
+    320
+   ],
+   "threshold": 5
+  },
+  {
+   "say": "@cart 0"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "say": "@lostskill 154"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@lostskill 2544"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@job 0"
+  },
+  {
+   "wait": 500
+  }
+ ]
+}

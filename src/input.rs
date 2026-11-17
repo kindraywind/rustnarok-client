@@ -1845,6 +1845,22 @@ impl App {
                     }
                 }
             }
+            // The cart choice: a cart sends its type (Change Cart's or Change Cart 2's answer) and closes it, as does its close
+            // button, which sends nothing.
+            Scene::Game(game) if on(Top::CartChoice) => {
+                let choice = game.cart_choice.as_ref().unwrap();
+                match choice.hit(cursor) {
+                    Some(cart_choice::Hit::Cart(kind)) => {
+                        let _ = match choice.answer {
+                            cart_choice::Answer::ChangeCart => game.session.change_cart(kind),
+                            cart_choice::Answer::SelectCart(account) => game.session.select_cart(account, kind as u8),
+                        };
+                        game.cart_choice = None;
+                    }
+                    Some(cart_choice::Hit::Close) => game.cart_choice = None,
+                    _ => {}
+                }
+            }
             // The slot machine: the first press on it makes the try.
             Scene::Game(game) if on(Top::Slot) => {
                 let machine = game.slot.as_mut().unwrap();
@@ -2046,6 +2062,10 @@ impl App {
             game.memorial.frame.drag_to(self.cursor, memorial_height);
             if let Some(log) = &mut game.storage_log {
                 log.drag_to(self.cursor);
+            }
+            if let Some(choice) = &mut game.cart_choice {
+                let height = choice.size()[1];
+                choice.frame.drag_to(self.cursor, height);
             }
             if let Some(window) = &mut game.stylist {
                 window.frame.drag_to(self.cursor, stylist::HEIGHT);
@@ -2877,7 +2897,8 @@ impl App {
                     | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.memorial.frame.drop_drag()
                     | game.forge.as_mut().is_some_and(|forge| forge.frame.drop_drag())
-                    | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag);
+                    | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag)
+                    | game.cart_choice.as_mut().is_some_and(|choice| choice.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
                 let slid = game.settings_window.as_mut().is_some_and(game_settings::GameSettings::drop_drag);
                 if slid {
@@ -3144,6 +3165,16 @@ impl App {
         }
         if let Scene::Game(game) = &mut self.scene {
             game.press_esc(top);
+        }
+        // The cart choice: its title bar drags it; the rest goes on the release.
+        if let Scene::Game(game) = &mut self.scene
+            && top == Some(Top::CartChoice)
+            && let Some(choice) = &mut game.cart_choice
+        {
+            if choice.hit(cursor) == Some(cart_choice::Hit::Title) {
+                choice.frame.start_drag(cursor);
+            }
+            return;
         }
         // The guild storage log: its tabs and arrows on the press, Close too, and anywhere else drags it.
         if let Scene::Game(game) = &mut self.scene

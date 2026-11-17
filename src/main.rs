@@ -824,6 +824,8 @@ const COOLDOWN_GRACE: Duration = Duration::from_millis(100);
 /// The Talkie Box (a Hunter's trap holding a message), and the box asking for its message.
 // ponytail: 436 "Please type a message for the Talkie Box"; 435 may be the official one.
 const TALKIE_BOX: u16 = 125;
+/// Change Cart (MC_CHANGECART): the client picks the cart itself.
+const CHANGE_CART: u16 = 154;
 /// A held item's or skill's icon is drawn this much larger than in its slot.
 const DRAG_ICON_SCALE: f32 = 1.5;
 /// The aim balloons' text.
@@ -1271,6 +1273,10 @@ struct Game {
     quest_npc: Option<(String, Option<SpriteSet>)>,
     /// The taming slot machine, open on a monster.
     slot: Option<taming::Machine>,
+    /// Change Cart's (or Change Cart 2's) choice, each cart's sprite once loaded, and the red lines when it can't open.
+    cart_choice: Option<cart_choice::CartChoice>,
+    cart_sprites: HashMap<u16, Option<SpriteSet>>,
+    cart_refusals: [String; 2],
     /// Units casting (None = the player): when it began and how long it takes.
     casts: HashMap<Option<u32>, (Instant, Duration)>,
     /// The last web page an NPC's link opened, under the control socket (which doesn't open it).
@@ -3097,6 +3103,7 @@ struct Assets {
     npc_menu: npc_menu::Assets,
     npc_input: npc_input::Assets,
     captcha: captcha::Assets,
+    cart_choice: cart_choice::Assets,
     cutin: cutin::Assets,
     next: ButtonImages,
     close: ButtonImages,
@@ -3228,6 +3235,7 @@ impl Assets {
             npc_menu: npc_menu::Assets::load(gpu, grf),
             npc_input: npc_input::Assets::load(gpu),
             captcha: captcha::Assets::load(gpu),
+            cart_choice: cart_choice::Assets::load(gpu, grf),
             cutin: cutin::Assets::load(gpu, grf),
             next: button(UI, "btn_next"),
             close: button(UI, "btn_close"),

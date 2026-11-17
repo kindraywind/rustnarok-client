@@ -516,6 +516,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // Each entry is the item and three materials rathena leaves at 0.
         ZC_MAKABLEITEMLIST => MapEvent::MakeList(packet[4..].chunks_exact(16).map(|entry| self::u32_at(entry, 0)).collect()),
         ZC_MAKINGITEM_LIST => MapEvent::CookList { kind: u16_at(4), items: packet[6..].chunks_exact(4).map(|id| self::u32_at(id, 0)).collect() },
+        ZC_SELECTCART => MapEvent::SelectCart { account: u32_at(4), kinds: packet.get(8..).unwrap_or_default().to_vec() },
         ZC_MAKINGARROW_LIST => MapEvent::ArrowList(packet[4..].chunks_exact(4).map(|id| self::u32_at(id, 0)).collect()),
         ZC_ACK_REQMAKINGITEM => MapEvent::Made { result: u16_at(2), item: u32_at(4) },
         // REPAIRITEM_INFO2: index, item, cards, refine, grade.

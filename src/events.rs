@@ -394,6 +394,9 @@ impl App {
                     talkie_text: None,
                     talkie_spots: HashMap::new(),
                     cooldown_line: self.messages.get(COOLDOWN_REFUSED).cloned().unwrap_or_default(),
+                    cart_choice: None,
+                    cart_sprites: HashMap::new(),
+                    cart_refusals: cart_choice::REFUSALS.map(|id| self.messages.get(id).cloned().unwrap_or_default()),
                     effects: effects::Effects::default(),
                     deal_choice: None,
                     deal_frame: window::Frame::new(shop::deal_box_position(), shop::DEAL_SIZE[0]),
@@ -3284,6 +3287,15 @@ impl App {
             MapEvent::MakeList(items) => {
                 let rows = items.into_iter().map(|id| net::InventoryItem { id, identified: true, ..Default::default() }).collect();
                 game.pick = Some((pick_list::PickList::text(MAKING_TITLE, rows), Picking::Make));
+            }
+            // Change Cart 2: the server's carts in the cart choice (an open one takes the new list where it is); none, nothing.
+            MapEvent::SelectCart { account, kinds } => {
+                let choice = cart_choice::CartChoice::select_cart(account, &kinds, screen());
+                match &mut game.cart_choice {
+                    _ if kinds.is_empty() => {}
+                    Some(open) => (open.kinds, open.answer) = (choice.kinds, choice.answer),
+                    None => game.cart_choice = Some(choice),
+                }
             }
             // Opened empty too; Cancel answers it.
             MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) => {
