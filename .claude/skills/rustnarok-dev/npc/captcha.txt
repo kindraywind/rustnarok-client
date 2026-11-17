@@ -1,0 +1,6 @@
+// Captcha check (issue #1333): Captcha Test starts the server's macro detector on whoever clicks it. The server needs
+// a captcha in its captcha_db. Loaded and unloaded by scenarios/captcha.json.
+morocc,157,123,4	script	Captcha Test	86,{
+	macro_detector;
+	end;
+}

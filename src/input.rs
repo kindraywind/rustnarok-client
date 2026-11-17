@@ -2633,6 +2633,15 @@ impl App {
                 let _ = game.session.stop_attack();
             }
         }
+        // A captcha check takes every click: OK answers.
+        if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
+            && game.captcha.as_ref().is_some_and(|check| check.asked.is_some())
+        {
+            if state == ElementState::Released && contains(captcha::ok_on(screen()), assets.ok[0].size, self.cursor) {
+                game.answer_captcha();
+            }
+            return;
+        }
         let message_size = self.assets.as_ref().map_or([0.0; 2], |assets| assets.message.size);
         let dragged = match &mut self.scene {
             Scene::Game(game) if state == ElementState::Released => {
@@ -4002,6 +4011,19 @@ impl App {
                 }
                 return;
             }
+        }
+        // A captcha check takes every key: typing goes to its field, Enter answers; Esc doesn't close it.
+        if let Scene::Game(game) = &mut self.scene
+            && let Some(check) = game.captcha.as_mut().filter(|check| check.asked.is_some())
+        {
+            let held = self.modifiers.super_key() || self.modifiers.control_key();
+            match key {
+                Key::Named(NamedKey::Enter) => game.answer_captcha(),
+                Key::Named(NamedKey::Backspace) => _ = check.typed.pop(),
+                _ if !held => check.type_text(event.text.as_deref().unwrap_or_default()),
+                _ => {}
+            }
+            return;
         }
         // Ctrl+Cmd+F, as Macs have it: fullscreen (the canvas widened to the screen's shape), or back. Alt+Enter is no
         // shortcut in the game: it reaches it as Enter with Alt held.

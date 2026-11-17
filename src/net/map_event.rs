@@ -179,6 +179,18 @@ pub enum MapEvent {
         kind: u8,
         items: Vec<InventoryItem>,
     },
+    /// A captcha check (rathena's macro detector) starts: its picture, `size` bytes compressed, comes in chunks.
+    CaptchaStart {
+        size: u16,
+    },
+    CaptchaChunk(Vec<u8>),
+    /// The answer is asked for: the tries left and the time limit.
+    CaptchaAsk {
+        tries: u8,
+        ms: i32,
+    },
+    /// The check is over: 0 out of time, 1 out of tries, 2 answered.
+    CaptchaClosed(i32),
     /// The list of that `kind` is complete (`flag` 0).
     InventoryEnd {
         kind: u8,

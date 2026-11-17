@@ -8,6 +8,7 @@ pub(crate) mod basic_info;
 pub(crate) mod battle_queue;
 pub(crate) mod booking_window;
 pub(crate) mod buying;
+pub(crate) mod captcha;
 pub(crate) mod cashshop;
 pub(crate) mod catalog;
 pub(crate) mod char_make;
