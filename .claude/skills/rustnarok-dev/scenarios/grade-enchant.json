@@ -1,5 +1,5 @@
 {
-  "about": "Grade enchanting (issue #116). The local server needs db/import/enchantgrade.yml overriding Armor level 2, grade None, refine 20 to chance 10000, or the try is not certain. @reloadstatusdb loads it. Take the override out when the test is done.",
+  "about": "Grade enchanting (issue #116). The result line comes 3 s after the result and the window is empty then; nothing is sent after the result. The local server needs db/import/enchantgrade.yml overriding Armor level 2, grade None, refine 20 to chance 10000, or the try is not certain. @reloadstatusdb loads it. Take the override out when the test is done.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -12,6 +12,7 @@
     {"say": "@zeny -2000000000"}, {"wait": 400}, {"say": "@zeny 175000"}, {"wait": 400},
     {"say": "@enchantgradeui"}, {"wait_for": {"packet": "0x0ae2", "ms": 5000}}, {"wait": 300},
     {"expect": {"windows_open": ["GradeEnchant", "Inventory"]}},
+    {"click_on": {"button": "tab:equip"}}, {"wait": 200},
     {"drag_on": [{"inventory_item": 15282}, {"point": [500, 260]}]},
     {"wait_for": {"packet": "0x0b5a", "ms": 5000}}, {"wait": 300}, {"move": [900, 700]},
     {"shot": "grade-listed", "crop": [290, 90, 420, 370]},
@@ -21,8 +22,10 @@
     {"click_on": {"button": "start"}},
     {"wait_for": {"packet": "0x0b5d", "ms": 5000}},
     {"wait_for": {"packet": "0x0b5e", "ms": 5000}}, {"wait": 400},
-    {"expect": {"inventory_has": [{"id": 15282, "grade": 1, "refine": 0}], "inventory_items": 1, "zeny": 0, "chat": "The grade has been successfully upgraded."}},
-    {"expect": {"chat": "succeeded in enhancing the grade"}},
+    {"expect": {"inventory_has": [{"id": 15282, "grade": 1, "refine": 0}], "inventory_items": 1, "zeny": 0, "chat": "succeeded in enhancing the grade", "no_chat": "The grade has been successfully upgraded.", "button": {"name": "material_0"}}},
+    {"shot": "grade-result", "crop": [290, 90, 420, 370]},
+    {"wait": 2800},
+    {"expect": {"chat": "The grade has been successfully upgraded.", "no_target": {"button": "material_0"}, "windows_open": ["GradeEnchant"]}},
     {"shot": "grade-done", "crop": [290, 90, 420, 370]},
     {"click_on": {"button": "close"}}, {"wait": 400},
     {"expect": {"windows_closed": ["GradeEnchant"]}},

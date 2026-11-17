@@ -4,6 +4,7 @@
 //! (`.str`) are left out: when they play isn't knowable.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use rustnarok_client::grf::Grf;
 use rustnarok_client::lua::ItemInfo;
@@ -46,6 +47,8 @@ const WONT_BREAK: usize = 3822;
 const REFINE_TOO_LOW: usize = 3821;
 /// Raised, failed, refine down, destroyed, protected.
 pub const RESULT_LINES: [usize; 5] = [3702, 3703, 3704, 3705, 3706];
+/// A try's line comes this long after its result (the result's animation), and the window empties then.
+const RESULT_DELAY: Duration = Duration::from_secs(3);
 pub const CANT_UPGRADE: usize = 3720;
 pub const ANNOUNCE_OK: usize = 3718;
 pub const ANNOUNCE_FAIL: usize = 3719;
@@ -199,13 +202,15 @@ pub struct GradeEnchant {
     materials: Vec<GradeMaterial>,
     steps: u32,
     picked: Option<usize>,
+    /// A try's result waiting for its line, and when the line comes.
+    result: Option<(u32, Instant)>,
 }
 
 impl GradeEnchant {
     pub fn new() -> Self {
         let mut frame = Frame::new(POSITION, WIDTH);
         frame.open = true;
-        Self { frame, item: None, chance: 0, blessing: GradeBlessing::default(), materials: Vec::new(), steps: 0, picked: None }
+        Self { frame, item: None, chance: 0, blessing: GradeBlessing::default(), materials: Vec::new(), steps: 0, picked: None, result: None }
     }
 
     /// The server's list for an item. The same item keeps the row, with the steps clamped to the new most.
@@ -235,20 +240,18 @@ impl GradeEnchant {
         self.blessing = GradeBlessing::default();
     }
 
-    /// The try's result. 3 empties the window. 0 and 1 empty it too: the caller asks for the list again, and when
-    /// none comes (the top grade) the window stays empty.
-    pub fn finished(&mut self, result: u32) -> bool {
-        match result {
-            3 => {
-                self.clear();
-                false
-            }
-            0 | 1 => {
-                self.clear();
-                true
-            }
-            _ => false,
-        }
+    /// A try's result: its line, and the window emptied, come `RESULT_DELAY` later (`result_due`). Nothing is sent: the
+    /// item is asked about again only when one is put in.
+    pub fn finished(&mut self, result: u32, now: Instant) {
+        self.result = Some((result, now + RESULT_DELAY));
+    }
+
+    /// The result whose time has come: the window empties, and the caller prints its line.
+    pub fn result_due(&mut self, now: Instant) -> Option<u32> {
+        let (result, _) = self.result.filter(|&(_, at)| now >= at)?;
+        self.clear();
+        self.result = None;
+        Some(result)
     }
 
     pub fn chance_shown(&self) -> u32 {
@@ -284,7 +287,8 @@ impl GradeEnchant {
             Hit::BlessingUp => self.steps = (self.steps + 1).min(self.blessing.most),
             Hit::BlessingDown => self.steps = self.steps.saturating_sub(1),
             Hit::Start => {
-                let index = self.item?;
+                // ponytail: no try while the last one's result plays out.
+                let index = self.item.filter(|_| self.result.is_none())?;
                 return match start_request(self.picked, &self.materials, self.chance, self.steps, self.blessing.item, self.blessing.per_step, carried, zeny) {
                     Start::Go { material, steps } => Some(Action::Enchant { index, material, steps }),
                     Start::Refuse(id) => Some(Action::Refuse(id)),
@@ -525,13 +529,17 @@ mod tests {
         assert!(window.start_off());
         assert_eq!(window.click(Hit::Start, &have, 175_000), None);
 
-        assert!(window.finished(0));
-        assert_eq!(window.item, None);
+        // A result: its line and the window emptied 3 s on, and no try meanwhile.
         window.listed(4, 100, blessing(1_000_337, 10, 1), vec![row(1_000_325, 1, 175_000)]);
-        assert!(!window.finished(2));
+        window.click(Hit::Material(0), &have, 175_000);
+        let now = Instant::now();
+        window.finished(2, now);
+        assert_eq!(window.click(Hit::Start, &have, 175_000), None);
+        assert_eq!(window.result_due(now + Duration::from_millis(2999)), None);
         assert_eq!(window.item, Some(4));
-        assert!(!window.finished(3));
+        assert_eq!(window.result_due(now + RESULT_DELAY), Some(2));
         assert_eq!(window.item, None);
+        assert_eq!(window.result_due(now + RESULT_DELAY), None);
 
         let names: Vec<_> = {
             let mut listed = GradeEnchant::new();

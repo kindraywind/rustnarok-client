@@ -1186,7 +1186,7 @@ impl App {
                     window.listed(index as u16, chance, blessing, materials);
                 }
             }
-            // The item's new grade. Result 3 already deleted it. 0 and 1 ask for the list again.
+            // The item's new grade (result 3 already deleted it); the window's line comes later (tick).
             MapEvent::GradeResult { index, grade: next, result } => {
                 if result != 3
                     && let Some(item) = game.inventory.items.iter_mut().find(|item| item.index == index)
@@ -1194,14 +1194,7 @@ impl App {
                     grade::apply_result(item, next, result);
                 }
                 if let Some(window) = &mut game.grade {
-                    let again = window.finished(result);
-                    if let Some(&id) = grade::RESULT_LINES.get(result as usize) {
-                        let color = if result == 0 || result == 4 { CHAT_ITEM } else { CHAT_ERROR };
-                        game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
-                    }
-                    if again {
-                        let _ = game.session.grade_select(index);
-                    }
+                    window.finished(result, control::now());
                 }
             }
             MapEvent::SynthesisOpen(id) => match self.synthesis_boxes.get(&id) {
