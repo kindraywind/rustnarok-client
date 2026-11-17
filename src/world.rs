@@ -575,6 +575,14 @@ pub fn sprite_corner([x, y]: [f32; 2], [w, h]: [f32; 2], angle: f32, [u, v]: [f3
     ([x + w / 2.0 + dx, y + h / 2.0 + dy], [1.0 + px, 1.0 + py])
 }
 
+/// The screen pixels each of a glow's corners moves to grow it by `grow` on every side: away from the quad's middle on
+/// each axis. A mirrored image (negative width) has its first corner on the right, so going by the corner's place, not
+/// its index, keeps the copy from shrinking sideways.
+fn grow_pushes(corners: [[f32; 2]; 4], grow: f32) -> [[f32; 2]; 4] {
+    let middle = [0, 1].map(|axis| corners.iter().map(|corner| corner[axis]).sum::<f32>() / 4.0);
+    corners.map(|corner| [0, 1].map(|axis| if corner[axis] < middle[axis] { -grow } else { grow }))
+}
+
 /// A sprite image in the world: texture, feet position, top-left offset from the feet and size in sprite pixels
 /// (negative width = mirrored), a color to multiply it by (damage colors, fading), degrees to turn it clockwise
 /// about its middle, and its depth layer.
@@ -1695,13 +1703,10 @@ impl WorldPass for WorldFrame<'_> {
             .glows
             .iter()
             .flat_map(|&(_, feet, corners, tint, _, grow)| {
-                let corner = |index: usize, uv: [f32; 2], pixel: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel, plane: [0.0; 3] };
-                let [top_left, top_right, bottom_right, bottom_left] = [
-                    corner(0, [0.0, 0.0], [-grow, -grow]),
-                    corner(1, [1.0, 0.0], [grow, -grow]),
-                    corner(2, [1.0, 1.0], [grow, grow]),
-                    corner(3, [0.0, 1.0], [-grow, grow]),
-                ];
+                let pushes = grow_pushes(corners, grow);
+                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel: pushes[index], plane: [0.0; 3] };
+                let [top_left, top_right, bottom_right, bottom_left] =
+                    [corner(0, [0.0, 0.0]), corner(1, [1.0, 0.0]), corner(2, [1.0, 1.0]), corner(3, [0.0, 1.0])];
                 [top_left, top_right, bottom_left, bottom_left, top_right, bottom_right]
             })
             .collect();
@@ -3035,6 +3040,19 @@ mod tests {
         assert_eq!(find_path(&open, [1, 1], [7, 5]).unwrap(), [[2, 2], [3, 3], [4, 4], [5, 5], [6, 5], [7, 5]]);
         let walled = gat(&["0000000000", "0000000000", "0001110000", "0000010000", "0000010000", "0000000000", "0000000000", "0000000000"]);
         assert_eq!(find_path(&walled, [1, 1], [8, 4]).unwrap(), [[2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [7, 2], [8, 3], [8, 4]]);
+    }
+
+    #[test]
+    fn glows_grow_outward_when_mirrored() {
+        for width in [40.0, -40.0] {
+            let corners = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]].map(|uv| sprite_corner([-20.0, -80.0], [width, 80.0], 0.0, uv).0);
+            let grown: Vec<[f32; 2]> = corners.iter().zip(grow_pushes(corners, 5.0)).map(|(c, p)| [c[0] + p[0], c[1] + p[1]]).collect();
+            let span = |points: &[[f32; 2]], axis: usize| {
+                points.iter().map(|p| p[axis]).fold(f32::MIN, f32::max) - points.iter().map(|p| p[axis]).fold(f32::MAX, f32::min)
+            };
+            // 10 pixels wider and taller either way: a mirrored copy used to come out 10 narrower.
+            assert_eq!([span(&grown, 0), span(&grown, 1)], [span(&corners, 0) + 10.0, span(&corners, 1) + 10.0]);
+        }
     }
 
     #[test]

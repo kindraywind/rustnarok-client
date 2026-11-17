@@ -1,0 +1,35 @@
+{
+ "about": "Assumptio with the camera turned 270 degrees, so the player facing north is drawn facing right from a mirrored image: the two white outlines hug the body on every side instead of shrinking inside it. Our NPC (npc/status-bodies.txt) starts and ends the status; the NPC is unloaded.",
+ "account": "",
+ "slot": 0,
+ "env": {
+  "RUSTNAROK_CLIENT_CAMERA": "270,45,65"
+ },
+ "steps": [
+  {"say": "@warp prontera 156 180"},
+  {"settle": 1500},
+  {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/status-bodies.txt"},
+  {"wait": 500},
+  {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/status-bodies.txt"},
+  {"wait": 1000},
+  {"key": "Tab"},
+  {"type": "npc:RustnarokBodies"},
+  {"key": "Tab"},
+  {"type": "clear"},
+  {"key": "Enter"},
+  {"wait": 800},
+  {"move": [1000, 740]},
+  {"type": "assumptio"},
+  {"key": "Enter"},
+  {"wait": 1200},
+  {"expect": {"state": {"camera.yaw": 270, "player.direction": 4}, "state_at_least": {"status_icons.0.left_ms": 1}}},
+  {"cmd": {"cmd": "clock", "action": "pause"}},
+  {"shot": "assumptio-turned", "crop": [362, 150, 300, 300], "threshold": 30},
+  {"cmd": {"cmd": "clock", "action": "resume"}},
+  {"type": "clear"},
+  {"key": "Enter"},
+  {"wait": 1000},
+  {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/status-bodies.txt"},
+  {"wait": 500}
+ ]
+}
