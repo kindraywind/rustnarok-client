@@ -1,0 +1,238 @@
+{
+ "about": "ZC_CARTOFF 0x012b and ZC_ACK_ADDITEM_TO_CART 0x012c: a Merchant puts Jellopy in the cart with its window open; taking the cart off (@cart 0) closes the window and empties its list; with the cart's weight limit lowered (@setbattleflag max_cart_weight 100, the ten Jellopy's weight, put back at the end), one more Jellopy is refused with 'You are over your Weight Limit.' in red.",
+ "account": "",
+ "slot": 0,
+ "steps": [
+  {
+   "say": "@warp morocc 160 120"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "say": "@itemreset"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@job 5"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@cart 2"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "say": "@item 909 10"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "click_on": {
+    "button": "tab:etc"
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "key": "Alt+W"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "expect": {
+    "windows_open": [
+     "Inventory",
+     "Cart"
+    ]
+   }
+  },
+  {
+   "click_on": {
+    "button": "cart_tab:etc"
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "click_on": {
+    "inventory_item": 909
+   },
+   "button": "right",
+   "mods": "Alt"
+  },
+  {
+   "wait_for": {
+    "sent": "0x0126",
+    "ms": 3000
+   }
+  },
+  {
+   "wait": 500
+  },
+  {
+   "expect": {
+    "button": {
+     "name": "cart_item:909"
+    }
+   }
+  },
+  {
+   "say": "@cart 0"
+  },
+  {
+   "wait_for": {
+    "packet": "0x012b",
+    "ms": 3000
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "expect": {
+    "windows_closed": [
+     "Cart"
+    ],
+    "no_target": {
+     "button": "cart_item:909"
+    }
+   }
+  },
+  {
+   "say": "@setbattleflag max_cart_weight 100"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@cart 2"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "key": "Alt+W"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "expect": {
+    "windows_open": [
+     "Inventory",
+     "Cart"
+    ]
+   }
+  },
+  {
+   "say": "@item 909 1"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "click_on": {
+    "inventory_item": 909
+   },
+   "button": "right",
+   "mods": "Alt"
+  },
+  {
+   "wait_for": {
+    "packet": "0x012c",
+    "ms": 3000
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "expect": {
+    "chat": "You are over your Weight Limit."
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "shot": "cart-add-refused",
+   "crop": [
+    0,
+    560,
+    520,
+    208
+   ],
+   "threshold": 5
+  },
+  {
+   "say": "@setbattleflag max_cart_weight 8000"
+  },
+  {
+   "wait": 300
+  },
+  {
+   "say": "@cart 0"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@cart 2"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@cleancart"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@cart 0"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@itemreset"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@job 0"
+  },
+  {
+   "wait": 500
+  }
+ ]
+}

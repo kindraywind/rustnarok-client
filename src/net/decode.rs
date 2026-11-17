@@ -890,6 +890,8 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_ACK_REMOVE_ITEM_MAIL => MapEvent::MailItemRemoved { ok: packet[2] != 0, index: u16_at(3), amount: u16_at(5), weight: u16_at(7) },
         ZC_ACK_WRITE_MAIL => MapEvent::MailSent(packet[2]),
         ZC_NOTIFY_CARTITEM_COUNTINFO => MapEvent::CartCount { count: u16_at(2), most: u16_at(4), weight: u32_at(6) as i32, max_weight: u32_at(10) as i32 },
+        ZC_CARTOFF => MapEvent::CartOff,
+        ZC_ACK_ADDITEM_TO_CART => MapEvent::CartAddFailed(packet[2]),
         ZC_DELETE_ITEM_FROM_CART => MapEvent::CartRemoved { index: u16_at(2), amount: u32_at(4) },
         // Index, amount, item, type, identified, damaged, cards, options, refine, grade.
         ZC_ADD_ITEM_TO_CART => MapEvent::CartAdded(InventoryItem {

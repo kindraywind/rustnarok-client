@@ -1051,6 +1051,10 @@ pub enum MapEvent {
         max_weight: i32,
     },
     CartAdded(InventoryItem),
+    /// ZC_CARTOFF: the cart's list emptied.
+    CartOff,
+    /// ZC_ACK_ADDITEM_TO_CART: a move into the cart refused, 0 too heavy, 1 too many kinds.
+    CartAddFailed(u8),
     CartRemoved {
         index: u16,
         amount: u32,

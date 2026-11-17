@@ -2384,6 +2384,13 @@ fn decodes_the_worn_ammunition() {
 }
 
 #[test]
+fn decodes_cart_off_and_a_refused_cart_add() {
+    assert_eq!([ZC_CARTOFF, ZC_ACK_ADDITEM_TO_CART].map(packet_length), [Some(2), Some(3)]);
+    let Some(MapEvent::CartOff) = decode_map_packet(&[0x2B, 0x01]) else { panic!() };
+    let Some(MapEvent::CartAddFailed(1)) = decode_map_packet(&[0x2C, 0x01, 1]) else { panic!() };
+}
+
+#[test]
 fn decodes_hat_effects() {
     // clif_hat_effects: length, the unit, a status byte, then each hat effect's number.
     let mut packet = ZC_EQUIPMENT_EFFECT.to_le_bytes().to_vec();
