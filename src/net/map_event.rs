@@ -598,9 +598,7 @@ pub enum MapEvent {
         unit: u32,
         amount: u16,
     },
-    /// The bank opens (rathena answers in its own words instead where banking is off).
-    BankOpened,
-    /// What the account keeps.
+    /// What the account keeps; the bank window opens on it.
     BankBalance(i64),
     /// A deposit's or withdrawal's answer: rathena's reason (0 done), the balance and the zeny carried after.
     BankMoved {

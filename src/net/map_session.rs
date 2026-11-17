@@ -289,17 +289,10 @@ impl MapSession {
 
     /// Public chat; the client sends "name : message".
     /// Shows an emotion over the player's head.
-    /// The bank's requests carry the player's own account: opening, the balance, closing.
-    pub fn open_bank(&mut self, account: u32) -> io::Result<()> {
-        self.send_id(CZ_REQ_OPEN_BANKING, account)
-    }
-
+    /// Opens the bank: asks the balance, with the player's own account; ZC_BANKING_CHECK answers and the window opens.
+    /// Nothing is sent to open or close it otherwise.
     pub fn check_bank(&mut self, account: u32) -> io::Result<()> {
         self.send_id(CZ_REQ_BANKING_CHECK, account)
-    }
-
-    pub fn close_bank(&mut self, account: u32) -> io::Result<()> {
-        self.send_id(CZ_REQ_CLOSE_BANKING, account)
     }
 
     pub fn open_cashshop(&mut self, tab: u32) -> io::Result<()> {

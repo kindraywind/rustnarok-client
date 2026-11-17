@@ -835,7 +835,6 @@ fn decodes_shadow_scars() {
 fn speaks_to_the_bank() {
     assert_eq!(encode_bank_move(true, 2_000_002, 1000)[..2], CZ_REQ_BANKING_DEPOSIT.to_le_bytes());
     assert_eq!(encode_bank_move(false, 2_000_002, 1000), [0xA9, 0x09, 0x82, 0x84, 0x1E, 0x00, 0xE8, 0x03, 0, 0]);
-    let Some(MapEvent::BankOpened) = decode_map_packet(&[0xB7, 0x09, 0, 0]) else { panic!() };
     let mut check = ZC_BANKING_CHECK.to_le_bytes().to_vec();
     check.extend_from_slice(&5_000_000_000i64.to_le_bytes());
     check.extend_from_slice(&[0, 0]);
@@ -845,9 +844,9 @@ fn speaks_to_the_bank() {
     moved.extend_from_slice(&1000i64.to_le_bytes());
     moved.extend_from_slice(&4000i32.to_le_bytes());
     let Some(MapEvent::BankMoved { deposit: false, reason: 1, balance: 1000, zeny: 4000 }) = decode_map_packet(&moved) else { panic!() };
-    let ids = [CZ_REQ_OPEN_BANKING, ZC_ACK_OPEN_BANKING, CZ_REQ_BANKING_CHECK, ZC_BANKING_CHECK, CZ_REQ_BANKING_DEPOSIT, ZC_ACK_BANKING_DEPOSIT];
-    assert_eq!(ids.map(packet_length), [Some(6), Some(4), Some(6), Some(12), Some(10), Some(16)]);
-    assert_eq!([CZ_REQ_BANKING_WITHDRAW, ZC_ACK_BANKING_WITHDRAW, CZ_REQ_CLOSE_BANKING].map(packet_length), [Some(10), Some(16), Some(6)]);
+    let ids = [CZ_REQ_BANKING_CHECK, ZC_BANKING_CHECK, CZ_REQ_BANKING_DEPOSIT, ZC_ACK_BANKING_DEPOSIT, CZ_REQ_BANKING_WITHDRAW, ZC_ACK_BANKING_WITHDRAW];
+    assert_eq!(ids.map(packet_length), [Some(6), Some(12), Some(10), Some(16), Some(10), Some(16)]);
+    assert_eq!(encode_id(CZ_REQ_BANKING_CHECK, 2_000_002), [0xAB, 0x09, 0x82, 0x84, 0x1E, 0x00]);
 }
 
 #[test]

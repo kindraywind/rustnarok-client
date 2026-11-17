@@ -2895,10 +2895,7 @@ impl Game {
         self.viewing = None;
         self.mail.letter = None;
         self.drop_compose();
-        if self.bank.is_some() {
-            let _ = self.session.close_bank(self.account_id);
-            self.bank = None;
-        }
+        self.bank = None;
         self.close_catalog();
         self.cancel_forge();
     }
@@ -3802,10 +3799,7 @@ impl Game {
             MonsterInfo => self.monster_window = None,
             Achievements => self.achievement_window.frame.open = false,
             OtherEquipment => self.viewing = None,
-            Bank => {
-                let _ = self.session.close_bank(self.account_id);
-                self.bank = None;
-            }
+            Bank => self.bank = None,
             CashShop => self.close_cashshop(),
             PickList => self.answer_pick(pick_list::PickChoice::Cancel),
             // Only while typing the zeny: Esc stops that, the deal stays.
