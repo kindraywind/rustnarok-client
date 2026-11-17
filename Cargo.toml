@@ -14,7 +14,7 @@ encoding_rs = "0.8"
 flate2 = "1"
 fontdue = "0.9.4"
 image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png", "tga"] }
-lunify = "1"
+lunify = "2"
 mlua = { version = "0.12", features = ["lua51", "vendored"] }
 pollster = "1.0"
 serde = { version = "1", features = ["derive"] }
