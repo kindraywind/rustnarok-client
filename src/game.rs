@@ -30,6 +30,8 @@ pub(crate) enum Top {
     // The rest, named as `windows` names them where it does.
     /// Taming's slot machine.
     Slot,
+    /// Change Cart's choice.
+    CartChoice,
     /// The NPC's say window, its menu or its input box.
     NpcDialog,
     SpecialPopup,
@@ -784,6 +786,7 @@ impl Game {
             esc(QueueAsked, asked(self.queue_asked.is_some())),
             esc(BattleQueue, self.queue_window.covers(cursor)),
             self.storage_log.as_ref().is_some_and(|log| log.covers(cursor)).then_some(Top::GuildStorageLog),
+            self.cart_choice.as_ref().is_some_and(|choice| choice.hit(cursor).is_some()).then_some(Top::CartChoice),
             esc(Memorial, self.memorial.frame.open && self.memorial.hit(cursor).is_some()),
             esc(FriendAsked, asked(self.friend_asked.is_some())),
             // One box, the first of these that's asked.
@@ -1628,6 +1631,8 @@ impl Game {
             return;
         }
         match kind {
+            // Change Cart picks the cart in a window of the client's own; the server only takes the SP.
+            net::Skill::SELF if id == CHANGE_CART => self.change_cart(level),
             net::Skill::SELF if self.cooled_down(id) => {
                 let _ = self.session.use_skill(id, level, self.account_id);
             }
@@ -1639,6 +1644,25 @@ impl Game {
             // ponytail: trap skills (32) aim at ground skill units in the game; not made yet.
             _ => {}
         }
+    }
+
+    /// Change Cart: after the cooldown, without 40 SP or a cart the game's red line; otherwise the cart choice opens and
+    /// the skill goes.
+    fn change_cart(&mut self, level: u16) {
+        if !self.cooled_down(CHANGE_CART) {
+            return;
+        }
+        let sp = self.status.get(&net::STATUS_SP).copied().unwrap_or(0);
+        let refused = if sp < cart_choice::SP { Some(0) } else { self.player.cart.is_none().then_some(1) };
+        if let Some(line) = refused {
+            return self.chat_line(self.cart_refusals[line].clone(), CHAT_ERROR);
+        }
+        // An open one stays as it is.
+        if self.cart_choice.is_none() {
+            let base_level = self.status.get(&net::STATUS_BASE_LEVEL).copied().unwrap_or(1);
+            self.cart_choice = Some(cart_choice::CartChoice::change_cart(base_level, screen()));
+        }
+        let _ = self.session.use_skill(CHANGE_CART, level, self.account_id);
     }
 
     /// An item casts a skill: on oneself at once, otherwise aimed as a known one would be.
@@ -3528,6 +3552,9 @@ impl Game {
         }
         if self.reason_box.is_some() {
             names.push("GuildReason".into());
+        }
+        if self.cart_choice.is_some() {
+            names.push("CartChoice".into());
         }
         if self.deal_confirm.is_some() {
             names.push("ConfirmDeal".into());

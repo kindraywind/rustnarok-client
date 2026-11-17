@@ -777,7 +777,6 @@
 0x097B unsent
 0x097C client
 0x097D unsent
-0x097F todo: Decorate Cart's cart picker (clif_SelectCart)
 0x0980 client
 0x098D client
 0x0991 old: an older server's form
