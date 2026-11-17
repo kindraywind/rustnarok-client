@@ -1,0 +1,26 @@
+{
+  "about": "Empty making lists (issue #1325): Arrow Crafting with nothing to craft from, and a cooking kit with no ingredients, open the pick window empty; Cancel answers each with -1 (CZ_REQ_MAKINGARROW 0x01ae, CZ_REQ_MAKINGITEM 0x025b).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@questskill 147"}, {"wait": 400}, {"say": "@heal"}, {"wait": 400},
+    {"say": "@useskill 147 1 self"}, {"wait_for": {"event": "ArrowList", "ms": 5000}},
+    {"wait": 300}, {"move": [900, 700]},
+    {"expect": {"windows_open": ["PickList"]}},
+    {"shot": "empty-arrow-list", "crop": [362, 267, 300, 234]},
+    {"click_on": {"button": "cancel"}}, {"wait_for": {"sent": "0x01ae", "ms": 2000}}, {"wait": 300},
+    {"expect": {"windows_closed": ["PickList"]}},
+    {"say": "@item 12125 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 400},
+    {"click_on": {"button": "tab:item"}}, {"wait": 300},
+    {"click_on": {"inventory_item": 12125}, "count": 2}, {"wait_for": {"event": "CookList", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 300}, {"move": [900, 700]},
+    {"expect": {"windows_open": ["PickList"]}},
+    {"shot": "empty-cooking-list", "crop": [362, 267, 300, 234]},
+    {"click_on": {"button": "cancel"}}, {"wait_for": {"sent": "0x025b", "ms": 2000}}, {"wait": 300},
+    {"expect": {"windows_closed": ["PickList"]}},
+    {"say": "@itemreset"}, {"wait": 500}
+  ]
+}

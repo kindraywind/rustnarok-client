@@ -1198,26 +1198,17 @@ impl App {
                     window.finished(result, control::now());
                 }
             }
-            MapEvent::SynthesisOpen(id) => match self.synthesis_boxes.get(&id) {
-                Some(info) => {
-                    game.synthesis = Some(laphine::Synthesis::new(id, info));
-                    game.inventory.frame.open = true;
-                    game.raise(Panel::Inventory);
-                }
-                None => {
-                    let _ = game.session.close_synthesis();
-                }
-            },
-            MapEvent::UpgradeOpen(id) => match self.upgrade_boxes.get(&id) {
-                Some(info) => {
-                    game.upgrade = Some(laphine::Upgrade::new(id, info));
-                    game.inventory.frame.open = true;
-                    game.raise(Panel::Inventory);
-                }
-                None => {
-                    let _ = game.session.close_upgrade();
-                }
-            },
+            // A box the data doesn't know opens too, empty; its close goes out when the player closes it.
+            MapEvent::SynthesisOpen(id) => {
+                game.synthesis = Some(laphine::Synthesis::new(id, &self.synthesis_boxes.get(&id).cloned().unwrap_or_default()));
+                game.inventory.frame.open = true;
+                game.raise(Panel::Inventory);
+            }
+            MapEvent::UpgradeOpen(id) => {
+                game.upgrade = Some(laphine::Upgrade::new(id, &self.upgrade_boxes.get(&id).cloned().unwrap_or_default()));
+                game.inventory.frame.open = true;
+                game.raise(Panel::Inventory);
+            }
             // A reform item the client has no entries for: tell the server and open nothing.
             MapEvent::ReformOpen(item) => match self.reforms.get(&item).filter(|entries| !entries.is_empty()) {
                 Some(entries) => {
@@ -3295,18 +3286,11 @@ impl App {
             MapEvent::MakeList(items) if items.is_empty() => {
                 game.question_box = Some(BoxQuestion::Notice(NOTHING_TO_MAKE));
             }
-            MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) if items.is_empty() => {
-                game.chat_line(self.messages.get(NOTHING_TO_MAKE).cloned().unwrap_or_default(), CHAT_ERROR);
-                // An empty making list still waits for an answer.
-                let _ = match event_kind {
-                    Some(Picking::Cook(kind)) => game.session.cook(kind, 0),
-                    _ => Ok(()),
-                };
-            }
             MapEvent::MakeList(items) => {
                 let rows = items.into_iter().map(|id| net::InventoryItem { id, identified: true, ..Default::default() }).collect();
                 game.pick = Some((pick_list::PickList::text(MAKING_TITLE, rows), Picking::Make));
             }
+            // Opened empty too; Cancel answers it.
             MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) => {
                 let picking = event_kind.unwrap_or(Picking::Arrow);
                 let rows = items.into_iter().map(|id| net::InventoryItem { id, identified: true, ..Default::default() }).collect();

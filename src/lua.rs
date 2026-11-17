@@ -1667,7 +1667,7 @@ pub struct SynthesisSource {
 }
 
 /// A synthesis box, keyed later by `ItemID`. `NeedSource_String` is left out.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SynthesisBox {
     pub need_count: u32,
     pub refine_min: u32,
@@ -1683,7 +1683,7 @@ pub struct UpgradeTarget {
 }
 
 /// An upgrade box, keyed later by `ItemID`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct UpgradeBox {
     pub refine_min: u32,
     pub refine_max: u32,

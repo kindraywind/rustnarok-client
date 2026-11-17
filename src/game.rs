@@ -4075,8 +4075,8 @@ impl Game {
         };
         let _ = match (picking, picked) {
             (Picking::Card(card), Some(equip)) => self.session.insert_card(card, equip.index),
-            // rathena keeps nothing for a card's list, nor for Arrow Crafting's.
-            (Picking::Card(_) | Picking::Arrow, None) => Ok(()),
+            // rathena keeps nothing for a card's list.
+            (Picking::Card(_), None) => Ok(()),
             // The server waits for the Magnifier's answer, a cancel too.
             (Picking::Identify, item) => self.session.identify(item.map(|item| item.index)),
             // A making list unanswered isn't sent again: a cancel answers item 0.
@@ -4089,8 +4089,9 @@ impl Game {
                 }
             }
             (Picking::Make, None) => self.session.make(0, [0, 0, 0]),
-            (Picking::Cook(kind), item) => self.session.cook(kind, item.map_or(0, |item| item.id)),
-            (Picking::Arrow, Some(item)) => self.session.make_arrow(item.id),
+            // Cancel answers both with -1.
+            (Picking::Cook(kind), item) => self.session.cook(kind, item.map_or(u32::MAX, |item| item.id)),
+            (Picking::Arrow, item) => self.session.make_arrow(item.map_or(u32::MAX, |item| item.id)),
             // Both lists end with an answer, a cancel too.
             (Picking::Repair, item) => self.session.repair(item),
             // Both hold the player until answered; 0 starts nothing.
