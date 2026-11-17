@@ -5,6 +5,8 @@
 # still send it for the invisible NPC a script run by an item talks through) and 0x00E7 (ZC_ACK_EXCHANGE_ITEM's first
 # form, the result alone: rathena before its #8581 (2024-09) answers a deal request that fails at once with it: too
 # far, no such player, busy).
+# 0x0B25: rathena names it (ZC_PAR_4JOB_CHANGE, PACKETVER 20200916 on) but has no struct for it and never sends it;
+# the game reads it as the trait raise's answer, 0x00BC's form for traits: id u16, result u8, value u8.
 0x0073 11
 0x0078 55
 0x0086 16
@@ -67,3 +69,4 @@
 0x0A87 -1
 0x0A96 51
 0x0AB9 39
+0x0B25 6

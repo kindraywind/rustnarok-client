@@ -3115,8 +3115,11 @@ fn trace_lines_show_the_direction_and_cut_at_32_bytes_unless_full() {
     assert_eq!(trace_line(42, "->", &enter, false), "00042 -> 0x0436 5 [36, 04, 01, 02, 03]");
     let long: Vec<u8> = (0..40).collect();
     assert!(trace_line(99_999, "<-", &long, false).starts_with("99999 <- 0x0100 40 [00, 01,"));
-    assert!(trace_line(0, "<-", &long, false).ends_with("1e, 1f]"));
-    assert!(trace_line(0, "<-", &long, true).ends_with("26, 27]"));
+    assert!(trace_line(0, "->", &long, false).ends_with("1e, 1f]"));
+    assert!(trace_line(0, "->", &long, true).ends_with("26, 27]"));
+    // A received packet no reader decodes says so; a decoded one doesn't.
+    assert!(trace_line(0, "<-", &[0xBB, 0x02, 0, 0], false).ends_with("[bb, 02, 00, 00] (not decoded)"));
+    assert!(trace_line(0, "<-", &ZC_NOTIFY_TIME.to_le_bytes(), false).ends_with("]"));
 }
 
 #[test]
@@ -3187,4 +3190,34 @@ fn decodes_the_captcha_check() {
     let answer = encode_captcha_answer("rn1333");
     assert_eq!(answer[..10], [0x5C, 0x0A, b'r', b'n', b'1', b'3', b'3', b'3', 0, 0]);
     assert_eq!(encode_captcha_answer("0123456789abcdefXYZ")[2..], *b"0123456789abcde\0");
+}
+
+#[test]
+fn every_known_packet_is_decoded_or_listed() {
+    // Decoded, but not from a zero-filled sample: the cash shop's list checks its length against its count.
+    let decoded_with_content = [ZC_ACK_SCHEDULER_CASHITEM];
+    // Read by the login exchange itself.
+    let login = [AC_ACCEPT_LOGIN, AC_REFUSE_LOGIN, SC_NOTIFY_BAN];
+    let tables = [include_str!("packet_lengths.txt"), include_str!("packet_lengths_20250402.txt"), include_str!("packet_lengths_extra.txt")];
+    let mut wrong: Vec<String> = tables
+        .into_iter()
+        .flat_map(load_lengths)
+        .filter(|&(id, length)| {
+            let size = if length < 0 { 1024 } else { length as usize };
+            let mut packet = vec![0u8; size];
+            packet[..2].copy_from_slice(&id.to_le_bytes());
+            if length < 0 {
+                packet[2..4].copy_from_slice(&(size as u16).to_le_bytes());
+            }
+            let decoded = decode_or_skip(&packet, decode_map_packet).is_some()
+                || decode_or_skip(&packet, decode_char_packet).is_some()
+                || login.contains(&id)
+                || decoded_with_content.contains(&id);
+            decoded == undecoded().contains_key(&id)
+        })
+        .map(|(id, _)| format!("{id:#06X}"))
+        .collect();
+    wrong.sort();
+    wrong.dedup();
+    assert!(wrong.is_empty(), "decoded yet in net/undecoded.txt, or neither decoded nor there with a reason: {wrong:?}");
 }

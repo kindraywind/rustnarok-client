@@ -840,10 +840,27 @@ fn trace_packet(arrow: &str, packet: &[u8]) {
 }
 
 /// One trace line: the time column, the arrow, the packet ID, its length and its bytes (only the first 32 unless `full`).
+/// A received packet no reader decodes ends with "(not decoded)".
 pub fn trace_line(ms: u64, arrow: &str, packet: &[u8], full: bool) -> String {
     let id = packet.get(..2).map_or(0, |id| u16::from_le_bytes([id[0], id[1]]));
     let shown = if full { packet.len() } else { packet.len().min(32) };
-    format!("{ms:05} {arrow} {id:#06x} {} {:02x?}", packet.len(), &packet[..shown])
+    let mark = if arrow == "<-" && undecoded().contains_key(&id) { " (not decoded)" } else { "" };
+    format!("{ms:05} {arrow} {id:#06x} {} {:02x?}{mark}", packet.len(), &packet[..shown])
+}
+
+/// The packet IDs of the length tables that no reader decodes, each with why (net/undecoded.txt).
+fn undecoded() -> &'static HashMap<u16, &'static str> {
+    static UNDECODED: LazyLock<HashMap<u16, &str>> = LazyLock::new(|| {
+        include_str!("net/undecoded.txt")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .filter_map(|line| {
+                let (id, why) = line.split_once(' ')?;
+                Some((u16::from_str_radix(id.trim_start_matches("0x"), 16).ok()?, why))
+            })
+            .collect()
+    });
+    &UNDECODED
 }
 
 /// Decodes a packet; one the decoder can't read (shorter than its fields) is skipped. A panic would end the reader
