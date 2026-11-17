@@ -1067,6 +1067,8 @@ const ZC_NOTIFY_EFFECT3: u16 = 0x0284;
 const ZC_REMOVE_EFFECT: u16 = 0x0B0D;
 const ZC_MSG_STATE_CHANGE2: u16 = 0x043F;
 const ZC_MSG_STATE_CHANGE3: u16 = 0x0983;
+/// A status already on a unit coming into view, or one of ours at map load: the id comes before the status.
+const ZC_EFST_SET_ENTER: u16 = 0x0984;
 const ZC_NOTIFY_STOREITEM_COUNTINFO: u16 = 0x00F2;
 const ZC_SHOW_IMAGE: u16 = 0x01B3;
 const CZ_REQ_EXCHANGE_ITEM: u16 = 0x00E4;

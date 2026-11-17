@@ -1,0 +1,29 @@
+{
+ "about": "Statuses already on a unit reach a player who comes into view (ZC_EFST_SET_ENTER 0x0984): the second player arrives next to a merchant whose cart was put on out of their sight and sees the cart; the merchant's own cart is still there after a warp to another map.",
+ "account": "",
+ "slot": 0,
+ "second": {"account": "2", "slot": 0},
+ "steps": [
+  {"say": "@warp gef_fild07 61 229"},
+  {"settle": 1500},
+  {"as": "second", "say": "@warp gef_fild07 61 275"},
+  {"as": "second", "settle": 1500},
+  {"say": "@job 5"},
+  {"wait": 500},
+  {"say": "@cart 0"},
+  {"wait": 500},
+  {"say": "@cart 1"},
+  {"wait": 1000},
+  {"as": "second", "say": "@warp gef_fild07 63 229"},
+  {"as": "second", "settle": 2000},
+  {"as": "second", "expect": {"unit_at_least": {"name": "{first}", "cart.frame": 0}}},
+  {"as": "second", "shot": "status-enter-cart", "crop": [362, 214, 300, 320], "threshold": 5},
+  {"say": "@warp morocc 160 120"},
+  {"settle": 2000},
+  {"expect": {"state_at_least": {"player.cart.frame": 0}}},
+  {"say": "@cart 0"},
+  {"wait": 500},
+  {"say": "@job 0"},
+  {"wait": 500}
+ ]
+}
