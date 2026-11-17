@@ -1850,6 +1850,7 @@ impl App {
             MapEvent::InventoryItems { kind: 2, items } => game.storage.extend(items),
             MapEvent::InventoryStart { kind: 1, .. } => game.cart.clear(),
             MapEvent::InventoryItems { kind: 1, items } => game.cart.extend(items),
+            MapEvent::InventoryEnd { kind, flag } => game.storage.list_end(kind, flag),
             MapEvent::InventoryStart { .. } | MapEvent::InventoryItems { .. } => {}
             MapEvent::Quests(quests) => game.quests = quests,
             // A new quest: its line and icon; one already known is refreshed in place.

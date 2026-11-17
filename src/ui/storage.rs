@@ -59,6 +59,13 @@ const COUNT_COLOR: [u8; 3] = [0x23, 0x23, 0x23];
 const FULL_COLOR: [u8; 3] = [0xFF, 0x00, 0x00];
 /// The wheel moves this many rows a notch (one less than the rows when fewer).
 const WHEEL_ROWS: usize = 3;
+/// The loading panel, over the rows until the list's end: a rounded 1 px line in #8494CE, rounded boxes in #DEE7FF and
+/// white inside it, the poring picture, and three lines centred in 257 px from x 20.
+const PANEL: [[f32; 4]; 3] = [[55.0, 131.0, 187.0, 139.0], [56.0, 132.0, 185.0, 137.0], [61.0, 137.0, 175.0, 127.0]];
+const PANEL_COLORS: [[u8; 4]; 2] = [[0x84, 0x94, 0xCE, 0xFF], [0xDE, 0xE7, 0xFF, 0xFF]];
+const PANEL_PORING: [f32; 2] = [116.0, 151.0];
+const PANEL_LINES: [(usize, f32, [u8; 3]); 3] = [(3540, 210.0, [0, 0, 0]), (3191, 236.0, [0x82, 0x94, 0xC8]), (3603, 272.0, [0xDC, 0x64, 0x64])];
+const PANEL_TEXT: [f32; 2] = [20.0, 257.0];
 
 /// The most rows at a screen `height` tall: 458 + 32k up to ⌊0.7·height⌋, only 12 under 700.
 pub fn most_rows(height: f32) -> usize {
@@ -150,6 +157,9 @@ pub struct Assets {
     grades: [Texture; 4],
     /// The sort box's background and its arrow.
     sort: [Texture; 2],
+    /// The loading panel's two colours and its picture.
+    panel: [Texture; 2],
+    poring: Option<Texture>,
 }
 
 impl Assets {
@@ -171,6 +181,8 @@ impl Assets {
             resize: image(format!("{UI}btn_resize.bmp")),
             grades: std::array::from_fn(|grade| image(format!("{UI}grade_enchant\\grade_icon{}.bmp", grade + 1))),
             sort: ["bg_setting", "combo_btn_a"].map(|name| image(format!("{basic}{name}.bmp"))),
+            panel: PANEL_COLORS.map(|color| gpu.solid(color)),
+            poring: maybe(format!("{basic}notice_poring.bmp")),
         }
     }
 }
@@ -345,6 +357,8 @@ pub struct Storage {
     pub frame: Frame,
     /// The name the server opened it with (empty: "Storage").
     pub name: String,
+    /// From the list's start to its end: the loading panel shows instead of the rows and the count.
+    pub loading: bool,
     /// The open tab, of the strip's.
     tab: usize,
     scroll: usize,
@@ -374,6 +388,7 @@ impl Default for Storage {
             count: [0; 2],
             frame: Frame::new(DEFAULT_POSITION, WIDTH),
             name: String::new(),
+            loading: false,
             tab: 0,
             scroll: 0,
             search: String::new(),
@@ -406,6 +421,7 @@ impl Storage {
             order: self.order,
             rows: self.rows,
             name,
+            loading: true,
             resized: self.rows != LEAST_ROWS,
             ..Self::default()
         };
@@ -415,6 +431,13 @@ impl Storage {
             if self.mask & 1 << tab != 0 {
                 category.open();
             }
+        }
+    }
+
+    /// A list's end: a storage's (kinds 2 and 3, flag 0) is loaded, and its rows and count show.
+    pub fn list_end(&mut self, kind: u8, flag: u8) {
+        if matches!(kind, 2 | 3) && flag == 0 {
+            self.loading = false;
         }
     }
 
@@ -807,13 +830,14 @@ impl Storage {
             layer.sprites.push((strip, at(TABS_AT), strip.size));
         }
         layer.sprites.push((&chrome.white, at([SIDE, TITLE_HEIGHT]), [STRIP_WHITE, h - 38.0]));
-        for row in 0..self.rows {
+        let rows = if self.loading { 0 } else { self.rows };
+        for row in 0..rows {
             let top = ROWS_TOP + row as f32 * CELL;
             layer.sprites.push((&assets.cell, at([CELL_X, top]), assets.cell.size));
             layer.sprites.push((&chrome.white, at([ROW_WHITE[0], top]), [ROW_WHITE[1] - ROW_WHITE[0], CELL]));
         }
         // Each row's item: the icon, its amount outlined, the name in its enchants' colour, the grade.
-        for (row, item) in self.listed(items, names).into_iter().skip(self.scroll).take(self.rows).enumerate() {
+        for (row, item) in self.listed(items, names).into_iter().skip(self.scroll).take(rows).enumerate() {
             let top = ROWS_TOP + row as f32 * CELL;
             let place = at([CELL_X, top]);
             let info = items.get(&item.id);
@@ -847,7 +871,11 @@ impl Storage {
             }
         }
 
-        // Footer: the count (red when full), the search box, its button, Close.
+        if self.loading {
+            self.draw_panel(layer, chrome, assets, messages, font);
+        }
+
+        // Footer: the count (red when full, none while loading), the search box, its button, Close.
         let [left, middle, right] = &assets.footer;
         let footer_top = h - FOOTER_HEIGHT;
         layer.sprites.push((left, at([0.0, footer_top]), left.size));
@@ -864,10 +892,12 @@ impl Storage {
             }
         }
         layer.sprites.push((&assets.count, at(self.footer_at(COUNT_ICON)), assets.count.size));
-        let count = self.count[0].to_string();
-        let [x, y] = self.footer_at(COUNT);
-        layer.texts.push((count.clone(), at([x, y]), count_color(self.count)));
-        layer.texts.push((format!("/{}", self.count[1]), at([x + 1.0 + font.width(&count), y]), [0, 0, 0]));
+        if !self.loading {
+            let count = self.count[0].to_string();
+            let [x, y] = self.footer_at(COUNT);
+            layer.texts.push((count.clone(), at([x, y]), count_color(self.count)));
+            layer.texts.push((format!("/{}", self.count[1]), at([x + 1.0 + font.width(&count), y]), [0, 0, 0]));
+        }
         layer.sprites.push((&assets.search_box, at(self.search_at()), SEARCH_SIZE));
         let shown = if self.typing && caret { format!("{}|", self.search) } else { self.search.clone() };
         layer.texts.push((window::fit(font, &shown, SEARCH_SIZE[0] - 6.0), at(offset(self.search_at(), [3.0, 3.0])), [0, 0, 0]));
@@ -894,6 +924,29 @@ impl Storage {
 }
 
 impl Storage {
+    /// The loading panel: white over the rows, the boxes, the poring and the three lines.
+    fn draw_panel<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, assets: &'a Assets, messages: &[String], font: &Font) {
+        let at = |local: [f32; 2]| self.frame.at(local);
+        layer.sprites.push((&chrome.white, at([CELL_X, ROWS_TOP]), [ROW_WHITE[1] - CELL_X, self.rows as f32 * CELL]));
+        let [[x, y, w, h], inner, white] = PANEL;
+        for [px, py, pw, ph] in window::rounded_outline([w, h]) {
+            layer.sprites.push((&assets.panel[0], at([x + px, y + py]), [pw, ph]));
+        }
+        for (texture, [x, y, w, h]) in [(&assets.panel[1], inner), (&chrome.white, white)] {
+            for [px, py, pw, ph] in window::rounded_fill([w, h]) {
+                layer.sprites.push((texture, at([x + px, y + py]), [pw, ph]));
+            }
+        }
+        if let Some(poring) = &assets.poring {
+            layer.sprites.push((poring, at(PANEL_PORING), poring.size));
+        }
+        for (id, y, color) in PANEL_LINES {
+            let line = messages.get(id).map_or("", String::as_str);
+            let x = PANEL_TEXT[0] + ((PANEL_TEXT[1] - font.width(line)) / 2.0).floor();
+            layer.texts.push((line.to_owned(), at([x, y]), color));
+        }
+    }
+
     /// A list window: the title bar (a category window's with no buttons, the Search window's with a close button), a
     /// white body, a cell and the item for each row, the footer and the grip.
     #[allow(clippy::too_many_arguments)]
@@ -1123,6 +1176,23 @@ mod tests {
         // Its sizes and pointer box are the category windows'.
         assert_eq!(storage.list_window(List::Search).size, [140.0, 145.0]);
         assert_eq!(storage.search_window.row_at([20.0, 20.0]), Some(0));
+    }
+
+    #[test]
+    fn loads_until_its_lists_end() {
+        // The start opens it loading; the inventory's and cart's ends, or a flagged one, leave it so; its own clears it.
+        let mut storage = Storage::default();
+        storage.open("Storage".into());
+        assert!(storage.loading);
+        for (kind, flag) in [(0, 0), (1, 0), (2, 1)] {
+            storage.list_end(kind, flag);
+            assert!(storage.loading);
+        }
+        storage.list_end(2, 0);
+        assert!(!storage.loading);
+        storage.open(String::new());
+        storage.list_end(3, 0);
+        assert!(!storage.loading);
     }
 
     #[test]

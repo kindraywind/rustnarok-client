@@ -210,6 +210,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             },
         },
         ZC_INVENTORY_START => MapEvent::InventoryStart { kind: packet[4], name: c_string(packet.get(5..).unwrap_or_default()) },
+        ZC_INVENTORY_END => MapEvent::InventoryEnd { kind: packet[2], flag: packet[3] },
         ZC_INVENTORY_ITEMLIST_NORMAL => {
             MapEvent::InventoryItems { kind: packet[4], items: packet[5..].chunks_exact(NORMAL_ITEM_SIZE).map(decode_normal_item).collect() }
         }
