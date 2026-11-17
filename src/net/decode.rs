@@ -153,6 +153,9 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_MSG_STATE_CHANGE3 => {
             MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: u32_at(9), left_ms: u32_at(13), value: u32_at(17) as i32 }
         }
+        ZC_EFST_SET_ENTER => {
+            MapEvent::StatusIcon { kind: u16_at(6), id: u32_at(2), on: true, total_ms: u32_at(8), left_ms: u32_at(12), value: u32_at(16) as i32 }
+        }
         ZC_MSG_STATE_CHANGE2 => {
             MapEvent::StatusIcon { kind: u16_at(2), id: u32_at(4), on: packet[8] != 0, total_ms: u32_at(9), left_ms: u32_at(9), value: u32_at(13) as i32 }
         }

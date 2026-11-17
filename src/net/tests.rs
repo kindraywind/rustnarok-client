@@ -2363,6 +2363,17 @@ fn reads_a_status_value() {
 }
 
 #[test]
+fn decodes_a_status_on_entering_view() {
+    // ZC_EFST_SET_ENTER: account 7 under Endure (22), 10 s of 12 s left, val1 5. The id comes before the status.
+    let mut packet = vec![0x84, 0x09, 7, 0, 0, 0, 22, 0];
+    for value in [12_000u32, 10_000, 5, 0, 0] {
+        packet.extend_from_slice(&value.to_le_bytes());
+    }
+    assert_eq!((packet.len(), packet_length(ZC_EFST_SET_ENTER)), (28, Some(28)));
+    let Some(MapEvent::StatusIcon { kind: 22, id: 7, on: true, total_ms: 12_000, left_ms: 10_000, value: 5 }) = decode_map_packet(&packet) else { panic!() };
+}
+
+#[test]
 fn decodes_hat_effects() {
     // clif_hat_effects: length, the unit, a status byte, then each hat effect's number.
     let mut packet = ZC_EQUIPMENT_EFFECT.to_le_bytes().to_vec();
