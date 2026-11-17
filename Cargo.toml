@@ -20,7 +20,7 @@ pollster = "1.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 symphonia = { version = "0.6", default-features = false, features = ["mp3", "pcm", "wav"] }
-wgpu = "29"
+wgpu = "30"
 winit = "0.30"
 
 # The Dock icon when the client runs outside the app bundle; the versions winit already uses.

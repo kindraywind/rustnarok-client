@@ -177,11 +177,11 @@ impl Gpu {
                 module: &shader,
                 entry_point: Some("vs"),
                 compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
+                buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32],
-                }],
+                })],
             },
             primitive: Default::default(),
             depth_stencil: None,
@@ -363,7 +363,7 @@ impl Gpu {
         let size = [self.config.width, self.config.height];
         let encoder = self.encode(&frame.texture.create_view(&Default::default()), size, world, sprites, alphas);
         self.queue.submit([encoder.finish()]);
-        frame.present();
+        self.queue.present(frame);
         let now = self.frame.get() + 1;
         self.frame.set(now);
         self.texts.borrow_mut().retain(|_, (_, drawn)| now - *drawn < TEXT_FRAMES);
@@ -409,7 +409,7 @@ impl Gpu {
         buffer.slice(..).map_async(wgpu::MapMode::Read, |result| result.expect("map screenshot"));
         self.device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
 
-        let mapped = buffer.slice(..).get_mapped_range();
+        let mapped = buffer.slice(..).get_mapped_range().expect("screenshot mapped");
         let bgra = matches!(self.config.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
         let mut rgba = Vec::with_capacity((width * height * 4) as usize);
         for row in mapped.chunks(bytes_per_row as usize) {

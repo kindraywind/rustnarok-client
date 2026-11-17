@@ -960,7 +960,7 @@ impl World {
                     module: &shader,
                     entry_point: Some(&format!("{entry}_vs")),
                     compilation_options: Default::default(),
-                    buffers: &[buffer],
+                    buffers: &[Some(buffer)],
                 },
                 primitive: wgpu::PrimitiveState { cull_mode: cull, front_face: wgpu::FrontFace::Ccw, ..Default::default() },
                 depth_stencil: Some(wgpu::DepthStencilState {
@@ -1616,7 +1616,7 @@ impl WorldPass for WorldFrame<'_> {
                 dimension: wgpu::TextureDimension::D2,
                 format: DEPTH_FORMAT,
                 // Nothing reads the depth after the world pass, so on Apple GPUs it can live in tile memory only.
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TRANSIENT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TRANSIENT_ATTACHMENT,
                 view_formats: &[],
             });
             *depth = Some((size, texture.create_view(&Default::default())));
