@@ -749,6 +749,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // 0xBBGGRR, like ZC_NPC_CHAT's.
         ZC_MSG_COLOR => MapEvent::Message { id: usize::from(u16_at(2)), value: None, skill: None, color: Some([packet[4], packet[5], packet[6]]) },
         ZC_ACTION_FAILURE => MapEvent::ActionFailure(u16_at(2)),
+        ZC_EQUIP_ARROW => MapEvent::AmmoWorn(u16_at(2)),
         ZC_ACK_REMEMBER_WARPPOINT => MapEvent::MemoResult(packet[2]),
         ZC_SOUND => MapEvent::Sound { file: c_string(&packet[2..26]), act: packet[26], unit: u32_at(31) },
         ZC_PLAY_NPC_BGM => MapEvent::NpcMusic(c_string(&packet[2..26])),

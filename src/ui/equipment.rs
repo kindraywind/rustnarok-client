@@ -52,7 +52,7 @@ const PRESS_X: [[f32; 2]; 2] = [[6.0, 30.0], [251.0, 275.0]];
 const HOVER_X: [[f32; 2]; 2] = [[6.0, 106.0], [170.0, 274.0]];
 /// The ammo (General, the player's own window): its icon at (115, 64), taken on 115 < x < 139, 64 < y < 88, and its
 /// name under it, 40 wide.
-const AMMO: u32 = 0x8000;
+pub(crate) const AMMO: u32 = 0x8000;
 const AMMO_ICON: [f32; 2] = [115.0, 64.0];
 const AMMO_NAME: [f32; 2] = [115.0, 88.0];
 const AMMO_NAME_WIDTH: f32 = 40.0;

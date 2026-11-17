@@ -2072,6 +2072,7 @@ impl App {
                     if skill.is_some() { chat::Kind::SkillFailure } else { chat::Kind::General },
                 );
             }
+            MapEvent::AmmoWorn(index) => game.inventory.wear_ammo(index),
             MapEvent::ActionFailure(kind) => {
                 let id = ACTION_FAILURES.get(usize::from(kind)).copied().unwrap_or(ACTION_FAILURES[0]);
                 game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), if kind == 3 { CHAT_ITEM } else { CHAT_ERROR });

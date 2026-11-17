@@ -1204,6 +1204,8 @@ const ZC_MSG_VALUE: u16 = 0x07E2;
 const ZC_MSG_SKILL: u16 = 0x07E6;
 const ZC_MSG_COLOR: u16 = 0x09CD;
 const ZC_ACTION_FAILURE: u16 = 0x013B;
+/// The worn ammunition: its inventory index (4 bytes), at login and on every ammunition equip.
+const ZC_EQUIP_ARROW: u16 = 0x013C;
 const ZC_ACK_REMEMBER_WARPPOINT: u16 = 0x011E;
 const ZC_WARPLIST: u16 = 0x0ABE;
 const ZC_SOUND: u16 = 0x01D3;
@@ -2398,7 +2400,6 @@ pub struct Equipped {
 /// NORMALITEM_INFO: index, item, type, amount, where it can go, cards, rental end, flags (bit 0: identified).
 /// rathena fills "WearState" with the item's places (`id->equip`): a card's is what it goes into, ammunition's
 /// the ammunition place, worn or not. None of these is worn as equipment is.
-// ponytail: worn ammunition (ZC_EQUIP_ARROW) stays in the inventory; the 2018 equipment window has no place for it.
 fn decode_normal_item(entry: &[u8]) -> InventoryItem {
     InventoryItem {
         index: u16_at(entry, 0),

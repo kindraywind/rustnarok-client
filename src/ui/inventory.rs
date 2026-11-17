@@ -659,6 +659,13 @@ impl Inventory {
         }
     }
 
+    /// ZC_EQUIP_ARROW: this item is the worn ammunition, and no other.
+    pub fn wear_ammo(&mut self, index: u16) {
+        for item in &mut self.items {
+            item.worn = if item.index == index { item.worn | crate::equipment::AMMO } else { item.worn & !crate::equipment::AMMO };
+        }
+    }
+
     /// An item that came through a pickup: marked new until the inventory closes.
     pub fn mark_new(&mut self, index: u16) {
         self.new_marks.insert(index);
@@ -1125,6 +1132,17 @@ fn count_color(carried: usize, most: usize) -> [u8; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_worn_ammunition() {
+        let mut inventory = Inventory::new(true);
+        for index in [2, 3] {
+            inventory.add(InventoryItem { index, id: 1750, amount: 100, location: 0x8000, ..Default::default() });
+        }
+        inventory.wear_ammo(2);
+        inventory.wear_ammo(3);
+        assert_eq!([2, 3].map(|index| inventory.get(index).unwrap().worn), [0, 0x8000]);
+    }
 
     #[test]
     fn the_cart_stops_at_five_rows() {

@@ -2378,6 +2378,12 @@ fn decodes_a_status_on_entering_view() {
 }
 
 #[test]
+fn decodes_the_worn_ammunition() {
+    assert_eq!(packet_length(ZC_EQUIP_ARROW), Some(4));
+    let Some(MapEvent::AmmoWorn(5)) = decode_map_packet(&[0x3C, 0x01, 5, 0]) else { panic!() };
+}
+
+#[test]
 fn decodes_hat_effects() {
     // clif_hat_effects: length, the unit, a status byte, then each hat effect's number.
     let mut packet = ZC_EQUIPMENT_EFFECT.to_le_bytes().to_vec();

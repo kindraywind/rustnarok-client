@@ -958,6 +958,8 @@ pub enum MapEvent {
     },
     /// Ammunition or weight trouble: 0 no ammunition, 1 and 2 too heavy, 3 ammunition equipped.
     ActionFailure(u16),
+    /// ZC_EQUIP_ARROW: the inventory index of the worn ammunition.
+    AmmoWorn(u16),
     /// A sound a script plays (`data\wav\<file>`) from where a unit stands: act 0 once, 1 on repeat, 2 stops it.
     Sound {
         file: String,

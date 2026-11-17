@@ -1,0 +1,202 @@
+{
+ "about": "Worn ammunition (ZC_EQUIP_ARROW 0x013c): an Archer with a bow equips arrows and they sit in the equipment window's ammo slot, equips other arrows and the slot moves to them, and the item lists sent again (@refresh, as at login) keep them there.",
+ "account": "",
+ "slot": 0,
+ "steps": [
+  {
+   "say": "@warp morocc 160 120"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "say": "@itemreset"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@set BaseLevel 10"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@job 3"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@item 1701"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@item 1750 100"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "say": "@item 1751 100"
+  },
+  {
+   "wait_for": {
+    "event": "PickedUp",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "click_on": {
+    "button": "tab:equip"
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "click_on": {
+    "inventory_item": 1701
+   },
+   "count": 2
+  },
+  {
+   "wait": 800
+  },
+  {
+   "click_on": {
+    "button": "tab:etc"
+   }
+  },
+  {
+   "wait": 300
+  },
+  {
+   "click_on": {
+    "inventory_item": 1750
+   },
+   "count": 2
+  },
+  {
+   "wait": 800
+  },
+  {
+   "expect": {
+    "inventory_has": [
+     {
+      "id": 1750,
+      "worn": 32768
+     },
+     {
+      "id": 1751,
+      "worn": 0
+     }
+    ]
+   }
+  },
+  {
+   "click_on": {
+    "inventory_item": 1751
+   },
+   "count": 2
+  },
+  {
+   "wait": 800
+  },
+  {
+   "expect": {
+    "inventory_has": [
+     {
+      "id": 1750,
+      "worn": 0
+     },
+     {
+      "id": 1751,
+      "worn": 32768
+     }
+    ]
+   }
+  },
+  {
+   "key": "Alt+E"
+  },
+  {
+   "say": "@refresh"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "expect": {
+    "inventory_has": [
+     {
+      "id": 1750,
+      "worn": 0
+     },
+     {
+      "id": 1751,
+      "worn": 32768
+     }
+    ]
+   }
+  },
+  {
+   "key": "Alt+Q"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "expect": {
+    "windows_open": [
+     "Equipment"
+    ]
+   }
+  },
+  {
+   "move": [
+    900,
+    650
+   ]
+  },
+  {
+   "shot": "ammo-worn",
+   "crop": [
+    183,
+    298,
+    284,
+    192
+   ],
+   "threshold": 5
+  },
+  {
+   "key": "Alt+Q"
+  },
+  {
+   "say": "@itemreset"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@job 0"
+  },
+  {
+   "wait": 500
+  }
+ ]
+}
