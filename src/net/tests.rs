@@ -1053,6 +1053,9 @@ fn decodes_making_lists() {
     assert_eq!(encode_make(0, [0, 0, 0]), [0x8E, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(encode_cook(1, 12046), [0x5B, 0x02, 1, 0, 0x0E, 0x2F, 0, 0]);
     assert_eq!(encode_make_arrow(713), [0xAE, 0x01, 0xC9, 0x02, 0, 0]);
+    // Cancel: -1.
+    assert_eq!(encode_cook(1, u32::MAX), [0x5B, 0x02, 1, 0, 0xFF, 0xFF, 0xFF, 0xFF]);
+    assert_eq!(encode_make_arrow(u32::MAX), [0xAE, 0x01, 0xFF, 0xFF, 0xFF, 0xFF]);
     let ids = [ZC_MAKABLEITEMLIST, CZ_REQMAKINGITEM, ZC_ACK_REQMAKINGITEM, ZC_MAKINGITEM_LIST, CZ_REQ_MAKINGITEM, ZC_MAKINGARROW_LIST, CZ_REQ_MAKINGARROW];
     assert_eq!(ids.map(packet_length), [Some(-1), Some(18), Some(8), Some(-1), Some(8), Some(-1), Some(6)]);
 }
