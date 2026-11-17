@@ -186,6 +186,165 @@ const WOLF_RIDING: u32 = 0x20_0000;
 const MADOGEAR: u32 = 0x40_0000;
 /// The mounts that swap the body for a mounted one.
 const MOUNTS: u32 = RIDING | DRAGONS[0] | DRAGONS[1] | DRAGONS[2] | DRAGONS[3] | DRAGONS[4] | WOLF_RIDING | MADOGEAR;
+/// Not a rathena option bit (theirs stop at 0x2000_0000): the all-jobs mount of the halter-lead items (status 613),
+/// kept in `Look::option` so every body choice through `sprite_job` sees it. It never comes from the server.
+pub const ALL_RIDING_LOOK: u32 = 0x8000_0000;
+/// The body each job rides on with the all-jobs mount, applied after the outfits and class mounts above (so a Knight
+/// on a Peco or in the wedding dress stays as he is). Jobs 4351–4357 also have mounts, 4358–4360, which no name table
+/// holds yet.
+const ALL_RIDING_BODIES: [(u16, u16); 150] = [
+    (0, 4124),
+    (1, 4116),
+    (2, 4130),
+    (3, 4122),
+    (4, 4126),
+    (5, 4119),
+    (6, 4141),
+    (7, 4199),
+    (8, 4156),
+    (9, 4134),
+    (10, 4138),
+    (11, 4154),
+    (12, 4145),
+    (14, 4203),
+    (15, 4125),
+    (16, 4131),
+    (17, 4142),
+    (18, 4137),
+    (19, 4149),
+    (20, 4147),
+    (23, 4128),
+    (24, 4115),
+    (25, 4114),
+    (4001, 4183),
+    (4002, 4184),
+    (4003, 4185),
+    (4004, 4186),
+    (4005, 4187),
+    (4006, 4188),
+    (4007, 4189),
+    (4008, 4200),
+    (4009, 4157),
+    (4010, 4136),
+    (4011, 4118),
+    (4012, 4150),
+    (4013, 4146),
+    (4015, 4204),
+    (4016, 4139),
+    (4017, 4135),
+    (4018, 4144),
+    (4019, 4121),
+    (4020, 4153),
+    (4021, 4152),
+    (4023, 4158),
+    (4024, 4159),
+    (4025, 4160),
+    (4026, 4161),
+    (4027, 4162),
+    (4028, 4163),
+    (4029, 4181),
+    (4030, 4207),
+    (4031, 4194),
+    (4032, 4195),
+    (4033, 4196),
+    (4034, 4164),
+    (4035, 4165),
+    (4037, 4210),
+    (4038, 4166),
+    (4039, 4167),
+    (4040, 4168),
+    (4041, 4169),
+    (4042, 4170),
+    (4043, 4171),
+    (4045, 4172),
+    (4046, 4155),
+    (4047, 4123),
+    (4048, 4123),
+    (4049, 4117),
+    (4054, 4202),
+    (4055, 4133),
+    (4056, 4198),
+    (4057, 4129),
+    (4058, 4197),
+    (4059, 4140),
+    (4060, 4202),
+    (4061, 4133),
+    (4062, 4198),
+    (4063, 4129),
+    (4064, 4197),
+    (4065, 4140),
+    (4066, 4201),
+    (4067, 4132),
+    (4068, 4148),
+    (4069, 4151),
+    (4070, 4127),
+    (4071, 4120),
+    (4072, 4143),
+    (4073, 4201),
+    (4074, 4132),
+    (4075, 4148),
+    (4076, 4151),
+    (4077, 4127),
+    (4078, 4120),
+    (4079, 4143),
+    (4096, 4209),
+    (4097, 4173),
+    (4098, 4206),
+    (4099, 4174),
+    (4100, 4205),
+    (4101, 4175),
+    (4102, 4208),
+    (4103, 4176),
+    (4104, 4177),
+    (4105, 4178),
+    (4106, 4179),
+    (4107, 4180),
+    (4108, 4182),
+    (4190, 4192),
+    (4191, 4193),
+    (4211, 4213),
+    (4212, 4214),
+    (4215, 4216),
+    (4218, 4219),
+    (4220, 4221),
+    (4222, 4230),
+    (4223, 4231),
+    (4224, 4232),
+    (4225, 4233),
+    (4226, 4234),
+    (4227, 4235),
+    (4228, 4236),
+    (4229, 4237),
+    (4238, 4234),
+    (4239, 4245),
+    (4240, 4246),
+    (4241, 4247),
+    (4242, 4248),
+    (4243, 4245),
+    (4244, 4247),
+    (4252, 4265),
+    (4253, 4266),
+    (4254, 4267),
+    (4255, 4268),
+    (4256, 4269),
+    (4257, 4270),
+    (4258, 4271),
+    (4259, 4272),
+    (4260, 4273),
+    (4261, 4274),
+    (4262, 4275),
+    (4263, 4276),
+    (4264, 4277),
+    (4302, 4309),
+    (4303, 4310),
+    (4304, 4311),
+    (4305, 4312),
+    (4306, 4313),
+    (4307, 4314),
+    (4308, 4315),
+    (4316, 4309),
+];
+
 /// rathena `OPTION_FALCON` (`src/map/status.hpp`).
 pub const OPTION_FALCON: u32 = 0x10;
 /// rathena `OPTION_WUG`.
@@ -270,7 +429,7 @@ pub const BODY_OPTIONS: u32 = WEDDING
     | OPTION_ORCISH;
 
 /// The job whose body a player of `job` is drawn with under `option`: a wedding or holiday outfit (not in the union),
-/// else its mount's or union's body, else its own.
+/// else its mount's or union's body, else its own; then the all-jobs mount's body over that (`ALL_RIDING_LOOK`).
 pub fn sprite_job(job: u16, option: u32) -> u16 {
     if option & WEDDING != 0 {
         return 22;
@@ -291,7 +450,11 @@ pub fn sprite_job(job: u16, option: u32) -> u16 {
         (MADOGEAR, &[(4058, 4086), (4064, 4087), (4100, 4112), (4253, 4279)]),
         (UNION, &[(4047, 4048), (4226, 4238), (4239, 4243), (4241, 4244), (4302, 4316)]),
     ];
-    bodies.iter().filter(|(bit, _)| option & bit != 0).flat_map(|(_, pairs)| pairs.iter()).find(|(from, _)| *from == job).map_or(job, |&(_, to)| to)
+    let job = bodies.iter().filter(|(bit, _)| option & bit != 0).flat_map(|(_, pairs)| pairs.iter()).find(|(from, _)| *from == job).map_or(job, |&(_, to)| to);
+    if option & ALL_RIDING_LOOK == 0 {
+        return job;
+    }
+    ALL_RIDING_BODIES.iter().find(|(from, _)| *from == job).map_or(job, |&(_, to)| to)
 }
 
 /// Outfit bodies (wedding and holidays) show no weapon or shield.
@@ -789,7 +952,10 @@ impl SpriteSet {
         let top = (!orcish && look.head_top != look.head_bottom && look.head_top != look.head_mid).then(|| headgear(look.head_top, Part::HeadTop)).flatten();
         // Some bodies hold no weapon sprite, only a glow of their own. ponytail: the Madogear type isn't tracked per
         // unit yet, so type 0.
-        let weapon = if let Some(glow) = body_glow(job, sex, look.body, 0, Some(&names)) {
+        // On the all-jobs mount neither the weapon nor its glow is drawn.
+        let weapon = if look.option & ALL_RIDING_LOOK != 0 {
+            None
+        } else if let Some(glow) = body_glow(job, sex, look.body, 0, Some(&names)) {
             Some((None, glow.and_then(|path| load(path, None, Part::WeaponGlow))))
         // Two weapons: one sprite for both hands, named by the pair's type alone; its glow only for some types.
         } else if left_weapon(look, tables) {
@@ -2850,7 +3016,12 @@ impl Actor {
 
     /// The job the unit is drawn with: a player look's `sprite_job` (outfits, the wedding dress), else its job.
     pub fn drawn_job(&self) -> u16 {
-        if self.look.is_some() { sprite_job(self.job, self.option) } else { self.job }
+        if self.look.is_some() { sprite_job(self.job, self.body_option()) } else { self.job }
+    }
+
+    /// The server's option word plus the all-jobs mount, which only the look holds.
+    pub fn body_option(&self) -> u32 {
+        self.option | self.look.as_ref().map_or(0, |look| look.option & ALL_RIDING_LOOK)
     }
 
     /// Plays `action` once at its ACT pace times `scale` (attack, flinch), or holds its last frame (death).
@@ -3997,6 +4168,17 @@ mod tests {
         assert_eq!(chosen_body(4332, "costume", "normal", true), "costume");
         assert_eq!(chosen_body(0, "costume", "normal", true), "normal");
         assert_eq!(chosen_body(4054, "costume", "normal", true), "normal");
+    }
+
+    #[test]
+    fn the_all_jobs_mount_rides_on_the_class_body() {
+        assert_eq!([sprite_job(0, ALL_RIDING_LOOK), sprite_job(7, ALL_RIDING_LOOK), sprite_job(4061, ALL_RIDING_LOOK)], [4124, 4199, 4133]);
+        // A class mount or an outfit comes first, and neither body is in the table: the Peco knight and the wedding dress stay.
+        assert_eq!([sprite_job(7, RIDING | ALL_RIDING_LOOK), sprite_job(7, WEDDING | ALL_RIDING_LOOK)], [13, 22]);
+        assert_eq!([sprite_job(4252, ALL_RIDING_LOOK), sprite_job(4316, ALL_RIDING_LOOK), sprite_job(4351, ALL_RIDING_LOOK)], [4265, 4309, 4351]);
+        // Every mount body has names to load, and the server's option word can't carry the bit.
+        assert!(ALL_RIDING_BODIES.iter().all(|&(_, to)| job_sprites(to).is_some()));
+        assert_eq!(BODY_OPTIONS & ALL_RIDING_LOOK, 0);
     }
 
     #[test]

@@ -4017,6 +4017,19 @@ impl App {
                 if id == game.account_id && kind == ALL_RIDING {
                     game.riding = on;
                 }
+                // The all-jobs mount puts anyone's body on its job's mount.
+                if kind == ALL_RIDING {
+                    let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
+                    if let Some(actor) = actor
+                        && let Some(look) = &mut actor.look
+                    {
+                        let option = if on { look.option | actor::ALL_RIDING_LOOK } else { look.option & !actor::ALL_RIDING_LOOK };
+                        if look.option != option {
+                            look.option = option;
+                            actor.sprites = SpriteSet::player(grf, look, look_tables);
+                        }
+                    }
+                }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != kind);
                     // Clairvoyance has no icon in the built-in table; it is still kept so hidden units can be silhouettes.
@@ -4063,10 +4076,13 @@ impl App {
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor
                     && let Some(look) = &mut actor.look
-                    && look.option != option & actor::BODY_OPTIONS
                 {
-                    look.option = option & actor::BODY_OPTIONS;
-                    actor.sprites = SpriteSet::player(grf, look, look_tables);
+                    // The all-jobs mount comes as a status, not an option bit: keep it.
+                    let body = option & actor::BODY_OPTIONS | look.option & actor::ALL_RIDING_LOOK;
+                    if look.option != body {
+                        look.option = body;
+                        actor.sprites = SpriteSet::player(grf, look, look_tables);
+                    }
                 }
                 let actor = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 if let Some(actor) = actor {
