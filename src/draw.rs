@@ -760,7 +760,7 @@ impl App {
         if let Some(shadow) = &game.shadow {
             // On the ground under each unit, even one in the air (a falling item).
             let cast = |actor: &actor::Actor, scale: f32| {
-                let factor = actor::shadow_factor(shadow_factors, actor.kind == PLAYER, actor.job, actor.option, actor.sitting, actor.dead);
+                let factor = actor::shadow_factor(shadow_factors, actor.kind == PLAYER, actor.job, actor.body_option(), actor.sitting, actor.dead);
                 factor * scale
             };
             for (owner, feet, _) in &frames {

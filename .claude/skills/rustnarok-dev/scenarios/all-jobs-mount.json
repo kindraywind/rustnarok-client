@@ -1,0 +1,35 @@
+{
+ "about": "The all-jobs mount (@mount2, the halter-lead status): a Novice rides a poring and a Warlock a fox, with no weapon drawn; off again, the plain body is back. Puts the job and the mount back at the end.",
+ "account": "",
+ "slot": 0,
+ "env": {
+  "RUSTNAROK_CLIENT_CAMERA": "0,45,65"
+ },
+ "steps": [
+  {"say": "@warp prontera 156 180"},
+  {"settle": 1500},
+  {"say": "@job 0"},
+  {"wait": 1000},
+  {"move": [1000, 740]},
+  {"say": "@mount2"},
+  {"wait": 1500},
+  {"expect": {"state": {"player.riding": true, "player.job": 0}}},
+  {"cmd": {"cmd": "clock", "action": "pause"}},
+  {"shot": "mount-novice", "crop": [362, 120, 300, 330]},
+  {"cmd": {"cmd": "clock", "action": "resume"}},
+  {"say": "@job 4061"},
+  {"wait": 1500},
+  {"expect": {"state": {"player.riding": true, "player.job": 4061}}},
+  {"cmd": {"cmd": "clock", "action": "pause"}},
+  {"shot": "mount-warlock", "crop": [362, 120, 300, 330]},
+  {"cmd": {"cmd": "clock", "action": "resume"}},
+  {"say": "@mount2"},
+  {"wait": 1500},
+  {"expect": {"state": {"player.riding": false}}},
+  {"cmd": {"cmd": "clock", "action": "pause"}},
+  {"shot": "mount-off", "crop": [362, 120, 300, 330]},
+  {"cmd": {"cmd": "clock", "action": "resume"}},
+  {"say": "@job 0"},
+  {"wait": 1000}
+ ]
+}
