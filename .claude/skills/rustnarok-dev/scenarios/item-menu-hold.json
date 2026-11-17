@@ -1,5 +1,5 @@
 {
-  "about": "A box item's menu doesn't hold the player. rathena runs an item's script through a stand-in hidden NPC and frees the script as soon as it pauses, so the Dungeon Ticket's menu (select in its item script) comes with the stand-in's vanish, and no answer or close ever follows. Main kept the player held for good (no walking) with the menu, or after OK an invisible dialog; now the dialog goes with the stand-in and the player walks.",
+  "about": "A box item's menu stays up as in the game, and answering it doesn't hold the player. rathena runs an item's script through a stand-in hidden NPC whose vanish comes with the menu. Stock rathena has freed the script by then (pc_useitem), so the Dungeon Ticket's menu (select in its item script) gets no reply; Class4-RO keeps its scripts and answers (its Metal Weapon Box). Main closed the menu with the stand-in, so no box could be answered; now the menu stays, and after OK the player walks.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -10,6 +10,9 @@
     {"click_on": {"button": "tab:item"}}, {"wait": 300},
     {"click_on": {"inventory_item": 14506}, "count": 2}, {"wait_for": {"packet": "0x00b7", "ms": 5000}},
     {"wait": 500},
+    {"expect": {"windows_open": ["NpcDialog"], "state": {"dialog.talking": true}}},
+    {"shot": "item-menu-open"},
+    {"click_on": {"button": "npc_menu_ok"}}, {"wait": 500},
     {"expect": {"windows_closed": ["NpcDialog"], "state": {"dialog": null}}},
     {"key": "Alt+E"}, {"wait": 300},
     {"click_on": {"cell": [153, 150]}}, {"wait": 2000},

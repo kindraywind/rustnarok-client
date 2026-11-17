@@ -130,6 +130,11 @@ impl Game {
             let _ = self.session.close_dialog(dialog.npc);
             self.dismiss_dialog();
             self.cutin = None;
+        } else if self.units.get(&dialog.npc).is_none_or(|unit| unit.vanish.is_some()) {
+            // A box item's menu talks through a stand-in (clif_sendfakenpc) that the server takes away with the menu
+            // still up. Class4-RO keeps the script and answers; stock rathena has already freed it (pc_useitem), and
+            // nothing would come. So the answer doesn't hold the player: what the script says next opens a new dialog.
+            self.dismiss_dialog();
         }
     }
 
