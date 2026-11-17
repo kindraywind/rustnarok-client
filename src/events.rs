@@ -1565,6 +1565,9 @@ impl App {
                 game.combos.clear();
                 game.locks.clear();
                 game.hold_locked();
+                // A stat raise sent as the warp began is dropped with the rest, never answered: stop waiting for it,
+                // or the status window would raise nothing more until a relog.
+                game.status_window.waiting = false;
                 if map == game.map {
                     // A teleport on the same map: no loading, but the server takes the player off the map until
                     // the load is acknowledged (it drops everything else till then) and sends what's in view again.
