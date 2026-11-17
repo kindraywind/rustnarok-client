@@ -1,0 +1,11 @@
+// Trap caught (issue #1331): a Poring born on gef_fild07 61,231, where trap-caught.json's Hunter put an Ankle Snare, so the
+// trap catches it at once; it is taken away 4 s later. Loaded and unloaded by scenarios/trap-caught.json.
+gef_fild07,1,1,0	script	TrapPoring	-1,{
+OnInit:
+	monster "gef_fild07", 61, 231, "--ja--", 1002, 1, "TrapPoring::OnDead";
+	sleep 4000;
+	killmonster "gef_fild07", "TrapPoring::OnDead";
+	end;
+OnDead:
+	end;
+}

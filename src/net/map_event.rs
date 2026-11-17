@@ -1500,6 +1500,10 @@ pub enum MapEvent {
         /// The skill's level.
         level: u8,
     },
+    /// A trap that caught someone is shown again (ZC_SKILL_UPDATE).
+    SkillUnitShown {
+        id: u32,
+    },
     /// A skill's unit is gone or out of sight (ZC_SKILL_DISAPPEAR).
     SkillUnitGone {
         id: u32,
