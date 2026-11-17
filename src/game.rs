@@ -2229,17 +2229,16 @@ impl Game {
         self.ask_guild_pages();
     }
 
-    /// The guild window's pages: the guild's info and its members, and the open tab's (positions, skills, the expel
-    /// list; the notice comes by itself). Which tabs open is asked for first, until the server has said.
+    /// What opening the guild window's tab asks for: which tabs open first, until the server has said, then the tab's
+    /// pages (`guild::tab_pages`).
     pub(crate) fn ask_guild_pages(&mut self) {
-        if self.guild.is_some() && self.guild_window.menu == guild::MENU_UNKNOWN {
+        let Some(guild) = &self.guild else { return };
+        let pages = guild::tab_pages(self.guild_window.tab, guild.info.as_ref().is_some_and(|info| !info.master.is_empty()));
+        if self.guild_window.menu == guild::MENU_UNKNOWN {
             let _ = self.session.guild_menu();
         }
-        if self.guild.is_some() {
-            let tab = self.guild_window.tab as u32;
-            for page in [0, 1].into_iter().chain((2..=4).contains(&tab).then_some(tab)) {
-                let _ = self.session.guild_page(page);
-            }
+        for page in pages {
+            let _ = self.session.guild_page(page);
         }
     }
 

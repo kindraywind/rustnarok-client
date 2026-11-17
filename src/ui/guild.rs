@@ -620,6 +620,8 @@ pub struct GuildWindow {
     pub notice_draft: (String, String),
     /// Which tabs open, by the guild's menu flag (MENU_UNKNOWN until the server says).
     pub menu: i32,
+    /// The skills and members pages were asked for on the session's first guild id (once a session).
+    pub first_asked: bool,
 }
 
 impl Default for GuildWindow {
@@ -642,8 +644,23 @@ impl Default for GuildWindow {
             typing: None,
             notice_draft: (String::new(), String::new()),
             menu: MENU_UNKNOWN,
+            first_asked: false,
         }
     }
+}
+
+/// The pages (CZ_REQ_GUILD_MENU types) opening a tab asks for: the info first while the master isn't known, then the
+/// tab's own; Guild Info's are the expel list, the info and the members, the notice's none (it comes by itself).
+pub fn tab_pages(tab: usize, master_known: bool) -> Vec<u32> {
+    let own: &[u32] = match tab {
+        0 => &[4, 0, 1],
+        MEMBERS => &[1],
+        POSITIONS => &[2],
+        SKILLS => &[3],
+        EXPELLED => &[4],
+        _ => &[],
+    };
+    (!master_known).then_some(0).into_iter().chain(own.iter().copied()).collect()
 }
 
 /// The members in the order shown: the packet's (rathena: the master first), or by a column, up or down; online
@@ -1577,6 +1594,16 @@ impl GuildWindow {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tab_pages_ask_the_info_first_while_the_master_is_unknown() {
+        assert_eq!(super::tab_pages(0, false), [0, 4, 0, 1]);
+        assert_eq!(super::tab_pages(0, true), [4, 0, 1]);
+        assert_eq!(super::tab_pages(super::MEMBERS, true), [1]);
+        assert_eq!(super::tab_pages(super::SKILLS, false), [0, 3]);
+        assert_eq!(super::tab_pages(super::NOTICE, true), Vec::<u32>::new());
+        assert_eq!(super::tab_pages(super::NOTICE, false), [0]);
+    }
+
     use super::*;
 
     #[test]

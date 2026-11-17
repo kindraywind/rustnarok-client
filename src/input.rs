@@ -1565,10 +1565,7 @@ impl App {
                             {
                                 game.guild_window.notice_draft = guild.notice.clone();
                             }
-                            // Each page but the notice is asked for when shown.
-                            if tab <= 4 {
-                                let _ = game.session.guild_page(tab as u32);
-                            }
+                            game.ask_guild_pages();
                         }
                         // Disband: the warning box, and the disband window asking the guild's name.
                         Some(guild::Hit::Disband) => {

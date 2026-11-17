@@ -2418,17 +2418,23 @@ impl App {
                 guild.emblem = emblem;
                 guild.mode = mode;
                 game.want_emblem(id, emblem);
+                // The session's first guild id asks for the guild's skills and members; the allies come only with the
+                // info page, so on a siege map they're known once the guild window has been opened.
+                if !std::mem::replace(&mut game.guild_window.first_asked, true) {
+                    let _ = game.session.guild_page(3);
+                    let _ = game.session.guild_page(1);
+                }
             }
             MapEvent::GuildMenu(menu) => game.guild_window.menu = menu,
+            // Kept also when it comes before the guild id (rathena's login order), so the master is known.
             MapEvent::GuildInfo(info) => {
-                if let Some(guild) = &mut game.guild {
-                    // We lead it when its master's name is ours, too.
-                    if info.master == game.me.name {
-                        guild.master = true;
-                    }
-                    guild.name.clone_from(&info.name);
-                    guild.info = Some(info);
+                let guild = game.guild.get_or_insert_with(guild::Guild::default);
+                // We lead it when its master's name is ours, too.
+                if info.master == game.me.name {
+                    guild.master = true;
                 }
+                guild.name.clone_from(&info.name);
+                guild.info = Some(info);
             }
             MapEvent::GuildMembers(members) => {
                 if let Some(guild) = &mut game.guild {
@@ -2742,10 +2748,6 @@ impl App {
             // A map's property: its notices, then the "ready" the server waits for.
             MapEvent::MapProperty { property, flags } => {
                 game.map_property = Some((property, flags));
-                // Allies are spared on siege maps: their list comes with the guild's first page.
-                if versus::siege(flags) && game.guild.is_some() {
-                    let _ = game.session.guild_page(0);
-                }
                 for id in arrival_notices(flags, game.me.job) {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), MAP_NOTICE);
                 }
