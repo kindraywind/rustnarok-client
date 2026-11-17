@@ -412,6 +412,9 @@ fn decodes_guild_pages() {
         packet.extend_from_slice(body);
         packet
     };
+    // The castle list: a byte a castle.
+    let Some(MapEvent::GuildCastles(castles)) = decode_map_packet(&packet(ZC_GUILD_AGIT_INFO, &[1, 11])) else { panic!() };
+    assert_eq!(castles, [1, 11]);
     let mut position = [0u8; 16];
     position[..4].copy_from_slice(&19u32.to_le_bytes());
     position[4..8].copy_from_slice(&0x111u32.to_le_bytes());

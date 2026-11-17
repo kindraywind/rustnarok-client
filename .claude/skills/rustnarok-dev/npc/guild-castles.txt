@@ -1,0 +1,12 @@
+// Guild castles (issue #1330): Castle Give hands Neuschwanstein (aldeg_cas01) and Kriemhild (prtg_cas01) to the
+// clicker's guild; Castle Take gives them back to no one. Loaded and unloaded by scenarios/guild-castles.json.
+morocc,157,123,4	script	Castle Give	86,{
+	setcastledata "aldeg_cas01", 1, getcharid(2);
+	setcastledata "prtg_cas01", 1, getcharid(2);
+	end;
+}
+morocc,163,123,4	script	Castle Take	86,{
+	setcastledata "aldeg_cas01", 1, 0;
+	setcastledata "prtg_cas01", 1, 0;
+	end;
+}

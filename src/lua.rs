@@ -31,6 +31,7 @@ const ACCESSORY_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\accname.lu
 const WEAPON_TABLE: &str = "data\\luafiles514\\lua files\\datainfo\\weapontable.lub";
 const ROBE_ID: &str = "data\\luafiles514\\lua files\\datainfo\\spriterobeid.lub";
 const ROBE_NAME: &str = "data\\luafiles514\\lua files\\datainfo\\spriterobename.lub";
+const AGIT_CONFIG: [&str; 2] = ["data\\luafiles514\\lua files\\agit\\agitconfig.lub", "data\\luafiles514\\lua files\\agit\\agitconfig_f.lub"];
 /// What decides where garments and headgear go among a character's layers: the garment tables (by job, action and
 /// frame), the garments worn over the headgear, the headgear priorities, and the headgear Doram wear moved.
 const LAYER_RULES: [&str; 14] = [
@@ -874,6 +875,14 @@ fn style_rows(shop: &mlua::Table, name: &str) -> io::Result<BTreeMap<u16, StyleR
 }
 
 /// The titles achievements give (`title_tbl`), e.g. 1000 → "Junction of life".
+/// Castle names by the id the server sends, as the guild window asks `get_agit_name` (1 → "Kriemhild"); ids it names
+/// nothing are left out.
+pub fn agit_names(grf: &Grf) -> io::Result<HashMap<u8, String>> {
+    let lua = run(grf, &AGIT_CONFIG)?;
+    let name: mlua::Function = lua.globals().get("get_agit_name").map_err(lua_error)?;
+    Ok((1..=u8::MAX).filter_map(|id| Some((id, decode(&name.call::<mlua::LuaString>(id).ok()?)))).filter(|(_, name)| !name.is_empty()).collect())
+}
+
 pub fn titles(grf: &Grf) -> io::Result<HashMap<u32, String>> {
     names(&run(grf, &[TITLE_TABLE])?.globals().get::<mlua::Table>("title_tbl").map_err(lua_error)?)
 }

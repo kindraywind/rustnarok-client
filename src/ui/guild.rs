@@ -148,6 +148,14 @@ const RELATION_MARK: [f32; 2] = [80.0, 16.0];
 const RELATION_ROWS: usize = 3;
 /// The info lines on the left stop short of the boxes.
 const INFO_RIGHT: f32 = 196.0;
+/// The castle list over the castles line: a white box (the list's own) 19 px right of the label's width, at y 129,
+/// 95 x 158; a castle's name a 13 px row, 3 px in. ponytail: no scrollbar past 12 castles.
+const CASTLES_GAP: f32 = 19.0;
+const CASTLES_TOP: f32 = 129.0;
+const CASTLES_SIZE: [f32; 2] = [95.0, 158.0];
+const CASTLE_ROW: f32 = 13.0;
+const CASTLE_TEXT: f32 = 3.0;
+const CASTLE_ROWS: usize = 12;
 /// The menu's hover color, on the selected relation.
 // ponytail: the highlight's colour is a choice.
 const HOVER: [u8; 4] = [0x73, 0x9C, 0xEF, 0xFF];
@@ -250,6 +258,13 @@ pub struct Guild {
     pub relations: Vec<GuildRelation>,
     /// Our position's rights (ZC_UPDATE_GDID): invite 0x01, expel 0x10.
     pub mode: u32,
+    /// The castles it owns (ZC_GUILD_AGIT_INFO), by id.
+    pub castles: Vec<u8>,
+}
+
+/// The names of `castles` the data knows, in order; the guild window lists no row for an id without one.
+pub fn castle_names<'n>(castles: &[u8], names: &'n HashMap<u8, String>) -> Vec<&'n str> {
+    castles.iter().filter_map(|id| names.get(id).map(String::as_str)).collect()
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -1296,6 +1311,7 @@ impl GuildWindow {
         messages: &[String],
         guild: &Guild,
         (job_names, skill_info): (&HashMap<u16, String>, &HashMap<u16, SkillInfo>),
+        agit_names: &HashMap<u8, String>,
         emblem: Option<&'a Texture>,
         pointer: ([f32; 2], bool),
     ) {
@@ -1354,6 +1370,14 @@ impl GuildWindow {
                         text(layer, format!(" {}", info.members), [icon + assets.online_icon.size[0], top], [0, 0, 0]);
                     }
                     text(layer, line, [INFO[0], top], [0, 0, 0]);
+                }
+                // The castle list's box goes over the castles line's text.
+                let layer = layer.window();
+                let left = font.width(message(LABELS[5])) + CASTLES_GAP;
+                layer.sprites.push((&assets.white, at([left, CASTLES_TOP]), CASTLES_SIZE));
+                for (row, name) in castle_names(&guild.castles, agit_names).into_iter().take(CASTLE_ROWS).enumerate() {
+                    let name = window::fit(font, name, CASTLES_SIZE[0] - CASTLE_TEXT);
+                    text(layer, name, [left + CASTLE_TEXT, CASTLES_TOP + row as f32 * CASTLE_ROW], [0, 0, 0]);
                 }
                 text(layer, format!("{} : {}", message(EXP_LABEL), info.exp), EXP, exp_color(info.level));
                 text(layer, message(EMBLEM_LABEL_MESSAGE).to_owned(), EMBLEM_LABEL, [0, 0, 0]);
@@ -1605,6 +1629,13 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn lists_the_castles_it_has_names_for() {
+        let names: HashMap<u8, String> = [(1, "Kriemhild".into()), (11, "Repherion".into())].into();
+        assert_eq!(castle_names(&[11, 36, 1], &names), ["Repherion", "Kriemhild"]);
+        assert!(castle_names(&[], &names).is_empty());
+    }
 
     #[test]
     fn downloads_an_emblem_from_the_web_server() {

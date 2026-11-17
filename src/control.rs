@@ -1894,6 +1894,7 @@ fn game_state(app: &App, game: &Game) -> Value {
                 "positions": positions,
                 "members": members,
                 "skill_points": guild.skill_points,
+                "castles": crate::guild::castle_names(&guild.castles, &app.agit_names),
                 "skills": guild.skills.iter().map(|skill| (skill.id.to_string(), json!(skill.level))).collect::<serde_json::Map<String, Value>>(),
             })
         }),
