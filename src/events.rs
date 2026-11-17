@@ -3910,6 +3910,14 @@ impl App {
                     game.effects.play_unit(gpu, grf, table, kind, id, at, (range, level), Instant::now());
                 }
             }
+            // A trap that caught someone is drawn again as when it came into view.
+            // ponytail: the unit's level isn't kept, so it plays at 1; rathena sends this only for Ankle Snare, whose look has none.
+            MapEvent::SkillUnitShown { id } => {
+                if let (Some(gpu), Some(&(kind, cell, range))) = (gpu, game.skill_units.get(&id)) {
+                    let at = game.world.cell_position(cell.map(f32::from));
+                    game.effects.play_unit(gpu, grf, table, kind, id, at, (range, 1), Instant::now());
+                }
+            }
             MapEvent::SkillUnitGone { id } => {
                 game.skill_units.remove(&id);
                 game.effects.forget(id);

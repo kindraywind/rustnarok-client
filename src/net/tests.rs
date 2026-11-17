@@ -531,6 +531,12 @@ fn decodes_skill_units() {
 }
 
 #[test]
+fn decodes_a_trap_shown_again() {
+    assert_eq!(packet_length(ZC_SKILL_UPDATE), Some(6));
+    let Some(MapEvent::SkillUnitShown { id: 110_000_123 }) = decode_map_packet(&[0xAC, 0x01, 0xFB, 0x77, 0x8E, 0x06]) else { panic!() };
+}
+
+#[test]
 fn decodes_map_cells() {
     // An Ice Wall cell at 61,232 of gef_fild07 made unwalkable (type 5).
     let mut packet = vec![0x92, 0x01, 61, 0, 232, 0, 5, 0];
