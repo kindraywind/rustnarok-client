@@ -1,0 +1,29 @@
+{
+  "about": "A captcha check (issue #1333). Needs a captcha in the server's captcha_db whose answer is rn1333 (rathena: db/import/captcha_db.yml, loaded at map-server start, or one uploaded with 0x0a52/0x0a54). Our NPC (npc/captcha.txt) starts rathena's macro detector on the player: the picture comes in chunks, the client says it's in (0x0a5a), and the box shows the picture, 3 tries and the time left. Esc doesn't close it; a wrong answer brings it back with 2 tries; rn1333 and Enter close it (0x0a5d). A client that can't answer is punished when it quits (rathena's default: the account blocked for good), so the scenario sets the punishment to a minute in jail and leaves it so: a run goes on after a failed step and quits with the check still open. Play it only with a client that answers it (not `check` against a main older than #1333).",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp morocc 160 120"}, {"settle": 1500},
+    {"say": "@setbattleflag macro_detection_punishment 1"}, {"wait": 300},
+    {"say": "@setbattleflag macro_detection_punishment_time 1"}, {"wait": 300},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/captcha.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/captcha.txt"}, {"wait": 1500},
+    {"click_unit": {"kind": "npc", "name": "Captcha Test"}},
+    {"wait_for": {"packet": "0x0a5b", "ms": 8000}}, {"wait": 300},
+    {"expect": {"state": {"captcha.picture": true, "captcha.tries": 3, "captcha.typed": ""}}},
+    {"key": "Escape"}, {"wait": 300},
+    {"expect": {"state": {"captcha.tries": 3}}},
+    {"type": "nope"}, {"wait": 200},
+    {"expect": {"state": {"captcha.typed": "nope"}}},
+    {"key": "Enter"},
+    {"wait_for": {"packet": "0x0a5b", "ms": 5000}}, {"wait": 300},
+    {"expect": {"state": {"captcha.tries": 2, "captcha.typed": ""}}},
+    {"type": "rn1333"},
+    {"move": [1000, 750]}, {"wait": 200},
+    {"shot": "captcha", "crop": [362, 263, 300, 242]},
+    {"key": "Enter"},
+    {"wait_for": {"packet": "0x0a5d", "ms": 5000}}, {"wait": 300},
+    {"expect": {"state": {"captcha": null}}},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/captcha.txt"}, {"wait": 500}
+  ]
+}
