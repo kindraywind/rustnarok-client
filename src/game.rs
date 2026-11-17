@@ -3119,10 +3119,13 @@ impl Game {
             mail::Action::Delete(kind, id) => self.session.delete_mail(kind, id),
             mail::Action::Check(name) => self.session.check_receiver(&name),
             mail::Action::Detach(index, amount) => self.session.attach_to_mail(index, amount, false),
+            // Sending closes the window written in at once, which tells the server writing is over.
             mail::Action::Send => {
                 let Some(compose) = &self.mail.compose else { return None };
                 let receiver = compose.receiver.map_or(0, |(character, ..)| character);
-                self.session.send_mail(&compose.to, &self.me.name, &compose.title, &compose.text, compose.zeny(), receiver)
+                let _ = self.session.send_mail(&compose.to, &self.me.name, &compose.title, &compose.text, compose.zeny(), receiver);
+                self.drop_compose();
+                Ok(())
             }
             mail::Action::Cancel => self.session.cancel_mail(),
             mail::Action::Say(id) => return Some(id),
