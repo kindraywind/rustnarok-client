@@ -2356,6 +2356,12 @@ fn decodes_the_stylist() {
 }
 
 #[test]
+fn decodes_a_skill_message() {
+    assert_eq!(packet_length(ZC_SKILLMSG), Some(6));
+    let Some(MapEvent::SkillMessage(0x1C)) = decode_map_packet(&[0x15, 0x02, 0x1C, 0, 0, 0]) else { panic!() };
+}
+
+#[test]
 fn reads_a_status_value() {
     // ZC_MSG_STATE_CHANGE3: EFST_ON_PUSH_CART (673) on account 7, cart type 3.
     let mut packet = vec![0x83, 0x09, 0xA1, 0x02, 7, 0, 0, 0, 1];

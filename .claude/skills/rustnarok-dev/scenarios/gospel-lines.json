@@ -1,0 +1,167 @@
+{
+ "about": "Gospel's lines to party members (ZC_SKILLMSG 0x0215): a Paladin casts Gospel next to a party member, who gets one of Gospel's messages in #FF9B9B in the chat when a blessing lands on them (which one is random, so the shot is cropped to the chat and the packet is what's checked). Both leave the party, and the Paladin goes back to Novice.",
+ "account": "",
+ "slot": 0,
+ "second": {
+  "account": "2",
+  "slot": 0,
+  "env": {
+   "RUSTNAROK_CLIENT_PARTY": "accept"
+  }
+ },
+ "steps": [
+  {
+   "say": "@warp morocc 160 120"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "type": "/leave"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "as": "second",
+   "type": "/leave"
+  },
+  {
+   "as": "second",
+   "key": "Enter"
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "say": "@recall {second}"
+  },
+  {
+   "as": "second",
+   "settle": 2000
+  },
+  {
+   "type": "/organize QAGospel{stamp}"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait_for": {
+    "event": "PartyMade",
+    "ms": 5000
+   }
+  },
+  {
+   "wait": 500
+  },
+  {
+   "key": "Alt+Z"
+  },
+  {
+   "click_on": {
+    "unit": "{second}"
+   },
+   "button": "right"
+  },
+  {
+   "wait": 400
+  },
+  {
+   "click_on": {
+    "menu_item": "party"
+   }
+  },
+  {
+   "wait_for": {
+    "packet": "0x02c5",
+    "ms": 5000
+   }
+  },
+  {
+   "key": "Alt+Z"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@set BaseLevel 99"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@job 4015"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@heal"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@useskill 369 10 {first}"
+  },
+  {
+   "as": "second",
+   "wait_for": {
+    "packet": "0x0215",
+    "ms": 60000
+   }
+  },
+  {
+   "as": "second",
+   "wait": 300
+  },
+  {
+   "as": "second",
+   "move": [
+    1000,
+    750
+   ]
+  },
+  {
+   "as": "second",
+   "shot": "gospel-line",
+   "crop": [
+    0,
+    560,
+    520,
+    208
+   ],
+   "threshold": 5
+  },
+  {
+   "say": "@useskill 369 10 {first}"
+  },
+  {
+   "wait": 800
+  },
+  {
+   "say": "@job 0"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "as": "second",
+   "type": "/leave"
+  },
+  {
+   "as": "second",
+   "key": "Enter"
+  },
+  {
+   "type": "/leave"
+  },
+  {
+   "key": "Enter"
+  },
+  {
+   "wait": 800
+  }
+ ]
+}

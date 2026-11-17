@@ -480,6 +480,8 @@ pub enum MapEvent {
     },
     /// Asking to adopt, refused (ZC_BABYMSG): 0 a child already, 1 under level 70, 2 the one asked is married.
     AdoptRefused(u32),
+    /// ZC_SKILLMSG: a skill's message to its target, by the packet's message id (`skill_message`).
+    SkillMessage(u32),
     /// A teammate's HP on a battleground (ZC_BATTLEFIELD_NOTIFY_HP2).
     BattleHp {
         account: u32,

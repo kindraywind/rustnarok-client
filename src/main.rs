@@ -183,6 +183,19 @@ const CHAT_REFINE_ANNOUNCEMENT: [u8; 3] = [0xFF, 0xB0, 0x62];
 const CHAT_NAVIGATION: [u8; 3] = [0xFF, 0xB0, 0x62];
 /// Messages that come with a skill's name, "[Name] message" (rathena's notes give 0xCDCDFF).
 const CHAT_SKILL_MESSAGE: [u8; 3] = [0xCD, 0xCD, 0xFF];
+/// ZC_SKILLMSG's lines (Gospel's effects).
+const CHAT_SKILL_MSG: [u8; 3] = [0xFF, 0x9B, 0x9B];
+
+/// ZC_SKILLMSG's message id to its msgstringtable line: Gospel's 0x15–0x19 and 0x1c–0x20, and 0x28; others print nothing.
+fn skill_message(id: u32) -> Option<usize> {
+    let id = id as usize;
+    match id {
+        0x15..=0x19 => Some(id - 0x15 + 889),
+        0x1C..=0x20 => Some(id - 0x1C + 894),
+        0x28 => Some(915),
+        _ => None,
+    }
+}
 /// The battle messages (msgstringtable): "Someone", and the four damage lines: on you, a party member attacked by someone, a
 /// receiver of damage, a party member attacking.
 const BATTLE_SOMEONE: usize = 1604;
@@ -5950,6 +5963,12 @@ fn ground_drop_refused(since_wear: Option<Duration>, busy: bool, equipment: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gospel_messages() {
+        assert_eq!([0x15, 0x19, 0x1C, 0x20, 0x28].map(skill_message), [Some(889), Some(893), Some(894), Some(898), Some(915)]);
+        assert_eq!([0, 0x1A, 0x1B, 0x21, 0x27].map(skill_message), [None; 5]);
+    }
 
     #[test]
     fn an_npc_with_a_monster_sprite_is_an_npc() {

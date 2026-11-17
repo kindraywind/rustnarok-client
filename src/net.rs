@@ -1153,6 +1153,8 @@ const ZC_COUPLENAME: u16 = 0x01E6;
 const ZC_DIVORCE: u16 = 0x0205;
 const ZC_REQ_BABY: u16 = 0x01F6;
 const ZC_BABYMSG: u16 = 0x0216;
+/// A skill's message to its target (Gospel's effects on party members): message id.L (6 bytes).
+const ZC_SKILLMSG: u16 = 0x0215;
 const CZ_REQ_JOIN_BABY: u16 = 0x01F9;
 const CZ_JOIN_BABY: u16 = 0x01F7;
 const ZC_BATTLEFIELD_NOTIFY_HP2: u16 = 0x0A0E;

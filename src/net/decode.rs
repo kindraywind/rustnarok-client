@@ -359,6 +359,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_DIVORCE => MapEvent::Divorced(c_string(&packet[2..26])),
         ZC_REQ_BABY => MapEvent::AdoptAsked { parent: u32_at(2), partner: u32_at(6), name: c_string(&packet[10..34]) },
         ZC_BABYMSG => MapEvent::AdoptRefused(u32_at(2)),
+        ZC_SKILLMSG => MapEvent::SkillMessage(u32_at(2)),
         ZC_BATTLEFIELD_NOTIFY_HP2 => MapEvent::BattleHp { account: u32_at(2), hp: u32_at(6) as i32, max: u32_at(10) as i32 },
         // Someone leaving comes with x = y = 0xFFFF.
         ZC_BATTLEFIELD_NOTIFY_POSITION => {

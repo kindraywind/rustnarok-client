@@ -4288,6 +4288,11 @@ impl App {
                 game.partner = None;
             }
             MapEvent::AdoptAsked { parent, partner, name } => game.adopt_asked = Some((parent, partner, name, false)),
+            MapEvent::SkillMessage(id) => {
+                if let Some(id) = skill_message(id) {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_SKILL_MSG);
+                }
+            }
             MapEvent::AdoptRefused(reason) => {
                 if let Some(&id) = ADOPT_REFUSALS.get(reason as usize) {
                     game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
