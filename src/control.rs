@@ -1476,6 +1476,10 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(game.my_shop.iter().flat_map(crate::vend::MyShop::cell_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.storage.grip_box().map(|area| json!({"kind": "button", "name": "storage_resize", "box": area})))
+        .chain(app.assets.as_ref().filter(|_| game.captcha.as_ref().is_some_and(|check| check.asked.is_some())).map(|assets| {
+            let [x, y] = crate::captcha::ok_on(crate::screen());
+            json!({"kind": "button", "name": "captcha_ok", "box": [x, y, assets.ok[0].size[0], assets.ok[0].size[1]]})
+        }))
         .chain(game.party_window.grip_box().map(|area| json!({"kind": "button", "name": "party_resize", "box": area})))
         .chain(
             app.assets
@@ -2264,6 +2268,15 @@ fn game_state(app: &App, game: &Game) -> Value {
         game.storage.categories.iter().enumerate().filter(|(_, category)| category.frame.open).map(|(tab, _)| tab).collect::<Vec<_>>().into();
     state["storage_title"] = game.storage.name.clone().into();
     state["storage_loading"] = game.storage.loading.into();
+    // A captcha check: null when none; whether its picture came in, the tries and seconds left once asked, the field.
+    state["captcha"] = game.captcha.as_ref().map_or(Value::Null, |check| {
+        json!({
+            "picture": check.picture.is_some(),
+            "tries": check.asked.map(|(tries, _)| tries),
+            "seconds_left": check.asked.map(|_| check.seconds_left(now)),
+            "typed": check.typed,
+        })
+    });
     state["skill_list_rows"] = game.skill_window.list_rows().into();
     state["vend_size"] = json!({"width": game.vend_size.width, "rows": game.vend_size.rows});
     state["shop_size"] = game.shop.as_ref().and_then(crate::shop::Shop::sizes).map(|(width, rows)| json!({"width": width, "rows": rows})).into();
@@ -2538,6 +2551,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("storage_found", Fair),
         ("storage_list", Fair),
         ("storage_loading", Fair),
+        ("captcha", Fair),
         ("storage_log", Fair),
         ("storage_mask", Fair),
         ("storage_rows", Fair),

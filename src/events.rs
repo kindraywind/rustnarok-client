@@ -456,6 +456,7 @@ impl App {
                     boss: None,
                     viewing: None,
                     bank: None,
+                    captcha: None,
                     cashshop: None,
                     cashshop_lists: vec![Vec::new(); 9],
                     cashshop_list_requested: false,
@@ -1842,6 +1843,25 @@ impl App {
             MapEvent::InventoryStart { kind: 1, .. } => game.cart.clear(),
             MapEvent::InventoryItems { kind: 1, items } => game.cart.extend(items),
             MapEvent::InventoryEnd { kind, flag } => game.storage.list_end(kind, flag),
+            // A captcha check: the picture in chunks, said to be in once whole, then the box asks until the server closes it.
+            MapEvent::CaptchaStart { size } => game.captcha = Some(captcha::Captcha::new(size)),
+            MapEvent::CaptchaChunk(chunk) => {
+                if let Some(whole) = game.captcha.as_mut().and_then(|check| check.add(&chunk)) {
+                    let picture = captcha::decode_picture(whole);
+                    if picture.is_none() {
+                        eprintln!("the captcha's picture isn't a compressed BMP");
+                    }
+                    let check = game.captcha.as_mut().unwrap();
+                    check.picture = picture.zip(gpu).map(|(picture, gpu)| gpu.texture(&picture, false));
+                    let _ = game.session.captcha_loaded();
+                }
+            }
+            MapEvent::CaptchaAsk { tries, ms } => {
+                if let Some(check) = &mut game.captcha {
+                    check.ask(tries, ms, control::now());
+                }
+            }
+            MapEvent::CaptchaClosed(_) => game.captcha = None,
             MapEvent::InventoryStart { .. } | MapEvent::InventoryItems { .. } => {}
             MapEvent::Quests(quests) => game.quests = quests,
             // A new quest: its line and icon; one already known is refreshed in place.

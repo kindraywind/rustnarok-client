@@ -80,6 +80,15 @@ impl MapSession {
     }
 
     /// Stops attacking (CZ_CANCEL_LOCKON).
+    /// The captcha's picture is all in (CZ_COMPLETE_APPLY_MACRO_DETECTOR_CAPTCHA): the server then asks for the answer.
+    pub fn captcha_loaded(&mut self) -> io::Result<()> {
+        self.stream.write_all(&CZ_COMPLETE_APPLY_MACRO_DETECTOR_CAPTCHA.to_le_bytes())
+    }
+
+    pub fn captcha_answer(&mut self, answer: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_captcha_answer(answer))
+    }
+
     pub fn stop_attack(&mut self) -> io::Result<()> {
         self.stream.write_all(&CZ_CANCEL_LOCKON.to_le_bytes())
     }

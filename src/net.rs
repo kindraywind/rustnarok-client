@@ -164,6 +164,17 @@ fn name_field(name: &str) -> Vec<u8> {
 }
 
 /// CZ_REG_CHANGE_GUILD_POSITIONINFO with one position: ID, permissions, rank (rathena ignores it; the ID), tax, title.
+/// CZ_ACK_ANSWER_MACRO_DETECTOR: a captcha's answer in 16 bytes, NUL-padded; longer text is cut to 15 so it ends in a
+/// NUL (rathena compares it as a C string).
+pub fn encode_captcha_answer(answer: &str) -> [u8; 18] {
+    let mut packet = [0; 18];
+    packet[..2].copy_from_slice(&CZ_ACK_ANSWER_MACRO_DETECTOR.to_le_bytes());
+    let text = encode_text(answer);
+    let length = text.len().min(15);
+    packet[2..2 + length].copy_from_slice(&text[..length]);
+    packet
+}
+
 /// A room's settings as CZ_CREATE_CHATROOM and CZ_CHANGE_CHATROOM carry them: the length, the limit, public (1) or
 /// private (0), the 8-byte password, the title.
 pub fn encode_room(packet_type: u16, title: &str, limit: u16, public: bool, password: &str) -> Vec<u8> {
@@ -1000,6 +1011,12 @@ const CZ_REQ_ITEMIDENTIFY: u16 = 0x0178;
 const ZC_ACK_ITEMIDENTIFY: u16 = 0x0179;
 const ZC_ITEM_PICKUP_ACK: u16 = 0x0B41;
 const ZC_INVENTORY_START: u16 = 0x0B08;
+const ZC_APPLY_MACRO_DETECTOR: u16 = 0x0A58;
+const ZC_APPLY_MACRO_DETECTOR_CAPTCHA: u16 = 0x0A59;
+const CZ_COMPLETE_APPLY_MACRO_DETECTOR_CAPTCHA: u16 = 0x0A5A;
+const ZC_REQ_ANSWER_MACRO_DETECTOR: u16 = 0x0A5B;
+const CZ_ACK_ANSWER_MACRO_DETECTOR: u16 = 0x0A5C;
+const ZC_CLOSE_MACRO_DETECTOR: u16 = 0x0A5D;
 const ZC_INVENTORY_END: u16 = 0x0B0B;
 const ZC_INVENTORY_ITEMLIST_NORMAL: u16 = 0x0B09;
 const ZC_INVENTORY_ITEMLIST_EQUIP: u16 = 0x0B39;

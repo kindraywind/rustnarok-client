@@ -3151,3 +3151,18 @@ fn map_link_drops_after_a_minute_of_silence() {
     assert_eq!(ping.last(), Some(&60_000));
     assert_eq!(silent, [65_000]);
 }
+
+#[test]
+fn decodes_the_captcha_check() {
+    // The start: the compressed size, a 4-byte key; each chunk after the length and key.
+    let Some(MapEvent::CaptchaStart { size: 300 }) = decode_map_packet(&[0x58, 0x0A, 0x2C, 0x01, 0, 0, 0, 0]) else { panic!() };
+    let Some(MapEvent::CaptchaChunk(chunk)) = decode_map_packet(&[0x59, 0x0A, 11, 0, 0, 0, 0, 0, 7, 8, 9]) else { panic!() };
+    assert_eq!(chunk, [7, 8, 9]);
+    // The ask: tries left, then the time limit in ms; the close's status.
+    let Some(MapEvent::CaptchaAsk { tries: 3, ms: 60_000 }) = decode_map_packet(&[0x5B, 0x0A, 3, 0x60, 0xEA, 0, 0]) else { panic!() };
+    let Some(MapEvent::CaptchaClosed(2)) = decode_map_packet(&[0x5D, 0x0A, 2, 0, 0, 0]) else { panic!() };
+    // The answer: 16 bytes NUL-padded, at most 15 of text.
+    let answer = encode_captcha_answer("rn1333");
+    assert_eq!(answer[..10], [0x5C, 0x0A, b'r', b'n', b'1', b'3', b'3', b'3', 0, 0]);
+    assert_eq!(encode_captcha_answer("0123456789abcdefXYZ")[2..], *b"0123456789abcde\0");
+}

@@ -211,6 +211,10 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         },
         ZC_INVENTORY_START => MapEvent::InventoryStart { kind: packet[4], name: c_string(packet.get(5..).unwrap_or_default()) },
         ZC_INVENTORY_END => MapEvent::InventoryEnd { kind: packet[2], flag: packet[3] },
+        ZC_APPLY_MACRO_DETECTOR => MapEvent::CaptchaStart { size: u16_at(2) },
+        ZC_APPLY_MACRO_DETECTOR_CAPTCHA => MapEvent::CaptchaChunk(packet.get(8..).unwrap_or_default().to_vec()),
+        ZC_REQ_ANSWER_MACRO_DETECTOR => MapEvent::CaptchaAsk { tries: packet[2], ms: u32_at(3) as i32 },
+        ZC_CLOSE_MACRO_DETECTOR => MapEvent::CaptchaClosed(u32_at(2) as i32),
         ZC_INVENTORY_ITEMLIST_NORMAL => {
             MapEvent::InventoryItems { kind: packet[4], items: packet[5..].chunks_exact(NORMAL_ITEM_SIZE).map(decode_normal_item).collect() }
         }

@@ -198,6 +198,13 @@ impl Game {
         boxes
     }
 
+    /// Enter or OK in the captcha box: the typed answer goes out.
+    pub(crate) fn answer_captcha(&mut self) {
+        if let Some(answer) = self.captcha.as_mut().and_then(captcha::Captcha::answer) {
+            let _ = self.session.captcha_answer(&answer);
+        }
+    }
+
     /// The input box's OK: nothing for an empty field; otherwise the answer goes to an NPC still in view (a text
     /// one also to id 0) and the box closes.
     pub(crate) fn submit_input(&mut self) {

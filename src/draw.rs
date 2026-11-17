@@ -1833,6 +1833,11 @@ impl App {
                 overlay.sprites.push(button_sprite(pointer, input.ok_on(screen()), &assets.ok));
             }
         }
+        // A captcha check over everything, once the server asks.
+        if let Some(check) = game.captcha.as_ref().filter(|check| check.asked.is_some()) {
+            check.draw(overlay.window(), &assets.chrome, &assets.captcha, font, messages, screen(), now);
+            overlay.sprites.push(button_sprite(pointer, captcha::ok_on(screen()), &assets.ok));
+        }
 
         let mut tooltip = Layer::over();
         // A pointed item picture in the NPC window: the item's name over it.
