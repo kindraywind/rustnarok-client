@@ -2196,6 +2196,7 @@ impl App {
                             messages,
                             guild,
                             (pc_job_names, skill_info),
+                            &self.agit_names,
                             emblem,
                             pointer,
                         );

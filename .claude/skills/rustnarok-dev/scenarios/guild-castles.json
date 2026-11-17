@@ -1,0 +1,22 @@
+{
+  "about": "The Guild Info tab's castle list (issue #1330): a new guild gets Neuschwanstein and Kriemhild from our NPC (npc/guild-castles.txt); opening the guild window asks for its info, rathena answers with ZC_GUILD_AGIT_INFO 0x0b27, and the list (a white box 19 px right of the Castles Owned label, at y 129) shows both names in the order rathena sends them. The castles go back to no one and the guild is broken at the start (after a stopped run) and at the end.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp morocc 160 120"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/guild-castles.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/guild-castles.txt"}, {"wait": 1500},
+    {"click_unit": {"kind": "npc", "name": "Castle Take"}}, {"wait": 1000},
+    {"say": "@breakguild"}, {"wait": 1500},
+    {"say": "@guild Castle{stamp}"}, {"wait_for": {"event": "GuildMade", "ms": 5000}}, {"wait": 500},
+    {"click_unit": {"kind": "npc", "name": "Castle Give"}}, {"wait": 1000},
+    {"key": "Alt+G"}, {"wait_for": {"packet": "0x0b27", "ms": 5000}}, {"wait": 500},
+    {"expect": {"windows_open": ["Guild"], "state": {"guild.castles": ["Kriemhild", "Neuschwanstein"]}}},
+    {"move": [1000, 750]},
+    {"shot": "guild-castles", "crop": [0, 24, 420, 340], "threshold": 5},
+    {"key": "Alt+G"}, {"wait": 300},
+    {"click_unit": {"kind": "npc", "name": "Castle Take"}}, {"wait": 1000},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/guild-castles.txt"}, {"wait": 500},
+    {"say": "@breakguild"}, {"wait": 1500}
+  ]
+}

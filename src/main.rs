@@ -4540,6 +4540,8 @@ struct App {
     look_tables: LookTables,
     /// Job names shown to players.
     pc_job_names: HashMap<u16, String>,
+    /// Castle names by id, for the guild window's list.
+    agit_names: HashMap<u8, String>,
     /// Maps' display names, and the world maps with their box colors.
     map_names: HashMap<String, String>,
     worlds: (Vec<rustnarok_client::lua::World>, [[u8; 4]; 2]),
@@ -5676,6 +5678,10 @@ fn main() {
         eprintln!("no job names: {error}");
         HashMap::new()
     });
+    let agit_names = lua::agit_names(&grf).unwrap_or_else(|error| {
+        eprintln!("no castle names: {error}");
+        HashMap::new()
+    });
     let map_names = rustnarok_client::map::map_names(&grf).unwrap_or_default();
     let skill_descriptions = lua::skill_descriptions(&grf).unwrap_or_else(|error| {
         eprintln!("no skill descriptions: {error}");
@@ -5748,6 +5754,7 @@ fn main() {
         save_view: !driven,
         look_tables,
         pc_job_names,
+        agit_names,
         map_names,
         worlds,
         quest_texts,

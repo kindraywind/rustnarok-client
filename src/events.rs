@@ -2437,6 +2437,11 @@ impl App {
                 guild.name.clone_from(&info.name);
                 guild.info = Some(info);
             }
+            MapEvent::GuildCastles(castles) => {
+                if let Some(guild) = &mut game.guild {
+                    guild.castles = castles;
+                }
+            }
             MapEvent::GuildMembers(members) => {
                 if let Some(guild) = &mut game.guild {
                     guild.members = members;

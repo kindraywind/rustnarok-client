@@ -1065,6 +1065,8 @@ pub enum MapEvent {
         mode: u32,
     },
     GuildInfo(GuildInfo),
+    /// The castles our guild owns, by the ids the client's Lua names.
+    GuildCastles(Vec<u8>),
     /// The guild window tabs the player may open: rathena's menu flag (0x57 members, 0xd7 the master).
     GuildMenu(i32),
     /// A stat or trait raise answered (ZC_STATUS_CHANGE_ACK): its new value when it went up, none when refused.

@@ -907,6 +907,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         // ID, level, members, most members, average level, exp, next exp, tax points, honor, virtue, emblem, name,
         // castles, zeny, master's ID and name.
         ZC_ACK_GUILD_MENUINTERFACE => MapEvent::GuildMenu(u32_at(2) as i32),
+        ZC_GUILD_AGIT_INFO => MapEvent::GuildCastles(packet[4..].to_vec()),
         ZC_GUILD_INFO => MapEvent::GuildInfo(GuildInfo {
             id: u32_at(2),
             level: u32_at(6),
