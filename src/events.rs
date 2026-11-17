@@ -1032,17 +1032,9 @@ impl App {
                     }
                 }
             }
-            // The bank: open on the server's word, then ask the balance; refusals by rathena's reasons.
+            // The bank: open on the balance's answer; refusals by rathena's reasons.
             // ponytail: which message goes with which reason is read off their words.
-            MapEvent::BankOpened => {
-                game.bank = Some(bank::Bank::new());
-                let _ = game.session.check_bank(game.account_id);
-            }
-            MapEvent::BankBalance(balance) => {
-                if let Some(bank) = &mut game.bank {
-                    bank.balance = balance;
-                }
-            }
+            MapEvent::BankBalance(balance) => game.bank.get_or_insert_with(bank::Bank::new).balance = balance,
             MapEvent::BankMoved { deposit, reason, balance, zeny } => {
                 if let Some(bank) = &mut game.bank {
                     bank.balance = balance;
@@ -1141,7 +1133,6 @@ impl App {
                     game.chat_line(self.messages.get(REFINE_CLOSED_MAIL).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
                 if game.bank.take().is_some() {
-                    let _ = game.session.close_bank(game.account_id);
                     game.chat_line(self.messages.get(REFINE_CLOSED_BANK).cloned().unwrap_or_default(), CHAT_ERROR);
                 }
                 // The inventory goes right beside it, its bottom on the window's.

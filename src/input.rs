@@ -1056,10 +1056,7 @@ impl App {
                         let _ = game.session.move_zeny(false, account, zeny);
                     }
                     Some(bank::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
-                    Some(bank::Action::Close) => {
-                        let _ = game.session.close_bank(account);
-                        game.bank = None;
-                    }
+                    Some(bank::Action::Close) => game.bank = None,
                     None => {}
                 }
             }
@@ -1421,7 +1418,7 @@ impl App {
                             Some("guild") => game.toggle_guild_window(),
                             // The bank opens when the server says so: it answers in its own words where banking is off.
                             Some("bank") => {
-                                let _ = game.session.open_bank(game.account_id);
+                                let _ = game.session.check_bank(game.account_id);
                             }
                             Some("achievement") => game.achievement_window.frame.toggle(),
                             // The attendance check opens when the server says so (it answers in its own words when no
@@ -3880,11 +3877,8 @@ impl App {
             }
             shortcuts::Action::Clan => {}
             shortcuts::Action::Bank => {
-                if game.bank.is_some() {
-                    let _ = game.session.close_bank(game.account_id);
-                    game.bank = None;
-                } else {
-                    let _ = game.session.open_bank(game.account_id);
+                if game.bank.take().is_none() {
+                    let _ = game.session.check_bank(game.account_id);
                 }
             }
             shortcuts::Action::Status => {
