@@ -1943,6 +1943,7 @@ impl App {
             game.inventory.resize_to(self.cursor);
             game.cart.resize_to(self.cursor);
             game.storage.resize_to(self.cursor);
+            game.storage.drag_thumbs(self.cursor[1]);
             game.party_window.resize_to(self.cursor);
             for category in &mut game.storage.categories {
                 category.resize_to(self.cursor);
@@ -2937,6 +2938,7 @@ impl App {
                     | game.inventory.stop_resize()
                     | game.cart.stop_resize()
                     | game.storage.stop_resize()
+                    | game.storage.drop_thumbs()
                     | game.party_window.stop_resize()
                     | game.skill_window.stop_resize()
                     | game.my_shop.as_mut().is_some_and(vend::MyShop::stop_resize)
@@ -3361,6 +3363,9 @@ impl App {
             && top == Some(Esc(W::Shop))
             && let Some(hit) = game.shop.as_ref().and_then(|shop| shop.hit(cursor))
         {
+            if game.shop.as_mut().unwrap().press_bar(cursor) {
+                return;
+            }
             match hit {
                 shop::Hit::Row(0, row) => game.dragging = Some((Dragged::ShopOffer(row), cursor, false)),
                 shop::Hit::Row(_, row) => game.dragging = Some((Dragged::ShopDeal(row), cursor, false)),
@@ -3536,6 +3541,7 @@ impl App {
             }
             if id == Panel::Storage
                 && let Some(assets) = &self.assets
+                && !game.storage.press_bar(cursor, &self.items, (&self.messages[..], &self.card_names, &game.char_names))
             {
                 match game.storage.hit(cursor, &assets.storage, &self.items, (&self.messages[..], &self.card_names, &game.char_names)) {
                     Some(storage::Hit::Item(index)) => game.dragging = Some((Dragged::Stored(index), cursor, false)),
@@ -3550,7 +3556,9 @@ impl App {
                     _ => {}
                 }
             }
-            if let Some(which) = storage_list(id) {
+            if let Some(which) = storage_list(id)
+                && !game.storage.press_category_bar(which, cursor, &self.items, (&self.messages[..], &self.card_names, &game.char_names))
+            {
                 match game.storage.category_hit(which, cursor, &self.items, (&self.messages[..], &self.card_names, &game.char_names)) {
                     Some(storage::Hit::Item(index)) => game.dragging = Some((Dragged::Stored(index), cursor, false)),
                     // The Search window's close button shuts it.

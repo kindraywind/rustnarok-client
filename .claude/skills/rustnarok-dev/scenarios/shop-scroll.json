@@ -1,0 +1,229 @@
+{
+  "about": "An NPC shop's scroll bar: a test NPC (npc/shop-scroll.txt) sells 12 goods and the goods window shows 8, so its list gets the standard bar at the right edge: the down arrow steps a row, a press on the track under the thumb pages 3 rows, the held thumb takes the list along (to the top, then to the bottom), and the last goods show. The empty Buying Items list has no bar.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/shop-scroll.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/shop-scroll.txt"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "click_unit": {
+        "kind": "npc",
+        "name": "Scroll Seller"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "DealChoice"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "button": "deal_buy"
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Shop"
+        ],
+        "state": {
+          "shop_scroll": [
+            0,
+            0
+          ]
+        },
+        "button": {
+          "name": "shop_scroll_down:0"
+        },
+        "no_target": {
+          "button": "shop_scroll_up:1"
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "shop-scroll-top",
+      "crop": [
+        0,
+        110,
+        570,
+        330
+      ]
+    },
+    {
+      "click_on": {
+        "button": "shop_scroll_down:0"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "shop_scroll": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "shop_scroll_down:0",
+        "offset": [
+          0,
+          -20
+        ]
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "shop_scroll": [
+            4,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "shop_scroll_up:0"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "shop_scroll": [
+            3,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "drag_on": [
+        {
+          "button": "shop_scroll_thumb:0"
+        },
+        {
+          "point": [
+            271,
+            60
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "shop_scroll": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "drag_on": [
+        {
+          "button": "shop_scroll_thumb:0"
+        },
+        {
+          "point": [
+            271,
+            700
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "shop_scroll": [
+            4,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "shop-scroll-bottom",
+      "crop": [
+        0,
+        110,
+        570,
+        330
+      ]
+    },
+    {
+      "click_on": {
+        "button": "shop_cancel"
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Shop"
+        ]
+      }
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/shop-scroll.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

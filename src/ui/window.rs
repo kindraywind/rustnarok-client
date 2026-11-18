@@ -30,6 +30,10 @@ pub struct Chrome {
     balloon_border: Texture,
     /// Laid over a button the client can't do yet, so it reads as switched off.
     pub dimmed: Texture,
+    /// A list's scroll bar: its up and down arrows, the track's piece, and the thumb's top, middle and bottom.
+    scroll_arrows: [Texture; 2],
+    scroll_track: Texture,
+    scroll_thumb: [Texture; 3],
 }
 
 impl Chrome {
@@ -72,6 +76,9 @@ impl Chrome {
             whole_fill: gpu.solid([0, 0, 0, 0x88]),
             balloon_border: gpu.solid([0x5C, 0x5C, 0x5C, 0xFF]),
             dimmed: gpu.solid([0x90, 0x90, 0x90, 0xB0]),
+            scroll_arrows: ["up", "down"].map(|end| image(format!("{UI}scroll0{end}.bmp"))),
+            scroll_track: image(format!("{UI}scroll0mid.bmp")),
+            scroll_thumb: ["up", "mid", "down"].map(|part| image(format!("{UI}scroll0bar_{part}.bmp"))),
         }
     }
 }
@@ -445,6 +452,141 @@ impl Grip {
     }
 }
 
+/// A list's scroll bar, 13 px wide: an arrow at each end, a track between them, and a thumb on the track. `at` is its
+/// top-left on screen; the list shows `shown` of its `rows`, from row `first`. A list where every row fits has none.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrollBar {
+    pub at: [f32; 2],
+    pub height: f32,
+    pub shown: usize,
+    pub rows: usize,
+    pub first: usize,
+}
+
+/// Where a press lands on a scroll bar.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BarHit {
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Thumb,
+}
+
+impl ScrollBar {
+    pub const WIDTH: f32 = 13.0;
+    const ARROW: f32 = 13.0;
+    /// The thumb's caps, and so its least length with a middle piece between them.
+    const CAP: f32 = 4.0;
+
+    /// How far the list scrolls: the rows that don't fit.
+    pub fn range(&self) -> usize {
+        self.rows.saturating_sub(self.shown)
+    }
+
+    fn track(&self) -> f32 {
+        self.height - 2.0 * Self::ARROW
+    }
+
+    /// The thumb: its top (from the bar's) and its length. As long as the share of the rows shown, 12 px at least.
+    fn thumb(&self) -> [f32; 2] {
+        let (track, range) = (self.track(), self.range());
+        let length = (track * self.shown as f32 / self.rows.max(1) as f32).floor().clamp(3.0 * Self::CAP, track.max(3.0 * Self::CAP));
+        let top = if range == 0 { 0.0 } else { ((track - length) * self.first.min(range) as f32 / range as f32).floor() };
+        [Self::ARROW + top, length]
+    }
+
+    /// What `cursor` is on: nothing while every row fits.
+    pub fn hit(&self, cursor: [f32; 2]) -> Option<BarHit> {
+        if self.range() == 0 || !contains(self.at, [Self::WIDTH, self.height], cursor) {
+            return None;
+        }
+        let y = cursor[1] - self.at[1];
+        let [top, length] = self.thumb();
+        Some(if y < Self::ARROW {
+            BarHit::Up
+        } else if y >= self.height - Self::ARROW {
+            BarHit::Down
+        } else if y < top {
+            BarHit::PageUp
+        } else if y < top + length {
+            BarHit::Thumb
+        } else {
+            BarHit::PageDown
+        })
+    }
+
+    /// A press at `cursor`: the list's first row after it, when it lands on the bar. An arrow steps a row, the track
+    /// pages by the wheel's step (3 rows, one less than shown at most), and the thumb is held: `thumb` then follows
+    /// the pointer. One press, one step: holding repeats nothing.
+    pub fn press(&self, cursor: [f32; 2], thumb: &mut Thumb) -> Option<usize> {
+        let page = self.shown.saturating_sub(1).clamp(1, 3);
+        let first = match self.hit(cursor)? {
+            BarHit::Up => self.first.saturating_sub(1),
+            BarHit::Down => self.first + 1,
+            BarHit::PageUp => self.first.saturating_sub(page),
+            BarHit::PageDown => self.first + page,
+            BarHit::Thumb => {
+                thumb.0 = Some((*self, cursor[1]));
+                self.first
+            }
+        };
+        Some(first.min(self.range()))
+    }
+
+    /// The first row with the thumb held since the pointer was at `from`, now at `y`: whole rows, the track's length
+    /// standing for one more row than the list scrolls.
+    fn dragged(&self, from: f32, y: f32) -> usize {
+        let rows = ((y - from) * (self.range() + 1) as f32 / self.track()).trunc() as i64;
+        (self.first as i64 + rows).clamp(0, self.range() as i64) as usize
+    }
+
+    /// The up arrow, the down arrow and the thumb on screen, while the bar shows (for the test driver).
+    pub fn boxes(&self) -> Option<[[f32; 4]; 3]> {
+        let [x, y] = self.at;
+        let [top, length] = self.thumb();
+        let arrow = |y| [x, y, Self::WIDTH, Self::ARROW];
+        (self.range() > 0).then(|| [arrow(y), arrow(y + self.height - Self::ARROW), [x, y + top, Self::WIDTH, length]])
+    }
+
+    /// The track's piece down the bar, the arrows over its ends, and the thumb: two caps around a stretched middle.
+    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome) {
+        if self.range() == 0 {
+            return;
+        }
+        let [x, y] = self.at;
+        let mut down = 0.0;
+        while down < self.height {
+            let piece = Self::ARROW.min(self.height - down);
+            layer.sprites.push((&chrome.scroll_track, [x, y + down], [Self::WIDTH, piece]));
+            down += piece;
+        }
+        layer.sprites.push((&chrome.scroll_arrows[0], [x, y], [Self::WIDTH, Self::ARROW]));
+        layer.sprites.push((&chrome.scroll_arrows[1], [x, y + self.height - Self::ARROW], [Self::WIDTH, Self::ARROW]));
+        let [top, length] = self.thumb();
+        let [up, middle, bottom] = &chrome.scroll_thumb;
+        layer.sprites.push((up, [x, y + top], [Self::WIDTH, Self::CAP]));
+        layer.sprites.push((middle, [x, y + top + Self::CAP], [Self::WIDTH, length - 2.0 * Self::CAP]));
+        layer.sprites.push((bottom, [x, y + top + length - Self::CAP], [Self::WIDTH, Self::CAP]));
+    }
+}
+
+/// A scroll bar's thumb while held: the bar as it was at the press, and the pointer's height then.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Thumb(Option<(ScrollBar, f32)>);
+
+impl Thumb {
+    /// The list's first row for the pointer at `y`, while held.
+    pub fn first(&self, y: f32) -> Option<usize> {
+        self.0.map(|(bar, from)| bar.dragged(from, y))
+    }
+
+    /// Lets go; whether it was held.
+    pub fn stop(&mut self) -> bool {
+        self.0.take().is_some()
+    }
+}
+
 /// The steps (0, 1, 2...) a size `asked` makes past `least`, `step` apart, clamped to `most` steps: the game's
 /// least + step·trunc((clamp(asked) − least)/step), rounding toward the least.
 pub fn steps(asked: f32, least: f32, step: f32, most: usize) -> usize {
@@ -574,6 +716,65 @@ impl<T> Amount<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 100 px bar at (50, 20) for a list showing 4 of 10 rows: a 74 px track, a 29 px thumb.
+    fn bar(first: usize) -> ScrollBar {
+        ScrollBar { at: [50.0, 20.0], height: 100.0, shown: 4, rows: 10, first }
+    }
+
+    #[test]
+    fn a_list_that_fits_has_no_scroll_bar() {
+        let mut thumb = Thumb::default();
+        for rows in [0, 3, 4] {
+            let bar = ScrollBar { rows, ..bar(0) };
+            assert_eq!((bar.range(), bar.hit([55.0, 25.0]), bar.boxes(), bar.press([55.0, 25.0], &mut thumb)), (0, None, None, None));
+        }
+        assert_eq!(bar(0).range(), 6);
+    }
+
+    #[test]
+    fn a_scroll_bar_press_lands_on_an_arrow_the_track_or_the_thumb() {
+        // At row 3 of 6 the thumb is 29 long, half way down the track's free 45 px: y 35 to 64 of the bar.
+        let bar = bar(3);
+        assert_eq!(bar.boxes(), Some([[50.0, 20.0, 13.0, 13.0], [50.0, 107.0, 13.0, 13.0], [50.0, 55.0, 13.0, 29.0]]));
+        let at = |y: f32| bar.hit([55.0, 20.0 + y]);
+        assert_eq!([0.0, 12.9, 13.0, 34.9].map(at), [Some(BarHit::Up), Some(BarHit::Up), Some(BarHit::PageUp), Some(BarHit::PageUp)]);
+        assert_eq!([35.0, 63.9, 64.0, 86.9].map(at), [Some(BarHit::Thumb), Some(BarHit::Thumb), Some(BarHit::PageDown), Some(BarHit::PageDown)]);
+        assert_eq!([87.0, 99.9, 100.0].map(at), [Some(BarHit::Down), Some(BarHit::Down), None]);
+        assert_eq!([bar.hit([49.9, 30.0]), bar.hit([63.0, 30.0])], [None, None]);
+    }
+
+    #[test]
+    fn scroll_bar_arrows_step_a_row_and_the_track_pages() {
+        let mut thumb = Thumb::default();
+        let press = |first: usize, y: f32, thumb: &mut Thumb| bar(first).press([55.0, 20.0 + y], thumb);
+        // The arrows: one row, stopping at the ends.
+        assert_eq!([0, 1, 6].map(|first| press(first, 5.0, &mut thumb)), [Some(0), Some(0), Some(5)]);
+        assert_eq!([0, 5, 6].map(|first| press(first, 95.0, &mut thumb)), [Some(1), Some(6), Some(6)]);
+        // The track pages by the wheel's step: 3 rows with 4 showing, kept within the list.
+        assert_eq!([press(6, 20.0, &mut thumb), press(2, 20.0, &mut thumb)], [Some(3), Some(0)]);
+        assert_eq!([press(0, 80.0, &mut thumb), press(4, 80.0, &mut thumb)], [Some(3), Some(6)]);
+        // With 2 rows showing a page is 1 row.
+        assert_eq!(ScrollBar { shown: 2, ..bar(0) }.press([55.0, 100.0], &mut thumb), Some(1));
+        // None of those held the thumb; a press on it does, and moves nothing.
+        assert!(!thumb.stop());
+        assert_eq!(press(3, 40.0, &mut thumb), Some(3));
+        assert!(thumb.stop() && !thumb.stop());
+    }
+
+    #[test]
+    fn a_held_thumb_scrolls_whole_rows_with_the_pointer() {
+        let mut thumb = Thumb::default();
+        assert_eq!(thumb.first(60.0), None);
+        bar(3).press([55.0, 60.0], &mut thumb);
+        // (range + 1) rows over the 74 px track: 7 / 74 a pixel, cut toward the press, kept in 0..=6.
+        assert_eq!([60.0, 70.0, 71.0, 81.5, 300.0].map(|y| thumb.first(y)), [Some(3), Some(3), Some(4), Some(5), Some(6)]);
+        assert_eq!([50.0, 49.0, 28.0, -300.0].map(|y| thumb.first(y)), [Some(3), Some(2), Some(0), Some(0)]);
+        // A long list's thumb is never under 12 px.
+        let long = ScrollBar { rows: 1000, ..bar(0) };
+        assert_eq!(long.boxes().unwrap()[2], [50.0, 33.0, 13.0, 12.0]);
+        assert_eq!(ScrollBar { first: 996, ..long }.boxes().unwrap()[2], [50.0, 95.0, 13.0, 12.0]);
+    }
 
     /// The Extras' UI scale turns the screen from one size to another under the windows.
     #[test]
