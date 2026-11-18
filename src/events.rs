@@ -1253,8 +1253,18 @@ impl App {
                     game.show_item(shown);
                 }
             }
-            // Result 0: rathena has forgotten the window, so close it. The inventory updates arrived on their own.
-            MapEvent::Reformed { result: 0, .. } => game.reform = None,
+            // Result 0: rathena has forgotten the window, so close it; the made item's effect plays on the player and
+            // its description opens (the inventory updates arrived on their own).
+            MapEvent::Reformed { result: 0, index } => {
+                game.reform = None;
+                if let Some(gpu) = gpu {
+                    game.play_effect(gpu, grf, table, reform::EFFECT, game.account_id);
+                }
+                if let Some(item) = game.inventory.get(index) {
+                    let shown = iteminfo::Shown::of(item);
+                    game.show_item(shown);
+                }
+            }
             MapEvent::Reformed { .. } => {}
             // A table this client doesn't have: say so, and tell rathena the window is closed.
             MapEvent::EnchantOpen(table) => match self.enchant_tables.get(&table).cloned() {
