@@ -1086,14 +1086,15 @@ impl App {
                     game.monster_window = None;
                 }
             }
-            // The Lucky Roulette: START spins, Get Prize claims (neither while the wheel spins), close lets it go.
+            // The Lucky Roulette: START spins, Get Prize claims (each only while it's there), close lets it go once the
+            // wheel has stopped.
             Scene::Game(game) if on(Esc(W::Roulette)) => {
                 let window = game.roulette.as_mut().unwrap();
                 let hit = window.hit(cursor).unwrap();
                 match window.click(hit, control::now()) {
                     Some(roulette::Action::Spin) => _ = game.session.roulette(net::RouletteRequest::Spin),
                     Some(roulette::Action::Claim) => _ = game.session.roulette(net::RouletteRequest::Claim),
-                    Some(roulette::Action::Busy) => game.chat_line(self.messages.get(roulette::SPINNING).cloned().unwrap_or_default(), CHAT_ERROR),
+                    Some(roulette::Action::Busy) => game.chat_line(self.messages.get(roulette::SPINNING).cloned().unwrap_or_default(), roulette::REFUSED),
                     Some(roulette::Action::Close) => game.close_roulette(),
                     None => {}
                 }
@@ -2025,9 +2026,6 @@ impl App {
                 input.frame.drag_to(self.cursor, height);
             }
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
-            if let Some(window) = &mut game.roulette {
-                window.frame.drag_to(self.cursor, roulette::HEIGHT);
-            }
             if let Some(window) = &mut game.refine {
                 window.frame.drag_to(self.cursor, refine::SIZE[1]);
             }
@@ -2906,7 +2904,6 @@ impl App {
                     | game.achievement_window.frame.drop_drag()
                     | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
                     | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
-                    | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.reform.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
                     | game.dressroom.as_mut().is_some_and(|room| room.frame.drop_drag())
                     | game.refine.as_mut().is_some_and(|window| window.frame.drop_drag())
@@ -3473,13 +3470,11 @@ impl App {
             window.hold(&hit, cursor, &game.inventory.items);
             return;
         }
-        if let Scene::Game(game) = &mut self.scene
+        // The roulette never moves: a press on it stays there.
+        if let Scene::Game(game) = &self.scene
             && top == Some(Esc(W::Roulette))
-            && let Some(hit) = game.roulette.as_ref().and_then(|window| window.hit(cursor))
+            && game.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())
         {
-            if hit == roulette::Hit::Title(TitleHit::Title) {
-                game.roulette.as_mut().unwrap().frame.start_drag(cursor);
-            }
             return;
         }
         // The dress room is dragged by any part of it but its tabs, list and arrows.

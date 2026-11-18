@@ -1783,6 +1783,7 @@ impl App {
             icons.entry(path.clone()).or_insert_with(|| gpu.try_load_texture(grf, &path, false).ok());
         }
         party::load_icons(icons, gpu, grf, game.party.as_ref());
+        roulette::load_grey(icons, gpu, grf, items, game.roulette.as_ref());
         // Online guild members' heads, for the member list.
         if game.guild_window.frame.open {
             for member in game.guild.iter().flat_map(|guild| guild.members.iter()).filter(|member| member.online) {

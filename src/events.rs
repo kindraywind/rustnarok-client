@@ -3226,6 +3226,8 @@ impl App {
             MapEvent::RouletteOpen { prize, bonus, points } => {
                 let window = game.roulette.get_or_insert_with(roulette::Roulette::new);
                 (window.prize, window.bonus, window.points) = (prize, bonus, points);
+                // The row in play: the waiting prize's, else the bottom.
+                window.row = prize.map_or(0, |(row, _)| row);
                 if window.prizes.is_empty() {
                     let _ = game.session.roulette(net::RouletteRequest::Prizes);
                 }
@@ -3247,7 +3249,7 @@ impl App {
                     }
                 }
                 if let Some(id) = roulette::spin_message(result) {
-                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), roulette::SPIN_REFUSED);
                 }
             }
             MapEvent::RouletteClaimed { result, bonus } => {
@@ -3258,7 +3260,7 @@ impl App {
                     }
                 }
                 if let Some(id) = roulette::claim_message(result) {
-                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), roulette::REFUSED);
                 }
             }
             // Sense: the window, named after a unit on screen of that class (the packet has no name).
