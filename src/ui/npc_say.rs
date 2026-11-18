@@ -5,7 +5,7 @@
 use std::time::{Duration, Instant};
 
 use crate::render::{Gpu, Texture};
-use crate::window::{Chrome, Frame};
+use crate::window::{BarHit, Chrome, Frame, ScrollBar, Thumb};
 use crate::{Layer, contains, links, pickup};
 
 pub const SIZE: [f32; 2] = [280.0, 180.0];
@@ -23,14 +23,10 @@ pub const LINE_GAP: f32 = 6.0;
 pub const PICTURE: f32 = 25.0;
 /// A pointed picture's item name shows this far from the picture's corner.
 pub const PICTURE_NAME_AT: [f32; 2] = [0.0, -17.0];
-/// The scrollbar, while the text is taller than the panel.
-pub const SCROLLBAR: [f32; 4] = [257.0, 10.0, 13.0, 140.0];
-/// The wheel and Up/Down scroll this much.
+/// The scroll bar at the panel's right edge, as tall as the panel, while the text is taller than the panel.
+pub const SCROLLBAR: [f32; 2] = [257.0, 10.0];
+/// The wheel, Up/Down, the bar's arrows and a press on its track scroll this much.
 pub const SCROLL_STEP: f32 = 30.0;
-// ponytail: plain fills for the scrollbar; the scroll bitmaps when someone wants them.
-const TRACK: [u8; 4] = [0xE0, 0xE0, 0xE0, 0xFF];
-const THUMB: [u8; 4] = [0xA8, 0xA8, 0xA8, 0xFF];
-const THUMB_MIN: f32 = 14.0;
 /// Next and Close.
 pub const BUTTON_AT: [f32; 2] = [234.0, 156.0];
 pub const BUTTON: [f32; 2] = [42.0, 20.0];
@@ -135,21 +131,61 @@ fn hex_color(from: &str) -> Option<[u8; 3]> {
     Some([(value >> 16) as u8, (value >> 8) as u8, value as u8])
 }
 
+/// One say packet's text as its lines (split at LF, CRs dropped): a `^RRGGBB` colour holds to the end of the packet,
+/// so each line after the first starts with the colour in force where the one before ended.
+pub fn packet_lines(text: &str) -> Vec<String> {
+    let mut color = String::new();
+    text.split('\n')
+        .map(|line| {
+            let line = format!("{color}{}", line.replace('\r', ""));
+            let is_code = |code: &&str| code.len() >= 7 && code.as_bytes()[1..7].iter().all(u8::is_ascii_hexdigit);
+            if let Some(code) = line.match_indices('^').map(|(at, _)| &line[at..]).rfind(is_code) {
+                color = code[..7].to_owned();
+            }
+            line
+        })
+        .collect()
+}
+
+/// `^nItemID^<id>` in NPC text (say lines and menu items) as the item's `name`; without digits it stays as it is.
+pub fn item_names(text: &str, name: impl Fn(u32) -> String) -> String {
+    const CODE: &str = "^nItemID^";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(CODE) {
+        let after = &rest[at + CODE.len()..];
+        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
+        out.push_str(&rest[..at]);
+        match after[..digits].parse() {
+            Ok(id) => out.push_str(&name(id)),
+            Err(_) => out.push_str(CODE),
+        }
+        rest = &after[digits..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The part of `area` inside `to` (both x, y, width, height), if any.
+pub fn cut(area: [f32; 4], to: [f32; 4]) -> Option<[f32; 4]> {
+    let [left, top] = [area[0].max(to[0]), area[1].max(to[1])];
+    let [right, bottom] = [(area[0] + area[2]).min(to[0] + to[2]), (area[1] + area[3]).min(to[1] + to[3])];
+    (right > left && bottom > top).then_some([left, top, right - left, bottom - top])
+}
+
 /// How far text this tall can scroll: past a panel this tall.
 fn scroll_range(text_height: f32, panel_height: f32) -> f32 {
     (text_height - panel_height).max(0.0)
 }
 
-/// The panel's fill and the scrollbar's track and thumb (the frame is the system box's, `pickup::Assets`).
+/// The panel's fill (the frame is the system box's, `pickup::Assets`).
 pub struct Assets {
     panel: Texture,
-    track: Texture,
-    thumb: Texture,
 }
 
 impl Assets {
     pub fn load(gpu: &Gpu) -> Self {
-        Self { panel: gpu.solid(PANEL_FILL), track: gpu.solid(TRACK), thumb: gpu.solid(THUMB) }
+        Self { panel: gpu.solid(PANEL_FILL) }
     }
 }
 
@@ -232,11 +268,14 @@ pub fn dialog_key(space: bool, input: bool, menu: bool, chat_text: bool) -> Dial
 }
 
 /// Where the window is (dragged by anything but its button, links and scrollbar, and kept with the other windows),
-/// how far its text is scrolled and how tall it was last drawn, and the throttle.
+/// how far its text is scrolled and how tall it was last drawn, the scroll bar's held thumb, the lines last drawn
+/// (each one's text and its box cut to the panel), and the throttle.
 pub struct SayWindow {
     pub frame: Frame,
     pub scroll: f32,
     pub text_height: f32,
+    pub thumb: Thumb,
+    pub drawn: Vec<(String, [f32; 4])>,
     pub throttle: Throttle,
     size: [f32; 2],
 }
@@ -245,7 +284,7 @@ impl Default for SayWindow {
     fn default() -> Self {
         let mut frame = Frame::new(DEFAULT_POSITION, SIZE[0]);
         frame.open = true;
-        Self { frame, scroll: 0.0, text_height: 0.0, throttle: Throttle::default(), size: SIZE }
+        Self { frame, scroll: 0.0, text_height: 0.0, thumb: Thumb::default(), drawn: Vec::new(), throttle: Throttle::default(), size: SIZE }
     }
 }
 
@@ -262,17 +301,26 @@ impl SayWindow {
         self.size[0] - (SIZE[0] - PANEL[2])
     }
 
-    /// Where a line of text breaks: the default 215, wider as the window grows.
+    /// Where a line of text breaks: 215 px, whatever size a script gives the window.
     pub fn wrap_width(&self) -> f32 {
-        (self.size[0] - (SIZE[0] - WRAP_WIDTH)).max(40.0)
+        WRAP_WIDTH
     }
 
     fn button_at(&self) -> [f32; 2] {
         [self.size[0] - (SIZE[0] - BUTTON_AT[0]), self.size[1] - (SIZE[1] - BUTTON_AT[1])]
     }
 
-    fn scrollbar_rect(&self) -> [f32; 4] {
-        [self.size[0] - (SIZE[0] - SCROLLBAR[0]), SCROLLBAR[1], SCROLLBAR[2], self.panel_height()]
+    /// The scroll bar, in pixels of text: it shows the panel's height of the text's, from the scroll offset.
+    fn bar(&self) -> ScrollBar {
+        let at = self.at([self.size[0] - (SIZE[0] - SCROLLBAR[0]), SCROLLBAR[1]]);
+        let height = self.panel_height();
+        ScrollBar { at, height, shown: height as usize, rows: self.text_height.ceil() as usize, first: self.scroll as usize }
+    }
+
+    /// The text panel on screen: what the text is cut to.
+    pub fn panel_box(&self) -> [f32; 4] {
+        let [x, y] = self.at([PANEL[0], PANEL[1]]);
+        [x, y, self.panel_width(), self.panel_height()]
     }
 
     fn range(&self) -> f32 {
@@ -298,11 +346,9 @@ impl SayWindow {
         contains([x, y], [width, height], cursor)
     }
 
-    /// The scrollbar's box on screen, while there's more text than the panel shows.
-    pub fn scrollbar_box(&self) -> Option<[f32; 4]> {
-        let [x, y, width, height] = self.scrollbar_rect();
-        let [x, y] = self.at([x, y]);
-        (self.range() > 0.0).then_some([x, y, width, height])
+    /// The scroll bar's up and down arrows and its thumb on screen, while there's more text than the panel shows.
+    pub fn bar_boxes(&self) -> Option<[[f32; 4]; 3]> {
+        self.bar().boxes()
     }
 
     /// Scrolls the text by `pixels` (down when positive), within its range.
@@ -310,19 +356,34 @@ impl SayWindow {
         self.scroll = (self.scroll + pixels).clamp(0.0, self.range());
     }
 
-    /// A press on the scrollbar scrolls to that point of it.
-    pub fn press_scrollbar(&mut self, cursor: [f32; 2]) {
-        let track = self.scrollbar_rect();
-        let top = self.at([track[0], track[1]])[1];
-        self.scroll = self.range() * ((cursor[1] - top) / track[3]).clamp(0.0, 1.0);
+    /// A press on the scroll bar, whether it was on it: an arrow or the track either side of the thumb scrolls
+    /// SCROLL_STEP, the thumb is held (`drag_thumb`). Holding repeats nothing.
+    pub fn press_scrollbar(&mut self, cursor: [f32; 2]) -> bool {
+        let bar = self.bar();
+        match bar.hit(cursor) {
+            None => return false,
+            Some(BarHit::Up | BarHit::PageUp) => self.scroll_by(-SCROLL_STEP),
+            Some(BarHit::Down | BarHit::PageDown) => self.scroll_by(SCROLL_STEP),
+            Some(BarHit::Thumb) => {
+                bar.press(cursor, &mut self.thumb);
+            }
+        }
+        true
     }
 
-    /// Where a text line goes on screen, `above` under the text's top and `line_height` tall: only lines wholly
-    /// inside the panel show.
-    // ponytail: whole lines only, as the renderer has no clipping; a line half out of the panel is hidden.
+    /// The pointer at height `y` with the thumb held: the offset at the press plus the pointer's way over the track,
+    /// the track standing for one pixel more than the range.
+    pub fn drag_thumb(&mut self, y: f32) {
+        if let Some(first) = self.thumb.first(y) {
+            self.scroll = first as f32;
+        }
+    }
+
+    /// Where a text line goes on screen, `above` under the text's top and `line_height` tall, while any of it is
+    /// inside the panel (the drawing is cut to `panel_box`).
     pub fn line_at(&self, above: f32, line_height: f32) -> Option<[f32; 2]> {
         let top = TEXT_AT[1] + above - self.scroll;
-        (top >= PANEL[1] && top + line_height <= PANEL[1] + self.panel_height()).then(|| self.at([TEXT_AT[0], top]))
+        (top < PANEL[1] + self.panel_height() && top + line_height > PANEL[1]).then(|| self.at([TEXT_AT[0], top]))
     }
 
     /// The frame, the panel and the scrollbar; the text and the button are the caller's.
@@ -330,12 +391,7 @@ impl SayWindow {
         let [x, y] = self.frame.position;
         pickup::draw_sysbox(layer, chrome, frame, [x, y, self.size[0], self.size[1]]);
         layer.sprites.push((&assets.panel, self.at([PANEL[0], PANEL[1]]), [self.panel_width(), self.panel_height()]));
-        if let Some([x, y, width, height]) = self.scrollbar_box() {
-            layer.sprites.push((&assets.track, [x, y], [width, height]));
-            let thumb = (height * height / self.text_height).max(THUMB_MIN);
-            let top = (height - thumb) * self.scroll / self.range();
-            layer.sprites.push((&assets.thumb, [x, y + top], [width, thumb]));
-        }
+        self.bar().draw(layer, chrome);
     }
 
     /// New text replacing the old: back to the top.
@@ -383,7 +439,7 @@ mod tests {
         // A page shorter than the panel: no scrolling, no scrollbar.
         let mut window = SayWindow { text_height: 120.0, ..SayWindow::default() };
         window.scroll_by(SCROLL_STEP);
-        assert_eq!((window.scroll, window.scrollbar_box()), (0.0, None));
+        assert_eq!((window.scroll, window.bar_boxes()), (0.0, None));
         // Ten lines of 20: 60 past the panel; the wheel's 30 a notch stops there.
         window.text_height = 200.0;
         window.scroll_by(SCROLL_STEP);
@@ -392,20 +448,57 @@ mod tests {
         assert_eq!(window.scroll, 60.0);
         window.scroll_by(-100.0);
         assert_eq!(window.scroll, 0.0);
-        assert_eq!(window.scrollbar_box(), Some([200.0 + 257.0, 100.0 + 10.0, 13.0, 140.0]));
+        // The bar at (257, 10) of the window, 13 wide and as tall as the panel: arrows 13 tall at its ends.
+        let [up, down, _] = window.bar_boxes().unwrap();
+        assert_eq!((up, down), ([457.0, 110.0, 13.0, 13.0], [457.0, 237.0, 13.0, 13.0]));
         // The button at (234, 156) of the window, 42×20.
         assert_eq!(window.button_box(), [434.0, 256.0, 42.0, 20.0]);
         assert!(window.on_button([440.0, 260.0]) && !window.on_button([430.0, 260.0]));
-        // Lines 20 apart and 14 tall: rows 0 to 6 show from the panel's top; scrolled 30, row 1 is half out.
+        // Lines 20 apart and 14 tall: rows 0 to 6 show from the panel's top, the 8th not at all.
         window.scroll = 0.0;
         assert_eq!(window.line_at(0.0, 14.0), Some([213.0, 110.0]));
         assert_eq!(window.line_at(120.0, 14.0), Some([213.0, 230.0]));
         assert_eq!(window.line_at(140.0, 14.0), None);
+        // Scrolled 30: row 1 is half out at the top and still drawn, cut to the panel.
         window.scroll_by(SCROLL_STEP);
-        assert_eq!((window.line_at(20.0, 14.0), window.line_at(40.0, 14.0)), (None, Some([213.0, 120.0])));
-        // A press on the scrollbar's middle scrolls halfway.
-        window.press_scrollbar([460.0, 180.0]);
+        assert_eq!((window.line_at(20.0, 14.0), window.line_at(0.0, 14.0)), (Some([213.0, 100.0]), None));
+        assert_eq!(cut([213.0, 100.0, 50.0, 14.0], window.panel_box()), Some([213.0, 110.0, 50.0, 4.0]));
+        assert_eq!(cut([213.0, 80.0, 50.0, 14.0], window.panel_box()), None);
+    }
+
+    #[test]
+    fn the_bars_arrows_track_and_thumb_scroll_the_text() {
+        // 200 px of text in the 140 px panel: 60 to scroll.
+        let mut window = SayWindow { text_height: 200.0, ..SayWindow::default() };
+        let [down, up] = [[460.0, 245.0], [460.0, 115.0]];
+        assert!(window.press_scrollbar(down));
         assert_eq!(window.scroll, 30.0);
+        window.press_scrollbar(down);
+        window.press_scrollbar(down);
+        assert_eq!(window.scroll, 60.0);
+        window.press_scrollbar(up);
+        assert_eq!(window.scroll, 30.0);
+        // The track over the thumb, then under it: 30 each.
+        window.scroll = 30.0;
+        let [_, _, thumb] = window.bar_boxes().unwrap();
+        window.press_scrollbar([460.0, thumb[1] - 1.0]);
+        assert_eq!(window.scroll, 0.0);
+        let [_, _, thumb] = window.bar_boxes().unwrap();
+        window.press_scrollbar([460.0, thumb[1] + thumb[3] + 1.0]);
+        assert_eq!(window.scroll, 30.0);
+        // The thumb, held: the offset at the press plus trunc(way × 61 / 114) (the track is 140 − 26), kept in range.
+        let [_, _, thumb] = window.bar_boxes().unwrap();
+        let grab = thumb[1] + 2.0;
+        assert!(window.press_scrollbar([460.0, grab]));
+        window.drag_thumb(grab + 10.0);
+        assert_eq!(window.scroll, 30.0 + (10.0f32 * 61.0 / 114.0).trunc());
+        window.drag_thumb(grab + 500.0);
+        assert_eq!(window.scroll, 60.0);
+        window.drag_thumb(grab - 500.0);
+        assert_eq!(window.scroll, 0.0);
+        assert!(window.thumb.stop());
+        // Off the bar: not taken.
+        assert!(!window.press_scrollbar([300.0, 150.0]));
     }
 
     #[test]
@@ -476,7 +569,8 @@ mod tests {
         let mut window = SayWindow::default();
         window.resize(400, 240);
         assert_eq!(window.size(), [400.0, 240.0]);
-        assert!(window.wrap_width() > WRAP_WIDTH);
+        // The text still breaks at 215 px.
+        assert_eq!(window.wrap_width(), WRAP_WIDTH);
         // The button stays 4 px in from the right and the bottom.
         assert_eq!(window.button_box(), [window.frame.position[0] + 400.0 - 46.0, window.frame.position[1] + 240.0 - 24.0, 42.0, 20.0]);
         // A 0 axis is the default, and nothing shrinks under 280×180.
@@ -489,6 +583,26 @@ mod tests {
         assert_eq!(window.frame.position, [screen[0] - SIZE[0], 0.0]);
         window.end_talk();
         assert_eq!((window.size(), window.frame.position), (SIZE, [screen[0] - SIZE[0], 0.0]));
+    }
+
+    #[test]
+    fn a_colour_holds_to_the_end_of_its_packet() {
+        assert_eq!(
+            packet_lines("^FF0000red\r\nstill red\n^0000FFblue ^00FF00green\nstill green"),
+            ["^FF0000red", "^FF0000still red", "^FF0000^0000FFblue ^00FF00green", "^00FF00still green"]
+        );
+        // A packet starts black: the next one's lines carry nothing over.
+        assert_eq!(packet_lines("black\nstill black"), ["black", "still black"]);
+        // Not a colour: `^nItemID^`, too few hex digits.
+        assert_eq!(packet_lines("^nItemID^501 ^12AB\nx"), ["^nItemID^501 ^12AB", "x"]);
+    }
+
+    #[test]
+    fn names_items_by_their_code() {
+        let name = |id: u32| if id == 501 { "Red Potion".to_owned() } else { format!("item {id}") };
+        assert_eq!(item_names("Bring ^nItemID^501 and ^nItemID^909.", name), "Bring Red Potion and item 909.");
+        // Without digits it stays.
+        assert_eq!(item_names("^nItemID^ and ^nItemID^x", name), "^nItemID^ and ^nItemID^x");
     }
 
     #[test]

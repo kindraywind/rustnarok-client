@@ -1587,7 +1587,8 @@ impl App {
             // Each text starts a line, and so does each LF in it; the first after Next wipes the old page.
             MapEvent::NpcSay { npc, text } => {
                 let name_of = |item: &links::ItemLink| inventory::item_name(&self.items, item.id, true, item.refine);
-                let text = npc_say::item_pictures(&links::mark(&npc_say::unescape(&text), &name_of));
+                let text = npc_say::item_names(&npc_say::unescape(&text), |id| inventory::item_name(&self.items, id, true, 0));
+                let text = npc_say::item_pictures(&links::mark(&text, &name_of));
                 game.front.settle_npc();
                 let dialog = game.dialog_for(npc);
                 dialog.said = true;
@@ -1596,7 +1597,7 @@ impl App {
                     game.say.restart();
                 }
                 let dialog = game.dialog.as_mut().unwrap();
-                dialog.lines.extend(text.split('\n').map(|line| line.replace('\r', "")));
+                dialog.lines.extend(npc_say::packet_lines(&text));
             }
             MapEvent::NpcNext { npc } => {
                 game.front.settle_npc();
@@ -1629,7 +1630,8 @@ impl App {
             }
             MapEvent::NpcMenu { npc, items } => {
                 // A new list replaces an open one, and the say window's Next goes.
-                let items = items.into_iter().filter(|item| !item.is_empty()).collect();
+                let name = |id| inventory::item_name(&self.items, id, true, 0);
+                let items = items.into_iter().filter(|item| !item.is_empty()).map(|item| npc_say::item_names(&item, name)).collect();
                 let dialog = game.dialog_for(npc);
                 dialog.menu = Some(npc_menu::Menu::new(items));
                 dialog.button = DialogButton::None;

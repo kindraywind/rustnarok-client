@@ -125,7 +125,7 @@ impl App {
                 match game.link_at(cursor).cloned().unwrap() {
                     links::Target::Item(item) => {
                         let card = self.card_pictures.name(item.id).is_some();
-                        game.show_item(iteminfo::Shown::of_link(item.id, item.refine, item.cards, card, &self.items).with_link(&item));
+                        game.toggle_item(iteminfo::Shown::of_link(item.id, item.refine, item.cards, card, &self.items).with_link(&item));
                     }
                     links::Target::Navi { map, cell, rest } => match navigation::linked(rest) {
                         Some(navigation::Linked::Go { kind, services, window, monster }) => {
@@ -1803,7 +1803,7 @@ impl App {
             Scene::Game(game) if game.dialog.is_some() && (on(Top::NpcDialog) || game.talk_blocks()) => {
                 // NPC windows take the click; the map doesn't react while talking.
                 let dialog = game.dialog.as_mut().unwrap();
-                if dialog.input.as_ref().is_some_and(|input| hit(input.ok_on(screen()), &assets.ok)) {
+                if dialog.input.as_ref().is_some_and(|input| hit(input.ok_on(), &assets.ok)) {
                     game.submit_input();
                 } else if dialog.button != DialogButton::None && dialog.say_window() && game.say.on_button(cursor) {
                     game.press_dialog_button(true);
@@ -2008,6 +2008,7 @@ impl App {
             game.quest_window.detail.drag_to(self.cursor, quest::DETAIL_HEIGHT);
             game.minimap_window.frame.drag_to(self.cursor, minimap_window::HEIGHT);
             game.say.frame.drag_to(self.cursor, game.say.size()[1]);
+            game.say.drag_thumb(self.cursor[1]);
             if let Some(cutin) = &mut game.cutin {
                 let height = cutin.height();
                 cutin.frame.drag_to(self.cursor, height);
@@ -2015,6 +2016,12 @@ impl App {
             if let Some(menu) = game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()) {
                 let height = menu.size()[1];
                 menu.frame_mut(&mut game.npc_menu).drag_to(self.cursor, height);
+                let top = menu.frame(&game.npc_menu).position[1];
+                menu.drag_thumb(self.cursor[1] - top);
+            }
+            if let Some(input) = game.dialog.as_mut().and_then(|dialog| dialog.input.as_mut()) {
+                let height = input.height();
+                input.frame.drag_to(self.cursor, height);
             }
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
             if let Some(window) = &mut game.roulette {
@@ -2095,7 +2102,7 @@ impl App {
             && let Some(&links::Target::Picture(id)) = game.link_at(self.cursor)
         {
             let card = self.card_pictures.name(id).is_some();
-            game.show_item(iteminfo::Shown::of_link(id, 0, [0; 4], card, &self.items));
+            game.toggle_item(iteminfo::Shown::of_link(id, 0, [0; 4], card, &self.items));
             return;
         }
         // A right press on an ore, the blessing or the item in the refine window describes it.
@@ -2502,14 +2509,7 @@ impl App {
                 _ => None,
             };
             if let Some(item) = described {
-                let shown = iteminfo::Shown::of(&item);
-                // The same item again closes its description; another one takes its place.
-                if game.item_window.as_ref().is_some_and(|window| window.shown.same_item(&shown)) {
-                    game.item_window = None;
-                    game.card_view = None;
-                } else {
-                    game.show_item(shown);
-                }
+                game.toggle_item(iteminfo::Shown::of(&item));
             } else if let Some((asked, amount)) = moved {
                 game.quick_moving = true;
                 game.give(asked, u32::from(amount));
@@ -2946,9 +2946,15 @@ impl App {
                     | game.navi_window.as_mut().is_some_and(navi_window::Window::drop_drag)
                     | game.minimap_window.frame.drop_drag()
                     | game.say.frame.drop_drag()
+                    | game.say.thumb.stop()
+                    | game.dialog.as_mut().and_then(|dialog| dialog.input.as_mut()).is_some_and(|input| input.frame.drop_drag())
                     | game.cutin.as_mut().is_some_and(|cutin| cutin.frame.drop_drag())
                     | game.npc_menu.drop_drag()
-                    | game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()).is_some_and(|menu| menu.frame_mut(&mut game.npc_menu).drop_drag())
+                    | game
+                        .dialog
+                        .as_mut()
+                        .and_then(|dialog| dialog.menu.as_mut())
+                        .is_some_and(|menu| menu.frame_mut(&mut game.npc_menu).drop_drag() | menu.thumb.stop())
                     | (game.deal_choice.is_some() && game.deal_frame.drop_drag())
                     | game.escape.as_mut().is_some_and(|menu| menu.frame.drop_drag());
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
@@ -3266,6 +3272,17 @@ impl App {
             }
             return;
         }
+        // The NPC input box goes by any part but its field and OK.
+        if let Scene::Game(game) = &mut self.scene
+            && top == Some(Top::NpcDialog)
+            && let Some(input) = game.dialog.as_mut().and_then(|dialog| dialog.input.as_mut())
+            && input.contains(cursor)
+        {
+            if input.grips(cursor) {
+                input.frame.start_drag(cursor);
+            }
+            return;
+        }
         // The NPC menu, over the say window: a press on a row selects it (a double click picks it); any part but the
         // list and the buttons drags it.
         if let Scene::Game(game) = &mut self.scene
@@ -3287,9 +3304,7 @@ impl App {
             && game.say.contains(cursor)
         {
             let on_button = game.dialog.as_ref().is_some_and(|dialog| dialog.button != DialogButton::None) && game.say.on_button(cursor);
-            if game.say.scrollbar_box().is_some_and(|[x, y, width, height]| contains([x, y], [width, height], cursor)) {
-                game.say.press_scrollbar(cursor);
-            } else if !on_button && links::at(&game.dialog_links, cursor).is_none() {
+            if !game.say.press_scrollbar(cursor) && !on_button && links::at(&game.dialog_links, cursor).is_none() {
                 game.say.frame.start_drag(cursor);
             }
             return;

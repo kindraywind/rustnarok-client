@@ -8,7 +8,7 @@ use rustnarok_client::grf::Grf;
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
-use crate::window::{Chrome, Frame};
+use crate::window::{Chrome, Frame, ScrollBar, Thumb};
 use crate::{Layer, UI, contains, pickup};
 
 pub const WIDTH: f32 = 280.0;
@@ -103,11 +103,13 @@ pub fn warp_rows(maps: &[String], names: &std::collections::HashMap<String, Stri
     maps.iter().map(row).chain([cancel.clone()]).collect()
 }
 
-/// The items, the selected one, the first row shown, and the last press on a row (when, where in the window, which).
+/// The items, the selected one, the first row shown, the scroll bar's held thumb, and the last press on a row (when,
+/// where in the window, which).
 pub struct Menu {
     pub items: Vec<String>,
     pub selected: usize,
     pub first: usize,
+    pub thumb: Thumb,
     last_press: Option<(Instant, [f32; 2], usize)>,
     /// The warp list: its heading and its own place, which isn't kept. It never grows past four rows.
     warp: Option<(String, Frame)>,
@@ -116,7 +118,7 @@ pub struct Menu {
 impl Menu {
     /// A new menu has its first item selected.
     pub fn new(items: Vec<String>) -> Self {
-        Self { items, selected: 0, first: 0, last_press: None, warp: None }
+        Self { items, selected: 0, first: 0, thumb: Thumb::default(), last_press: None, warp: None }
     }
 
     /// The Warp Portal and Teleport list under its `heading`, opened on a `screen`.
@@ -147,6 +149,31 @@ impl Menu {
     /// Where OK and Cancel go inside the window.
     pub fn buttons(&self) -> [[f32; 2]; 2] {
         buttons(self.sized())
+    }
+
+    /// The scroll bar at the list's right edge, as tall as the list, for a window at `corner`: it shows while there
+    /// are more items than rows.
+    fn bar(&self, corner: [f32; 2]) -> ScrollBar {
+        let [x, y, width, height] = list_box(self.sized());
+        let at = [corner[0] + x + width - ScrollBar::WIDTH, corner[1] + y];
+        ScrollBar { at, height, shown: rows(self.sized()), rows: self.items.len(), first: self.first }
+    }
+
+    /// How much narrower the rows are for the bar: its width while it shows.
+    fn bar_width(&self) -> f32 {
+        if self.bar([0.0; 2]).range() > 0 { ScrollBar::WIDTH } else { 0.0 }
+    }
+
+    /// The bar's arrows and thumb on screen for a window at `corner`, while it shows.
+    pub fn bar_boxes(&self, corner: [f32; 2]) -> Option<[[f32; 4]; 3]> {
+        self.bar(corner).boxes()
+    }
+
+    /// The pointer at height `local_y` in the window with the bar's thumb held: whole rows.
+    pub fn drag_thumb(&mut self, local_y: f32) {
+        if let Some(first) = self.thumb.first(local_y) {
+            self.first = first;
+        }
     }
 
     /// Up or Down: one row, stopping at the ends, with the view following.
@@ -181,6 +208,7 @@ impl Menu {
     /// The rows shown: each one's item and its box inside the window, where `row_at` finds that item.
     pub fn row_boxes(&self) -> Vec<(usize, [f32; 4])> {
         let [x, y, width, _] = list_box(self.sized());
+        let width = width - self.bar_width();
         (0..rows(self.sized()))
             .map(|row| (self.first + row, row))
             .filter(|(index, _)| *index < self.items.len())
@@ -194,9 +222,15 @@ impl Menu {
         !contains([x, y], [width, height], local) && !buttons(self.sized()).iter().any(|&place| contains(place, BUTTON, local))
     }
 
-    /// A press at `local`: the row under it is selected. Returns true for a double click, the second press on that
-    /// row within 500 ms with the pointer where it was.
+    /// A press at `local`: on the scroll bar, an arrow moves one row, the track three and the thumb is held
+    /// (`drag_thumb`); otherwise the row under it is selected. Returns true for a double click, the second press on
+    /// that row within 500 ms with the pointer where it was.
     pub fn press(&mut self, local: [f32; 2], now: Instant) -> bool {
+        if let Some(first) = self.bar([0.0; 2]).press(local, &mut self.thumb) {
+            self.first = first;
+            self.last_press = None;
+            return false;
+        }
         let Some(index) = self.row_at(local) else {
             self.last_press = None;
             return false;
@@ -218,7 +252,8 @@ impl Menu {
         let [x, y, list_width, list_height] = list_box(self.sized());
         let [x, y] = [corner[0] + x, corner[1] + y];
         layer.sprites.push((&assets.list, [x, y], [list_width, list_height]));
-        for (index, line) in item_lines(&self.items, font, list_width - TEXT_X).into_iter().enumerate() {
+        // With the bar up an item's text is cut that much sooner.
+        for (index, line) in item_lines(&self.items, font, list_width - TEXT_X - self.bar_width()).into_iter().enumerate() {
             let Some(row) = index.checked_sub(self.first).filter(|&row| row < rows(self.sized())) else { continue };
             let top = y + row as f32 * ROW;
             if index == self.selected {
@@ -231,6 +266,7 @@ impl Menu {
                 left += width;
             }
         }
+        self.bar(corner).draw(layer, chrome);
     }
 }
 
@@ -351,6 +387,38 @@ mod tests {
         // Cut at the list's edge.
         let long = ["W".repeat(80)];
         assert!(font.width(&item_lines(&long, &font, 253.0)[0][0].1) <= 253.0);
+    }
+
+    #[test]
+    fn a_bar_from_sixteen_items() {
+        let menu = |count: usize| Menu::new((1..=count).map(|item| item.to_string()).collect());
+        assert_eq!(menu(15).bar_boxes([0.0; 2]), None);
+        for count in [16, 20] {
+            // At (255, 26), as tall as the 15-row list: 241.
+            let [up, down, _] = menu(count).bar_boxes([0.0; 2]).unwrap();
+            assert_eq!((up, down), ([255.0, 26.0, 13.0, 13.0], [255.0, 254.0, 13.0, 13.0]));
+        }
+        // With the bar the rows end at it.
+        assert_eq!((menu(15).row_boxes()[0].1[2], menu(16).row_boxes()[0].1[2]), (256.0, 243.0));
+        // An arrow moves a row, the track three; the rows stay unselected.
+        let start = Instant::now();
+        let mut menu = menu(20);
+        assert!(!menu.press([260.0, 260.0], start));
+        assert_eq!((menu.first, menu.selected), (1, 0));
+        menu.press([260.0, 30.0], start);
+        assert_eq!(menu.first, 0);
+        let [_, _, thumb] = menu.bar_boxes([0.0; 2]).unwrap();
+        menu.press([260.0, thumb[1] + thumb[3] + 2.0], start);
+        assert_eq!(menu.first, 3);
+        // The thumb drags by whole rows, kept in 0..=5.
+        let [_, _, thumb] = menu.bar_boxes([0.0; 2]).unwrap();
+        let grab = thumb[1] + 2.0;
+        menu.press([260.0, grab], start);
+        menu.drag_thumb(grab + 500.0);
+        assert_eq!(menu.first, 5);
+        menu.drag_thumb(grab - 500.0);
+        assert_eq!(menu.first, 0);
+        assert!(menu.thumb.stop());
     }
 
     #[test]

@@ -576,7 +576,7 @@ pub fn now() -> Instant {
 }
 
 /// Every drawn frame passes here: a screenshot asked for is taken of it, the way `RUSTNAROK_CLIENT_SCREENSHOT` captures.
-pub fn on_draw(gpu: &Gpu, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) {
+pub fn on_draw(gpu: &Gpu, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[crate::render::Shade]) {
     if WANT_SHOT.swap(false, Ordering::Relaxed) {
         *SHOT.lock().unwrap() = Some(gpu.snapshot(world, sprites, alphas));
     }
@@ -1745,10 +1745,12 @@ fn game_state(app: &App, game: &Game) -> Value {
                 DialogButton::None => "none",
             },
             "menu": dialog.menu.as_ref().map(|menu| json!({"items": menu.items, "selected": menu.selected, "first": menu.first, "position": menu.frame(&game.npc_menu).position})),
-            "input": dialog.input.as_ref().map(|input| json!({"text": input.text, "typed": input.typed})),
+            "input": dialog.input.as_ref().map(|input| json!({"text": input.text, "typed": input.typed, "position": input.frame.position})),
             "position": game.say.frame.position,
             "size": game.say.size(),
             "scroll": game.say.scroll,
+            // Each line drawn: its text and its box on screen, cut to the panel.
+            "drawn": game.say.drawn.iter().map(|(text, area)| json!({"text": text, "box": area})).collect::<Vec<_>>(),
         })
     });
     // The NPC's picture: its window's corner and height, its type and file.

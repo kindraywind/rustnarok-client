@@ -176,13 +176,14 @@ impl Game {
     }
 
     /// The NPC dialog's buttons as the control socket names them, with the boxes their clicks test: `npc_next` or
-    /// `npc_close`, each menu row shown as `npc_menu:<index>`, `npc_menu_ok` and `npc_menu_cancel`, and `npc_input_ok`.
+    /// `npc_close`, each menu row shown as `npc_menu:<index>`, `npc_menu_ok` and `npc_menu_cancel`, and `npc_input_ok`;
+    /// while a scroll bar shows, its arrows and thumb as `npc_say_scroll_up`, `_down`, `_thumb` (`npc_menu_scroll_...`).
     /// `ok` and `cancel` are the buttons' image sizes.
     pub(crate) fn dialog_button_boxes(&self, ok: [f32; 2], cancel: [f32; 2]) -> Vec<(String, [f32; 4])> {
         let Some(dialog) = &self.dialog else { return Vec::new() };
         let mut boxes = Vec::new();
         if let Some(input) = &dialog.input {
-            let [x, y] = input.ok_on(screen());
+            let [x, y] = input.ok_on();
             boxes.push(("npc_input_ok".to_owned(), [x, y, ok[0], ok[1]]));
         }
         let name = match dialog.button {
@@ -193,11 +194,18 @@ impl Game {
         if let Some(name) = name.filter(|_| dialog.say_window()) {
             boxes.push((name.to_owned(), self.say.button_box()));
         }
+        let bar = |name: &str, parts: Option<[[f32; 4]; 3]>| {
+            parts.into_iter().flatten().zip(["up", "down", "thumb"]).map(move |(area, part)| (format!("{name}_scroll_{part}"), area)).collect::<Vec<_>>()
+        };
+        if dialog.say_window() {
+            boxes.extend(bar("npc_say", self.say.bar_boxes()));
+        }
         if let Some(menu) = &dialog.menu {
             for (index, [x, y, width, height]) in menu.row_boxes() {
                 let [x, y] = menu.frame(&self.npc_menu).at([x, y]);
                 boxes.push((format!("npc_menu:{index}"), [x, y, width, height]));
             }
+            boxes.extend(bar("npc_menu", menu.bar_boxes(menu.frame(&self.npc_menu).position)));
             let [ok_at, cancel_at] = menu.buttons().map(|place| menu.frame(&self.npc_menu).at(place));
             boxes.push(("npc_menu_ok".to_owned(), [ok_at[0], ok_at[1], ok[0], ok[1]]));
             boxes.push(("npc_menu_cancel".to_owned(), [cancel_at[0], cancel_at[1], cancel[0], cancel[1]]));
@@ -638,7 +646,7 @@ impl Game {
         let Some(dialog) = &self.dialog else { return false };
         (dialog.say_window() && self.say.contains(cursor))
             || dialog.menu.as_ref().is_some_and(|menu| menu.frame(&self.npc_menu).local(cursor, menu.size()[1]).is_some())
-            || dialog.input.as_ref().is_some_and(|input| input.contains(screen(), cursor))
+            || dialog.input.as_ref().is_some_and(|input| input.contains(cursor))
     }
 
     /// CZ_PROGRESS when the player's progress bar ends now: its time ran out, or the server took it away.
@@ -1057,6 +1065,16 @@ impl Game {
             let title = items.get(&card).map_or_else(String::new, |info| info.name.clone());
             self.card_view = Some(iteminfo::CardView::new(iteminfo::cardbmp_path(name), card, title, screen()));
             escape::touch(&mut self.esc_order, escape::WindowId::CardPicture);
+        }
+    }
+
+    /// The same item again closes its description; another one takes its place (`show_item`).
+    pub(crate) fn toggle_item(&mut self, shown: iteminfo::Shown) {
+        if self.item_window.as_ref().is_some_and(|window| window.shown.same_item(&shown)) {
+            self.item_window = None;
+            self.card_view = None;
+        } else {
+            self.show_item(shown);
         }
     }
 
