@@ -1618,20 +1618,18 @@ impl App {
                     game.dialog_for(npc).input = Some(npc_input::Input::new(text));
                 }
             }
-            // Where Warp Portal or Teleport goes, in the NPC menu's box: "Random Area" for Teleport's random spot, the
-            // maps by their file names, then Cancel.
+            // Where Warp Portal or Teleport goes, in a box of its own under its heading: "Random Area" for Teleport's
+            // random spot, the maps by their names, then Cancel.
             MapEvent::WarpList { skill, maps } => {
                 let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
-                let mut items: Vec<String> =
-                    maps.iter().map(|map| if map.trim_end_matches(".gat") == "Random" { message(RANDOM_AREA) } else { map.clone() }).collect();
-                items.push(message(WARP_CANCEL));
+                let items = npc_menu::warp_rows(&maps, &self.map_names, [message(RANDOM_AREA), message(WARP_CANCEL)]);
                 game.dialog = Some(Dialog {
                     npc: 0,
                     talking: false,
                     lines: Vec::new(),
                     wipe: false,
                     button: DialogButton::None,
-                    menu: Some(npc_menu::Menu::new(items)),
+                    menu: Some(npc_menu::Menu::warp_list(items, message(WARP_HEADING), screen())),
                     input: None,
                     warp: Some((skill, maps)),
                 });

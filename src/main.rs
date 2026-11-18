@@ -269,6 +269,7 @@ const UPGRADE_TITLE: usize = 910;
 const UPGRADE_RESULTS: [(usize, [u8; 3]); 4] = [(911, [0, 255, 255]), (912, [0, 205, 205]), (913, [255, 200, 200]), (914, [255, 200, 200])];
 /// Warp Portal's and Teleport's list: Teleport's random spot, and the last row.
 const RANDOM_AREA: usize = 212;
+const WARP_HEADING: usize = 213;
 const WARP_CANCEL: usize = 218;
 /// What a map doesn't allow: teleporting, memo points, the skill, the item.
 const MAP_FORBIDS: [usize; 4] = [500, 501, 1334, 1335];
