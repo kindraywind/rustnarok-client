@@ -1,0 +1,33 @@
+{
+  "about": "Dying closes the NPC windows (issue #1366). With an NPC's Buy list open, @die: the shop and its Buy / Sell / Cancel entry are gone before any respawn, one CZ_NPC_TRADE_QUIT 0x09d4 went out, and the dead menu is up as the newest window, over the inventory that stays. With a talk open (npc/talk.txt), @die: the say window goes and neither CZ_CLOSE_DIALOG 0x0146 nor CZ_CHOOSE_MENU 0x00b8 is sent. The NPCs are loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@unloadnpcfile {scenarios}/deal-cancel.txt"}, {"wait": 500},
+    {"say": "@loadnpc {scenarios}/deal-cancel.txt"}, {"wait": 800},
+    {"say": "@warp morocc 160 120"}, {"settle": 2000},
+    {"say": "@heal"}, {"wait": 300},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"click_on": {"unit": "Deal Tester"}}, {"wait_for": {"packet": "0x00c4", "ms": 3000}},
+    {"click_on": {"button": "deal_buy"}}, {"wait_for": {"packet": "0x0b77", "ms": 3000}}, {"wait": 300},
+    {"expect": {"windows_open": ["Shop", "Inventory"], "state": {"esc_order": ["DealChoice", "Inventory"]}}},
+    {"say": "@die"},
+    {"wait_for": {"sent": "0x09d4", "ms": 2000}}, {"wait": 500},
+    {"expect": {"windows_open": ["GameMenu", "Inventory"], "windows_closed": ["Shop", "DealChoice"], "state": {"escape": ["save_point", "return"], "esc_order": ["GameMenu", "Inventory"]}}},
+    {"move": [1000, 750]},
+    {"shot": "dying-closes-shop", "threshold": 5},
+    {"say": "@alive"}, {"wait": 800},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"say": "@unloadnpcfile {scenarios}/deal-cancel.txt"}, {"wait": 500},
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/talk.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/talk.txt"}, {"wait": 1000},
+    {"click_unit": {"kind": "npc", "name": "Talk Clerk"}}, {"wait": 1000},
+    {"expect": {"windows_open": ["NpcDialog"]}},
+    {"say": "@die"},
+    {"wait_for": {"sent": "0x0146", "ms": 1200}, "none": true}, {"wait_for": {"sent": "0x00b8", "ms": 300}, "none": true},
+    {"expect": {"windows_open": ["GameMenu"], "windows_closed": ["NpcDialog", "NpcMenu"], "state": {"dialog": null, "escape": ["save_point", "return"]}}},
+    {"say": "@alive"}, {"wait": 800},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/talk.txt"}, {"wait": 500}
+  ]
+}

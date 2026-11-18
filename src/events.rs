@@ -1386,11 +1386,12 @@ impl App {
                 // Reason 1: died. The body falls when the killing hit lands, then stays a moment.
                 let key = (id != game.account_id).then_some(id);
                 let lands = game.damages.iter().filter(|damage| damage.target == key).map(|damage| damage.start).fold(Instant::now(), Instant::max);
-                let dying = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
-                // Our own death brings up the option menu with the save point.
+                // Our own death ends the NPC talk and the shops, then brings up the option menu with the save point.
                 if id == game.account_id && reason == 1 {
+                    game.close_on_death();
                     game.escape = Some(escape::Menu::new(true));
                 }
+                let dying = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 // Teleporting and logging out leave rings and a sound on the spot (not for a GM hidden from sight).
                 if id != game.account_id
                     && let (Some(gpu), Some(actor)) = (gpu, dying.as_deref())

@@ -4035,6 +4035,29 @@ impl Game {
         self.cashshop_buy_asked = false;
     }
 
+    /// Our own death: the NPC talk goes with nothing sent (the server has ended the script), the Buy / Sell / Cancel
+    /// box, the shop lists and the shop setups close as their Cancel does, and our own shop or buying store as its Close
+    /// does. The inventory, the storage, pick lists and the rest stay. An open game menu leaves the Esc order, so the
+    /// dead one that follows joins it as the newest window.
+    pub(crate) fn close_on_death(&mut self) {
+        use escape::WindowId::*;
+        if self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()) {
+            self.dismiss_dialog();
+        }
+        self.close_deal_choice();
+        self.close_shop();
+        let open = [
+            (VendSetup, self.vend_setup.is_some()),
+            (BuyingStoreSetup, self.buying_setup.is_some()),
+            (MyShop, self.my_shop.is_some()),
+            (MyBuyingStore, self.my_buying_store.is_some()),
+        ];
+        for (id, _) in open.into_iter().filter(|(_, open)| *open) {
+            self.close_esc(id);
+        }
+        escape::remove(&mut self.esc_order, GameMenu);
+    }
+
     /// The deal-type question goes and its drag is dropped, with no word to the server (a map change, or Buy and Sell
     /// that say their own). The NPC it was for.
     pub(crate) fn drop_deal_choice(&mut self) -> Option<u32> {
