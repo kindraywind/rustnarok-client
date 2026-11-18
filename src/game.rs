@@ -3568,6 +3568,9 @@ impl Game {
         if self.storage.frame.open {
             names.push("Storage".into());
         }
+        if self.refine.is_some() {
+            names.push("Refine".into());
+        }
         if matches!(self.queue_asked, Some(QueueAsked::Lobby(..))) {
             names.push("BattleLobby".into());
         }

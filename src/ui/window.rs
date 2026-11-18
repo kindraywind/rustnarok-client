@@ -34,6 +34,8 @@ pub struct Chrome {
     scroll_arrows: [Texture; 2],
     scroll_track: Texture,
     scroll_thumb: [Texture; 3],
+    /// The plain text button's left, middle and right pieces: normal, under the pointer, held down, switched off.
+    text_buttons: [[Texture; 3]; 4],
 }
 
 impl Chrome {
@@ -79,11 +81,34 @@ impl Chrome {
             scroll_arrows: ["up", "down"].map(|end| image(format!("{UI}scroll0{end}.bmp"))),
             scroll_track: image(format!("{UI}scroll0mid.bmp")),
             scroll_thumb: ["up", "mid", "down"].map(|part| image(format!("{UI}scroll0bar_{part}.bmp"))),
+            text_buttons: ["out", "over", "press", "disable"].map(|look| ["left", "mid", "right"].map(|part| image(format!("{basic}btn_{look}_{part}.bmp")))),
         }
     }
 }
 
 impl Chrome {
+    /// The plain text button, 20 px high and `width` wide: a 6 px cap at each end, 6 px middle pieces between them (the
+    /// last one against the right cap), and the label in the middle. `look`: 0 normal, 1 under the pointer, 2 held
+    /// down (the label a pixel down and right, over white), 3 switched off (grey over a lighter grey).
+    pub fn draw_text_button<'a>(&'a self, layer: &mut Layer<'a>, font: &Font, corner: [f32; 2], width: f32, label: &str, look: usize) {
+        let [left, middle, right] = &self.text_buttons[look];
+        let piece = left.size[0];
+        let mut x = piece;
+        while x < width - piece {
+            layer.sprites.push((middle, offset(corner, [x.min(width - 2.0 * piece), 0.0]), middle.size));
+            x += piece;
+        }
+        layer.sprites.push((left, corner, left.size));
+        layer.sprites.push((right, offset(corner, [width - piece, 0.0]), right.size));
+        let at = offset(corner, [((width - font.width(label)) / 2.0).trunc(), ((left.size[1] - font.line_height()) / 2.0).trunc()]);
+        // The text and what lies a pixel off it: under it, or (held down, switched off) it over the lighter one.
+        let (under, over): ([u8; 3], [u8; 3]) = [([0xD7; 3], [0; 3]), ([0x96, 0xA7, 0xC7], [0; 3]), ([0; 3], [0xFF; 3]), ([0x6F; 3], [0xE2; 3])][look];
+        let (first, second) = if look < 2 { (under, over) } else { (over, under) };
+        let low = offset(at, [1.0, 1.0]);
+        layer.texts.push((label.to_owned(), if look < 2 { low } else { at }, first));
+        layer.texts.push((label.to_owned(), if look < 2 { at } else { low }, second));
+    }
+
     /// The base (0), minimize (1) or close (2) button, lit when hovered.
     pub fn button(&self, button: usize, hovered: bool) -> &Texture {
         &self.buttons[button][usize::from(hovered)]

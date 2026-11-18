@@ -1232,7 +1232,7 @@ impl App {
                 let window = game.refine.as_mut().unwrap();
                 let hit = window.hit(cursor).unwrap();
                 // A double click on the item slot empties the machine.
-                if hit == refine::Hit::Item && window.item.is_some() && game.refine_clicks.double(0) {
+                if hit == refine::Hit::Item && window.item.is_some() && !window.hammering() && game.refine_clicks.double(0) {
                     window.clear();
                     return;
                 }
@@ -2815,7 +2815,7 @@ impl App {
                     }
                     // Into the refine machine's item slot: the server lists what refines it; anywhere else on it, refused.
                     (Some((Dragged::Item(index), _, true)), _) if on_refine => {
-                        let on_slot = game.refine.as_ref().and_then(|window| window.hit(self.cursor)) == Some(refine::Hit::Item);
+                        let on_slot = game.refine.as_ref().is_some_and(|window| window.takes_drop(self.cursor));
                         let identified = game.inventory.get(index).is_some_and(|item| item.identified);
                         if on_slot && game.refine.as_mut().is_some_and(|window| window.put(identified, control::now())) {
                             let _ = game.session.refine_select(index);
