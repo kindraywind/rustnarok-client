@@ -23,7 +23,7 @@
     {"wait_for": {"packet": "0x0b92", "ms": 5000}},
     {"expect": {"inventory_has": [{"id": 500024}], "inventory_items": 1, "windows_closed": ["ItemReform"], "windows_open": ["ItemInfo"]}},
     {"move": [900, 700]},
-    {"shot": "reform-done", "crop": [0, 160, 300, 160]},
+    {"shot": "reform-done"},
     {"say": "@item 100817"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
     {"key": "Escape"}, {"key": "Alt+E"}, {"wait": 400},
     {"click_on": {"inventory_item": 100817}, "count": 2},
