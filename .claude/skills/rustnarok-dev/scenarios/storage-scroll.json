@@ -1,0 +1,413 @@
+{
+  "about": "The storage's scroll bars: 16 kinds of loot stored, so the Etc tab has more stacks than its 12 rows and the list gets the standard bar at the right edge (none on the first tab, where every row fits). The down arrow steps a row, a press on the track under the thumb pages 3 rows, the up arrow steps back, and the held thumb takes the list to the top and to the bottom, where the last stacks show. The Etc category window (3 rows) has its own bar; its down arrow steps its list. A tab whose rows fit has no bar.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@clearstorage"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@item 909"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 910"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 911"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 912"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 913"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 914"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 915"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 916"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 917"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 918"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 919"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 920"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 921"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 922"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 923"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@item 924"
+    },
+    {
+      "wait_for": {
+        "event": "PickedUp",
+        "ms": 5000
+      }
+    },
+    {
+      "say": "@storeall"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "say": "@storage"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b08",
+        "ms": 8000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Storage"
+        ],
+        "state": {
+          "storage_rows": 12,
+          "storage_loading": false
+        },
+        "no_target": {
+          "button": "storage_scroll_up"
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "storage_tab:7"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "storage_scroll": 0
+        },
+        "button": {
+          "name": "storage_scroll_down"
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "storage-scroll-top",
+      "crop": [
+        350,
+        190,
+        300,
+        478
+      ]
+    },
+    {
+      "click_on": {
+        "button": "storage_scroll_down"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "storage_scroll": 1
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "storage_scroll_down",
+        "offset": [
+          0,
+          -20
+        ]
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "storage_scroll": 4
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "storage_scroll_up"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "storage_scroll": 3
+        }
+      }
+    },
+    {
+      "drag_on": [
+        {
+          "button": "storage_scroll_thumb"
+        },
+        {
+          "point": [
+            631,
+            150
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "storage_scroll": 0
+        }
+      }
+    },
+    {
+      "drag_on": [
+        {
+          "button": "storage_scroll_thumb"
+        },
+        {
+          "point": [
+            631,
+            760
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "storage_scroll": 4
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "storage-scroll-bottom",
+      "crop": [
+        350,
+        190,
+        300,
+        478
+      ]
+    },
+    {
+      "click_on": {
+        "button": "storage_box:7"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "button": {
+          "name": "storage_cat7_scroll_down"
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "storage_cat7_scroll_down"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "storage-scroll-category"
+    },
+    {
+      "click_on": {
+        "button": "storage_box:7"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "storage_tab:0"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "no_target": {
+          "button": "storage_scroll_up"
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "storage_close"
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@clearstorage"
+    },
+    {
+      "wait": 800
+    }
+  ]
+}

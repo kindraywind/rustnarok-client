@@ -59,6 +59,11 @@ const COUNT_COLOR: [u8; 3] = [0x23, 0x23, 0x23];
 const FULL_COLOR: [u8; 3] = [0xFF, 0x00, 0x00];
 /// The wheel moves this many rows a notch (one less than the rows when fewer).
 const WHEEL_ROWS: usize = 3;
+/// The scroll bars: 15 px from the window's right edge, from 14 px down; the main list's stops 55 px above the bottom
+/// as the window opens and 60 px above once its height has changed, a list window's 24 px above.
+const BAR_AT: [f32; 2] = [15.0, 14.0];
+const BAR_SHORT: [f32; 2] = [69.0, 74.0];
+const CATEGORY_BAR_SHORT: f32 = 38.0;
 /// The loading panel, over the rows until the list's end: a rounded 1 px line in #8494CE, rounded boxes in #DEE7FF and
 /// white inside it, the poring picture, and three lines centred in 257 px from x 20.
 const PANEL: [[f32; 4]; 3] = [[55.0, 131.0, 187.0, 139.0], [56.0, 132.0, 185.0, 137.0], [61.0, 137.0, 175.0, 127.0]];
@@ -224,6 +229,7 @@ pub struct Category {
     size: [f32; 2],
     scroll: usize,
     grip: window::Grip,
+    thumb: window::Thumb,
 }
 
 impl Category {
@@ -232,7 +238,7 @@ impl Category {
     }
 
     fn at(place: [f32; 2]) -> Self {
-        Self { frame: Frame::new(place, CATEGORY_SIZE[0]), size: CATEGORY_SIZE, scroll: 0, grip: window::Grip::default() }
+        Self { frame: Frame::new(place, CATEGORY_SIZE[0]), size: CATEGORY_SIZE, scroll: 0, grip: window::Grip::default(), thumb: window::Thumb::default() }
     }
 
     /// Opens at 140 × 145 where it was last, at the top.
@@ -250,6 +256,13 @@ impl Category {
 
     fn rows(&self) -> usize {
         ((self.size[1] - 38.0) / CELL).floor() as usize
+    }
+
+    /// Its scroll bar for a list of `total` rows (none while it's shut or rolled up).
+    fn bar(&self, total: usize) -> window::ScrollBar {
+        let rows = if self.frame.open && !self.frame.minimized { total } else { 0 };
+        let at = self.frame.at([self.size[0] - BAR_AT[0], BAR_AT[1]]);
+        window::ScrollBar { at, height: self.size[1] - CATEGORY_BAR_SHORT, shown: self.rows(), rows, first: self.scroll }
     }
 
     /// The row under a point in the window: x 20 to 52, 10 px right of the drawn cell.
@@ -368,6 +381,7 @@ pub struct Storage {
     /// Rows shown, and the corner grip while held.
     rows: usize,
     grip: window::Grip,
+    thumb: window::Thumb,
     /// The height has changed since it opened (or opened taller): the search box sits further right.
     resized: bool,
     /// Each tab's category window, and which are on (a bit each, Use first): those open with the storage.
@@ -395,6 +409,7 @@ impl Default for Storage {
             typing: false,
             rows: LEAST_ROWS,
             grip: window::Grip::default(),
+            thumb: window::Thumb::default(),
             resized: false,
             categories: std::array::from_fn(Category::new),
             mask: 0,
@@ -588,10 +603,16 @@ impl Storage {
                 boxes.push((format!("storage_sort:{line}"), place(self.sort_line_at(line), SORT_SIZE)));
             }
         }
-        let rows = self.listed(info, names).into_iter().skip(self.scroll).take(self.rows).enumerate();
+        let listed = self.listed(info, names);
+        let bar_boxes = |name: &str, bar: window::ScrollBar| {
+            bar.boxes().into_iter().flatten().zip(["up", "down", "thumb"]).map(move |(area, part)| (format!("{name}_scroll_{part}"), area)).collect::<Vec<_>>()
+        };
+        boxes.extend(bar_boxes("storage", self.bar(listed.len())));
+        let rows = listed.into_iter().skip(self.scroll).take(self.rows).enumerate();
         boxes.extend(rows.map(|(row, item)| (format!("storage_item:{}", item.id), place([CELL_X, ROWS_TOP + row as f32 * CELL], [CELL, CELL]))));
         // Each open list window's rows: `storage_cat<tab>_item:<id>` (`storage_found_item:<id>` for the Search
-        // window), and its grip `storage_cat<tab>_resize` (`storage_found_resize`).
+        // window), its grip `storage_cat<tab>_resize` (`storage_found_resize`), and its scroll bar's parts while it
+        // shows, as the main window's: `storage_scroll_up`, `_down`, `_thumb`; `storage_cat<tab>_scroll_up`...
         let windows = (0..TABS).map(List::Tab).chain([List::Search]);
         for which in windows.filter(|&which| self.list_window(which).frame.open) {
             let name = match which {
@@ -599,7 +620,9 @@ impl Storage {
                 List::Search => "storage_found".to_owned(),
             };
             let window = self.list_window(which);
-            let rows = self.list(which, info, names).into_iter().skip(window.scroll).take(window.rows()).enumerate();
+            let listed = self.list(which, info, names);
+            boxes.extend(bar_boxes(&name, window.bar(listed.len())));
+            let rows = listed.into_iter().skip(window.scroll).take(window.rows()).enumerate();
             boxes.extend(rows.map(|(row, item)| {
                 let [x, y] = window.frame.at([CATEGORY_POINTER[0], ROWS_TOP + row as f32 * CELL]);
                 (format!("{name}_item:{}", item.id), [x, y, CATEGORY_POINTER[1] - CATEGORY_POINTER[0], CELL])
@@ -708,6 +731,48 @@ impl Storage {
         }
         let item = self.row_at(local).and_then(|row| self.listed(info, names).get(self.scroll + row).copied());
         Some(item.map_or(Hit::Window, |item| Hit::Item(item.index)))
+    }
+
+    /// The list's scroll bar for `total` rows (none while it loads, or the window is shut or rolled up).
+    fn bar(&self, total: usize) -> window::ScrollBar {
+        let rows = if self.frame.open && !self.frame.minimized && !self.loading { total } else { 0 };
+        let height = self.height() - BAR_SHORT[usize::from(self.resized)];
+        window::ScrollBar { at: self.frame.at([WIDTH - BAR_AT[0], BAR_AT[1]]), height, shown: self.rows, rows, first: self.scroll }
+    }
+
+    /// A press: true when the list's scroll bar took it (an arrow, the track, or the thumb, which is then held).
+    pub fn press_bar(&mut self, cursor: [f32; 2], info: &HashMap<u32, ItemInfo>, names: Names) -> bool {
+        let bar = self.bar(self.listed(info, names).len());
+        let Some(first) = bar.press(cursor, &mut self.thumb) else { return false };
+        self.scroll = first;
+        true
+    }
+
+    /// The same for a list window's bar.
+    pub fn press_category_bar(&mut self, which: List, cursor: [f32; 2], info: &HashMap<u32, ItemInfo>, names: Names) -> bool {
+        let total = self.list(which, info, names).len();
+        let window = self.list_window_mut(which);
+        let Some(first) = window.bar(total).press(cursor, &mut window.thumb) else { return false };
+        window.scroll = first;
+        true
+    }
+
+    /// The pointer moved to height `y`: a held thumb takes its list along.
+    pub fn drag_thumbs(&mut self, y: f32) {
+        if let Some(first) = self.thumb.first(y) {
+            self.scroll = first;
+        }
+        for window in self.categories.iter_mut().chain([&mut self.search_window]) {
+            if let Some(first) = window.thumb.first(y) {
+                window.scroll = first;
+            }
+        }
+    }
+
+    /// Lets go of any held thumb; whether one was held.
+    pub fn drop_thumbs(&mut self) -> bool {
+        let lists = self.categories.iter_mut().chain([&mut self.search_window]).fold(false, |any, window| window.thumb.stop() | any);
+        self.thumb.stop() | lists
     }
 
     /// A click: true when it asks to close the storage. A tab keeps the scroll row as far as the new tab's list goes,
@@ -905,6 +970,7 @@ impl Storage {
         layer.sprites.push((find, at(self.footer_at(FIND)), find.size));
         layer.sprites.push((&assets.close[look(Hit::Close)], at(self.footer_at(CLOSE)), CLOSE_SIZE));
         layer.sprites.push((&assets.resize, at([WIDTH - window::GRIP, h - window::GRIP]), assets.resize.size));
+        self.bar(self.listed(items, names).len()).draw(layer, chrome);
         // The sort box showing the chosen line, and its list while down.
         let [back, arrow] = &assets.sort;
         let line = |order: Order| messages.get(SORT_LINES[order as usize]).map_or("", String::as_str);
@@ -1014,6 +1080,7 @@ impl Storage {
         layer.sprites.push((middle, at([left.size[0], footer_top]), [w - left.size[0] - right.size[0], CATEGORY_FOOTER]));
         layer.sprites.push((right, at([w - right.size[0], footer_top]), right.size));
         layer.sprites.push((&assets.resize, at([w - window::GRIP, h - window::GRIP]), assets.resize.size));
+        category.bar(self.list(which, items, (messages, cards, makers)).len()).draw(layer, chrome);
     }
 }
 
@@ -1121,6 +1188,55 @@ mod tests {
             storage.scroll_by(-1, &none, names);
             assert_eq!(storage.scroll(), 0);
         }
+    }
+
+    #[test]
+    fn the_lists_have_scroll_bars_where_the_rows_dont_fit() {
+        let none = HashMap::new();
+        let (cards, makers) = (CardNames::default(), HashMap::new());
+        let names: Names = (&[], &cards, &makers);
+        let mut storage = Storage::default();
+        storage.open(String::new());
+        storage.loading = false;
+        let [x, y] = storage.frame.position;
+        // Twelve rows fit: no bar, and a press there isn't the bar's.
+        storage.extend((0..12).map(|index| item(index, 0, 0)).collect());
+        assert_eq!(storage.bar(12).boxes(), None);
+        assert!(!storage.press_bar([x + 270.0, y + 20.0], &none, names));
+        // Twenty rows: the bar at (265, 14), 13 x 389 as the window opens at 458.
+        storage.extend((12..20).map(|index| item(index, 0, 0)).collect());
+        let bar = storage.bar(20);
+        assert_eq!((bar.at, bar.height, bar.shown, bar.rows), ([x + 265.0, y + 14.0], 389.0, 12, 20));
+        // The down arrow steps a row, the track under the thumb pages 3, the up arrow steps back.
+        assert!(storage.press_bar([x + 270.0, y + 14.0 + 380.0], &none, names));
+        assert_eq!(storage.scroll(), 1);
+        assert!(storage.press_bar([x + 270.0, y + 14.0 + 370.0], &none, names));
+        assert_eq!(storage.scroll(), 4);
+        assert!(storage.press_bar([x + 270.0, y + 16.0], &none, names));
+        assert_eq!(storage.scroll(), 3);
+        assert!(!storage.drop_thumbs());
+        // The thumb held and pulled to the bottom shows the last rows; let go, the pointer moves nothing.
+        let thumb = storage.bar(20).boxes().unwrap()[2];
+        assert!(storage.press_bar([thumb[0] + 5.0, thumb[1] + 5.0], &none, names));
+        storage.drag_thumbs(thumb[1] + 400.0);
+        assert_eq!(storage.scroll(), 8);
+        assert!(storage.drop_thumbs());
+        storage.drag_thumbs(0.0);
+        assert_eq!(storage.scroll(), 8);
+        // No bar while the list loads; once the height has changed the bar is as tall as the rows.
+        storage.loading = true;
+        assert_eq!(storage.bar(20).boxes(), None);
+        storage.loading = false;
+        storage.resized = true;
+        assert_eq!(storage.bar(20).height, storage.height() - 74.0);
+        // A 140 x 145 list window: (125, 14), 13 x 107, for the 3 rows it shows.
+        storage.toggle_category(0);
+        let [x, y] = storage.categories[0].frame.position;
+        let bar = storage.categories[0].bar(20);
+        assert_eq!((bar.at, bar.height, bar.shown), ([x + 125.0, y + 14.0], 107.0, 3));
+        assert!(storage.press_category_bar(List::Tab(0), [x + 130.0, y + 14.0 + 100.0], &none, names));
+        assert_eq!(storage.categories[0].scroll, 1);
+        assert!(!storage.press_category_bar(List::Tab(0), [x + 60.0, y + 60.0], &none, names));
     }
 
     #[test]

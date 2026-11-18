@@ -66,6 +66,10 @@ const WHOLE_MESSAGE: usize = 295;
 const WHOLE_BOX: [f32; 2] = [200.0, 12.0];
 const WHOLE_UP: f32 = 20.0;
 const FOOTER: f32 = 27.0;
+/// A list's scroll bar: 15 px from the right edge, from 14 px down, 10 px longer than the goods' rows and 18 px longer
+/// than the deal's.
+const BAR_AT: [f32; 2] = [15.0, 14.0];
+const BAR_PAST_ROWS: [f32; 2] = [10.0, 18.0];
 pub const BUTTON: [f32; 2] = [42.0, 20.0];
 /// The deal-type box (Buy / Sell / Cancel): 280×120 at ((W − 640)/2 + 185, 300·H/480).
 pub const DEAL_SIZE: [f32; 2] = [280.0, 120.0];
@@ -248,7 +252,9 @@ pub struct Shop {
     rows: [usize; 2],
     width: f32,
     grips: [window::Grip; 2],
+    /// The first row each list shows, and its scroll bar's thumb while held.
     scroll: [usize; 2],
+    thumbs: [window::Thumb; 2],
     selected: [Option<usize>; 2],
     clicks: Clicks,
     /// The zeny carried, for what buying from an NPC may add.
@@ -287,6 +293,7 @@ impl Shop {
             width: WIDTH,
             grips: [window::Grip::default(); 2],
             scroll: [0; 2],
+            thumbs: [window::Thumb::default(); 2],
             selected: [None; 2],
             clicks: Clicks::default(),
             zeny: u64::MAX,
@@ -329,6 +336,9 @@ impl Shop {
             }
             let height = self.height(window);
             self.frames[window].drag_to(cursor, height);
+            if let Some(first) = self.thumbs[window].first(cursor[1]) {
+                self.scroll[window] = first;
+            }
         }
     }
 
@@ -375,9 +385,39 @@ impl Shop {
         true
     }
 
-    /// Lets go of the grips; whether one was held.
+    /// Lets go of the grips and the scroll bars' thumbs; whether one was held.
     pub fn stop_resize(&mut self) -> bool {
-        self.grips.iter_mut().fold(false, |held, grip| grip.stop() | held)
+        let thumbs = self.thumbs.iter_mut().fold(false, |held, thumb| thumb.stop() | held);
+        self.grips.iter_mut().fold(thumbs, |held, grip| grip.stop() | held)
+    }
+
+    /// A window's scroll bar (none while it's shut or rolled up).
+    fn bar(&self, window: usize) -> window::ScrollBar {
+        let frame = &self.frames[window];
+        let rows = if frame.open && !frame.minimized { self.rows(window).len() } else { 0 };
+        let shown = self.rows[window];
+        let height = shown as f32 * ROW + BAR_PAST_ROWS[window];
+        window::ScrollBar { at: frame.at([self.window_width(window) - BAR_AT[0], BAR_AT[1]]), height, shown, rows, first: self.scroll[window] }
+    }
+
+    /// A press: true when a list's scroll bar took it (an arrow, the track, or the thumb, which is then held).
+    pub fn press_bar(&mut self, cursor: [f32; 2]) -> bool {
+        // The deal is over the goods where they overlap, as in `hit`.
+        for window in [1, 0] {
+            if let Some(first) = self.bar(window).press(cursor, &mut self.thumbs[window]) {
+                self.scroll[window] = first;
+                return true;
+            }
+            if self.frames[window].local(cursor, self.height(window)).is_some() {
+                break;
+            }
+        }
+        false
+    }
+
+    /// The first row each list shows (for the test driver).
+    pub fn scrolls(&self) -> [usize; 2] {
+        self.scroll
     }
 
     fn window_width(&self, window: usize) -> f32 {
@@ -512,6 +552,10 @@ impl Shop {
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         for window in [1, 0] {
             let Some(local) = self.frames[window].local(cursor, self.height(window)) else { continue };
+            // The scroll bar is the window's own: no row or title under it takes the pointer.
+            if self.bar(window).hit(cursor).is_some() {
+                return Some(Hit::Window(window));
+            }
             if let Some(hit) = self.frames[window].title_hit(local) {
                 return Some(Hit::Title(window, hit));
             }
@@ -910,6 +954,7 @@ impl Shop {
                 layer.sprites.push((&deal_images[look(Hit::Deal)], frame.at(deal), BUTTON));
                 layer.sprites.push((&assets.buttons[2][look(Hit::Cancel)], frame.at(cancel), BUTTON));
             }
+            self.bar(window).draw(layer, chrome);
         }
         // A vendor's row under the pointer: the whole name ("[N Option]" with options) in the item's colour, over the
         // name, or over the icon's cell when the pointer is on it.
@@ -980,6 +1025,11 @@ impl Shop {
                 let [x, y] = self.frames[window].at([self.window_width(window) - window::GRIP, self.height(window) - window::GRIP]);
                 boxes.push((name, [x, y, window::GRIP, window::GRIP]));
             }
+        }
+        // Each list's scroll bar while it shows: its arrows and thumb.
+        let parts = [["shop_scroll_up:0", "shop_scroll_down:0", "shop_scroll_thumb:0"], ["shop_scroll_up:1", "shop_scroll_down:1", "shop_scroll_thumb:1"]];
+        for (window, names) in parts.into_iter().enumerate() {
+            boxes.extend(self.bar(window).boxes().into_iter().flatten().zip(names).map(|(area, name)| (name, area)));
         }
         boxes
     }
@@ -1331,6 +1381,35 @@ mod tests {
         shop.set_size(0, None, 2);
         shop.scroll_by([x + 100.0, y + 50.0], -1);
         assert_eq!(shop.scroll[0], 1);
+    }
+
+    #[test]
+    fn the_lists_have_scroll_bars_where_the_rows_dont_fit() {
+        // Eight goods fit the goods' 8 rows: no bar. Ten don't: the bar at (265, 14), 10 px longer than the rows.
+        assert_eq!(Shop::new(false, (0..8).map(|n| offer(501 + n, 50, 0, 0)).collect()).bar(0).boxes(), None);
+        let mut shop = Shop::new(false, (0..10).map(|n| offer(501 + n, 50, 0, 0)).collect());
+        let [x, y] = shop.frames[0].position;
+        let bar = shop.bar(0);
+        assert_eq!((bar.at, bar.height, bar.shown, bar.rows), ([x + 265.0, y + 14.0], 266.0, 8, 10));
+        // Under the bar the pointer is on the window, not on a row; beside it, on the row.
+        assert_eq!([shop.hit([x + 270.0, y + 60.0]), shop.hit([x + 264.0, y + 60.0])], [Some(Hit::Window(0)), Some(Hit::Row(0, 1))]);
+        // The down arrow, then the thumb pulled back to the top.
+        assert!(shop.press_bar([x + 270.0, y + 14.0 + 260.0]));
+        assert_eq!(shop.scrolls(), [1, 0]);
+        let thumb = shop.bar(0).boxes().unwrap()[2];
+        assert!(shop.press_bar([thumb[0] + 5.0, thumb[1] + 5.0]));
+        shop.drag_to([thumb[0] + 5.0, thumb[1] - 300.0]);
+        assert_eq!(shop.scrolls(), [0, 0]);
+        assert!(shop.stop_resize() && !shop.stop_resize());
+        assert!(!shop.press_bar([x + 100.0, y + 60.0]));
+        // The deal's bar is 18 px longer than its 3 rows, and shows once it holds a fourth.
+        for row in 0..4 {
+            shop.add(row, 1);
+        }
+        let [x, y] = shop.frames[1].position;
+        let bar = shop.bar(1);
+        assert_eq!((bar.at, bar.height, bar.shown, bar.rows), ([x + 265.0, y + 14.0], 114.0, 3, 4));
+        assert!(shop.button_boxes().iter().any(|&(name, area)| name == "shop_scroll_down:1" && area == [x + 265.0, y + 115.0, 13.0, 13.0]));
     }
 
     #[test]

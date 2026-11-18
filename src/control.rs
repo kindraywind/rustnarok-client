@@ -2294,6 +2294,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["skill_list_rows"] = game.skill_window.list_rows().into();
     state["vend_size"] = json!({"width": game.vend_size.width, "rows": game.vend_size.rows});
     state["shop_size"] = game.shop.as_ref().and_then(crate::shop::Shop::sizes).map(|(width, rows)| json!({"width": width, "rows": rows})).into();
+    state["shop_scroll"] = game.shop.as_ref().map(crate::shop::Shop::scrolls).into();
     // The ranking board.
     state["ranking"] = json!(game.ranking.as_ref().map(|board| {
         let rows = board.rows(&game.char_names);
@@ -2540,6 +2541,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("shop_goods", Fair),
         ("shop_prices", Fair),
         ("shop_size", Fair),
+        ("shop_scroll", Fair),
         ("shop_whole", Fair),
         ("shop_points", Fair),
         ("shortcuts", Fair),
