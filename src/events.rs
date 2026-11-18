@@ -399,6 +399,7 @@ impl App {
                     cart_refusals: cart_choice::REFUSALS.map(|id| self.messages.get(id).cloned().unwrap_or_default()),
                     effects: effects::Effects::default(),
                     deal_choice: None,
+                    deal_chosen: false,
                     deal_frame: window::Frame::new(shop::deal_box_position(), shop::DEAL_SIZE[0]),
                     shop: None,
                     deal_confirm: None,
@@ -1387,7 +1388,7 @@ impl App {
                 let dying = if id == game.account_id { Some(&mut game.player) } else { game.units.get_mut(&id) };
                 // Our own death brings up the option menu with the save point.
                 if id == game.account_id && reason == 1 {
-                    game.escape = Some(escape::Menu { dead: true });
+                    game.escape = Some(escape::Menu::new(true));
                 }
                 // Teleporting and logging out leave rings and a sound on the spot (not for a GM hidden from sight).
                 if id != game.account_id

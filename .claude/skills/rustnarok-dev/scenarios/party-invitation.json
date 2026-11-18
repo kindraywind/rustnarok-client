@@ -1,5 +1,5 @@
 {
-  "about": "The party invitation box (issue #481): \"(QAParty)\" and the question at the game's place (392, 320 at 1024×768); Yes joins and opens the party window, and the inviter reads \"<second> accepted your party invitation.\"",
+  "about": "The party invitation box (issue #481): \"(QAParty)\" and the question at the game's place (392, 320 at 1024×768); Yes joins and opens the party window, and the inviter reads \"<second> accepted your party invitation.\" Esc doesn't answer it: with nothing else open it opens the game menu, and the next Esc closes that (issue #1363).",
   "account": "",
   "slot": 0,
   "second": {
@@ -18,6 +18,10 @@
     {"as": "second", "expect": {"windows_open": ["PartyInvite"], "windows_closed": ["Party"]}},
     {"as": "second", "move": [1000, 740]},
     {"as": "second", "shot": "party-invitation"},
+    {"as": "second", "key": "Escape"}, {"as": "second", "wait_for": {"sent": "0x02c7", "ms": 800}, "none": true},
+    {"as": "second", "expect": {"windows_open": ["PartyInvite", "GameMenu"]}},
+    {"as": "second", "key": "Escape"}, {"as": "second", "wait": 300},
+    {"as": "second", "expect": {"windows_open": ["PartyInvite"], "windows_closed": ["GameMenu"]}},
     {"as": "second", "click_on": {"button": "ok"}},
     {"wait_for": {"packet": "0x02c5", "ms": 5000}}, {"wait": 500},
     {"expect": {"chat": "{second} accepted your party invitation."}},

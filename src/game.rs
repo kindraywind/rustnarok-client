@@ -527,6 +527,10 @@ impl Game {
     /// A shop's windows open at the sizes the last one was left at (an NPC's shop or a market; the others keep
     /// theirs), with "Toggle Item Amount." as it was left.
     pub(crate) fn open_shop(&mut self, mut shop: shop::Shop) {
+        // A plain shop that the Buy / Sell / Cancel box led to (a script can open one without the box).
+        // ponytail: a Buy or Sell the server never answered leaves the mark for the next shop.
+        let chosen = std::mem::take(&mut self.deal_chosen);
+        shop.dealt = chosen && shop.plain();
         shop.apply_sizes(self.shop_sizes);
         shop.whole = self.shop_whole;
         self.shop = Some(shop);
@@ -2824,6 +2828,12 @@ impl Game {
 
     /// A text box has the caret. The chat line does while it is open, and so does a window's field while it is typed in.
     pub(crate) fn text_box_focused(&self) -> bool {
+        // Battle mode off: the line is always open, so letters stay out of the shortcut layer.
+        self.window_text_focused() || self.chat_mode.chat_line_open()
+    }
+
+    /// A text box in a window has the caret, not the chat line.
+    pub(crate) fn window_text_focused(&self) -> bool {
         self.dialog.as_ref().is_some_and(|dialog| dialog.input.is_some())
             || self.amount.is_some()
             || self.vend_setup.as_ref().is_some_and(vend::Setup::typing)
@@ -2848,8 +2858,6 @@ impl Game {
             || self.talks.typing()
             || self.away_prompt.is_some()
             || self.minimap_window.naming()
-            // Battle mode off: the line is always open, so letters stay out of the shortcut layer.
-            || self.chat_mode.chat_line_open()
     }
 
     /// Opens the memorial window and puts it first for Esc.
@@ -3414,6 +3422,12 @@ impl Game {
 
     /// Every window Esc may close that is open now, questions included.
     pub(crate) fn esc_open(&self) -> Vec<escape::WindowId> {
+        self.open_windows().into_iter().filter(|&id| !escape::left_alone(id)).collect()
+    }
+
+    /// The windows open now that `windows` names by their `WindowId`: Esc's, and the ones it leaves alone
+    /// (`escape::left_alone`).
+    fn open_windows(&self) -> Vec<escape::WindowId> {
         use escape::WindowId::*;
         let mut open = Vec::new();
         let mut push = |id: escape::WindowId, shown: bool| {
@@ -3476,7 +3490,7 @@ impl Game {
         push(OtherEquipment, self.viewing.is_some());
         push(Bank, self.bank.is_some());
         push(CashShop, self.cashshop.is_some());
-        push(PickList, self.pick.as_ref().is_some_and(|(_, picking)| picking.escapable()));
+        push(PickList, self.pick.is_some());
         push(CardPicture, self.card_view.is_some());
         push(ItemInfo, self.item_window.is_some());
         push(CardInfo, self.card_window.is_some());
@@ -3519,12 +3533,18 @@ impl Game {
         push(GuildInvite, self.guild_invite.is_some());
         push(PartyInvite, self.party_invite.is_some());
         push(FriendAsked, self.friend_asked.is_some());
-        push(DealChoice, self.deal_choice.is_some());
+        // The Buy / Sell / Cancel box stays an entry, hidden, while the shop it led to is open: Esc stops at it.
+        push(DealChoice, self.deal_choice.is_some() || self.shop.as_ref().is_some_and(|shop| shop.dealt));
+        push(QuestNotice, self.quest_icon);
+        push(ChatSettings, self.chat.settings.is_some());
+        push(PartyBooking, self.booking.is_some());
         push(BattleQueue, self.queue_window.frame.open);
         push(Memorial, self.memorial.frame.open);
         push(MemorialAsked, self.memorial_asked);
         push(AdoptAsked, self.adopt_asked.is_some());
         push(QueueAsked, self.queue_asked.is_some());
+        // Last, so it is the newest of what shows in one frame: dying opens it over the windows already up.
+        push(GameMenu, self.escape.is_some());
         open
     }
 
@@ -3543,14 +3563,13 @@ impl Game {
     /// `windows` in the control state: the Esc order, newest first, plus a few second names for the same window.
     pub(crate) fn esc_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.esc_order.iter().map(|id| id.name().to_owned()).collect();
+        // Open, but never Esc's.
+        names.extend(self.open_windows().into_iter().filter(|&id| escape::left_alone(id)).map(|id| id.name().to_owned()));
         if self.equipment.frame.open && self.equipment.swapping {
             names.push("SwapEquipment".into());
         }
         if self.pick.as_ref().is_some_and(|(list, _)| list.merging) {
             names.push("ItemMerge".into());
-        }
-        if self.pick.as_ref().is_some_and(|(_, picking)| !picking.escapable()) {
-            names.push("PickList".into());
         }
         if self.forge.as_ref().is_some_and(|forge| forge.frame.open) {
             names.push("MakingMaterial".into());
@@ -3578,12 +3597,6 @@ impl Game {
         if self.trade_asked.is_some() {
             names.push("TradeAsked".into());
         }
-        if self.booking.is_some() {
-            names.push("PartyBooking".into());
-        }
-        if self.chat.settings.is_some() {
-            names.push("ChatSettings".into());
-        }
         if self.booking_asked.is_some() {
             names.push("BookingAsked".into());
         }
@@ -3597,61 +3610,8 @@ impl Game {
         names
     }
 
-    /// A text box inside a window has the caret. The always-on chat line is not one of these.
-    pub(crate) fn focused_text(&self) -> Option<escape::WindowId> {
-        use escape::WindowId::*;
-        if self.away_prompt.is_some() {
-            return Some(AwayMessage);
-        }
-        if self.talks.typing() {
-            return Some(Whisper);
-        }
-        if self.dialog.as_ref().is_some_and(|dialog| dialog.input.is_some()) {
-            return Some(NpcInput);
-        }
-        if self.vend_setup.as_ref().is_some_and(vend::Setup::typing) {
-            return Some(VendSetup);
-        }
-        if self.buying_setup.as_ref().is_some_and(|setup| setup.focus.is_some()) {
-            return Some(BuyingStoreSetup);
-        }
-        if self.mail.compose.as_ref().is_some_and(|compose| compose.field.is_some()) {
-            return Some(MailWrite);
-        }
-        if self.mail.list.typing {
-            return Some(Mailbox);
-        }
-        if self.macro_window.as_ref().is_some_and(|window| window.editing.is_some()) {
-            return Some(Macros);
-        }
-        if self.room_make.is_some() {
-            return Some(RoomMake);
-        }
-        if self.room.is_some() {
-            return Some(ChatRoom);
-        }
-        if self.cashshop.as_ref().is_some_and(|shop| shop.typing) {
-            return Some(CashShop);
-        }
-        if self.bank.as_ref().is_some_and(|bank| bank.typing) {
-            return Some(Bank);
-        }
-        if self.trade.as_ref().is_some_and(|trade| trade.typing) {
-            return Some(Trade);
-        }
-        if self.storage.typing {
-            return Some(Storage);
-        }
-        if self.catalog.as_ref().is_some_and(|catalog| catalog.focus.is_some()) {
-            return Some(Catalog);
-        }
-        if self.minimap_window.naming() {
-            return Some(Minimap);
-        }
-        None
-    }
-
-    /// A question is up. An NPC's menu (and the warp list) isn't one: Esc leaves those alone.
+    /// A question is up. An NPC's menu (and the warp list) isn't one: Esc leaves those alone. Nor are the invitations
+    /// and the amount box: they are windows with their own buttons.
     pub(crate) fn question_open(&self) -> bool {
         self.save_asked
             || self.apply_asked
@@ -3665,12 +3625,6 @@ impl Game {
             || self.pet_asked.is_some()
             || self.cashshop_buy_asked
             || self.guild_asked.is_some()
-            || self.guild_invite.is_some()
-            || self.party_invite.is_some()
-            || self.friend_asked.is_some()
-            || self.deal_choice.is_some()
-            || self.amount.is_some()
-            || self.adopt_asked.is_some()
             || self.queue_asked.is_some()
             || self.booking_asked.is_some()
             || self.memorial_asked
@@ -3702,10 +3656,6 @@ impl Game {
         }
         if self.apply_asked {
             self.apply_asked = false;
-            return;
-        }
-        if self.amount.is_some() {
-            self.answer_amount(false, messages);
             return;
         }
         if self.bind_asked.is_some() {
@@ -3749,29 +3699,9 @@ impl Game {
         if self.reason_box.take().is_some() {
             return;
         }
-        if let Some((guild, _)) = self.guild_invite.take() {
-            let _ = self.session.answer_guild(guild, false);
-            return;
+        if let Some(QueueAsked::Lobby(name, _)) = self.queue_asked.take() {
+            let _ = self.session.answer_lobby(false, &name);
         }
-        if let Some((party, _)) = self.party_invite.take() {
-            let _ = self.session.answer_party(party, false);
-            return;
-        }
-        if let Some((account, character, _)) = self.friend_asked.take() {
-            let _ = self.session.answer_friend(account, character, false);
-            return;
-        }
-        if let Some((parent, partner, _, _)) = self.adopt_asked.take() {
-            let _ = self.session.answer_adoption(parent, partner, false);
-            return;
-        }
-        if let Some(asked) = self.queue_asked.take() {
-            if let QueueAsked::Lobby(name, _) = asked {
-                let _ = self.session.answer_lobby(false, &name);
-            }
-            return;
-        }
-        self.close_deal_choice();
     }
 
     /// Closes one window the way its Cancel or close button does, and drops it from the Esc list.
@@ -3793,8 +3723,6 @@ impl Game {
             MercenarySkills => self.mercenary_skill_list.frame.open = false,
             Homunculus => self.homunculus_window.frame.open = false,
             HomunculusSkills => self.homunculus_skill_list.frame.open = false,
-            // Esc never gets here for the input box, nor for the storage (its search box keeps Esc too).
-            NpcInput | Storage => {}
             Shop => self.close_shop(),
             GradeEnchant => {
                 let _ = self.session.close_grade();
@@ -3937,7 +3865,13 @@ impl Game {
                     let _ = self.session.answer_friend(account, character, false);
                 }
             }
+            // Hidden behind the shop it led to: Esc stops here and nothing happens.
+            DealChoice if self.deal_choice.is_none() => return,
             DealChoice => self.close_deal_choice(),
+            GameMenu => self.escape = None,
+            QuestNotice => self.quest_icon = false,
+            ChatSettings => self.chat.settings = None,
+            PartyBooking => self.booking = None,
             BattleQueue => self.queue_window.frame.open = false,
             Memorial => {
                 self.memorial.frame.open = false;
@@ -4091,6 +4025,7 @@ impl Game {
     /// The deal-type question's Buy or Sell.
     pub(crate) fn choose_deal(&mut self, sell: bool) {
         if let Some(npc) = self.drop_deal_choice() {
+            self.deal_chosen = true;
             let _ = self.session.choose_deal(npc, sell);
         }
     }

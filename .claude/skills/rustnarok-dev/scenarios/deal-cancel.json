@@ -1,5 +1,5 @@
 {
-  "about": "Cancelling the buy-or-sell question tells the server the shop closed. A test NPC (deal-cancel.txt) asks with a script's callshop, which marks the player busy with that shop from the question on. Cancel sends CZ_NPC_TRADE_QUIT, and a second talk asks again instead of the server's busy line; Esc does the same.",
+  "about": "Cancelling the buy-or-sell question tells the server the shop closed. A test NPC (deal-cancel.txt) asks with a script's callshop, which marks the player busy with that shop from the question on. Cancel sends CZ_NPC_TRADE_QUIT, and a second talk asks again instead of the server's busy line; Esc does the same. With the Buy list open Esc does nothing and sends nothing; a window opened over the lists closes, and the next Esc is swallowed again (issue #1363).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -24,7 +24,15 @@
     {"wait": 700},
     {"click_on": {"unit": "Deal Tester"}},
     {"wait_for": {"packet": "0x00c4", "ms": 3000}},
-    {"click_on": {"button": "deal_cancel"}},
+    {"click_on": {"button": "deal_buy"}}, {"wait_for": {"packet": "0x0b77", "ms": 3000}}, {"wait": 300},
+    {"expect": {"windows_open": ["Shop"], "windows_closed": ["GameMenu"], "state": {"esc_order": ["DealChoice"]}}},
+    {"key": "Escape"}, {"wait_for": {"sent": "0x09d4", "ms": 800}, "none": true},
+    {"expect": {"windows_open": ["Shop"], "state": {"escape": null, "esc_order": ["DealChoice"]}}},
+    {"key": "Alt+E"}, {"wait": 300}, {"expect": {"state": {"esc_order": ["Inventory", "DealChoice"]}}},
+    {"key": "Escape"}, {"wait": 300}, {"expect": {"windows_open": ["Shop"], "windows_closed": ["Inventory"], "state": {"escape": null}}},
+    {"key": "Escape"}, {"wait": 300}, {"expect": {"windows_open": ["Shop"], "state": {"escape": null}}},
+    {"click_on": {"button": "shop_cancel"}}, {"wait_for": {"sent": "0x09d4", "ms": 1500}},
+    {"expect": {"windows_closed": ["Shop"], "state": {"esc_order": []}}},
     {"wait": 500},
     {"say": "@unloadnpcfile {scenarios}/deal-cancel.txt"}, {"wait": 500}
   ]

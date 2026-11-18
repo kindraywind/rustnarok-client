@@ -21,7 +21,7 @@
     {"wait": 1500},
     {"expect": {"windows_open": ["ChatRoom"]}},
     {"shot": "hidden-room-joined"},
-    {"key": "Escape"},
+    {"click_on": {"button": "room_close"}},
     {"wait": 800},
     {"expect": {"windows_closed": ["ChatRoom"], "button": {"name": "room_sign"}}},
     {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/hidden-room.txt"},

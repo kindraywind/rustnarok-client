@@ -296,7 +296,7 @@ impl Room {
         self.grip.stop()
     }
 
-    /// The corner grip and the member rows on screen (for the test driver).
+    /// The corner grip, the title's close button and the member rows on screen (for the test driver).
     pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
         if !self.frame.open || self.frame.minimized {
             return Vec::new();
@@ -307,6 +307,8 @@ impl Room {
             let [x, y] = self.frame.at([self.divider() + 2.0, TITLE_HEIGHT + 5.0 + row as f32 * LINE]);
             boxes.push((format!("room_member_{name}"), [x, y, self.size[0] - self.divider() - 4.0, LINE]));
         }
+        let [x, y] = self.frame.at(self.frame.close_button());
+        boxes.push(("room_close".to_owned(), [x, y, window::BUTTON_SIZE[0], window::BUTTON_SIZE[1]]));
         boxes
     }
 
