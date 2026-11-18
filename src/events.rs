@@ -1534,10 +1534,21 @@ impl App {
                 game.materials = None;
                 game.drop_deal_choice();
                 game.attack = None;
-                // The merge window closes without a word.
-                if matches!(game.pick, Some((_, Picking::Merge))) {
-                    game.pick = None;
-                }
+                // What only a packet or an action of the moment opens goes too, without a word: the server has quit the
+                // storage, forgotten the skill behind a list and refused the invitations already.
+                game.storage.close();
+                game.pick = None;
+                game.forge = None;
+                game.cart_choice = None;
+                game.party_invite = None;
+                game.guild_invite = None;
+                game.friend_asked = None;
+                game.adopt_asked = None;
+                game.trade_asked = None;
+                game.booking_asked = None;
+                game.amount = None;
+                game.bank = None;
+                game.attendance = None;
                 game.combos.clear();
                 game.locks.clear();
                 game.hold_locked();

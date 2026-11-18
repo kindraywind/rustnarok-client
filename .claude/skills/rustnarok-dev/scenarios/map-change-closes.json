@@ -1,0 +1,33 @@
+{
+  "about": "A map change or a teleport on the same map closes what only a packet or an action of the moment opens (issue #1367): the storage (no CZ_CLOSE_STORE 0x0193 is sent, the server has quit it already) after a warp to the same map and to another one, and a Magnifier's list (nothing sent for it). The inventory, opened before, stays open.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp morocc 160 120"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"say": "@storage"}, {"wait": 800},
+    {"expect": {"windows_open": ["Storage", "Inventory"]}},
+    {"say": "@warp morocc 162 122"},
+    {"wait_for": {"sent": "0x0193", "ms": 1500}, "none": true},
+    {"settle": 1000},
+    {"expect": {"windows_open": ["Inventory"], "windows_closed": ["Storage"]}},
+    {"say": "@storage"}, {"wait": 800},
+    {"expect": {"windows_open": ["Storage"]}},
+    {"say": "@warp prt_fild08 170 360"},
+    {"wait_for": {"sent": "0x0193", "ms": 1500}, "none": true},
+    {"settle": 1500},
+    {"expect": {"windows_open": ["Inventory"], "windows_closed": ["Storage"], "map": "prt_fild08.gat"}},
+    {"say": "@item 611 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"say": "@item2 1201 1 0 0 0 0 0 0 0"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"click_on": {"inventory_item": 611}, "count": 2},
+    {"wait_for": {"event": "IdentifyList", "ms": 5000}}, {"wait": 300},
+    {"expect": {"windows_open": ["PickList", "Inventory"]}},
+    {"say": "@warp morocc 160 120"},
+    {"wait_for": {"sent": "0x0178", "ms": 1500}, "none": true},
+    {"settle": 1500},
+    {"expect": {"windows_open": ["Inventory"], "windows_closed": ["PickList", "Storage"], "unidentified": [1201]}},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"say": "@itemreset"}, {"wait": 500}
+  ]
+}
