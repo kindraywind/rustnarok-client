@@ -1834,7 +1834,7 @@ impl App {
                 let dialog = game.dialog.as_mut().unwrap();
                 if dialog.input.as_ref().is_some_and(|input| hit(input.ok_on(screen()), &assets.ok)) {
                     game.submit_input();
-                } else if dialog.button != DialogButton::None && dialog.warp.is_none() && game.say.on_button(cursor) {
+                } else if dialog.button != DialogButton::None && dialog.say_window() && game.say.on_button(cursor) {
                     game.press_dialog_button(true);
                 } else if let Some(menu) = &dialog.menu {
                     // Rows go on the press; the buttons on the click.
@@ -2582,7 +2582,7 @@ impl App {
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
                 _ if on_npc_menu => game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()).unwrap().wheel(rows),
-                _ if game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()) && game.say.contains(self.cursor) => {
+                _ if game.dialog.as_ref().is_some_and(Dialog::say_window) && game.say.contains(self.cursor) => {
                     game.say.scroll_by(rows as f32 * npc_say::SCROLL_STEP);
                 }
                 _ if game.enchant.as_ref().is_some_and(|window| window.hit(self.cursor).is_some()) => {
@@ -3303,7 +3303,7 @@ impl App {
         // The NPC say window goes by any part but its button, links and scrollbar.
         if let Scene::Game(game) = &mut self.scene
             && top == Some(Top::NpcDialog)
-            && game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none())
+            && game.dialog.as_ref().is_some_and(Dialog::say_window)
             && game.say.contains(cursor)
         {
             let on_button = game.dialog.as_ref().is_some_and(|dialog| dialog.button != DialogButton::None) && game.say.on_button(cursor);
@@ -3779,7 +3779,7 @@ impl App {
         let view = escape::EscView {
             // The always-on line is not this. An open battle-mode line is the first Esc.
             battle_line: game.chat_mode.battle_line_open() && !game.window_text_focused(),
-            conversation: game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()),
+            conversation: game.dialog.as_ref().is_some_and(Dialog::say_window),
             question: game.question_open(),
             // Esc never closes the own shop or buying store.
             newest: game.esc_order.iter().copied().find(|id| !matches!(id, escape::WindowId::MyShop | escape::WindowId::MyBuyingStore)),

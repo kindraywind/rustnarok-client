@@ -1785,8 +1785,8 @@ impl App {
         let mut overlay = Layer::of(Top::NpcDialog);
         let mut dialog_links = Vec::new();
         if let Some(dialog) = &game.dialog {
-            // A warp list is the menu alone.
-            if dialog.warp.is_none() {
+            // The say window, once something was said: a menu or an input box alone has none, nor has a warp list.
+            if dialog.say_window() {
                 let lines: links::LinkedLines = dialog
                     .lines
                     .iter()
