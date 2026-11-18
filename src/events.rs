@@ -258,6 +258,7 @@ impl App {
                 let sky = sky::for_map(&self.grf, &map, &world, position);
                 let _ = session.loaded(self.client_tick());
                 let look = character_look(&me);
+                let dress_lists = lua::dress_lists(&self.grf, me.sex);
                 let sprites = SpriteSet::player(&self.grf, &look, &self.look_tables);
                 // The character list's speed until the map server sends one.
                 let mut player = Actor::new(me.name.clone(), sprites, position.map(i32::from), direction, if me.speed > 0 { me.speed } else { 150 });
@@ -527,9 +528,7 @@ impl App {
                     refusing_party: None,
                     announcements: announce::Bar::default(),
                     map_property: None,
-                    dress_lists: lua::dress_lists(&self.grf)
-                        .map(|[hair, hair_color, clothes_color]| dressroom::Lists { hair, hair_color, clothes_color })
-                        .unwrap_or_default(),
+                    dress_lists: dress_lists.map(|[hair, hair_color, clothes_color]| dressroom::Lists { hair, hair_color, clothes_color }).unwrap_or_default(),
                     dressroom: None,
                     ranking: None,
                     reputation: HashMap::new(),
