@@ -1602,7 +1602,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.catalog.iter().flat_map(|catalog| catalog.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.catalog.iter().flat_map(|catalog| catalog.row_boxes()).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
         .chain(game.ranking.iter().flat_map(|board| board.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
-        .chain(game.dressroom.iter().flat_map(|room| room.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.dressroom
+                .iter()
+                .flat_map(|room| room.button_boxes(&game.dress_lists))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(game.party_dialog.iter().flat_map(|dialog| dialog.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
             app.assets
@@ -1981,7 +1986,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             .chain(game.top_ten.contains(&game.account_id).then(|| game.me.name.clone())).collect::<Vec<_>>(),
         "dressroom": game.dressroom.as_ref().map(|room| {
             let look = room.look(&crate::character_look(&game.me), &game.dress_lists);
-            json!({"hair": look.hair, "hair_color": look.hair_color, "clothes_color": look.clothes_color, "stage": room.stage, "direction": room.direction})
+            json!({"hair": look.hair, "hair_color": look.hair_color, "clothes_color": look.clothes_color, "tab": room.tab, "direction": room.direction})
         }),
         "head_emblems": game.head_emblems.iter().map(|(name, guild, area)| json!({"name": name, "guild": guild, "box": area})).collect::<Vec<_>>(),
         // The bars under units: by whose ("player", "homunculus", "mercenary", "elemental", "pet", else the unit ID), the

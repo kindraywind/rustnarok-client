@@ -591,19 +591,23 @@ fn decoded<K: TryFrom<i64> + std::hash::Hash + Eq>(table: &mlua::Table, decode: 
     Ok(names)
 }
 
-/// The dress room's lists (`_DressHeadstyleList`, `_DressHeadPaletteList`, `_DressBodyPaletteList`): the values of
-/// their `{label, value}` rows, in order.
-pub fn dress_lists(grf: &Grf) -> io::Result<[Vec<u16>; 3]> {
-    let lua = run(grf, &[DRESS_LIST, DRESS_F])?;
-    let values = |name: &str| -> io::Result<Vec<u16>> {
+/// The dress room's lists (`_DressHeadstyleList`, `_DressHeadPaletteList`, `_DressBodyPaletteList`): their
+/// `{label, value}` rows, in order.
+pub fn dress_lists(grf: &Grf) -> io::Result<[Vec<(String, u16)>; 3]> {
+    read_dress_lists(&run(grf, &[DRESS_LIST, DRESS_F])?)
+}
+
+fn read_dress_lists(lua: &Lua) -> io::Result<[Vec<(String, u16)>; 3]> {
+    let rows = |name: &str| -> io::Result<Vec<(String, u16)>> {
         let table: mlua::Table = lua.globals().get(name).map_err(lua_error)?;
-        let mut values = Vec::new();
+        let mut rows = Vec::new();
         for row in table.sequence_values::<mlua::Table>() {
-            values.push(row.map_err(lua_error)?.get::<u16>(2).map_err(lua_error)?);
+            let row = row.map_err(lua_error)?;
+            rows.push((lua_name(&row, 1), row.get::<u16>(2).map_err(lua_error)?));
         }
-        Ok(values)
+        Ok(rows)
     };
-    Ok([values("_DressHeadstyleList")?, values("_DressHeadPaletteList")?, values("_DressBodyPaletteList")?])
+    Ok([rows("_DressHeadstyleList")?, rows("_DressHeadPaletteList")?, rows("_DressBodyPaletteList")?])
 }
 
 /// Sprite names of NPCs and monsters by job ID (`JobNameTable`), e.g. 45 → "1_ETC_01".
@@ -2666,6 +2670,24 @@ mod tests {
         assert!(hunter.counted);
         assert_eq!(hunter.objectives, [("Porings".to_owned(), 10), ("Lunatics".to_owned(), 5)]);
         assert_eq!((hunter.reward_title, hunter.details.as_str()), (0, ""));
+    }
+
+    #[test]
+    fn reads_the_dress_lists() {
+        let lua = super::new_lua().unwrap();
+        lua.load(
+            r#"
+            _DressHeadstyleList = { { "(1) Short", 1 }, { "(2) Long", 2 } }
+            _DressHeadPaletteList = { { "(0) Basic", 0 } }
+            _DressBodyPaletteList = { { "(0) Basic", 0 }, { "(3) Red", 3 } }
+            "#,
+        )
+        .exec()
+        .unwrap();
+        let [hair, hair_color, clothes_color] = super::read_dress_lists(&lua).unwrap();
+        assert_eq!(hair, [("(1) Short".to_owned(), 1), ("(2) Long".to_owned(), 2)]);
+        assert_eq!(hair_color, [("(0) Basic".to_owned(), 0)]);
+        assert_eq!(clothes_color, [("(0) Basic".to_owned(), 0), ("(3) Red".to_owned(), 3)]);
     }
 
     #[test]
