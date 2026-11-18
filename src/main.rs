@@ -2758,6 +2758,31 @@ struct Dialog {
     input: Option<npc_input::Input>,
     /// Warp Portal's or Teleport's list rather than an NPC's: the skill and the maps as the server named them.
     warp: Option<(u16, Vec<String>)>,
+    /// The server has sent text or a Next button: the say window is up, and stays until its Close is clicked. A menu or
+    /// an input box alone opens none.
+    said: bool,
+}
+
+impl Dialog {
+    fn new(npc: u32) -> Self {
+        Self { npc, talking: false, lines: Vec::new(), wipe: false, button: DialogButton::None, menu: None, input: None, warp: None, said: false }
+    }
+
+    /// The say window shows: something was said, and this isn't a warp list (the menu's box alone).
+    fn say_window(&self) -> bool {
+        self.said && self.warp.is_none()
+    }
+
+    /// The script's close. With a say window its Close button shows and the window waits for the click. With none
+    /// the menu just goes and nothing is answered: true when that ends the talk (an open input box keeps it).
+    fn close(&mut self) -> bool {
+        if self.say_window() {
+            self.button = DialogButton::Close;
+            return false;
+        }
+        self.menu = None;
+        self.input.is_none()
+    }
 }
 
 /// A number over a unit: who (None = the player), how much, when it shows, how it looks, and the flinch it causes.
@@ -6532,6 +6557,27 @@ mod tests {
         assert_eq!(esc_reached(Some(Top::PartyBooking), false), Some(PartyBooking));
         // A press anywhere while the right-click menu is up is the menu's.
         assert_eq!(esc_reached(Some(Top::Panel(Panel::Inventory)), true), Some(Menu));
+    }
+
+    #[test]
+    fn the_say_window_is_there_only_once_something_was_said() {
+        // A menu alone: no say window, no button. The script's close takes the menu away and ends the talk.
+        let mut alone = Dialog { menu: Some(npc_menu::Menu::new(vec!["Yes".into(), "No".into()])), ..Dialog::new(7) };
+        assert!(!alone.say_window() && alone.button == DialogButton::None);
+        assert!(alone.close());
+        assert!(alone.menu.is_none() && alone.button == DialogButton::None);
+        // Text, then a menu: both; the close leaves the window with its Close button, and the menu stays for it.
+        let mut said = Dialog { said: true, menu: Some(npc_menu::Menu::new(vec!["Yes".into()])), ..Dialog::new(7) };
+        assert!(said.say_window());
+        assert!(!said.close());
+        assert!(said.button == DialogButton::Close && said.menu.is_some());
+        // An input box alone has no say window either, and survives a close.
+        let mut input = Dialog { input: Some(npc_input::Input::new(false)), ..Dialog::new(7) };
+        assert!(!input.say_window());
+        assert!(!input.close());
+        assert!(input.input.is_some() && input.button == DialogButton::None);
+        // A warp list is the menu's box alone, whatever was said.
+        assert!(!Dialog { said: true, warp: Some((27, Vec::new())), ..Dialog::new(0) }.say_window());
     }
 
     #[test]

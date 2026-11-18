@@ -71,7 +71,7 @@ impl Top {
 impl Game {
     pub(crate) fn dialog_for(&mut self, npc: u32) -> &mut Dialog {
         if self.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) {
-            self.dialog = Some(Dialog { npc, talking: false, lines: Vec::new(), wipe: false, button: DialogButton::None, menu: None, input: None, warp: None });
+            self.dialog = Some(Dialog::new(npc));
             self.say.restart();
         }
         self.dialog.as_mut().unwrap()
@@ -112,8 +112,8 @@ impl Game {
         }
     }
 
-    /// Picks the highlighted menu item, or cancels the conversation: the menu answers 255, the talk is closed and
-    /// the say window, the menu and the cut-in go. A menu without items cancels.
+    /// Picks the highlighted menu item, or cancels the conversation: the menu answers 255 and the menu and the cut-in
+    /// go; an open say window is closed too, which the server hears. A menu without items cancels.
     pub(crate) fn choose(&mut self, cancel: bool) {
         let Some(dialog) = &mut self.dialog else { return };
         let Some(menu) = dialog.menu.take() else { return };
@@ -127,9 +127,9 @@ impl Game {
         let cancel = cancel || menu.items.is_empty();
         let _ = self.session.choose(dialog.npc, if cancel { 255 } else { selected as u8 + 1 });
         if cancel {
-            // ponytail: the say window counts as open whenever there's a talk; CZ_CLOSE_DIALOG for a menu-only talk
-            // is harmless to rathena.
-            let _ = self.session.close_dialog(dialog.npc);
+            if dialog.say_window() {
+                let _ = self.session.close_dialog(dialog.npc);
+            }
             self.dismiss_dialog();
             self.cutin = None;
         } else if self.units.get(&dialog.npc).is_none_or(|unit| unit.vanish.is_some()) {
@@ -190,7 +190,7 @@ impl Game {
             DialogButton::Close => Some("npc_close"),
             DialogButton::None => None,
         };
-        if let Some(name) = name.filter(|_| dialog.warp.is_none()) {
+        if let Some(name) = name.filter(|_| dialog.say_window()) {
             boxes.push((name.to_owned(), self.say.button_box()));
         }
         if let Some(menu) = &dialog.menu {
@@ -218,12 +218,17 @@ impl Game {
         let Some(dialog) = &mut self.dialog else { return };
         let Some(answer) = dialog.input.as_ref().and_then(npc_input::Input::answer) else { return };
         dialog.input = None;
-        let in_view = self.units.contains_key(&dialog.npc);
+        let (npc, over) = (dialog.npc, !dialog.said && dialog.menu.is_none() && !dialog.talking);
+        let in_view = self.units.contains_key(&npc);
         let _ = match answer {
-            npc_input::Answer::Number(value) if in_view => self.session.input_number(dialog.npc, value),
-            npc_input::Answer::Text(text) if in_view || dialog.npc == 0 => self.session.input_text(dialog.npc, &text),
+            npc_input::Answer::Number(value) if in_view => self.session.input_number(npc, value),
+            npc_input::Answer::Text(text) if in_view || npc == 0 => self.session.input_text(npc, &text),
             _ => Ok(()),
         };
+        // A box that came alone leaves nothing on screen: the talk is over until the script says more.
+        if over {
+            self.dismiss_dialog();
+        }
     }
 
     /// Whether players win over monsters under the pointer: Shift held, or aiming a skill for players, but not both.
@@ -603,7 +608,7 @@ impl Game {
         if let Some(cell) = self.units.get(&id).map(|actor| actor.position(now).map(|value| (value + 0.5).floor() as i32)) {
             self.turn_to(cell);
         }
-        if self.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()) {
+        if self.dialog.as_ref().is_some_and(Dialog::say_window) {
             if let Some(line) = messages.get(TALK_REFUSED) {
                 self.chat_line(line.clone(), CHAT_ERROR);
             }
@@ -631,7 +636,7 @@ impl Game {
     /// The pointer is on an NPC window: the say window, the menu or an input box.
     pub(crate) fn on_npc_window(&self, cursor: [f32; 2]) -> bool {
         let Some(dialog) = &self.dialog else { return false };
-        (dialog.warp.is_none() && self.say.contains(cursor))
+        (dialog.say_window() && self.say.contains(cursor))
             || dialog.menu.as_ref().is_some_and(|menu| menu.frame(&self.npc_menu).local(cursor, menu.size()[1]).is_some())
             || dialog.input.as_ref().is_some_and(|input| input.contains(screen(), cursor))
     }
@@ -3620,7 +3625,13 @@ impl Game {
         }
         names.extend(self.talks.window_names());
         if let Some(dialog) = &self.dialog {
-            names.push(if dialog.warp.is_some() { "WarpList" } else { "NpcDialog" }.into());
+            // The say window, and the menu when it is up (a warp list is the menu's box under its own name).
+            if dialog.say_window() {
+                names.push("NpcDialog".into());
+            }
+            if dialog.menu.is_some() {
+                names.push(if dialog.warp.is_some() { "WarpList" } else { "NpcMenu" }.into());
+            }
             if dialog.input.is_some() {
                 names.push("NpcInput".into());
             }

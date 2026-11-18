@@ -331,7 +331,7 @@ pub enum EscAct {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EscView {
     pub battle_line: bool,
-    /// An NPC's text window or choice menu is up.
+    /// An NPC's say window is up. Its menu alone, an input box or a warp list isn't one.
     pub conversation: bool,
     pub question: bool,
     pub newest: Option<WindowId>,

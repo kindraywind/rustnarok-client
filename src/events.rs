@@ -1581,6 +1581,7 @@ impl App {
                 let name_of = |item: &links::ItemLink| inventory::item_name(&self.items, item.id, true, item.refine);
                 let text = npc_say::item_pictures(&links::mark(&npc_say::unescape(&text), &name_of));
                 let dialog = game.dialog_for(npc);
+                dialog.said = true;
                 if std::mem::take(&mut dialog.wipe) {
                     dialog.lines.clear();
                     game.say.restart();
@@ -1588,7 +1589,11 @@ impl App {
                 let dialog = game.dialog.as_mut().unwrap();
                 dialog.lines.extend(text.split('\n').map(|line| line.replace('\r', "")));
             }
-            MapEvent::NpcNext { npc } => game.dialog_for(npc).button = DialogButton::Next,
+            MapEvent::NpcNext { npc } => {
+                let dialog = game.dialog_for(npc);
+                dialog.said = true;
+                dialog.button = DialogButton::Next;
+            }
             MapEvent::NpcWindowSize { width, height } => game.say.resize(width, height),
             MapEvent::NpcWindowPos { x, y, percent } => game.say.move_to(x, y, percent),
             MapEvent::SpecialPopup(id) => game.special_popup = Some(id),
@@ -1597,8 +1602,13 @@ impl App {
             // mes_active), and a server whose event scripts close on every kill sends hundreds when an area skill
             // kills a pack: answering each one flooded the server, which dropped the connection.
             MapEvent::NpcClose { npc } if game.dialog.as_ref().is_none_or(|dialog| dialog.npc != npc) => {}
-            // The script is done: Close shows, and the player is free while it does.
-            MapEvent::NpcClose { npc } => game.dialog_for(npc).button = DialogButton::Close,
+            // The script is done: Close shows on the say window, and the player is free while it does. With nothing
+            // said there is no window to close: the menu goes and the talk is over, with no answer.
+            MapEvent::NpcClose { npc } => {
+                if game.dialog_for(npc).close() {
+                    game.dismiss_dialog();
+                }
+            }
             // The text goes and the view is back at the top; the window, its button, the menu and the cut-in stay.
             MapEvent::NpcClear { npc } => {
                 if let Some(dialog) = game.dialog.as_mut().filter(|dialog| dialog.npc == npc) {
@@ -1625,16 +1635,8 @@ impl App {
             MapEvent::WarpList { skill, maps } => {
                 let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
                 let items = npc_menu::warp_rows(&maps, &self.map_names, [message(RANDOM_AREA), message(WARP_CANCEL)]);
-                game.dialog = Some(Dialog {
-                    npc: 0,
-                    talking: false,
-                    lines: Vec::new(),
-                    wipe: false,
-                    button: DialogButton::None,
-                    menu: Some(npc_menu::Menu::warp_list(items, message(WARP_HEADING), screen())),
-                    input: None,
-                    warp: Some((skill, maps)),
-                });
+                game.dialog =
+                    Some(Dialog { menu: Some(npc_menu::Menu::warp_list(items, message(WARP_HEADING), screen())), warp: Some((skill, maps)), ..Dialog::new(0) });
             }
             MapEvent::Act(act) => {
                 crate::autohunt::hit(game, &act, None);

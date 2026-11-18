@@ -1720,6 +1720,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         json!({
             "npc": dialog.npc,
             "talking": dialog.talking,
+            "said": dialog.said,
             "lines": dialog.lines,
             "pointed_item": match crate::links::at(&game.dialog_links, app.cursor) {
                 Some(crate::links::Target::Picture(id)) if app.items.contains_key(id) => Some(crate::inventory::item_name(&app.items, *id, true, 0)),
