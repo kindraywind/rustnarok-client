@@ -2318,6 +2318,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["vend_size"] = json!({"width": game.vend_size.width, "rows": game.vend_size.rows});
     state["shop_size"] = game.shop.as_ref().and_then(crate::shop::Shop::sizes).map(|(width, rows)| json!({"width": width, "rows": rows})).into();
     state["shop_scroll"] = game.shop.as_ref().map(crate::shop::Shop::scrolls).into();
+    // Where the shop's two windows are: the goods, then the deal.
+    state["shop_at"] = game.shop.as_ref().map(|shop| shop.frames.each_ref().map(|frame| frame.position)).into();
     // The style shop: each row of its list of what will be bought, and whether Buy is live.
     state["stylist"] = json!(game.stylist.as_ref().map(|window| {
         let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0);
@@ -2574,6 +2576,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("shop_prices", Fair),
         ("shop_size", Fair),
         ("shop_scroll", Fair),
+        ("shop_at", Fair),
         ("stylist", Fair),
         ("shop_whole", Fair),
         ("shop_points", Fair),
