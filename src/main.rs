@@ -2640,6 +2640,8 @@ enum BoxQuestion {
     OpenStall { account: u32, store: u32, item: u32 },
     /// "Do you want to cancel navigation?" (2239).
     StopNavigation,
+    /// The style shop's Buy: "Item cannot be restored, are you sure want to apply it?" (2818), for these picks.
+    BuyStyle(net::StylePicks),
 }
 
 impl BoxQuestion {
@@ -2658,6 +2660,7 @@ impl BoxQuestion {
             Self::RebindKey(_) => shortcut_window::ASKS_REBIND,
             Self::OpenStall { .. } => catalog::OPEN_STALL_ASKS,
             Self::StopNavigation => navigation::ASKS_STOP,
+            Self::BuyStyle(_) => stylist::ASKS_BUY,
         }
     }
 

@@ -1,48 +1,400 @@
 {
-  "about": "The stylist (issue #119): a hair color and a clothes dye, paid in zeny and one coupon. No headgear: that is mailed, and the reset would have to clear the mail tables.",
+  "about": "The stylist (issues #119, #1377): the 480 x 330 picture is the whole window, in the middle of the screen: tabs down its left column, the figure with its arrows, the hair colours under it and the list of what the picks cost at the right. A hair colour chip (zeny) and a step of the clothes colour (a coupon) make two rows that can be paid, so Buy is live; it asks first, and OK sends the buy: the look and the zeny change, the coupon is used and the answer comes in a box. With no zeny left a hair style's row can't be paid: it is struck through and Buy is off. No headgear: that is mailed, and the reset would have to clear the mail tables.",
   "account": "",
   "slot": 0,
   "steps": [
-    {"say": "@warp prt_in 63 66"}, {"settle": 1500},
-    {"say": "@hairstyle 1"}, {"wait": 300},
-    {"say": "@haircolor 0"}, {"wait": 300},
-    {"say": "@dye 0"}, {"wait": 300},
-    {"say": "@itemreset"}, {"wait": 400},
-    {"say": "@item 6046"}, {"wait": 400},
-    {"say": "@zeny -2000000000"}, {"wait": 300},
-    {"say": "@zeny 100000"}, {"wait": 400},
-    {"expect": {"zeny": 100000, "inventory_items": 1, "state": {"player.look.hair": 1, "player.look.hair_color": 0, "player.look.clothes_color": 0}}},
-    {"say": "@stylist"}, {"wait_for": {"packet": "0x0ae2", "ms": 5000}}, {"wait": 400},
-    {"move": [900, 700]},
-    {"expect": {"windows_open": ["Stylist"]}},
-    {"shot": "stylist-open", "crop": [272, 190, 480, 347]},
-    {"click_on": {"button": "hair_color_3"}}, {"wait": 200},
-    {"click_on": {"button": "clothes_color_2"}}, {"wait": 300},
-    {"move": [900, 700]},
-    {"shot": "stylist-preview", "crop": [272, 190, 480, 347]},
-    {"expect": {"state": {"player.look.hair_color": 0}, "windows_open": ["Stylist"]}},
-    {"click_on": {"button": "buy"}}, {"wait_for": {"packet": "0x0a47", "ms": 5000}}, {"wait": 500},
-    {"move": [900, 700]},
-    {"expect": {
-      "state": {"player.look.hair_color": 3, "player.look.clothes_color": 2},
-      "zeny": 0,
-      "inventory_items": 0,
-      "windows_closed": ["Stylist"],
-      "chat": "You have successfully change your style."
-    }},
-    {"shot": "stylist-bought", "crop": [200, 80, 620, 560]},
-    {"say": "@stylist"}, {"wait_for": {"packet": "0x0ae2", "ms": 5000}}, {"wait": 400},
-    {"click_on": {"button": "hair_style_5"}}, {"wait": 200},
-    {"click_on": {"button": "buy"}}, {"wait": 400},
-    {"expect": {"chat": "Insufficient Zeny", "windows_open": ["Stylist"]}},
-    {"click_on": {"button": "close"}}, {"wait": 400},
-    {"expect": {"windows_closed": ["Stylist"]}},
-    {"say": "@stylist"}, {"wait_for": {"packet": "0x0ae2", "ms": 5000}}, {"wait": 400},
-    {"expect": {"windows_open": ["Stylist"]}},
-    {"click_on": {"button": "close"}}, {"wait": 400},
-    {"expect": {"windows_closed": ["Stylist"]}},
-    {"say": "@haircolor 0"}, {"wait": 300},
-    {"say": "@dye 0"}, {"wait": 300},
-    {"say": "@hairstyle 1"}, {"wait": 300}
+    {
+      "say": "@warp prt_in 63 66"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@hairstyle 1"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@haircolor 0"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@dye 0"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@item 6046"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@zeny -2000000000"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@zeny 100000"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "zeny": 100000,
+        "inventory_items": 1,
+        "state": {
+          "player.look.hair": 1,
+          "player.look.hair_color": 0,
+          "player.look.clothes_color": 0
+        }
+      }
+    },
+    {
+      "say": "@stylist"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0ae2",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Stylist"
+        ],
+        "state": {
+          "stylist.buy": false,
+          "stylist.rows": []
+        }
+      }
+    },
+    {
+      "shot": "stylist-open",
+      "crop": [
+        272,
+        219,
+        480,
+        330
+      ]
+    },
+    {
+      "click_on": {
+        "button": "hair_color_3"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "stylist.rows.0.part": "HairColor",
+          "stylist.rows.0.payable": true,
+          "stylist.buy": true
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "clothes_next"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "stylist.rows.1.part": "ClothesColor",
+          "stylist.rows.1.payable": true,
+          "stylist.buy": true,
+          "player.look.hair_color": 0
+        },
+        "windows_open": [
+          "Stylist"
+        ]
+      }
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "shot": "stylist-preview",
+      "crop": [
+        272,
+        219,
+        480,
+        330
+      ]
+    },
+    {
+      "click_on": {
+        "button": "buy"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "button": {
+          "name": "cancel"
+        },
+        "state": {
+          "player.look.hair_color": 0
+        }
+      }
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "shot": "stylist-asks",
+      "crop": [
+        200,
+        180,
+        620,
+        420
+      ]
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0a47",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "expect": {
+        "state": {
+          "player.look.hair_color": 3,
+          "player.look.clothes_color": 2
+        },
+        "zeny": 0,
+        "inventory_items": 0,
+        "windows_closed": [
+          "Stylist"
+        ],
+        "windows_open": [
+          "Notice"
+        ],
+        "no_target": {
+          "button": "cancel"
+        }
+      }
+    },
+    {
+      "shot": "stylist-bought",
+      "crop": [
+        200,
+        180,
+        620,
+        420
+      ]
+    },
+    {
+      "click_on": {
+        "button": "ok"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Notice"
+        ]
+      }
+    },
+    {
+      "say": "@stylist"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0ae2",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "hair_style_next"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "move": [
+        900,
+        700
+      ]
+    },
+    {
+      "expect": {
+        "state": {
+          "stylist.rows.0.part": "HairStyle",
+          "stylist.rows.0.payable": false,
+          "stylist.buy": false
+        }
+      }
+    },
+    {
+      "shot": "stylist-cant-pay",
+      "crop": [
+        272,
+        219,
+        480,
+        330
+      ]
+    },
+    {
+      "click_on": {
+        "button": "buy"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Stylist"
+        ],
+        "windows_closed": [
+          "Notice"
+        ],
+        "no_target": {
+          "button": "ok"
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "refresh"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "stylist.rows": []
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "close"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Stylist"
+        ]
+      }
+    },
+    {
+      "say": "@stylist"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0ae2",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Stylist"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "button": "close"
+      }
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Stylist"
+        ]
+      }
+    },
+    {
+      "say": "@haircolor 0"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@dye 0"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@hairstyle 1"
+    },
+    {
+      "wait": 300
+    }
   ]
 }

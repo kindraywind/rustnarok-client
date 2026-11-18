@@ -4464,12 +4464,12 @@ impl App {
                     game.attack_step(now);
                 }
             }
+            // A style change's answer comes in a box: done closes the shop, a refusal leaves it open.
             MapEvent::StyleChanged(false) => {
                 game.stylist = None;
-                game.chat_line(self.messages.get(stylist::DONE).cloned().unwrap_or_default(), CHAT_ITEM);
+                game.question_box = Some(BoxQuestion::Notice(stylist::DONE));
             }
-            // ponytail: no client line fits a failed style change, so the result is printed plainly. The window stays.
-            MapEvent::StyleChanged(true) => game.chat_line(stylist::FAILED_LINE.to_owned(), CHAT_ERROR),
+            MapEvent::StyleChanged(true) => game.question_box = Some(BoxQuestion::Notice(stylist::FAILED)),
             // The guild storage's log: pages gather until the last, which opens the window with all of them; no log
             // or a refusal says so in red and drops what was heard.
             MapEvent::GuildStorageLog { result, entries } => match result {
