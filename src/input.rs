@@ -1066,6 +1066,7 @@ impl App {
                 match shop.click(hit) {
                     Some(cashshop::Action::Buy) => game.cashshop_buy_asked = true,
                     Some(cashshop::Action::Close) => game.close_cashshop(),
+                    Some(cashshop::Action::Search) => shop.search(&self.items),
                     None => {}
                 }
             }
@@ -4397,7 +4398,8 @@ impl App {
             Scene::Game(game) if game.cashshop.as_ref().is_some_and(|shop| shop.typing) => {
                 let shop = game.cashshop.as_mut().unwrap();
                 match key {
-                    Key::Named(NamedKey::Enter | NamedKey::Escape) => shop.typing = false,
+                    Key::Named(NamedKey::Enter) => shop.enter(&self.items),
+                    Key::Named(NamedKey::Escape) => shop.typing = false,
                     Key::Named(NamedKey::Backspace) => shop.backspace(),
                     _ => shop.type_text(event.text.as_deref().unwrap_or_default()),
                 }
