@@ -4506,6 +4506,8 @@ struct Layer<'a> {
     /// Where the layer sits among the windows (`front`), and each window after the first.
     place: front::Place,
     places: Vec<front::Place>,
+    /// The rectangle on screen each window after the first is cut to, if any (`clipped`).
+    clips: Vec<Option<[f32; 4]>>,
 }
 
 impl Layer<'_> {
@@ -4528,6 +4530,14 @@ impl Layer<'_> {
     fn window_at(&mut self, place: front::Place) -> &mut Self {
         self.windows.push((self.sprites.len(), self.texts.len()));
         self.places.push(place);
+        self.clips.push(None);
+        self
+    }
+
+    /// Goes on with the layer's window, what's drawn from here cut to `rect` on screen (`None`: not cut).
+    fn clipped(&mut self, rect: Option<[f32; 4]>) -> &mut Self {
+        self.window();
+        *self.clips.last_mut().unwrap() = rect;
         self
     }
 
@@ -5108,8 +5118,8 @@ impl App {
     }
 }
 
-/// A layer's window with its text rasterized, and where it sits among the windows.
-type Composed<'a> = (Vec<Sprite<'a>>, Vec<(Texture, [f32; 2])>, f32, front::Place);
+/// A layer's window with its text rasterized, where it sits among the windows, and the rectangle it is cut to.
+type Composed<'a> = (Vec<Sprite<'a>>, Vec<(Texture, [f32; 2])>, f32, front::Place, Option<[f32; 4]>);
 
 /// Rasterizes each layer's text, one piece per window (see `Layer::window`).
 fn compose<'a>(gpu: &Gpu, font: &Font, layers: Vec<Layer<'a>>) -> Vec<Composed<'a>> {
@@ -5117,12 +5127,13 @@ fn compose<'a>(gpu: &Gpu, font: &Font, layers: Vec<Layer<'a>>) -> Vec<Composed<'
         .into_iter()
         .flat_map(|layer| {
             let places = std::iter::once(layer.place).chain(layer.places.iter().copied());
+            let clips = std::iter::once(None).chain(layer.clips.iter().copied());
             window_spans(&layer.windows, layer.sprites.len(), layer.texts.len())
                 .into_iter()
-                .zip(places)
-                .map(|((sprites, texts), place)| {
+                .zip(places.zip(clips))
+                .map(|((sprites, texts), (place, clip))| {
                     let texts = layer.texts[texts].iter().map(|(text, position, color)| (gpu.text(font, text, *color), *position)).collect();
-                    (layer.sprites[sprites].to_vec(), texts, layer.faded, place)
+                    (layer.sprites[sprites].to_vec(), texts, layer.faded, place, clip)
                 })
                 .collect::<Vec<_>>()
         })
@@ -5133,7 +5144,7 @@ fn compose<'a>(gpu: &Gpu, font: &Font, layers: Vec<Layer<'a>>) -> Vec<Composed<'
 /// pieces under the windows, the windows bottom up, and what's over them, each group in the order it was drawn.
 fn order_windows(composed: &mut [Composed], front: &mut front::Front) {
     let mut shown = Vec::new();
-    for (sprites, texts, _, place) in composed.iter() {
+    for (sprites, texts, _, place, _) in composed.iter() {
         if let front::Place::Window(key) = place
             && !(sprites.is_empty() && texts.is_empty())
             && !shown.contains(key)
@@ -5160,15 +5171,13 @@ fn window_spans(starts: &[(usize, usize)], sprites: usize, texts: usize) -> Vec<
         .collect()
 }
 
-/// Everything to draw, in order: each layer's sprites, then its text, over the layers before it; and how opaque each is.
-fn flatten<'a>(composed: &'a [Composed<'a>]) -> (Vec<Sprite<'a>>, Vec<f32>) {
+/// Everything to draw, in order: each layer's sprites, then its text, over the layers before it; and how opaque each is and what it is cut to.
+fn flatten<'a>(composed: &'a [Composed<'a>]) -> (Vec<Sprite<'a>>, Vec<render::Shade>) {
     let mut sprites = Vec::new();
     let mut alphas = Vec::new();
-    for (layer, texts, faded, _) in composed {
-        let before = sprites.len();
+    for (layer, texts, faded, _, clip) in composed {
         sprites.extend(layer.iter().copied().chain(texts.iter().map(|(texture, position)| (texture, *position, texture.size))));
-        alphas.resize(sprites.len(), 1.0);
-        alphas[before..].fill(1.0 - faded);
+        alphas.resize(sprites.len(), (1.0 - faded, *clip));
     }
     (sprites, alphas)
 }

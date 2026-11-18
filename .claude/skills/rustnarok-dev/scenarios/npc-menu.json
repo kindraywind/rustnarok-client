@@ -1,5 +1,5 @@
 {
-  "about": "The NPC menu (issue #447): 280 wide at (200, 300), 16 px rows growing from 4 to 15 rows, a colour code carried into the next row, the first item selected, a single click selects and a double click picks, the wheel scrolls 3 rows of a 20-item list and Up/Down keep the selection shown, and Cancel answers 255, closes the talk and takes the picture away. The NPC (npc/menu.txt) is loaded with @loadnpc and unloaded at both ends.",
+  "about": "The NPC menu (issues #447, #1369): 280 wide at (200, 300), 16 px rows growing from 4 to 15 rows, a colour code carried into the next row, the first item selected, a single click selects and a double click picks, no scroll bar for 6 items; the wheel scrolls 3 rows of a 20-item list and Up/Down keep the selection shown; its scroll bar at the list's right edge moves a row an arrow, three a press on the track, and its thumb drags; Cancel answers 255, closes the talk and takes the picture away. The NPC (npc/menu.txt) is loaded with @loadnpc and unloaded at both ends.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -8,12 +8,13 @@
     {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/menu.txt"}, {"wait": 1000},
     {"click_unit": {"kind": "npc", "name": "Menu Clerk"}}, {"wait": 1000},
     {"expect": {"windows_open": ["NpcDialog"], "state": {"dialog.menu.position": [200.0, 300.0], "dialog.menu.selected": 0, "dialog.button": "none", "cutin": true}}},
+    {"expect": {"no_target": {"button": "npc_menu_scroll_up"}}},
     {"move": [900, 700]}, {"wait": 200},
     {"shot": "npc-menu-six", "crop": [190, 290, 440, 300], "threshold": 5},
-    {"click": [300, 350]}, {"wait": 700},
-    {"click": [300, 350]}, {"wait": 700},
+    {"click_on": {"button": "npc_menu:1"}}, {"wait": 700},
+    {"click_on": {"button": "npc_menu:1"}}, {"wait": 700},
     {"expect": {"state": {"dialog.menu.selected": 1}}},
-    {"click": [300, 366], "count": 2}, {"wait_for": {"sent": "0x00b8", "ms": 3000}}, {"wait": 500},
+    {"click_on": {"button": "npc_menu:2"}, "count": 2}, {"wait_for": {"sent": "0x00b8", "ms": 3000}}, {"wait": 500},
     {"expect": {"state": {"dialog.menu": null, "dialog.lines.2": "Black it is.", "dialog.button": "next"}}},
     {"key": "Enter"}, {"wait": 1000},
     {"expect": {"state": {"dialog.lines": ["Twenty."], "dialog.menu.items.19": "20", "dialog.menu.first": 0}}},
@@ -25,7 +26,13 @@
     {"expect": {"state": {"dialog.menu.first": 1, "dialog.menu.selected": 1}}},
     {"move": [900, 700]}, {"wait": 200},
     {"shot": "npc-menu-scrolled", "crop": [190, 290, 440, 316], "threshold": 5},
-    {"click": [455, 582]}, {"wait_for": {"sent": "0x0146", "ms": 3000}}, {"wait": 500},
+    {"click_on": {"button": "npc_menu_scroll_down"}}, {"wait": 200},
+    {"expect": {"state": {"dialog.menu.first": 2, "dialog.menu.selected": 1}}},
+    {"drag_on": [{"button": "npc_menu_scroll_thumb"}, {"point": [461, 590]}]}, {"wait": 200},
+    {"expect": {"state": {"dialog.menu.first": 5}}},
+    {"click": [461, 342]}, {"wait": 200},
+    {"expect": {"state": {"dialog.menu.first": 2}}},
+    {"click_on": {"button": "npc_menu_cancel"}}, {"wait_for": {"sent": "0x0146", "ms": 3000}}, {"wait": 500},
     {"expect": {"windows_closed": ["NpcDialog"], "state": {"cutin": false}}},
     {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/menu.txt"}, {"wait": 500}
   ]

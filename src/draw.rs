@@ -1807,11 +1807,17 @@ impl App {
                 game.say.text_height = heights.iter().map(|height| height + npc_say::LINE_GAP).sum();
                 game.say.scroll_by(0.0);
                 game.say.draw(&mut overlay, &assets.chrome, &assets.pickup, &assets.say);
+                // The text is cut at the panel's edges: a line half out shows its inside part, and only that part of
+                // a link or a picture takes a click.
+                let panel = game.say.panel_box();
+                overlay.clipped(Some(panel));
+                let mut drawn = Vec::new();
                 let mut above = 0.0;
                 for (pieces, height) in lines.iter().zip(heights) {
                     let place = game.say.line_at(above, height);
                     above += height + npc_say::LINE_GAP;
                     let Some([mut x, top]) = place else { continue };
+                    let left = x;
                     let y = top + height - font.line_height();
                     for (color, piece, item) in pieces {
                         // An item's picture: its icon in a box of its own, pointed and right-clicked like an item.
@@ -1820,7 +1826,9 @@ impl App {
                             if let Some(icon) = items.get(id).and_then(|info| icons.get(&inventory::icon_path(info, true))).and_then(Option::as_ref) {
                                 overlay.sprites.push((icon, corner, icon.size));
                             }
-                            dialog_links.push(([corner[0], corner[1], npc_say::PICTURE, npc_say::PICTURE], links::Target::Picture(*id)));
+                            if let Some(area) = npc_say::cut([corner[0], corner[1], npc_say::PICTURE, npc_say::PICTURE], panel) {
+                                dialog_links.push((area, links::Target::Picture(*id)));
+                            }
                             x += npc_say::PICTURE;
                             continue;
                         }
@@ -1830,11 +1838,18 @@ impl App {
                         if let Some(item) = item {
                             let line = if matches!(item, links::Target::Url(_)) { &assets.url_line } else { &assets.link_line };
                             overlay.sprites.push((line, [x, y + font.line_height() - 1.0], [width, 1.0]));
-                            dialog_links.push(([x, y, width, font.line_height()], item.clone()));
+                            if let Some(area) = npc_say::cut([x, y, width, font.line_height()], panel) {
+                                dialog_links.push((area, item.clone()));
+                            }
                         }
                         x += width;
                     }
+                    if let Some(area) = npc_say::cut([left, top, x - left, height], panel) {
+                        drawn.push((pieces.iter().map(|(_, piece, _)| piece.as_str()).collect(), area));
+                    }
                 }
+                game.say.drawn = drawn;
+                overlay.clipped(None);
                 let [x, y, _, _] = game.say.button_box();
                 match dialog.button {
                     DialogButton::Next => overlay.sprites.push(button_sprite(pointer, [x, y], &assets.next)),
@@ -1850,8 +1865,8 @@ impl App {
                 overlay.sprites.push(button_sprite(pointer, cancel, &assets.cancel));
             }
             if let Some(input) = &dialog.input {
-                input.draw(overlay.window(), &assets.chrome, &assets.pickup, &assets.npc_input, screen());
-                overlay.sprites.push(button_sprite(pointer, input.ok_on(screen()), &assets.ok));
+                input.draw(overlay.window(), &assets.chrome, &assets.pickup, &assets.npc_input);
+                overlay.sprites.push(button_sprite(pointer, input.ok_on(), &assets.ok));
             }
         }
         // A captcha check over everything, once the server asks.

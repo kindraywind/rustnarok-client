@@ -1,8 +1,8 @@
 //! An NPC's number or text input (ZC_OPEN_EDITDLG, ZC_OPEN_EDITDLGSTR): a box of its own in the sys box frame with an
-//! edit field and OK, at a place that depends only on the screen size.
+//! edit field and OK, opening at a place that depends only on the screen size, dragged by any part but those two.
 
 use crate::render::{Gpu, Texture};
-use crate::window::Chrome;
+use crate::window::{Chrome, Frame};
 use crate::{Layer, contains, offset, pickup};
 
 const NUMBER_SIZE: [f32; 2] = [176.0, 46.0];
@@ -18,12 +18,13 @@ const FIELD_FILL: [u8; 4] = [0xE8, 0xE8, 0xE8, 0xFF];
 /// Where the typed text starts in the field.
 const TYPED_AT: [f32; 2] = [2.0, 1.0];
 const NUMBER_OK: [f32; 2] = [121.0, 14.0];
+const OK_SIZE: [f32; 2] = [42.0, 20.0];
 const TEXT_OK: [f32; 2] = [291.0, 14.0];
 // ponytail: 12 and 70 characters until the game's limits are checked.
 const NUMBER_LENGTH: usize = 12;
 const TEXT_LENGTH: usize = 70;
 
-/// Where both boxes go at this screen size: (392, 320) at 1024×768.
+/// Where both boxes open at this screen size, each time: (392, 320) at 1024×768.
 pub fn corner(screen: [f32; 2]) -> [f32; 2] {
     [((screen[0] - 640.0) / 2.0 + 200.0).floor(), (200.0 * screen[1] / 480.0).floor()]
 }
@@ -55,16 +56,30 @@ impl Assets {
     }
 }
 
-/// The box: a text or number field and what's typed in it.
+/// The box: a text or number field and what's typed in it, and where it is.
 pub struct Input {
     pub text: bool,
     pub typed: String,
+    pub frame: Frame,
 }
 
 impl Input {
-    /// A number field starts with "0", a text field empty.
+    /// A number field starts with "0", a text field empty; it opens at `corner`.
     pub fn new(text: bool) -> Self {
-        Self { text, typed: if text { String::new() } else { "0".into() } }
+        let mut frame = Frame::new(corner(crate::screen()), if text { TEXT_SIZE[0] } else { NUMBER_SIZE[0] });
+        frame.open = true;
+        Self { text, typed: if text { String::new() } else { "0".into() }, frame }
+    }
+
+    pub fn height(&self) -> f32 {
+        self.size()[1]
+    }
+
+    /// Whether a press at `cursor` drags the box: on it, but not on the field or OK.
+    pub fn grips(&self, cursor: [f32; 2]) -> bool {
+        let Some(local) = self.frame.local(cursor, self.height()) else { return false };
+        let field = [if self.text { TEXT_FIELD } else { NUMBER_FIELD }, FIELD_HEIGHT];
+        !contains(FIELD_AT, field, local) && !contains(self.ok_at(), OK_SIZE, local)
     }
 
     fn size(&self) -> [f32; 2] {
@@ -76,13 +91,13 @@ impl Input {
         if self.text { TEXT_OK } else { NUMBER_OK }
     }
 
-    /// OK's corner on a screen this big.
-    pub fn ok_on(&self, screen: [f32; 2]) -> [f32; 2] {
-        offset(corner(screen), self.ok_at())
+    /// OK's corner on screen.
+    pub fn ok_on(&self) -> [f32; 2] {
+        self.frame.at(self.ok_at())
     }
 
-    pub fn contains(&self, screen: [f32; 2], cursor: [f32; 2]) -> bool {
-        contains(corner(screen), self.size(), cursor)
+    pub fn contains(&self, cursor: [f32; 2]) -> bool {
+        self.frame.local(cursor, self.height()).is_some()
     }
 
     /// Typed characters, up to the field's length.
@@ -104,8 +119,8 @@ impl Input {
     }
 
     /// The frame, the number box's label and the field with what's typed and the caret; OK is the caller's.
-    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, frame: &'a pickup::Assets, assets: &'a Assets, screen: [f32; 2]) {
-        let corner = corner(screen);
+    pub fn draw<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, frame: &'a pickup::Assets, assets: &'a Assets) {
+        let corner = self.frame.position;
         let [width, height] = self.size();
         pickup::draw_sysbox(layer, chrome, frame, [corner[0], corner[1], width, height]);
         if !self.text {
@@ -145,7 +160,24 @@ mod tests {
     fn opens_at_the_same_place_for_both() {
         assert_eq!(corner([1024.0, 768.0]), [392.0, 320.0]);
         assert_eq!(corner([800.0, 600.0]), [280.0, 250.0]);
-        assert_eq!(Input::new(false).ok_on([1024.0, 768.0]), [513.0, 334.0]);
-        assert_eq!(Input::new(true).ok_on([800.0, 600.0]), [571.0, 264.0]);
+        let screen = crate::screen();
+        assert_eq!(Input::new(false).ok_on(), offset(corner(screen), [121.0, 14.0]));
+        assert_eq!(Input::new(true).ok_on(), offset(corner(screen), [291.0, 14.0]));
+    }
+
+    #[test]
+    fn dragged_by_any_part_but_the_field_and_ok() {
+        let mut input = Input::new(false);
+        let at = |local: [f32; 2]| offset(input.frame.position, local);
+        assert!(input.grips(at([5.0, 5.0])));
+        assert!(!input.grips(at([20.0, 25.0])), "the field");
+        assert!(!input.grips(at([130.0, 20.0])), "OK");
+        assert!(!input.grips(at([500.0, 500.0])));
+        let from = at([5.0, 5.0]);
+        input.frame.start_drag(from);
+        input.frame.drag_to(offset(from, [30.0, -40.0]), input.height());
+        assert!(input.frame.drop_drag());
+        assert_eq!(input.frame.position, offset(corner(crate::screen()), [30.0, -40.0]));
+        assert_eq!(input.ok_on(), offset(input.frame.position, [121.0, 14.0]));
     }
 }

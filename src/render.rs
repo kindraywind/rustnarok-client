@@ -57,6 +57,8 @@ impl Texture {
 
 /// A texture drawn at a position with a size, in logical pixels.
 pub type Sprite<'a> = (&'a Texture, [f32; 2], [f32; 2]);
+/// How opaque a sprite is drawn (0 to 1), and the rectangle on screen it is cut to, if any.
+pub type Shade = (f32, Option<[f32; 4]>);
 
 pub struct Gpu {
     pub window: Arc<Window>,
@@ -345,8 +347,8 @@ impl Gpu {
         self.frame_floor = frame_floor(&self.window);
     }
 
-    /// Draws the world and then `sprites` in order, each at its `alphas` opacity (1 past the list's end).
-    pub fn draw(&mut self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) {
+    /// Draws the world and then `sprites` in order, each at its `alphas` opacity and cut (opaque and whole past the list's end).
+    pub fn draw(&mut self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[Shade]) {
         crate::control::on_draw(self, world, sprites, alphas);
         self.drawn_at = Instant::now();
         let frame = match self.surface.get_current_texture() {
@@ -370,12 +372,12 @@ impl Gpu {
     }
 
     /// Renders one frame at 1x into a PNG, for checking output against the real client.
-    pub fn capture(&self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32], path: &str) {
+    pub fn capture(&self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[Shade], path: &str) {
         self.snapshot(world, sprites, alphas).save(path).expect("save screenshot");
     }
 
     /// Renders one frame at 1x.
-    pub fn snapshot(&self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) -> RgbaImage {
+    pub fn snapshot(&self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[Shade]) -> RgbaImage {
         let [width, height] = screen().map(|value| value as u32);
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -420,7 +422,7 @@ impl Gpu {
         RgbaImage::from_raw(width, height, rgba).expect("frame size")
     }
 
-    fn encode(&self, view: &wgpu::TextureView, size: [u32; 2], world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[f32]) -> wgpu::CommandEncoder {
+    fn encode(&self, view: &wgpu::TextureView, size: [u32; 2], world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[Shade]) -> wgpu::CommandEncoder {
         let [left, top, width, height] = viewport(size);
         // At a scale that isn't whole (a window under 1024×768, the Extras' UI scale) every edge goes to the target's
         // nearest pixel: text, rasterized at that scale, lands on its own pixels, and pictures side by side still meet.
@@ -432,7 +434,7 @@ impl Gpu {
             .iter()
             .enumerate()
             .flat_map(|(index, &(_, [x, y], [w, h]))| {
-                let alpha = alphas.get(index).copied().unwrap_or(1.0);
+                let alpha = alphas.get(index).map_or(1.0, |shade| shade.0);
                 let corner = |dx: f32, dy: f32| Vertex { pixel: [snap(x + dx * w), snap(y + dy * h)], uv: [dx, dy], alpha };
                 [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
             })
@@ -468,7 +470,23 @@ impl Gpu {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.screen_bind_group, &[]);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            // A cut sprite draws only inside its rectangle, in the target's pixels.
+            let target = |[x, y, w, h]: [f32; 4]| {
+                let [x0, y0] = [(left + x * scale).round().clamp(0.0, size[0] as f32), (top + y * scale).round().clamp(0.0, size[1] as f32)];
+                let [x1, y1] = [(left + (x + w) * scale).round().clamp(x0, size[0] as f32), (top + (y + h) * scale).round().clamp(y0, size[1] as f32)];
+                [x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32]
+            };
+            let mut cut = None;
             for (index, (texture, ..)) in sprites.iter().enumerate() {
+                let clip = alphas.get(index).and_then(|shade| shade.1);
+                let [x, y, w, h] = clip.map_or([0, 0, size[0], size[1]], target);
+                if w == 0 || h == 0 {
+                    continue;
+                }
+                if clip != cut {
+                    pass.set_scissor_rect(x, y, w, h);
+                    cut = clip;
+                }
                 let first = index as u32 * 6;
                 pass.set_bind_group(1, &texture.bind_group, &[]);
                 pass.draw(first..first + 6, 0..1);

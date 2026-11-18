@@ -1,5 +1,5 @@
 {
-  "about": "Item pictures in NPC text: the `^i[<item id>]` code (rathena's mesitemicon) is drawn as the item's icon in a 25 px box on the line, the text after it following on and the line as tall as the picture. A Red Potion's picture before its item link, a Knife's inside a sentence, an id no item has (an empty box) and a bare `^i` (nothing), then three pictures in a row on a line that wraps. Pointing a picture shows the item's name over it, a left click does nothing and a right click opens the item's information. The NPC (npc/item-pictures.txt) is loaded with @loadnpc and unloaded at both ends.",
+  "about": "Item pictures in NPC text: the `^i[<item id>]` code (rathena's mesitemicon) is drawn as the item's icon in a 25 px box on the line, the text after it following on and the line as tall as the picture. A Red Potion's picture before its item link, a Knife's inside a sentence, an id no item has (an empty box) and a bare `^i` (nothing), then three pictures in a row on a line that wraps. Pointing a picture shows the item's name over it, a left click does nothing and a right click opens the item's information and a second one closes it. The NPC (npc/item-pictures.txt) is loaded with @loadnpc and unloaded at both ends.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -133,10 +133,20 @@
       "threshold": 10
     },
     {
-      "key": "Escape"
+      "click_on": {
+        "item_picture": 1201
+      },
+      "button": "right"
     },
     {
-      "wait": 300
+      "wait": 600
+    },
+    {
+      "expect": {
+        "state": {
+          "item_window": null
+        }
+      }
     },
     {
       "key": "Enter"
