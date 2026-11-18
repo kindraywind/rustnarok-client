@@ -1592,6 +1592,7 @@ impl App {
             MapEvent::NpcSay { npc, text } => {
                 let name_of = |item: &links::ItemLink| inventory::item_name(&self.items, item.id, true, item.refine);
                 let text = npc_say::item_pictures(&links::mark(&npc_say::unescape(&text), &name_of));
+                game.front.settle_npc();
                 let dialog = game.dialog_for(npc);
                 dialog.said = true;
                 if std::mem::take(&mut dialog.wipe) {
@@ -1602,6 +1603,7 @@ impl App {
                 dialog.lines.extend(text.split('\n').map(|line| line.replace('\r', "")));
             }
             MapEvent::NpcNext { npc } => {
+                game.front.settle_npc();
                 let dialog = game.dialog_for(npc);
                 dialog.said = true;
                 dialog.button = DialogButton::Next;
@@ -1635,11 +1637,14 @@ impl App {
                 let dialog = game.dialog_for(npc);
                 dialog.menu = Some(npc_menu::Menu::new(items));
                 dialog.button = DialogButton::None;
+                // The menu comes on top, as a window that opens does.
+                game.front.raise(Top::NpcDialog);
             }
             // The box opens only for an NPC in view (a text one also for id 0).
             MapEvent::NpcInput { npc, text } => {
                 if game.units.contains_key(&npc) || (text && npc == 0) {
                     game.dialog_for(npc).input = Some(npc_input::Input::new(text));
+                    game.front.raise(Top::NpcDialog);
                 }
             }
             // Where Warp Portal or Teleport goes, in a box of its own under its heading: "Random Area" for Teleport's
@@ -3458,8 +3463,13 @@ impl App {
                     let picture = gpu.and_then(|gpu| {
                         ["illust", "cardbmp"].iter().find_map(|folder| gpu.try_load_texture(grf, &format!("{UI}{folder}\\{name}"), false).ok())
                     });
+                    // A cut-in that is made goes over the open windows and under the say window; one that only changes
+                    // its picture keeps its place.
+                    if showing.is_none() {
+                        game.raise(Panel::Cutin);
+                        game.front.settle_npc();
+                    }
                     game.cutin = picture.map(|picture| cutin::Cutin::new(name, place, picture, screen()));
-                    game.raise(Panel::Cutin);
                 }
             }
             MapEvent::CatalogOpen { remote, uses } => game.catalog = Some(catalog::Catalog::new(remote, uses)),

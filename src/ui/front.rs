@@ -34,9 +34,9 @@ pub fn place(top: Top) -> Place {
     }
 }
 
-/// The windows from the bottom up.
+/// The windows from the bottom up, and whether the NPC windows are due back in their rank (`settle_npc`).
 #[derive(Debug, Default)]
-pub struct Front(Vec<Top>);
+pub struct Front(Vec<Top>, bool);
 
 impl Front {
     /// Drops the windows that closed and puts the ones newly shown on top, in the order they're drawn.
@@ -45,6 +45,24 @@ impl Front {
         for key in shown {
             if !self.0.contains(key) {
                 self.0.push(*key);
+            }
+        }
+        if std::mem::take(&mut self.1) {
+            self.settle();
+        }
+    }
+
+    /// The NPC's text or Next came, or a cut-in was made: the cut-in goes over every ordinary window and the say window
+    /// over the cut-in, the others keeping their order. It holds from the next `sync`, when a window just made is
+    /// listed; after that a window that opens or is pressed goes over them again, until the next time.
+    pub fn settle_npc(&mut self) {
+        self.1 = true;
+    }
+
+    fn settle(&mut self) {
+        for key in [Top::Panel(crate::Panel::Cutin), Top::NpcDialog] {
+            if self.0.contains(&key) {
+                self.raise(key);
             }
         }
     }
@@ -125,6 +143,40 @@ mod tests {
         front.sync(&[INVENTORY, MAIL]);
         front.sync(&[INVENTORY, MAIL, BANK]);
         assert_eq!(front.windows(), [INVENTORY, MAIL, BANK]);
+    }
+
+    #[test]
+    fn the_npcs_text_puts_the_cutin_and_the_say_window_back_on_top() {
+        const CUTIN: Top = Top::Panel(Panel::Cutin);
+        let shown = [INVENTORY, CUTIN, Top::NpcDialog, MAIL];
+        let mut front = Front::default();
+        front.sync(&shown);
+        front.raise(INVENTORY);
+        assert_eq!(front.windows(), [CUTIN, Top::NpcDialog, MAIL, INVENTORY]);
+        // The ordinary windows keep their order; the cut-in, then the say window, go on top at the next sync.
+        front.settle_npc();
+        assert_eq!(front.windows(), [CUTIN, Top::NpcDialog, MAIL, INVENTORY]);
+        front.sync(&shown);
+        assert_eq!(front.windows(), [MAIL, INVENTORY, CUTIN, Top::NpcDialog]);
+        // A press after that puts the window over the say window, until the next text.
+        front.raise(INVENTORY);
+        front.sync(&shown);
+        assert_eq!(front.windows(), [MAIL, CUTIN, Top::NpcDialog, INVENTORY]);
+        front.settle_npc();
+        front.sync(&shown);
+        assert_eq!(front.windows(), [MAIL, INVENTORY, CUTIN, Top::NpcDialog]);
+        // Only what is there moves; a say window made in the same frame is listed first, then settled.
+        let mut front = Front::default();
+        front.sync(&[INVENTORY, CUTIN, MAIL]);
+        front.settle_npc();
+        front.sync(&[INVENTORY, CUTIN, MAIL]);
+        assert_eq!(front.windows(), [INVENTORY, MAIL, CUTIN]);
+        let mut front = Front::default();
+        front.sync(&[Top::NpcDialog, INVENTORY]);
+        front.raise(INVENTORY);
+        front.settle_npc();
+        front.sync(&[Top::NpcDialog, INVENTORY, CUTIN]);
+        assert_eq!(front.windows(), [INVENTORY, CUTIN, Top::NpcDialog]);
     }
 
     #[test]
