@@ -1045,10 +1045,11 @@ impl App {
             }
             Scene::Game(game) if on(Esc(W::Bank)) => {
                 let carried = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
+                let busy = game.synthesis.is_some() || game.upgrade.is_some() || game.reform.is_some();
                 let bank = game.bank.as_mut().unwrap();
                 let hit = bank.hit(cursor).unwrap();
                 let account = game.account_id;
-                match bank.click(hit, carried) {
+                match bank.click(hit, carried, busy) {
                     Some(bank::Action::Deposit(zeny)) => {
                         let _ = game.session.move_zeny(true, account, zeny);
                     }

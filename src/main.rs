@@ -219,10 +219,10 @@ const REFINE_FAILED: usize = 3272;
 const MVP_ITEM: [usize; 2] = [143, 144];
 const MVP_EXP: [usize; 2] = [145, 146];
 const MVP_OVERWEIGHT: usize = 147;
-/// The bank's refusals: unavailable, not enough zeny carried, too much to hold, not enough in the bank.
+/// The bank's refusals: unavailable, not enough zeny carried, the bank can't hold more, not enough in the bank.
 const BANK_DOWN: usize = 2454;
 const BANK_NO_ZENY: usize = 2456;
-const BANK_OVERFLOW: usize = 2459;
+const BANK_OVERFLOW: usize = 2465;
 const BANK_SHORT: usize = 2455;
 /// Pick lists' titles: a Magnifier's, a card's.
 const ITEM_APPRAISAL: usize = 521;
