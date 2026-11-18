@@ -2003,6 +2003,9 @@ impl App {
             game.homunculus_window.frame.drag_to(self.cursor, homunculus::Window::height());
             game.homunculus_skill_list.drag_to(self.cursor, game.homunculus_skills.len());
             game.talks.drag_to(self.cursor);
+            if let Some((list, _)) = &mut game.pick {
+                list.drag_to(self.cursor);
+            }
             if let Some(forge) = &mut game.forge {
                 forge.frame.drag_to(self.cursor, forge::HEIGHT);
             }
@@ -2909,6 +2912,7 @@ impl App {
                     | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.memorial.frame.drop_drag()
                     | game.forge.as_mut().is_some_and(|forge| forge.frame.drop_drag())
+                    | game.pick.as_mut().is_some_and(|(list, _)| list.drop_drag())
                     | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag)
                     | game.cart_choice.as_mut().is_some_and(|choice| choice.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
@@ -3406,6 +3410,14 @@ impl App {
             if window.frame.local(cursor, monster_info::MonsterWindow::height()).and_then(|local| window.frame.title_hit(local)) == Some(TitleHit::Title) {
                 window.frame.start_drag(cursor);
             }
+            return;
+        }
+        // A pick list goes by its title bar; an icon list's scroll thumb drags its rows.
+        if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::PickList))
+            && let Some((list, _)) = &mut game.pick
+        {
+            list.press(cursor);
             return;
         }
         if let Scene::Game(game) = &mut self.scene

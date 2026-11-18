@@ -993,6 +993,11 @@ impl Game {
         if let Some(window) = &self.card_window {
             self.card_place = window.position;
         }
+        match &self.pick {
+            Some((list, Picking::Identify)) => self.pick_places[0] = list.frame.position,
+            Some((list, Picking::Card(_))) => self.pick_places[1] = list.frame.position,
+            _ => {}
+        }
         if control::driven() {
             return;
         }
@@ -1015,6 +1020,8 @@ impl Game {
         places += &format!("{VEND_SIZE} {} {} 0\n{SKILL_LIST_SIZE} 0 {} 0\n", self.vend_size.width, self.vend_size.rows, self.skill_window.list_rows());
         places += &format!("{ITEM_PLACE} {} {} 0\n{CARD_PLACE} {} {} 0\n", self.item_place[0], self.item_place[1], self.card_place[0], self.card_place[1]);
         places += &format!("{COMPANION_SKILLS_SIZE} {} {} 0\n", self.homunculus_skill_list.height(), self.mercenary_skill_list.height());
+        let [identify, card] = self.pick_places;
+        places += &format!("{IDENTIFY_LIST_PLACE} {} {} 0\n{CARD_LIST_PLACE} {} {} 0\n", identify[0], identify[1], card[0], card[1]);
         let quest = self.quest_window.frame.position;
         places += &format!("{QUEST_PLACE} {} {} 0\n", quest[0], quest[1]);
         if places != self.saved_places {
@@ -1113,6 +1120,11 @@ impl Game {
         }
         if let Some(&(place, _)) = saved.get(CARD_PLACE) {
             self.card_place = iteminfo::restored_card_place(place, screen());
+        }
+        for (slot, name) in [IDENTIFY_LIST_PLACE, CARD_LIST_PLACE].into_iter().enumerate() {
+            if let Some(&(place, _)) = saved.get(name) {
+                self.pick_places[slot] = pick_list::restored_place(place, screen());
+            }
         }
         if let (Some(&([width, goods], _)), Some(&([_, deal], _))) = (saved.get(SHOP_SIZE), saved.get(SHOP_DEAL_SIZE)) {
             self.shop_sizes = (shop::snap_width(width), [goods as usize, deal as usize]);

@@ -11,7 +11,7 @@
     {"move": [900, 700]},
     {"say": "@hatch"}, {"wait_for": {"event": "PetEggs", "ms": 5000}}, {"wait": 300},
     {"expect": {"windows_open": ["PickList"]}},
-    {"shot": "egg-list", "crop": [362, 260, 300, 250]},
+    {"shot": "egg-list", "crop": [382, 310, 220, 220]},
     {"click_on": {"pick_item": 9001}, "count": 2}, {"wait_for": {"event": "PetInfo", "ms": 5000}}, {"wait": 800},
     {"expect": {"units_at_least": {"pet": 1}, "state": {"pet.name": "Poring", "pet.accessory": 0}, "windows_closed": ["PickList"]}},
     {"key": "Alt+J"}, {"wait": 300}, {"move": [900, 700]},
