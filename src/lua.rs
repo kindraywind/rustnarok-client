@@ -2104,6 +2104,8 @@ pub struct ReformInfo {
     /// Added to the refine (negative lowers it).
     pub change_refine: i32,
     pub random_option: String,
+    /// `InformationString`: the lines of the window's details popup (none: no link).
+    pub information: Vec<String>,
 }
 
 /// `ItemDBNameTbl` as name bytes to item id. Keys stay the Lua string's raw bytes: some names are cp949, not UTF-8.
@@ -2230,6 +2232,10 @@ fn read_reform(entry: &mlua::Table, names: &HashMap<Vec<u8>, u32>) -> Option<Ref
         preserve_grade: flag(entry, "PreserveGrade", true),
         change_refine: i32::try_from(field_number(entry, "ChangeRefineValue").unwrap_or(0)).unwrap_or(0),
         random_option: entry.get::<mlua::LuaString>("RandomOptionCode").ok().map(|text| decode(&text)).unwrap_or_default(),
+        information: entry
+            .get::<mlua::Table>("InformationString")
+            .map(|lines| lines.sequence_values::<mlua::LuaString>().flatten().map(|line| decode(&line)).collect())
+            .unwrap_or_default(),
     })
 }
 

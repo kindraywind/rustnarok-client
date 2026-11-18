@@ -2031,7 +2031,8 @@ impl App {
                 window.drag_thumb(self.cursor[1], &game.inventory.items);
             }
             if let Some(window) = &mut game.reform {
-                window.frame.drag_to(self.cursor, reform::HEIGHT);
+                window.frame.drag_to(self.cursor, reform::SIZE[1]);
+                window.drag_thumb(self.cursor[1]);
             }
             if let Some(window) = &mut game.enchant {
                 window.frame.drag_to(self.cursor, enchant::HEIGHT);
@@ -2110,6 +2111,13 @@ impl App {
                     None => return,
                 },
             };
+            game.show_item(shown);
+            return;
+        }
+        // A right press on the reform window's made item, base item or a material describes it.
+        if let (Scene::Game(game), ElementState::Pressed) = (&mut self.scene, state)
+            && let Some(shown) = game.reform.as_ref().and_then(|window| window.shown_at(self.cursor, &game.inventory.items, &self.items))
+        {
             game.show_item(shown);
             return;
         }
@@ -2877,7 +2885,7 @@ impl App {
                     | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
                     | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
                     | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
-                    | game.reform.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.reform.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
                     | game.refine.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.grade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
@@ -3438,11 +3446,9 @@ impl App {
         }
         if let Scene::Game(game) = &mut self.scene
             && top == Some(Esc(W::ItemReform))
-            && let Some(hit) = game.reform.as_ref().and_then(|window| window.hit(cursor, &game.inventory.items))
+            && let Some(window) = &mut game.reform
         {
-            if hit == reform::Hit::Title(TitleHit::Title) {
-                game.reform.as_mut().unwrap().frame.start_drag(cursor);
-            }
+            window.press(cursor, &game.inventory.items);
             return;
         }
         if let Scene::Game(game) = &mut self.scene
