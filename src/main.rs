@@ -3200,7 +3200,7 @@ impl Assets {
             storage_log: storage_log::Assets::load(gpu, grf),
             trade: trade::Assets::load(gpu, grf),
             refine: refine::Assets::load(gpu, grf),
-            grade: grade::Assets::load(gpu, grf),
+            grade: grade::Assets::load(gpu, grf, font),
             laphine: laphine::Assets::load(gpu, grf),
             reform: reform::Assets::load(gpu, grf),
             enchant: enchant::Assets::load(gpu, grf),
