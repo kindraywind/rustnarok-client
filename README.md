@@ -4,14 +4,14 @@
 
 # rustnarok-client
 
-**A native Ragnarok Online client for macOS, written from scratch in Rust. It builds on Linux and Windows too.**
+**A native, multi-platform Ragnarok Online client for Windows, macOS and Linux, written from scratch in Rust.**
 
 No Wine, no wrapper, no official client underneath: an open-source reimplementation of the whole client, from the
 network protocol to the last window. The windows, fonts, sounds and behavior of the official client, drawn from the
 player's own game data at runtime. As good as the original, and better where it can be.
 
 <img alt="100% Rust" src="https://img.shields.io/badge/100%25-Rust-b7410e?style=flat-square&logo=rust">
-<img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-native-2f7bf5?style=flat-square">
+<img alt="Windows · macOS · Linux" src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-native-2f7bf5?style=flat-square">
 <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-3a3a3a?style=flat-square">
 <img alt="Status: beta" src="https://img.shields.io/badge/status-beta-d69e2e?style=flat-square">
 
@@ -106,7 +106,7 @@ against `main`.
 | 🧪 **Homunculus** | Its sprite, the window (Alt+R) with its values, bars and words, the skill list with level up, feeding, renaming, following the player (Alt+T) and Alt + right click orders. |
 | 👥 **Together** | Parties, guilds (info with the emblem, members, positions, skills, expel list, notice), clans, friends, chat rooms, RODEX mail, server announcements and item news. |
 | 🔊 **Sound** | Each map's music, NPC scripts' sounds and music, sprites' own sounds (attacks, flinches, deaths), effect sounds, volume settings. |
-| 🍎 **macOS** | Retina-sharp text, a resizable window, fullscreen (Ctrl+Cmd+F, or the screen mode on Game Settings' Graphics page), an `.app` bundle. |
+| 🖥️ **Every platform** | Windows, macOS and Linux from one codebase, each running natively: a resizable window, fullscreen (the screen mode on Game Settings' Graphics page; Ctrl+Cmd+F on macOS), Retina-sharp text and an `.app` bundle on macOS. |
 | 🌐 **English** | Through a translation pack's loose files placed over data.grf, as the official client does. |
 
 Window places are measured over the client's own bitmaps where they show them. Where they don't, they are estimates
@@ -325,7 +325,7 @@ flowchart LR
         net["net"]
     end
     lib --> game["🎮 rustnarok-client<br/>scenes · windows · world · actors"]
-    game --> gpu["wgpu → Metal"]
+    game --> gpu["wgpu → DirectX 12 · Metal · Vulkan"]
     game --> audio["cpal → speakers"]
     driver["🤖 control socket · MCP"] <--> game
 ```
