@@ -1562,7 +1562,12 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
-        .chain(game.grade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.grade
+                .iter()
+                .flat_map(|window| window.button_boxes(&game.inventory.items, game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32))
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(game.synthesis.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.upgrade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(

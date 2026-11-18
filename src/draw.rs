@@ -2318,9 +2318,11 @@ impl App {
         layers.push(member_tooltip);
         // A dragged item's or skill's icon follows the pointer.
         let dragged_icon = match game.dragging {
-            Some((Dragged::Item(index) | Dragged::Worn(index) | Dragged::LaphineRow(index) | Dragged::LaphineSlot(index), _, true)) => {
-                game.inventory.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
-            }
+            Some((
+                Dragged::Item(index) | Dragged::Worn(index) | Dragged::LaphineRow(index) | Dragged::LaphineSlot(index) | Dragged::GradeItem(index),
+                _,
+                true,
+            )) => game.inventory.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified))),
             Some((Dragged::Skill(id), _, true)) => skill_info.get(&id).map(skills::icon_path),
             Some((Dragged::Stored(index), _, true)) => {
                 game.storage.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
@@ -2584,7 +2586,19 @@ impl App {
             let status = |kind| game.status.get(&kind).copied().unwrap_or(0).max(0) as u32;
             let heavy = status(net::STATUS_WEIGHT) * 10 > status(net::STATUS_MAX_WEIGHT) * 7;
             let more = (status(net::STATUS_ZENY), heavy, control::now());
-            window.draw(shop_layer.esc(W::GradeEnchant), &assets.chrome, &assets.grade, icons, items, &game.inventory.items, messages, font, pointer, more);
+            window.draw(
+                shop_layer.esc(W::GradeEnchant),
+                &mut tooltip,
+                &assets.chrome,
+                &assets.grade,
+                icons,
+                items,
+                &game.inventory.items,
+                messages,
+                font,
+                pointer,
+                more,
+            );
         }
         if let Some(window) = &game.enchant {
             window.draw(

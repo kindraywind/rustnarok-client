@@ -2576,6 +2576,8 @@ enum Dragged {
     /// A Laphine list's row, or what's in one of its slots, by inventory index.
     LaphineRow(u16),
     LaphineSlot(u16),
+    /// The item on the grade window's machine, by inventory index, being taken out.
+    GradeItem(u16),
 }
 
 /// What a sprite on the map belongs to.
@@ -2647,6 +2649,8 @@ enum BoxQuestion {
     BuyStyle(net::StylePicks),
     /// The enchant window's button: "Do you want to enchant it?" (3846).
     Enchant,
+    /// Grade enchanting's Start with no blessing: go on anyway? (3823).
+    GradeStart,
 }
 
 impl BoxQuestion {
@@ -2667,6 +2671,7 @@ impl BoxQuestion {
             Self::StopNavigation => navigation::ASKS_STOP,
             Self::BuyStyle(_) => stylist::ASKS_BUY,
             Self::Enchant => enchant::ASKS,
+            Self::GradeStart => grade::ASKS_WITHOUT_BLESSING,
         }
     }
 

@@ -1219,7 +1219,7 @@ impl App {
                     None => {}
                 }
             }
-            // Grade enchanting: Start sends the try, a refusal is the client's own line, close tells the server.
+            // Grade enchanting: Start sends the try (asking first with no blessing), close tells the server.
             Scene::Game(game) if on(Esc(W::GradeEnchant)) => {
                 let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0).max(0) as u32;
                 let carried = &game.inventory.items;
@@ -1230,7 +1230,8 @@ impl App {
                     Some(grade::Action::Enchant { index, material, steps }) => {
                         let _ = game.session.grade_enchant(index, material, steps);
                     }
-                    Some(grade::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                    Some(grade::Action::Ask) => game.question_box = Some(BoxQuestion::GradeStart),
+                    Some(grade::Action::Notice(id)) => game.question_box = Some(BoxQuestion::Notice(id)),
                     Some(grade::Action::Close) => {
                         let _ = game.session.close_grade();
                         game.grade = None;
@@ -2464,12 +2465,15 @@ impl App {
             }));
             let names = (&self.messages[..], &self.card_names, &game.char_names);
             let on_enchant = assets.is_some_and(|assets| game.top_at(self.cursor, assets.message.size) == Some(Top::Esc(escape::WindowId::Enchant)));
+            let on_grade = assets.is_some_and(|assets| game.top_at(self.cursor, assets.message.size) == Some(Top::Esc(escape::WindowId::GradeEnchant)));
             let described = match game.window_at(self.cursor) {
                 // The press alone describes: the release would take it for the same item again and close it.
                 _ if state != ElementState::Pressed || self.modifiers.alt_key() || card.is_some() => None,
                 _ if viewed.is_some() => viewed,
                 // The enchant window's items: either list's rows, its picture, a material or a card.
                 _ if on_enchant => game.enchant.as_ref().and_then(|window| window.hovered(self.cursor, &game.inventory.items)),
+                // The grade window's: a material row, the blessing or the item in.
+                _ if on_grade => game.grade.as_ref().and_then(|window| window.hovered(self.cursor, &game.inventory.items)),
                 _ if shop_row.is_some() => shop_row.map(shop::Offer::described),
                 _ if listed.is_some() => listed,
                 Some(Panel::Inventory) => match game.inventory.hit(self.cursor) {
@@ -2689,7 +2693,8 @@ impl App {
                         | Dragged::VendMirror(_)
                         | Dragged::VendGood(_)
                         | Dragged::LaphineRow(_)
-                        | Dragged::LaphineSlot(_) => None,
+                        | Dragged::LaphineSlot(_)
+                        | Dragged::GradeItem(_) => None,
                     };
                     if let Some(key) = key {
                         for (slot, key) in hotkeys::drop_on(&game.hotkeys.keys, key, slot) {
@@ -2810,9 +2815,20 @@ impl App {
                             let _ = game.session.refine_select(index);
                         }
                     }
-                    // Onto the grade window: the server lists what raises it.
+                    // Onto the grade window's machine, identified: the server lists what raises it.
                     (Some((Dragged::Item(index), _, true)), _) if on_grade => {
-                        let _ = game.session.grade_select(index);
+                        let identified = game.inventory.get(index).is_some_and(|item| item.identified);
+                        if identified && game.grade.as_ref().is_some_and(|window| window.takes_drop(self.cursor)) {
+                            let _ = game.session.grade_select(index);
+                        }
+                    }
+                    // The grade window's item let go on the inventory or the ground: the window empties.
+                    (Some((Dragged::GradeItem(_), _, true)), place) => {
+                        if (place == Some(Panel::Inventory) || !game.on_ui(self.cursor, message_size))
+                            && let Some(window) = &mut game.grade
+                        {
+                            window.clear();
+                        }
                     }
                     // Into the enchant window: it stays here until a request; the server hears the item with that.
                     (Some((Dragged::Item(index), _, true)), _) if on_enchant => {
@@ -3466,6 +3482,9 @@ impl App {
         {
             if hit == grade::Hit::Title(TitleHit::Title) {
                 game.grade.as_mut().unwrap().frame.start_drag(cursor);
+            }
+            if let Some(index) = game.grade.as_ref().and_then(|window| window.grab(cursor)) {
+                game.dragging = Some((Dragged::GradeItem(index), cursor, false));
             }
             return;
         }

@@ -1185,11 +1185,9 @@ impl App {
                 game.sync_esc();
             }
             MapEvent::GradeMaterials { index, chance, blessing, materials } => {
+                // Not upgradable: a line, and the window stays as it was.
                 if index < 0 {
-                    game.chat_line(self.messages.get(grade::CANT_UPGRADE).cloned().unwrap_or_default(), CHAT_ERROR);
-                    if let Some(window) = &mut game.grade {
-                        window.clear();
-                    }
+                    game.chat_line(self.messages.get(grade::CANT_UPGRADE).cloned().unwrap_or_default(), grade::CANT_COLOR);
                 } else if let Some(window) = &mut game.grade {
                     window.listed(index as u16, chance, blessing, materials);
                 }
@@ -1201,8 +1199,14 @@ impl App {
                 {
                     grade::apply_result(item, next, result);
                 }
+                // With the window open, the machine's effect and the result's play on the player at once.
                 if let Some(window) = &mut game.grade {
                     window.finished(result, control::now());
+                    if let Some(gpu) = gpu {
+                        for effect in grade::result_effects(result) {
+                            game.play_effect(gpu, grf, table, effect, game.account_id);
+                        }
+                    }
                 }
             }
             // A box the data doesn't know opens too, empty; its close goes out when the player closes it.

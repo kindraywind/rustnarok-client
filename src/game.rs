@@ -1351,6 +1351,11 @@ impl Game {
             BoxQuestion::BuyStyle(picks) => {
                 let _ = self.session.buy_style(picks);
             }
+            BoxQuestion::GradeStart => {
+                if let Some(grade::Action::Enchant { index, material, steps }) = self.grade.as_mut().and_then(grade::GradeEnchant::go) {
+                    let _ = self.session.grade_enchant(index, material, steps);
+                }
+            }
             BoxQuestion::Enchant => {
                 let Some(window) = &mut self.enchant else { return };
                 let result = match window.confirm() {
