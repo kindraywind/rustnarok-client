@@ -1,7 +1,8 @@
-//! The grade enchant window: an item dropped on it, the materials that can raise its grade, blessing steps, and Start.
+//! The grade enchant window: an item dropped on the machine, the materials that can raise its grade, blessings, and
+//! Start.
 //!
 //! Textures live under `data\texture\유저인터페이스\grade_enchant\`. The window is its background picture, which has
-//! its own title strip; no title text. Result effects (`.str`) are left out: when they play isn't knowable.
+//! its own title strip; no title text.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -74,7 +75,6 @@ const WHEEL_STEP: Duration = Duration::from_millis(100);
 /// No row, too few materials, too little zeny, heavy.
 const NO_ROW: usize = 3707;
 const SHORT_MATERIAL: usize = 3708;
-const NO_ZENY: usize = 2968;
 const NO_MATERIALS: usize = 3709;
 const HEAVY: usize = 3710;
 /// Can break, the refine goes down, or won't break.
@@ -90,6 +90,21 @@ pub const RESULT_LINES: [usize; 5] = [3702, 3703, 3704, 3705, 3706];
 /// A try's line comes this long after its result (the result's animation), and the window empties then.
 const RESULT_DELAY: Duration = Duration::from_secs(3);
 pub const CANT_UPGRADE: usize = 3720;
+/// Start with no blessing chosen asks first.
+pub const ASKS_WITHOUT_BLESSING: usize = 3823;
+/// Another row picked with blessings chosen: they go back to 0.
+const BLESSINGS_RESET: usize = 3831;
+/// The up button's tooltip: the blessings one step takes.
+const PER_REQUEST: usize = 3976;
+/// The item goes in when let go in this box, and a double click in it takes it out; a press in the other picks it up.
+const DROP_BOX: [f32; 2] = [53.0, 114.0];
+const GRAB_BOX: [f32; 2] = [64.0, 125.0];
+const ITEM_BOX: [f32; 2] = [46.0, 46.0];
+/// The blessing's icon, for its description.
+const BLESSING_HOVER: [f32; 2] = [24.0, 24.0];
+/// The result lines' colour, and the "can't be upgraded" line's.
+pub const RESULT_COLOR: [u8; 3] = [0x00, 0xFF, 0xFF];
+pub const CANT_COLOR: [u8; 3] = [0xFF, 0xB0, 0x62];
 pub const ANNOUNCE_OK: usize = 3718;
 pub const ANNOUNCE_FAIL: usize = 3719;
 /// ZC_UI_OPEN's kind for this window.
@@ -203,6 +218,8 @@ pub enum Hit {
     BlessingUp,
     BlessingDown,
     Start,
+    /// The box round the item's icon on the machine.
+    Item,
     Window,
 }
 
@@ -214,60 +231,16 @@ pub enum Action {
         material: u32,
         steps: u32,
     },
-    /// The client's own refusal, a message number.
-    Refuse(usize),
+    /// Ask before a try with no blessing (`ASKS_WITHOUT_BLESSING`); yes sends what `go` gives.
+    Ask,
+    /// A notice in the message box, OK only.
+    Notice(usize),
     Close,
-}
-
-/// What Start does: send the try, refuse with a message, or stay off.
-#[derive(Debug, PartialEq)]
-pub enum Start {
-    Go { material: u32, steps: u32 },
-    Refuse(usize),
-    Off,
 }
 
 /// The chance on screen: the list's plus one share per step, and never past 100.
 pub fn shown_chance(list: u32, steps: u32, per_step: u32) -> u32 {
     list.saturating_add(steps.saturating_mul(per_step)).min(100)
-}
-
-/// Start's answer. A list chance of 0 leaves it off: the server would ignore the request, blessings included.
-/// The material number is the row. With steps, blessings are required too, and when the blessing item is the
-/// material both amounts are required together.
-pub fn start_request(
-    picked: Option<usize>,
-    materials: &[GradeMaterial],
-    list_chance: u32,
-    steps: u32,
-    blessing_item: u32,
-    per_step: u32,
-    carried: impl Fn(u32) -> u32,
-    zeny: u32,
-) -> Start {
-    if list_chance == 0 {
-        return Start::Off;
-    }
-    let Some(row) = picked.filter(|&row| row < materials.len()) else {
-        return Start::Refuse(NO_ROW);
-    };
-    let material = &materials[row];
-    if zeny < material.zeny {
-        return Start::Refuse(NO_ZENY);
-    }
-    let blessings = steps.saturating_mul(per_step);
-    let mut need = material.amount;
-    if steps > 0 {
-        if blessing_item == material.item {
-            need = need.saturating_add(blessings);
-        } else if carried(blessing_item) < blessings {
-            return Start::Refuse(NO_MATERIALS);
-        }
-    }
-    if carried(material.item) < need {
-        return Start::Refuse(NO_MATERIALS);
-    }
-    Start::Go { material: row as u32, steps: if steps > 0 { steps } else { 0 } }
 }
 
 /// The notice box's lines, at most three, each a message and whether it's green (else red). Empty while a result
@@ -327,6 +300,11 @@ pub fn frames(elapsed: Duration, working: bool) -> (usize, usize) {
     (machine, wheel)
 }
 
+/// The effects a result plays on the player at once: the machine's, then success or failure.
+pub fn result_effects(result: u32) -> [u32; 2] {
+    [1607, if result == 0 { 1608 } else { 1609 }]
+}
+
 /// What the item becomes after a try. Result 3 means it is already gone. Result 0 sets the refine to 0.
 /// ponytail: result 2's downgrade isn't in the packet, and rathena's data never sends one, so the refine stays.
 pub fn apply_result(item: &mut InventoryItem, grade: u16, result: u32) -> bool {
@@ -359,8 +337,12 @@ pub struct GradeEnchant {
     chance: u32,
     blessing: GradeBlessing,
     materials: Vec<GradeMaterial>,
-    steps: u32,
+    /// The blessing items chosen: steps of the amount per step.
+    chosen: u32,
     picked: Option<usize>,
+    /// A try is out and its answer hasn't come.
+    waiting: bool,
+    clicks: window::Clicks,
     /// A try's result waiting for its line, and when the line comes.
     result: Option<(u32, Instant)>,
     /// When it opened: the machine's animation counts from then.
@@ -372,7 +354,19 @@ impl GradeEnchant {
     pub fn new(screen: [f32; 2], now: Instant) -> Self {
         let mut frame = Frame::new([((screen[0] - SIZE[0]) / 2.0 - 100.0).floor(), ((screen[1] - SIZE[1]) / 2.0).floor()], SIZE[0]);
         frame.open = true;
-        Self { frame, item: None, chance: 0, blessing: GradeBlessing::default(), materials: Vec::new(), steps: 0, picked: None, result: None, opened: now }
+        Self {
+            frame,
+            item: None,
+            chance: 0,
+            blessing: GradeBlessing::default(),
+            materials: Vec::new(),
+            chosen: 0,
+            picked: None,
+            waiting: false,
+            clicks: window::Clicks::default(),
+            result: None,
+            opened: now,
+        }
     }
 
     /// Where the inventory goes beside it: right of the window, its bottom on the window's.
@@ -380,28 +374,21 @@ impl GradeEnchant {
         [self.frame.position[0] + SIZE[0], self.frame.position[1] + SIZE[1] - inventory_height]
     }
 
-    /// The server's list for an item. The same item keeps the row, with the steps clamped to the new most.
+    /// The server's list for an item: it's in, with no row picked, no blessing and no try waiting.
     pub fn listed(&mut self, index: u16, chance: u32, blessing: GradeBlessing, materials: Vec<GradeMaterial>) {
-        let same = self.item == Some(index);
+        self.clear();
         self.item = Some(index);
         self.chance = chance;
         self.blessing = blessing;
         self.materials = materials;
-        if same {
-            if self.picked.is_some_and(|row| row >= self.materials.len()) {
-                self.picked = None;
-            }
-            self.steps = self.steps.min(self.blessing.most);
-        } else {
-            self.picked = None;
-            self.steps = 0;
-        }
     }
 
+    /// Empties the window: the three fixed notice lines again.
     pub fn clear(&mut self) {
         self.item = None;
         self.picked = None;
-        self.steps = 0;
+        self.chosen = 0;
+        self.waiting = false;
         self.chance = 0;
         self.materials.clear();
         self.blessing = GradeBlessing::default();
@@ -421,13 +408,56 @@ impl GradeEnchant {
         Some(result)
     }
 
-    pub fn chance_shown(&self) -> u32 {
-        shown_chance(self.chance, self.steps, self.blessing.chance)
+    /// Blessing steps: the items chosen over the amount per step.
+    fn steps(&self) -> u32 {
+        self.chosen.checked_div(self.blessing.per_step).unwrap_or(0)
     }
 
-    /// Start sends nothing while the list's chance is 0.
-    pub fn start_off(&self) -> bool {
-        self.chance == 0
+    pub fn chance_shown(&self) -> u32 {
+        shown_chance(self.chance, self.steps(), self.blessing.chance)
+    }
+
+    /// Start can go: no try waiting or playing, an item in, a row picked with its material carried and its zeny, and a
+    /// chance.
+    pub fn start_ready(&self, carried: impl Fn(u32) -> u32, zeny: u32) -> bool {
+        let row = self.picked.and_then(|row| self.materials.get(row));
+        !self.waiting
+            && self.result.is_none()
+            && self.item.is_some()
+            && self.chance != 0
+            && row.is_some_and(|row| carried(row.item) >= row.amount && zeny >= row.zeny)
+    }
+
+    /// The try Start sends, now waited on.
+    pub fn go(&mut self) -> Option<Action> {
+        let index = self.item?;
+        let material = self.picked? as u32;
+        self.waiting = true;
+        Some(Action::Enchant { index, material, steps: self.steps() })
+    }
+
+    /// An inventory item let go at `cursor` goes in: inside the box round the machine's icon, not while a result plays.
+    pub fn takes_drop(&self, cursor: [f32; 2]) -> bool {
+        self.result.is_none() && self.frame.local(cursor, HEIGHT).is_some_and(|local| contains(DROP_BOX, ITEM_BOX, local))
+    }
+
+    /// A press at `cursor` that picks the item up to take it out: its index.
+    pub fn grab(&self, cursor: [f32; 2]) -> Option<u16> {
+        self.item.filter(|_| self.result.is_none() && self.frame.local(cursor, HEIGHT).is_some_and(|local| contains(GRAB_BOX, ITEM_BOX, local)))
+    }
+
+    /// The item under the pointer, for its description: a material row's, the blessing's, or the one in.
+    pub fn hovered(&self, cursor: [f32; 2], carried: &[InventoryItem]) -> Option<InventoryItem> {
+        let local = self.frame.local(cursor, HEIGHT)?;
+        let plain = |id| Some(InventoryItem { id, identified: true, ..Default::default() });
+        if let Some(row) = (0..self.materials.len().min(ROWS)).find(|&row| contains(row_at(row), ROW_SIZE, local)) {
+            return plain(self.materials[row].item);
+        }
+        if self.item.is_some() && self.blessing.item != 0 && contains(BLESSING_ICON, BLESSING_HOVER, local) {
+            return plain(self.blessing.item);
+        }
+        let index = self.item.filter(|_| contains(DROP_BOX, ITEM_BOX, local))?;
+        carried.iter().find(|item| item.index == index).cloned()
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
@@ -440,33 +470,44 @@ impl GradeEnchant {
             None if contains(UP_AT, STEP_SIZE, local) => Hit::BlessingUp,
             None if contains(DOWN_AT, STEP_SIZE, local) => Hit::BlessingDown,
             None if contains(START_AT, START_SIZE, local) => Hit::Start,
+            None if contains(DROP_BOX, ITEM_BOX, local) => Hit::Item,
             None => Hit::Window,
         })
     }
 
     /// Reacts to a click. `carried` counts an item, `zeny` is the zeny carried.
     pub fn click(&mut self, hit: Hit, carried: impl Fn(u32) -> u32, zeny: u32) -> Option<Action> {
+        let per_step = self.blessing.per_step;
         match hit {
             Hit::Title(TitleHit::Close) => return Some(Action::Close),
-            Hit::Material(row) if row < self.materials.len() => self.picked = Some(row),
-            Hit::BlessingUp => self.steps = (self.steps + 1).min(self.blessing.most),
-            Hit::BlessingDown => self.steps = self.steps.saturating_sub(1),
-            Hit::Start => {
-                // ponytail: no try while the last one's result plays out.
-                let index = self.item.filter(|_| self.result.is_none())?;
-                return match start_request(self.picked, &self.materials, self.chance, self.steps, self.blessing.item, self.blessing.per_step, carried, zeny) {
-                    Start::Go { material, steps } => Some(Action::Enchant { index, material, steps }),
-                    Start::Refuse(id) => Some(Action::Refuse(id)),
-                    Start::Off => None,
-                };
+            // Another row resets the blessings, saying so.
+            Hit::Material(row) if row < self.materials.len() && self.picked != Some(row) => {
+                self.picked = Some(row);
+                if self.chosen > 0 {
+                    self.chosen = 0;
+                    return Some(Action::Notice(BLESSINGS_RESET));
+                }
             }
-            Hit::Title(_) | Hit::Material(_) | Hit::Window => {}
+            // Up while under the most and enough are carried; down to 0.
+            Hit::BlessingUp
+                if self.blessing.item != 0
+                    && per_step > 0
+                    && self.chosen < self.blessing.most.saturating_mul(per_step)
+                    && carried(self.blessing.item) >= self.chosen + per_step =>
+            {
+                self.chosen += per_step;
+            }
+            Hit::BlessingDown if self.blessing.item != 0 => self.chosen = self.chosen.saturating_sub(per_step),
+            Hit::Start if self.start_ready(carried, zeny) => return if self.chosen == 0 { Some(Action::Ask) } else { self.go() },
+            // A double click on the item takes it out; nothing is sent.
+            Hit::Item if self.item.is_some() && self.result.is_none() && self.clicks.double(0) => self.clear(),
+            Hit::Title(_) | Hit::Material(_) | Hit::BlessingUp | Hit::BlessingDown | Hit::Start | Hit::Item | Hit::Window => {}
         }
         None
     }
 
-    /// The buttons on screen, named for scripted clicks.
-    pub fn button_boxes(&self) -> Vec<(&'static str, [f32; 4])> {
+    /// The buttons on screen, named for scripted clicks: Start is `start_off` while it can't go.
+    pub fn button_boxes(&self, carried: &[InventoryItem], zeny: u32) -> Vec<(&'static str, [f32; 4])> {
         if !self.frame.open {
             return Vec::new();
         }
@@ -480,7 +521,8 @@ impl GradeEnchant {
         }
         boxes.push(("blessing_down", place(DOWN_AT, STEP_SIZE)));
         boxes.push(("blessing_up", place(UP_AT, STEP_SIZE)));
-        boxes.push(("start", place(START_AT, START_SIZE)));
+        boxes.push((if self.start_ready(count_in(carried), zeny) { "start" } else { "start_off" }, place(START_AT, START_SIZE)));
+        boxes.push(("item", place(DROP_BOX, ITEM_BOX)));
         boxes
     }
 
@@ -498,6 +540,7 @@ impl GradeEnchant {
     pub fn draw<'a>(
         &self,
         layer: &mut Layer<'a>,
+        tooltip: &mut Layer<'a>,
         chrome: &'a Chrome,
         assets: &'a Assets,
         icons: &'a HashMap<String, Option<Texture>>,
@@ -514,7 +557,7 @@ impl GradeEnchant {
         let over = |place: [f32; 2], size: [f32; 2]| contains(place, size, local);
         let held = |place: [f32; 2], size: [f32; 2]| if over(place, size) { 1 + usize::from(pointer.1) } else { 0 };
         let icon = |id: u32| items.get(&id).and_then(|info| icons.get(&inventory::icon_path(info, true))).and_then(Option::as_ref);
-        let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
+        let count = count_in(carried);
         let amount_of =
             |id: u32, amount: u32| rustnarok_client::messages::fill(message(AMOUNT_OF), &[&inventory::item_name(items, id, true, 0), &amount.to_string()]);
         layer.sprites.push((&assets.background, at([0.0, 0.0]), SIZE));
@@ -562,11 +605,15 @@ impl GradeEnchant {
             if let Some(texture) = icon(self.blessing.item) {
                 layer.sprites.push((texture, at(BLESSING_ICON), [24.0, 24.0]));
             }
-            outlined(layer, &amount_of(self.blessing.item, self.steps * self.blessing.per_step), at(BLESSING_TEXT));
+            outlined(layer, &amount_of(self.blessing.item, self.chosen), at(BLESSING_TEXT));
         }
         layer.sprites.push((&assets.up[held(UP_AT, STEP_SIZE)], at(UP_AT), STEP_SIZE));
         layer.sprites.push((&assets.down[held(DOWN_AT, STEP_SIZE)], at(DOWN_AT), STEP_SIZE));
-        let start = if self.start_off() { 3 } else { held(START_AT, START_SIZE) };
+        let start = if self.start_ready(&count, zeny) { held(START_AT, START_SIZE) } else { 3 };
+        if item.is_some() && over(UP_AT, STEP_SIZE) {
+            let text = rustnarok_client::messages::fill(message(PER_REQUEST), &[&self.blessing.per_step]);
+            window::tooltip(tooltip, chrome, font, &text, at(offset(UP_AT, [0.0, -20.0])), WHITE);
+        }
         layer.sprites.push((&assets.start[start], at(START_AT), START_SIZE));
 
         let carried_of_row = picked.map_or(0, |row| count(row.item));
@@ -578,6 +625,11 @@ impl GradeEnchant {
             bold(layer, &text, at(offset(place, [NOTICE_TEXT, 0.0])), if green { GREEN } else { RED });
         }
     }
+}
+
+/// How many of an item are carried, over every stack.
+fn count_in(carried: &[InventoryItem]) -> impl Fn(u32) -> u32 + '_ {
+    |id| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum()
 }
 
 fn row_at(row: usize) -> [f32; 2] {
@@ -680,25 +732,6 @@ mod tests {
         assert_eq!(shown_chance(0, 10, 1), 10);
     }
     #[test]
-    fn start_refuses_and_stays_off() {
-        let rows = [row(1_000_325, 1, 175_000), row(1_000_325, 5, 875_000)];
-        let have = [(1_000_325, 1), (1_000_337, 2)];
-        let ask = |picked, steps, blessing_item, zeny| start_request(picked, &rows, 80, steps, blessing_item, 1, carried(&have), zeny);
-        assert_eq!(ask(None, 0, 1_000_337, 175_000), Start::Refuse(NO_ROW));
-        assert_eq!(ask(Some(0), 0, 1_000_337, 174_999), Start::Refuse(NO_ZENY));
-        assert_eq!(ask(Some(1), 0, 1_000_337, 875_000), Start::Refuse(NO_MATERIALS));
-        assert_eq!(ask(Some(0), 3, 1_000_337, 175_000), Start::Refuse(NO_MATERIALS));
-        // The blessing item is the material: both amounts together.
-        assert_eq!(start_request(Some(0), &rows, 80, 2, 1_000_325, 1, carried(&[(1_000_325, 2)]), 175_000), Start::Refuse(NO_MATERIALS));
-        assert_eq!(start_request(Some(0), &rows, 80, 2, 1_000_325, 1, carried(&[(1_000_325, 3)]), 175_000), Start::Go { material: 0, steps: 2 });
-        assert_eq!(ask(Some(0), 0, 1_000_337, 175_000), Start::Go { material: 0, steps: 0 });
-        assert_eq!(ask(Some(0), 2, 1_000_337, 175_000), Start::Go { material: 0, steps: 2 });
-        // A chance of 0 keeps Start off, even with steps that would show a number.
-        assert_eq!(start_request(Some(0), &rows, 0, 10, 1_000_337, 1, carried(&have), 175_000), Start::Off);
-        assert_eq!(start_request(None, &rows, 0, 0, 0, 0, carried(&have), 0), Start::Off);
-    }
-
-    #[test]
     fn the_item_after_each_result() {
         let mut raised = InventoryItem { refine: 20, grade: 0, ..InventoryItem::default() };
         assert!(apply_result(&mut raised, 1, 0));
@@ -719,48 +752,123 @@ mod tests {
     }
 
     #[test]
-    fn the_window_steps_and_answers() {
+    fn start_goes_only_when_it_can_and_asks_without_blessings() {
         let mut window = opened();
         let rows = vec![row(1_000_325, 1, 175_000), row(1_000_325, 5, 875_000)];
         window.listed(4, 80, blessing(1_000_337, 10, 1), rows);
         let have = carried(&[(1_000_325, 1), (1_000_337, 2)]);
-        assert_eq!(window.click(Hit::Start, &have, 175_000), Some(Action::Refuse(NO_ROW)));
-        window.click(Hit::Material(0), &have, 175_000);
-        window.click(Hit::BlessingUp, &have, 175_000);
-        window.click(Hit::BlessingUp, &have, 175_000);
-        assert_eq!(window.steps, 2);
-        assert_eq!(window.chance_shown(), 82);
-        assert_eq!(window.click(Hit::Start, &have, 175_000), Some(Action::Enchant { index: 4, material: 0, steps: 2 }));
-        window.click(Hit::BlessingDown, &have, 175_000);
-        assert_eq!(window.click(Hit::Start, &have, 175_000), Some(Action::Enchant { index: 4, material: 0, steps: 1 }));
-        // Ten is the most.
-        window.steps = 10;
-        window.click(Hit::BlessingUp, &have, 175_000);
-        assert_eq!(window.steps, 10);
-        assert_eq!(window.chance_shown(), 90);
-        // A chance of 0: the button stays off.
-        window.chance = 0;
-        assert!(window.start_off());
+        // No row, too few materials, too little zeny: Start is off and a press does nothing.
+        assert!(!window.start_ready(&have, 175_000));
         assert_eq!(window.click(Hit::Start, &have, 175_000), None);
+        window.click(Hit::Material(1), &have, 875_000);
+        assert!(!window.start_ready(&have, 875_000));
+        window.click(Hit::Material(0), &have, 175_000);
+        assert!(!window.start_ready(&have, 174_999));
+        assert!(window.start_ready(&have, 175_000));
+        // No blessing: it asks; yes sends and waits, which turns Start off.
+        assert_eq!(window.click(Hit::Start, &have, 175_000), Some(Action::Ask));
+        assert_eq!(window.go(), Some(Action::Enchant { index: 4, material: 0, steps: 0 }));
+        assert!(!window.start_ready(&have, 175_000));
+        // A new list: no row, no blessing, nothing waiting.
+        window.listed(4, 80, blessing(1_000_337, 10, 1), vec![row(1_000_325, 1, 175_000)]);
+        assert_eq!((window.picked, window.chosen, window.waiting), (None, 0, false));
+        window.click(Hit::Material(0), &have, 175_000);
+        // With blessings it sends at once, steps = chosen / per step.
+        window.click(Hit::BlessingUp, &have, 175_000);
+        assert_eq!(window.click(Hit::Start, &have, 175_000), Some(Action::Enchant { index: 4, material: 0, steps: 1 }));
+        // A chance of 0: off.
+        window.listed(4, 0, blessing(1_000_337, 10, 1), vec![row(1_000_325, 1, 175_000)]);
+        window.click(Hit::Material(0), &have, 175_000);
+        assert!(!window.start_ready(&have, 175_000));
+    }
 
-        // A result: its line and the window emptied 3 s on, and no try meanwhile.
+    #[test]
+    fn blessings_stop_at_what_is_carried_and_reset_with_another_row() {
+        let mut window = opened();
+        window.listed(4, 80, GradeBlessing { item: 1_000_337, per_step: 2, most: 3, chance: 1 }, vec![row(1_000_325, 1, 1); 2]);
+        window.click(Hit::Material(0), carried(&[]), 1);
+        let have = carried(&[(1_000_337, 5)]);
+        for _ in 0..4 {
+            window.click(Hit::BlessingUp, &have, 1);
+        }
+        // Two steps of 2: a third would need 6 carried.
+        assert_eq!((window.chosen, window.steps(), window.chance_shown()), (4, 2, 82));
+        let plenty = carried(&[(1_000_337, 99)]);
+        for _ in 0..4 {
+            window.click(Hit::BlessingUp, &plenty, 1);
+        }
+        // The most is 3 steps.
+        assert_eq!(window.chosen, 6);
+        for _ in 0..4 {
+            window.click(Hit::BlessingDown, &plenty, 1);
+        }
+        assert_eq!(window.chosen, 0);
+        window.click(Hit::BlessingUp, &plenty, 1);
+        // The same row again changes nothing; another resets the blessings and says so.
+        assert_eq!(window.click(Hit::Material(0), &plenty, 1), None);
+        assert_eq!(window.chosen, 2);
+        assert_eq!(window.click(Hit::Material(1), &plenty, 1), Some(Action::Notice(BLESSINGS_RESET)));
+        assert_eq!((window.chosen, window.picked), (0, Some(1)));
+        assert_eq!(window.click(Hit::Material(0), &plenty, 1), None);
+        // No blessing item in the list: neither button does anything.
+        window.listed(4, 80, GradeBlessing::default(), vec![row(1_000_325, 1, 1)]);
+        window.click(Hit::BlessingUp, &plenty, 1);
+        assert_eq!(window.chosen, 0);
+    }
+
+    #[test]
+    fn the_item_goes_in_on_its_box_and_comes_out_by_double_click() {
+        let mut window = opened();
+        let at = |window: &GradeEnchant, local: [f32; 2]| offset(window.frame.position, local);
+        assert!(window.takes_drop(at(&window, [53.0, 114.0])));
+        assert!(window.takes_drop(at(&window, [98.0, 159.0])));
+        assert!(!window.takes_drop(at(&window, [52.0, 130.0])));
+        assert!(!window.takes_drop(at(&window, [80.0, 160.0])));
+        assert_eq!(window.grab(at(&window, [70.0, 130.0])), None);
+        window.listed(4, 80, blessing(1_000_337, 10, 1), vec![row(1_000_325, 1, 175_000)]);
+        assert_eq!(window.grab(at(&window, [64.0, 125.0])), Some(4));
+        assert_eq!(window.grab(at(&window, [109.0, 170.0])), Some(4));
+        assert_eq!(window.grab(at(&window, [63.0, 130.0])), None);
+        assert_eq!(window.grab(at(&window, [80.0, 171.0])), None);
+        let item = InventoryItem { index: 4, id: 15282, ..Default::default() };
+        assert_eq!(window.hovered(at(&window, [60.0, 120.0]), std::slice::from_ref(&item)).map(|item| item.id), Some(15282));
+        assert_eq!(window.hovered(at(&window, [200.0, 110.0]), &[]).map(|item| item.id), Some(1_000_325));
+        assert_eq!(window.hovered(at(&window, [196.0, 229.0]), &[]).map(|item| item.id), Some(1_000_337));
+        // One click does nothing; two empty it, and nothing is sent.
+        let hit = window.hit(at(&window, [70.0, 130.0])).unwrap();
+        assert_eq!(hit, Hit::Item);
+        assert_eq!(window.click(hit, carried(&[]), 0), None);
+        assert_eq!(window.item, Some(4));
+        assert_eq!(window.click(hit, carried(&[]), 0), None);
+        assert_eq!((window.item, window.materials.len()), (None, 0));
+        // While a result plays nothing goes in or out.
+        window.listed(4, 80, blessing(1_000_337, 10, 1), vec![row(1_000_325, 1, 175_000)]);
+        window.finished(0, Instant::now());
+        assert!(!window.takes_drop(at(&window, [70.0, 130.0])));
+        assert_eq!(window.grab(at(&window, [70.0, 130.0])), None);
+    }
+
+    #[test]
+    fn a_result_plays_its_effects_then_empties_the_window() {
+        assert_eq!([0, 1, 2, 3, 4].map(result_effects), [[1607, 1608], [1607, 1609], [1607, 1609], [1607, 1609], [1607, 1609]]);
+        let mut window = opened();
+        let have = carried(&[(1_000_325, 1)]);
         window.listed(4, 100, blessing(1_000_337, 10, 1), vec![row(1_000_325, 1, 175_000)]);
         window.click(Hit::Material(0), &have, 175_000);
         let now = Instant::now();
         window.finished(2, now);
-        assert_eq!(window.click(Hit::Start, &have, 175_000), None);
+        assert!(!window.start_ready(&have, 175_000));
         assert_eq!(window.result_due(now + Duration::from_millis(2999)), None);
         assert_eq!(window.item, Some(4));
         assert_eq!(window.result_due(now + RESULT_DELAY), Some(2));
         assert_eq!(window.item, None);
         assert_eq!(window.result_due(now + RESULT_DELAY), None);
-
         let names: Vec<_> = {
             let mut listed = opened();
             listed.listed(4, 100, blessing(1_000_337, 10, 1), vec![row(1_000_325, 1, 175_000), row(1_000_325, 5, 875_000)]);
-            listed.button_boxes().into_iter().map(|(name, _)| name).collect()
+            listed.button_boxes(&[], 0).into_iter().map(|(name, _)| name).collect()
         };
-        assert_eq!(names, ["close", "close_text", "material_0", "material_1", "blessing_down", "blessing_up", "start"]);
+        assert_eq!(names, ["close", "close_text", "material_0", "material_1", "blessing_down", "blessing_up", "start_off", "item"]);
         assert_eq!(grade_letter(1), "D");
         assert_eq!(grade_letter(4), "A");
     }

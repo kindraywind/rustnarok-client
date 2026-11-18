@@ -51,8 +51,7 @@ impl App {
         if let Some(result) = game.grade.as_mut().and_then(|window| window.result_due(control::now()))
             && let Some(&id) = grade::RESULT_LINES.get(result as usize)
         {
-            let color = if result == 0 || result == 4 { CHAT_ITEM } else { CHAT_ERROR };
-            game.chat_line(messages.get(id).cloned().unwrap_or_default(), color);
+            game.chat_line(messages.get(id).cloned().unwrap_or_default(), grade::RESULT_COLOR);
         }
         // The map's ambient sounds, each on its cycle.
         if let Some(audio) = audio.as_mut() {
