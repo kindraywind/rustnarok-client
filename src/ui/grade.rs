@@ -1,7 +1,7 @@
 //! The grade enchant window: an item dropped on it, the materials that can raise its grade, blessing steps, and Start.
 //!
-//! Textures live under `data\texture\유저인터페이스\grade_enchant\`. The title bar has no text. Result effects
-//! (`.str`) are left out: when they play isn't knowable.
+//! Textures live under `data\texture\유저인터페이스\grade_enchant\`. The window is its background picture, which has
+//! its own title strip; no title text. Result effects (`.str`) are left out: when they play isn't knowable.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -13,38 +13,78 @@ use rustnarok_client::text::Font;
 
 use crate::inventory;
 use crate::render::{Gpu, Texture};
-use crate::shop::group;
-use crate::window::{self, BUTTON_SIZE, Chrome, Frame, TITLE_HEIGHT, TitleHit};
+use crate::window::{self, BUTTON_SIZE, Chrome, Frame, TitleHit};
 use crate::{Layer, UI, contains, offset};
 
-// ponytail: where each piece sits, the text colors, and which grade image is which are estimates.
-const POSITION: [f32; 2] = [300.0, 100.0];
-const BACKGROUND: [f32; 2] = [400.0, 330.0];
-pub const HEIGHT: f32 = TITLE_HEIGHT + BACKGROUND[1];
-const WIDTH: f32 = BACKGROUND[0];
-const ITEM_FRAME: [f32; 2] = [104.0, 208.0];
-const ITEM_AT: [f32; 2] = [12.0, TITLE_HEIGHT + 28.0];
-const ROW_SIZE: [f32; 2] = [235.0, 37.0];
-const ROW_AT: [f32; 2] = [150.0, TITLE_HEIGHT + 20.0];
-const ROW_STEP: f32 = 44.0;
-const STEP_SIZE: [f32; 2] = [32.0, 15.0];
-const DOWN_AT: [f32; 2] = [150.0, TITLE_HEIGHT + 250.0];
-const UP_AT: [f32; 2] = [190.0, TITLE_HEIGHT + 250.0];
-const START_SIZE: [f32; 2] = [82.0, 28.0];
-const START_AT: [f32; 2] = [300.0, TITLE_HEIGHT + 286.0];
-const CAUTION: [f32; 2] = [12.0, 10.0];
+// Places are the game's, on the 400×330 picture.
+const SIZE: [f32; 2] = [400.0, 330.0];
+pub const HEIGHT: f32 = SIZE[1];
+/// The picture's title strip: a press right of x 141 and above y 38 drags the window.
+const DRAG_STRIP: [f32; 2] = [141.0, 38.0];
+const CLOSE_AT: [f32; 2] = [384.0, 20.0];
+/// The "Close" text button.
+const CLOSE_TEXT_AT: [f32; 2] = [345.0, 299.0];
+const CLOSE_TEXT_SIZE: [f32; 2] = [42.0, 20.0];
+const CLOSE_LABEL: usize = 1299;
+/// The machine, with the item's icon (and grade mark) on it and the chance above.
+const MACHINE_AT: [f32; 2] = [24.0, 54.0];
+const MACHINE_SIZE: [f32; 2] = [104.0, 208.0];
+const ITEM_ICON: [f32; 2] = [64.0, 125.0];
+const GRADE_ICON_AT: [f32; 2] = [64.0, 137.0];
 const GRADE_ICON: [f32; 2] = [12.0, 12.0];
+/// The chance, centred in the 74 px from x 39.
+const CHANCE_AT: [f32; 2] = [39.0, 88.0];
+const CHANCE_WIDTH: f32 = 74.0;
+const CHANCE_SIZE: f32 = 28.0;
+const WHEEL_AT: [f32; 2] = [56.0, 268.0];
 const WHEEL: [f32; 2] = [40.0, 23.0];
-/// No row, too little zeny, too few materials or blessings.
+/// The three material rows on their beds, 40 apart; each with an icon and "name amount ea".
+const ROWS: usize = 3;
+const ROW_AT: [f32; 2] = [158.0, 102.0];
+const ROW_STEP: f32 = 40.0;
+const ROW_SIZE: [f32; 2] = [235.0, 37.0];
+const ROW_ICON: [f32; 2] = [12.0, 7.0];
+const ROW_TEXT: [f32; 2] = [45.0, 16.0];
+/// "%s %d ea".
+const AMOUNT_OF: usize = 3553;
+const UP_AT: [f32; 2] = [158.0, 225.0];
+const DOWN_AT: [f32; 2] = [158.0, 240.0];
+const STEP_SIZE: [f32; 2] = [32.0, 15.0];
+/// The blessing's box, its icon and "name amount ea" beside it.
+const BLESSING_AT: [f32; 2] = [192.0, 225.0];
+const BLESSING_SIZE: [f32; 2] = [30.0, 30.0];
+const BLESSING_ICON: [f32; 2] = [195.0, 228.0];
+const BLESSING_TEXT: [f32; 2] = [228.0, 237.0];
+const START_AT: [f32; 2] = [35.0, 291.0];
+const START_SIZE: [f32; 2] = [82.0, 28.0];
+/// The zeny in the TAX box, ending at x 307.
+const ZENY_AT: [f32; 2] = [307.0, 303.0];
+const ZENY_SIZE: f32 = 16.0;
+/// Up to three notice lines, a caution mark before each.
+const NOTICE_AT: [f32; 2] = [152.0, 46.0];
+const NOTICE_TEXT: f32 = 14.0;
+const NOTICE_STEP: f32 = 16.0;
+const NOTICE_WIDTH: f32 = 228.0;
+const CAUTION: [f32; 2] = [12.0, 10.0];
+/// The machine's frames step every 200 ms (all five, four while a result plays); the wheel's every 100 ms while a
+/// result plays, else its first.
+const MACHINE_STEP: Duration = Duration::from_millis(200);
+const WHEEL_STEP: Duration = Duration::from_millis(100);
+
+/// No row, too few materials, too little zeny, heavy.
 const NO_ROW: usize = 3707;
+const SHORT_MATERIAL: usize = 3708;
 const NO_ZENY: usize = 2968;
 const NO_MATERIALS: usize = 3709;
-/// Can break, the refine goes down, or neither.
+const HEAVY: usize = 3710;
+/// Can break, the refine goes down, or won't break.
 const CAN_BREAK: usize = 3712;
 const LOWERS_REFINE: usize = 3713;
 const WONT_BREAK: usize = 3822;
-/// ponytail: whether a line says the refine is too low, and which, isn't knowable. 3821 is a guess.
+/// The list's chance is 0.
 const REFINE_TOO_LOW: usize = 3821;
+/// The empty window's three lines.
+const EMPTY_NOTICES: [(usize, bool); 3] = [(3870, false), (3871, true), (3872, true)];
 /// Raised, failed, refine down, destroyed, protected.
 pub const RESULT_LINES: [usize; 5] = [3702, 3703, 3704, 3705, 3706];
 /// A try's line comes this long after its result (the result's animation), and the window empties then.
@@ -55,11 +95,13 @@ pub const ANNOUNCE_FAIL: usize = 3719;
 /// ZC_UI_OPEN's kind for this window.
 pub const UI_KIND: u8 = 8;
 const TEXT: [u8; 3] = [0, 0, 0];
-const WARN: [u8; 3] = [0xC0, 0x40, 0x20];
+const WHITE: [u8; 3] = [255, 255, 255];
+const RED: [u8; 3] = [0xDC, 0x0A, 0x0A];
+const GREEN: [u8; 3] = [0x00, 0xEB, 0x5A];
 
 pub struct Assets {
     background: Texture,
-    /// One frame per grade, none through A.
+    /// The machine's animation, five frames.
     frames: [Texture; 5],
     /// A material row: plain, hovered, picked.
     material: [Texture; 3],
@@ -67,31 +109,91 @@ pub struct Assets {
     start: [Texture; 4],
     up: [Texture; 3],
     down: [Texture; 3],
-    /// Grade marks D through A, and the three wheels.
+    /// Grade marks D through A.
     icons: [Texture; 4],
+    /// The wheel's spin, three frames.
     wheels: [Texture; 3],
+    blessing: Texture,
     caution: Texture,
-    close: Texture,
+    /// "0" to "9" and "%": the chance's, white and its black outline, and the zeny's, black.
+    chance_digits: [Texture; 11],
+    chance_outline: [Texture; 11],
+    zeny_digits: [Texture; 11],
 }
 
+const DIGITS: &str = "0123456789%";
+/// Where a bold text's black outline goes round it, a pixel out.
+const OUTLINE: [[f32; 2]; 6] = [[-1.0, 0.0], [2.0, 0.0], [0.0, -1.0], [0.0, 1.0], [1.0, -1.0], [1.0, 1.0]];
+
 impl Assets {
-    pub fn load(gpu: &Gpu, grf: &Grf) -> Self {
+    pub fn load(gpu: &Gpu, grf: &Grf, font: &Font) -> Self {
         let image = |name: &str| gpu.load_texture(grf, &format!("{UI}grade_enchant\\{name}.bmp"), false);
         let row = |name: &str| ["", "_over", "_pick"].map(|suffix| image(&format!("{name}{suffix}")));
+        let digit = |index: usize, color: [u8; 3], size: f32| {
+            let character = DIGITS.chars().nth(index).unwrap_or('0');
+            gpu.texture(&font.render_sized(&character.to_string(), color, size), false)
+        };
         Self {
             background: image("bg_grade_enchant"),
-            frames: [1, 2, 3, 4, 5].map(|grade| image(&format!("bg_gradeitem{grade}"))),
+            frames: [1, 2, 3, 4, 5].map(|frame| image(&format!("bg_gradeitem{frame}"))),
             material: row("btn_material"),
             start: ["", "_over", "_press", "_disable"].map(|suffix| image(&format!("btn_start{suffix}"))),
             up: row("btn_chance_up"),
             down: row("btn_chance_down"),
             icons: [1, 2, 3, 4].map(|grade| image(&format!("grade_icon{grade}"))),
-            wheels: [1, 2, 3].map(|grade| image(&format!("gradewheel{grade}"))),
+            wheels: [1, 2, 3].map(|frame| image(&format!("gradewheel{frame}"))),
+            blessing: image("btn_unbroken"),
             caution: image("caution"),
-            close: image("btn_close_a"),
-            // btn_unbroken is the protection mark. This version doesn't use it.
+            chance_digits: std::array::from_fn(|index| digit(index, WHITE, CHANCE_SIZE)),
+            chance_outline: std::array::from_fn(|index| digit(index, TEXT, CHANCE_SIZE)),
+            zeny_digits: std::array::from_fn(|index| digit(index, TEXT, ZENY_SIZE)),
         }
     }
+}
+
+/// A number from pre-drawn digits, bold (each drawn twice, a pixel apart); `outline` under it when given.
+fn draw_digits<'a>(layer: &mut Layer<'a>, digits: &'a [Texture; 11], outline: Option<&'a [Texture; 11]>, text: &str, at: [f32; 2]) {
+    let glyphs: Vec<(usize, f32)> = text
+        .chars()
+        .filter_map(|character| DIGITS.find(character))
+        .scan(at[0], |x, glyph| {
+            let left = *x;
+            *x += digits[glyph].size[0];
+            Some((glyph, left))
+        })
+        .collect();
+    // The whole outline first, so no glyph's outline covers the one before it.
+    if let Some(outline) = outline {
+        for &(glyph, x) in &glyphs {
+            for step in OUTLINE {
+                layer.sprites.push((&outline[glyph], [x + step[0], at[1] + step[1]], digits[glyph].size));
+            }
+        }
+    }
+    for &(glyph, x) in &glyphs {
+        for bold in [0.0, 1.0] {
+            layer.sprites.push((&digits[glyph], [x + bold, at[1]], digits[glyph].size));
+        }
+    }
+}
+
+/// How wide `draw_digits` draws a number, its bold pixel included.
+fn digits_width(digits: &[Texture; 11], text: &str) -> f32 {
+    text.chars().filter_map(|character| DIGITS.find(character)).map(|glyph| digits[glyph].size[0]).sum::<f32>() + 1.0
+}
+
+/// Text drawn bold: twice, a pixel apart.
+fn bold(layer: &mut Layer, text: &str, at: [f32; 2], color: [u8; 3]) {
+    layer.texts.push((text.to_owned(), at, color));
+    layer.texts.push((text.to_owned(), offset(at, [1.0, 0.0]), color));
+}
+
+/// Text drawn bold in white over a black outline a pixel round it.
+fn outlined(layer: &mut Layer, text: &str, at: [f32; 2]) {
+    for step in OUTLINE {
+        layer.texts.push((text.to_owned(), offset(at, step), TEXT));
+    }
+    bold(layer, text, at, WHITE);
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -168,6 +270,63 @@ pub fn start_request(
     Start::Go { material: row as u32, steps: if steps > 0 { steps } else { 0 } }
 }
 
+/// The notice box's lines, at most three, each a message and whether it's green (else red). Empty while a result
+/// plays; the three fixed lines with no item in; with one, why it can't go and what may happen, in the game's order.
+pub fn notices(
+    item_in: bool,
+    working: bool,
+    list_chance: u32,
+    row: Option<&GradeMaterial>,
+    carried: u32,
+    zeny: u32,
+    heavy: bool,
+    shown: u32,
+) -> Vec<(usize, bool)> {
+    if working {
+        return Vec::new();
+    }
+    if !item_in {
+        return EMPTY_NOTICES.to_vec();
+    }
+    if list_chance == 0 {
+        return vec![(REFINE_TOO_LOW, false)];
+    }
+    let mut lines = Vec::new();
+    match row {
+        Some(row) if !row.can_break => lines.push((WONT_BREAK, true)),
+        None => lines.push((NO_ROW, false)),
+        Some(_) => {}
+    }
+    if let Some(row) = row {
+        if carried < row.amount {
+            lines.push((SHORT_MATERIAL, false));
+        }
+        if zeny < row.zeny {
+            lines.push((NO_MATERIALS, false));
+        }
+    }
+    if heavy {
+        lines.push((HEAVY, false));
+    }
+    if let Some(row) = row {
+        if row.can_break {
+            lines.push(if shown < 100 { (CAN_BREAK, false) } else { (WONT_BREAK, true) });
+        }
+        if row.lowers_refine {
+            lines.push((LOWERS_REFINE, false));
+        }
+    }
+    lines.truncate(3);
+    lines
+}
+
+/// The machine's frame and the wheel's, `elapsed` into the window's state: 0-based.
+pub fn frames(elapsed: Duration, working: bool) -> (usize, usize) {
+    let machine = (elapsed.as_millis() / MACHINE_STEP.as_millis()) as usize % if working { 4 } else { 5 };
+    let wheel = if working { (elapsed.as_millis() / WHEEL_STEP.as_millis()) as usize % 3 } else { 0 };
+    (machine, wheel)
+}
+
 /// What the item becomes after a try. Result 3 means it is already gone. Result 0 sets the refine to 0.
 /// ponytail: result 2's downgrade isn't in the packet, and rathena's data never sends one, so the refine stays.
 pub fn apply_result(item: &mut InventoryItem, grade: u16, result: u32) -> bool {
@@ -204,13 +363,21 @@ pub struct GradeEnchant {
     picked: Option<usize>,
     /// A try's result waiting for its line, and when the line comes.
     result: Option<(u32, Instant)>,
+    /// When it opened: the machine's animation counts from then.
+    opened: Instant,
 }
 
 impl GradeEnchant {
-    pub fn new() -> Self {
-        let mut frame = Frame::new(POSITION, WIDTH);
+    /// The window on a `screen`-sized screen: 100 px left of centre.
+    pub fn new(screen: [f32; 2], now: Instant) -> Self {
+        let mut frame = Frame::new([((screen[0] - SIZE[0]) / 2.0 - 100.0).floor(), ((screen[1] - SIZE[1]) / 2.0).floor()], SIZE[0]);
         frame.open = true;
-        Self { frame, item: None, chance: 0, blessing: GradeBlessing::default(), materials: Vec::new(), steps: 0, picked: None, result: None }
+        Self { frame, item: None, chance: 0, blessing: GradeBlessing::default(), materials: Vec::new(), steps: 0, picked: None, result: None, opened: now }
+    }
+
+    /// Where the inventory goes beside it: right of the window, its bottom on the window's.
+    pub fn inventory_place(&self, inventory_height: f32) -> [f32; 2] {
+        [self.frame.position[0] + SIZE[0], self.frame.position[1] + SIZE[1] - inventory_height]
     }
 
     /// The server's list for an item. The same item keeps the row, with the steps clamped to the new most.
@@ -265,11 +432,10 @@ impl GradeEnchant {
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = self.frame.local(cursor, HEIGHT)?;
-        if let Some(hit) = self.frame.title_hit(local) {
-            return Some(Hit::Title(hit));
-        }
-        let row = (0..self.materials.len()).find(|&row| contains(offset(ROW_AT, [0.0, row as f32 * ROW_STEP]), ROW_SIZE, local));
+        let row = (0..self.materials.len().min(ROWS)).find(|&row| contains(row_at(row), ROW_SIZE, local));
         Some(match row {
+            _ if contains(CLOSE_AT, BUTTON_SIZE, local) || contains(CLOSE_TEXT_AT, CLOSE_TEXT_SIZE, local) => Hit::Title(TitleHit::Close),
+            _ if local[0] > DRAG_STRIP[0] && local[1] < DRAG_STRIP[1] => Hit::Title(TitleHit::Title),
             Some(row) => Hit::Material(row),
             None if contains(UP_AT, STEP_SIZE, local) => Hit::BlessingUp,
             None if contains(DOWN_AT, STEP_SIZE, local) => Hit::BlessingDown,
@@ -282,7 +448,6 @@ impl GradeEnchant {
     pub fn click(&mut self, hit: Hit, carried: impl Fn(u32) -> u32, zeny: u32) -> Option<Action> {
         match hit {
             Hit::Title(TitleHit::Close) => return Some(Action::Close),
-            Hit::Title(title) => self.frame.click_title(title),
             Hit::Material(row) if row < self.materials.len() => self.picked = Some(row),
             Hit::BlessingUp => self.steps = (self.steps + 1).min(self.blessing.most),
             Hit::BlessingDown => self.steps = self.steps.saturating_sub(1),
@@ -295,7 +460,7 @@ impl GradeEnchant {
                     Start::Off => None,
                 };
             }
-            Hit::Material(_) | Hit::Window => {}
+            Hit::Title(_) | Hit::Material(_) | Hit::Window => {}
         }
         None
     }
@@ -309,13 +474,9 @@ impl GradeEnchant {
             let [x, y] = self.frame.at(local);
             [x, y, size[0], size[1]]
         };
-        let mut boxes = vec![("close", place(self.frame.close_button(), BUTTON_SIZE))];
-        if self.frame.minimized {
-            return boxes;
-        }
-        for row in 0..self.materials.len().min(2) {
-            let name = if row == 0 { "material_0" } else { "material_1" };
-            boxes.push((name, place(offset(ROW_AT, [0.0, row as f32 * ROW_STEP]), ROW_SIZE)));
+        let mut boxes = vec![("close", place(CLOSE_AT, BUTTON_SIZE)), ("close_text", place(CLOSE_TEXT_AT, CLOSE_TEXT_SIZE))];
+        for (row, name) in ["material_0", "material_1", "material_2"].into_iter().enumerate().take(self.materials.len()) {
+            boxes.push((name, place(row_at(row), ROW_SIZE)));
         }
         boxes.push(("blessing_down", place(DOWN_AT, STEP_SIZE)));
         boxes.push(("blessing_up", place(UP_AT, STEP_SIZE)));
@@ -332,6 +493,7 @@ impl GradeEnchant {
             .collect()
     }
 
+    /// `heavy`: the weight is past 70 % of the limit.
     #[allow(clippy::too_many_arguments)]
     pub fn draw<'a>(
         &self,
@@ -344,99 +506,82 @@ impl GradeEnchant {
         messages: &[String],
         font: &Font,
         pointer: ([f32; 2], bool),
+        (zeny, heavy, now): (u32, bool, Instant),
     ) {
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let at = |local: [f32; 2]| self.frame.at(local);
-        // The bar has no title in the message table.
-        self.frame.draw_title(layer, chrome, "", pointer.0);
-        layer.sprites.push((&assets.close, at(self.frame.close_button()), BUTTON_SIZE));
-        if self.frame.minimized {
-            return;
-        }
         let local = [pointer.0[0] - self.frame.position[0], pointer.0[1] - self.frame.position[1]];
         let over = |place: [f32; 2], size: [f32; 2]| contains(place, size, local);
+        let held = |place: [f32; 2], size: [f32; 2]| if over(place, size) { 1 + usize::from(pointer.1) } else { 0 };
         let icon = |id: u32| items.get(&id).and_then(|info| icons.get(&inventory::icon_path(info, true))).and_then(Option::as_ref);
         let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
-        layer.sprites.push((&assets.background, at([0.0, TITLE_HEIGHT]), BACKGROUND));
+        let amount_of =
+            |id: u32, amount: u32| rustnarok_client::messages::fill(message(AMOUNT_OF), &[&inventory::item_name(items, id, true, 0), &amount.to_string()]);
+        layer.sprites.push((&assets.background, at([0.0, 0.0]), SIZE));
+        layer.sprites.push((chrome.button(2, over(CLOSE_AT, BUTTON_SIZE)), at(CLOSE_AT), BUTTON_SIZE));
+        chrome.draw_text_button(layer, font, at(CLOSE_TEXT_AT), CLOSE_TEXT_SIZE[0], message(CLOSE_LABEL), held(CLOSE_TEXT_AT, CLOSE_TEXT_SIZE));
+
         let item = self.item.and_then(|index| carried.iter().find(|item| item.index == index));
+        let working = self.result.map(|(_, due)| due - RESULT_DELAY);
+        let (machine, wheel) = frames(now.saturating_duration_since(working.unwrap_or(self.opened)), working.is_some());
+        layer.sprites.push((&assets.wheels[wheel], at(WHEEL_AT), WHEEL));
+        let picked = self.picked.and_then(|row| self.materials.get(row));
         if let Some(item) = item {
-            // ponytail: frame 1 is grade none, then one frame per grade.
-            let frame = &assets.frames[usize::from(item.grade).min(assets.frames.len() - 1)];
-            layer.sprites.push((frame, at(ITEM_AT), ITEM_FRAME));
+            layer.sprites.push((&assets.frames[machine], at(MACHINE_AT), MACHINE_SIZE));
             if let Some(texture) = icon(item.id) {
-                let center = [ITEM_AT[0] + ITEM_FRAME[0] / 2.0, ITEM_AT[1] + 78.0];
-                layer.sprites.push((texture, at([center[0] - texture.size[0] / 2.0, center[1] - texture.size[1] / 2.0]), texture.size));
+                layer.sprites.push((texture, at(ITEM_ICON), [24.0, 24.0]));
             }
-            let name = inventory::item_name(items, item.id, true, item.refine);
-            let name = window::fit(font, &name, ITEM_FRAME[0] - 8.0);
-            layer.texts.push((name.clone(), at([ITEM_AT[0] + 4.0, ITEM_AT[1] + ITEM_FRAME[1] - 18.0]), TEXT));
             if (1..=4).contains(&item.grade) {
-                layer.sprites.push((&assets.icons[usize::from(item.grade - 1)], at([ITEM_AT[0] + 8.0, ITEM_AT[1] + 8.0]), GRADE_ICON));
-                // ponytail: three wheels, one each for D and C and one shared by B and A.
-                let wheel = match item.grade {
-                    1 => 0,
-                    2 => 1,
-                    _ => 2,
-                };
-                layer.sprites.push((&assets.wheels[wheel], at([ITEM_AT[0] + 28.0, ITEM_AT[1] + 6.0]), WHEEL));
-                let letter = grade_letter(u16::from(item.grade));
-                layer.texts.push((letter.to_owned(), at([ITEM_AT[0] + 72.0, ITEM_AT[1] + 8.0]), TEXT));
+                layer.sprites.push((&assets.icons[usize::from(item.grade - 1)], at(GRADE_ICON_AT), GRADE_ICON));
             }
+            let chance = format!("{}%", self.chance_shown());
+            let left = CHANCE_AT[0] + ((CHANCE_WIDTH - digits_width(&assets.chance_digits, &chance)) / 2.0).floor();
+            draw_digits(layer, &assets.chance_digits, Some(&assets.chance_outline), &chance, at([left, CHANCE_AT[1]]));
+            layer.sprites.push((&assets.blessing, at(BLESSING_AT), BLESSING_SIZE));
+            let zeny = picked.map_or(0, |row| row.zeny).to_string();
+            let width = digits_width(&assets.zeny_digits, &zeny);
+            draw_digits(layer, &assets.zeny_digits, None, &zeny, at([ZENY_AT[0] - width, ZENY_AT[1]]));
         }
-        let shown = self.chance_shown();
-        layer.texts.push((format!("{shown}%"), at([ITEM_AT[0] + 8.0, ITEM_AT[1] + ITEM_FRAME[1] + 6.0]), TEXT));
-        if self.item.is_some() && self.chance == 0 {
-            layer.texts.push((window::fit(font, message(REFINE_TOO_LOW), 200.0), at([ITEM_AT[0], TITLE_HEIGHT + BACKGROUND[1] - 36.0]), WARN));
-        }
-        for (row, material) in self.materials.iter().enumerate() {
-            let place = offset(ROW_AT, [0.0, row as f32 * ROW_STEP]);
-            let face = if self.picked == Some(row) {
-                2
-            } else if over(place, ROW_SIZE) {
-                1
-            } else {
+        for row in 0..ROWS {
+            let place = row_at(row);
+            let look = if item.is_none() {
                 0
-            };
-            layer.sprites.push((&assets.material[face], at(place), ROW_SIZE));
-            if let Some(texture) = icon(material.item) {
-                layer.sprites.push((texture, at(offset(place, [4.0, 6.0])), texture.size));
-            }
-            let cost = format!("{}  {} z", material.amount, group(u64::from(material.zeny)));
-            let short = count(material.item) < material.amount;
-            layer.texts.push((cost, at(offset(place, [32.0, 4.0])), if short { WARN } else { TEXT }));
-            let warning = if material.can_break {
-                CAN_BREAK
-            } else if material.lowers_refine {
-                LOWERS_REFINE
+            } else if self.picked == Some(row) {
+                2
             } else {
-                WONT_BREAK
+                usize::from(over(place, ROW_SIZE))
             };
-            if material.can_break || material.lowers_refine {
-                layer.sprites.push((&assets.caution, at(offset(place, [32.0, 20.0])), CAUTION));
+            layer.sprites.push((&assets.material[look], at(place), ROW_SIZE));
+            let Some(material) = self.materials.get(row) else { continue };
+            if let Some(texture) = icon(material.item) {
+                layer.sprites.push((texture, at(offset(place, ROW_ICON)), [24.0, 24.0]));
             }
-            let line = window::fit(font, message(warning), ROW_SIZE[0] - 52.0);
-            layer.texts.push((line, at(offset(place, [46.0, 18.0])), if material.can_break || material.lowers_refine { WARN } else { TEXT }));
+            layer.texts.push((amount_of(material.item, material.amount), at(offset(place, ROW_TEXT)), TEXT));
         }
-        if self.blessing.item != 0 {
+        if item.is_some() && self.blessing.item != 0 {
             if let Some(texture) = icon(self.blessing.item) {
-                layer.sprites.push((texture, at([12.0, TITLE_HEIGHT + 246.0]), texture.size));
+                layer.sprites.push((texture, at(BLESSING_ICON), [24.0, 24.0]));
             }
-            let label = format!("{}  {} / {}", inventory::item_name(items, self.blessing.item, true, 0), self.steps, self.blessing.most);
-            layer.texts.push((window::fit(font, &label, 120.0), at([40.0, TITLE_HEIGHT + 252.0]), TEXT));
+            outlined(layer, &amount_of(self.blessing.item, self.steps * self.blessing.per_step), at(BLESSING_TEXT));
         }
-        let down = if over(DOWN_AT, STEP_SIZE) { if pointer.1 { 2 } else { 1 } } else { 0 };
-        let up = if over(UP_AT, STEP_SIZE) { if pointer.1 { 2 } else { 1 } } else { 0 };
-        layer.sprites.push((&assets.down[down], at(DOWN_AT), STEP_SIZE));
-        layer.sprites.push((&assets.up[up], at(UP_AT), STEP_SIZE));
-        let start = if self.start_off() {
-            3
-        } else if over(START_AT, START_SIZE) {
-            if pointer.1 { 2 } else { 1 }
-        } else {
-            0
-        };
+        layer.sprites.push((&assets.up[held(UP_AT, STEP_SIZE)], at(UP_AT), STEP_SIZE));
+        layer.sprites.push((&assets.down[held(DOWN_AT, STEP_SIZE)], at(DOWN_AT), STEP_SIZE));
+        let start = if self.start_off() { 3 } else { held(START_AT, START_SIZE) };
         layer.sprites.push((&assets.start[start], at(START_AT), START_SIZE));
+
+        let carried_of_row = picked.map_or(0, |row| count(row.item));
+        let lines = notices(item.is_some(), working.is_some(), self.chance, picked, carried_of_row, zeny, heavy, self.chance_shown());
+        for (line, (id, green)) in lines.into_iter().enumerate() {
+            let place = offset(NOTICE_AT, [0.0, NOTICE_STEP * line as f32]);
+            layer.sprites.push((&assets.caution, at(place), CAUTION));
+            let text = window::fit(font, message(id), NOTICE_WIDTH);
+            bold(layer, &text, at(offset(place, [NOTICE_TEXT, 0.0])), if green { GREEN } else { RED });
+        }
     }
+}
+
+fn row_at(row: usize) -> [f32; 2] {
+    [ROW_AT[0], ROW_AT[1] + ROW_STEP * row as f32]
 }
 
 #[cfg(test)]
@@ -455,6 +600,76 @@ mod tests {
         |id| have.iter().find(|&&(item, _)| item == id).map_or(0, |&(_, amount)| amount)
     }
 
+    fn opened() -> GradeEnchant {
+        GradeEnchant::new([1024.0, 768.0], Instant::now())
+    }
+
+    #[test]
+    fn opens_left_of_centre_with_the_inventory_beside_it() {
+        assert_eq!(opened().frame.position, [212.0, 219.0]);
+        let big = GradeEnchant::new([1280.0, 1024.0], Instant::now());
+        assert_eq!(big.frame.position, [340.0, 347.0]);
+        assert_eq!(big.inventory_place(200.0), [740.0, 477.0]);
+    }
+
+    #[test]
+    fn each_piece_takes_its_own_press() {
+        let mut window = opened();
+        window.listed(4, 80, blessing(1_000_337, 10, 1), vec![row(1_000_325, 1, 175_000); 3]);
+        let hit = |local: [f32; 2]| window.hit(offset(window.frame.position, local));
+        assert_eq!(hit([384.0, 20.0]), Some(Hit::Title(TitleHit::Close)));
+        assert_eq!(hit([386.0, 318.0]), Some(Hit::Title(TitleHit::Close)));
+        // The picture's title strip drags it; left of it, or below, it doesn't.
+        assert_eq!(hit([142.0, 37.0]), Some(Hit::Title(TitleHit::Title)));
+        assert_eq!(hit([141.0, 30.0]), Some(Hit::Window));
+        assert_eq!(hit([300.0, 38.0]), Some(Hit::Window));
+        for row in 0..3 {
+            let top = 102.0 + 40.0 * row as f32;
+            assert_eq!(hit([158.0, top]), Some(Hit::Material(row)));
+            assert_eq!(hit([392.0, top + 36.0]), Some(Hit::Material(row)));
+        }
+        assert_eq!(hit([300.0, 140.0]), Some(Hit::Window));
+        assert_eq!(hit([158.0, 225.0]), Some(Hit::BlessingUp));
+        assert_eq!(hit([189.0, 239.0]), Some(Hit::BlessingUp));
+        assert_eq!(hit([158.0, 240.0]), Some(Hit::BlessingDown));
+        assert_eq!(hit([35.0, 291.0]), Some(Hit::Start));
+        assert_eq!(hit([116.0, 318.0]), Some(Hit::Start));
+        assert_eq!(hit([117.0, 291.0]), Some(Hit::Window));
+        // A row the list doesn't have takes nothing.
+        window.listed(4, 80, blessing(1_000_337, 10, 1), vec![row(1_000_325, 1, 175_000)]);
+        assert_eq!(window.hit(offset(window.frame.position, [200.0, 150.0])), Some(Hit::Window));
+    }
+
+    #[test]
+    fn the_notice_box_says_why_and_what_may_happen() {
+        let breaks = row(1, 1, 100);
+        let lowers = GradeMaterial { lowers_refine: true, can_break: false, ..breaks.clone() };
+        let note = |row: Option<&GradeMaterial>, carried, zeny, heavy, shown| notices(true, false, 80, row, carried, zeny, heavy, shown);
+        assert_eq!(notices(false, false, 0, None, 0, 0, false, 0), [(3870, false), (3871, true), (3872, true)]);
+        assert_eq!(notices(true, true, 80, Some(&breaks), 1, 100, false, 80), []);
+        assert_eq!(notices(true, false, 0, Some(&breaks), 0, 0, true, 0), [(3821, false)]);
+        assert_eq!(note(None, 0, 0, false, 80), [(3707, false)]);
+        assert_eq!(note(Some(&breaks), 0, 100, false, 80), [(3708, false), (3712, false)]);
+        assert_eq!(note(Some(&breaks), 1, 99, false, 80), [(3709, false), (3712, false)]);
+        assert_eq!(note(Some(&breaks), 1, 100, false, 100), [(3822, true)]);
+        assert_eq!(note(Some(&lowers), 1, 100, false, 80), [(3822, true), (3713, false)]);
+        // Short of everything: the first three.
+        assert_eq!(note(Some(&lowers), 0, 0, true, 80), [(3822, true), (3708, false), (3709, false)]);
+    }
+
+    #[test]
+    fn the_machine_and_the_wheel_turn() {
+        let ms = Duration::from_millis;
+        assert_eq!(frames(ms(0), false), (0, 0));
+        assert_eq!(frames(ms(199), false), (0, 0));
+        assert_eq!(frames(ms(850), false), (4, 0));
+        assert_eq!(frames(ms(1000), false), (0, 0));
+        // A result: the machine's short loop, the wheel spinning.
+        assert_eq!(frames(ms(650), true), (3, 0));
+        assert_eq!(frames(ms(850), true), (0, 2));
+        assert_eq!(frames(ms(150), true), (0, 1));
+    }
+
     #[test]
     fn chance_adds_steps_and_stops_at_100() {
         assert_eq!(shown_chance(80, 0, 1), 80);
@@ -464,7 +679,6 @@ mod tests {
         assert_eq!(shown_chance(99, 5, 1), 100);
         assert_eq!(shown_chance(0, 10, 1), 10);
     }
-
     #[test]
     fn start_refuses_and_stays_off() {
         let rows = [row(1_000_325, 1, 175_000), row(1_000_325, 5, 875_000)];
@@ -506,7 +720,7 @@ mod tests {
 
     #[test]
     fn the_window_steps_and_answers() {
-        let mut window = GradeEnchant::new();
+        let mut window = opened();
         let rows = vec![row(1_000_325, 1, 175_000), row(1_000_325, 5, 875_000)];
         window.listed(4, 80, blessing(1_000_337, 10, 1), rows);
         let have = carried(&[(1_000_325, 1), (1_000_337, 2)]);
@@ -542,11 +756,11 @@ mod tests {
         assert_eq!(window.result_due(now + RESULT_DELAY), None);
 
         let names: Vec<_> = {
-            let mut listed = GradeEnchant::new();
+            let mut listed = opened();
             listed.listed(4, 100, blessing(1_000_337, 10, 1), vec![row(1_000_325, 1, 175_000), row(1_000_325, 5, 875_000)]);
             listed.button_boxes().into_iter().map(|(name, _)| name).collect()
         };
-        assert_eq!(names, ["close", "material_0", "material_1", "blessing_down", "blessing_up", "start"]);
+        assert_eq!(names, ["close", "close_text", "material_0", "material_1", "blessing_down", "blessing_up", "start"]);
         assert_eq!(grade_letter(1), "D");
         assert_eq!(grade_letter(4), "A");
     }

@@ -2581,7 +2581,10 @@ impl App {
             window.draw(shop_layer.esc(W::ItemReform), &assets.chrome, &assets.reform, icons, items, &game.inventory.items, messages, font, pointer);
         }
         if let Some(window) = &game.grade {
-            window.draw(shop_layer.esc(W::GradeEnchant), &assets.chrome, &assets.grade, icons, items, &game.inventory.items, messages, font, pointer);
+            let status = |kind| game.status.get(&kind).copied().unwrap_or(0).max(0) as u32;
+            let heavy = status(net::STATUS_WEIGHT) * 10 > status(net::STATUS_MAX_WEIGHT) * 7;
+            let more = (status(net::STATUS_ZENY), heavy, control::now());
+            window.draw(shop_layer.esc(W::GradeEnchant), &assets.chrome, &assets.grade, icons, items, &game.inventory.items, messages, font, pointer, more);
         }
         if let Some(window) = &game.enchant {
             window.draw(

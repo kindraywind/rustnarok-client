@@ -1160,8 +1160,10 @@ impl App {
                         escape::touch(&mut game.esc_order, escape::WindowId::Attendance);
                     }
                 } else if kind == grade::UI_KIND {
-                    game.grade = Some(grade::GradeEnchant::new());
+                    let window = grade::GradeEnchant::new(crate::screen(), control::now());
                     game.inventory.frame.open = true;
+                    game.inventory.frame.position = window.inventory_place(game.inventory.height());
+                    game.grade = Some(window);
                     game.raise(Panel::Inventory);
                 } else if kind == stylist::UI_KIND {
                     game.stylist = Some(stylist::Window::open());
