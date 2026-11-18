@@ -1,0 +1,27 @@
+{
+  "about": "The NPC say window comes back in front with every text and Next (issue #1365). During a talk (npc/talk.txt) the inventory is opened and dragged over the say window: it is on top, as any window that opens or is pressed. After Next and the NPC's menu, and again after the next text, a click where the two overlap reaches the NPC's window. The NPC is loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/talk.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/talk.txt"}, {"wait": 1000},
+    {"click_unit": {"kind": "npc", "name": "Talk Clerk"}}, {"wait": 1000},
+    {"expect": {"windows_open": ["NpcDialog"], "state": {"dialog.button": "next"}}},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"drag": [[100, 128], [330, 158]]}, {"wait": 300},
+    {"move": [300, 250]}, {"wait": 200},
+    {"shot": "say-under-inventory", "crop": [150, 60, 560, 420], "threshold": 5},
+    {"click": [300, 250], "hit": "Inventory"}, {"wait": 300},
+    {"key": "Enter"}, {"wait_for": {"packet": "0x00b7", "ms": 3000}}, {"wait": 400},
+    {"key": "Enter"}, {"wait_for": {"packet": "0x00b4", "ms": 3000}}, {"wait": 400},
+    {"expect": {"state": {"dialog.lines": ["Still here."], "dialog.button": "close"}}},
+    {"move": [900, 700]}, {"wait": 200},
+    {"shot": "say-over-inventory", "crop": [150, 60, 560, 420], "threshold": 5},
+    {"click": [300, 250], "hit": "NpcDialog"}, {"wait": 400},
+    {"click_on": {"button": "npc_close"}}, {"wait": 500},
+    {"expect": {"windows_closed": ["NpcDialog"]}},
+    {"key": "Alt+E"}, {"wait": 300},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/talk.txt"}, {"wait": 500}
+  ]
+}
