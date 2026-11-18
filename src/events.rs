@@ -1038,9 +1038,9 @@ impl App {
                     }
                 }
             }
-            // The bank: open on the balance's answer; refusals by rathena's reasons.
+            // The bank: the balance's answer opens it, or closes it when open; refusals by rathena's reasons.
             // ponytail: which message goes with which reason is read off their words.
-            MapEvent::BankBalance(balance) => game.bank.get_or_insert_with(bank::Bank::new).balance = balance,
+            MapEvent::BankBalance(balance) => bank::Bank::answer(&mut game.bank, balance, &self.messages),
             MapEvent::BankMoved { deposit, reason, balance, zeny } => {
                 if let Some(bank) = &mut game.bank {
                     bank.balance = balance;

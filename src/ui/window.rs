@@ -318,6 +318,15 @@ impl Frame {
         }
     }
 
+    /// The title bar of a window that doesn't minimize: the base and close buttons only.
+    pub fn draw_title_no_minimize<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome, title: &str, cursor: [f32; 2]) {
+        self.draw_title_only(layer, chrome, title);
+        for (button, place) in [(0, BASE_BUTTON), (2, self.close_button())] {
+            let image = chrome.button(button, contains(self.at(place), BUTTON_SIZE, cursor));
+            layer.sprites.push((image, self.at(place), image.size));
+        }
+    }
+
     /// The bar alone: rounded caps around a stretched middle.
     pub fn draw_bar<'a>(&self, layer: &mut Layer<'a>, chrome: &'a Chrome) {
         let [left, middle, right] = &chrome.title;
