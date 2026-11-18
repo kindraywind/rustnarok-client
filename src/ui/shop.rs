@@ -263,6 +263,8 @@ pub struct Shop {
     pub whole: bool,
     /// An NPC point shop: its prices are points, not zeny.
     pub points: Option<Points>,
+    /// The Buy / Sell / Cancel box led here (`Game::open_shop`): Esc stops at that box, hidden, while this is open.
+    pub dealt: bool,
 }
 
 /// What a point shop's buyer holds: points (an item shop's: the coins carried), free points, and the buyer's name for the
@@ -299,6 +301,7 @@ impl Shop {
             zeny: u64::MAX,
             whole: false,
             points: None,
+            dealt: false,
         }
     }
 

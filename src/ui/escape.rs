@@ -15,8 +15,8 @@ const BUTTON: [f32; 2] = [221.0, 20.0];
 const BUTTON_X: f32 = 29.0;
 const BUTTON_Y: f32 = 22.0;
 const STEP: f32 = 23.0;
-// ponytail: the gap under the last button; the spec places the buttons, not the frame's bottom.
-const BOTTOM: f32 = 6.0;
+/// After the last button's step: the frame is 139 px with five buttons, 93 with three, 70 with two.
+const BOTTOM: f32 = 2.0;
 const TITLE_MESSAGE: usize = 1483;
 /// "Do you really want to go back to your savepoint?"
 pub const SAVE_QUESTION: usize = 1548;
@@ -33,7 +33,6 @@ pub enum WindowId {
     Inventory,
     Equipment,
     Skills,
-    Storage,
     /// A storage category window (it has no close button: Esc turns its box off).
     StorageCategory(usize),
     /// The storage's Search window.
@@ -48,8 +47,6 @@ pub enum WindowId {
     MercenarySkills,
     Homunculus,
     HomunculusSkills,
-    /// An NPC's number or text box: Esc stops at it and does nothing.
-    NpcInput,
     /// An NPC shop: Esc presses its Cancel, which tells the server.
     Shop,
     GradeEnchant,
@@ -106,7 +103,8 @@ pub enum WindowId {
     Quests,
     Menu,
     Capturing,
-    /// Questions. Esc answers them No before it would close a window (rule 3); they are still listed so `windows` shows them.
+    /// Questions. Esc answers them No before it would close a window (rule 2); they are still listed so `windows` shows them.
+    /// The amount box isn't one: only its own buttons end it.
     Amount,
     SaveAsked,
     /// The skill window's Apply question.
@@ -147,6 +145,14 @@ pub enum WindowId {
     Memorial,
     /// Destroy asks yes or no in the message box.
     MemorialAsked,
+    /// The game menu Esc opens when nothing is left to close: an entry like any other once it is up.
+    GameMenu,
+    /// The new-quest notice.
+    QuestNotice,
+    /// A chat tab's message log settings.
+    ChatSettings,
+    /// The party booking board.
+    PartyBooking,
 }
 
 impl WindowId {
@@ -156,7 +162,6 @@ impl WindowId {
             Self::Inventory => "Inventory",
             Self::Equipment => "Equipment",
             Self::Skills => "Skills",
-            Self::Storage => "Storage",
             Self::StorageCategory(_) => "StorageCategory",
             Self::StorageSearch => "StorageSearch",
             Self::Party => "Party",
@@ -169,7 +174,6 @@ impl WindowId {
             Self::MercenarySkills => "MercenarySkills",
             Self::Homunculus => "Homunculus",
             Self::HomunculusSkills => "HomunculusSkills",
-            Self::NpcInput => "NpcInput",
             Self::Shop => "Shop",
             Self::GradeEnchant => "GradeEnchant",
             Self::LaphineSynthesis => "LaphineSynthesis",
@@ -249,14 +253,46 @@ impl WindowId {
             Self::AwayMessage => "AwayMessage",
             Self::Memorial => "Memorial",
             Self::MemorialAsked => "MemorialAsked",
+            Self::GameMenu => "GameMenu",
+            Self::QuestNotice => "QuestNotice",
+            Self::ChatSettings => "ChatSettings",
+            Self::PartyBooking => "PartyBooking",
         }
     }
 }
 
-/// Puts `id` at the front (just opened, or pressed). A second press of the same window moves it.
+/// Windows Esc never closes: they are open (`windows` names them) but never in the Esc order, and only their own
+/// buttons or the server end them. The storage, the trade, the NPC windows and input boxes, a plain NPC shop's lists
+/// and the cart choice aren't Esc's either; those have no `WindowId`.
+pub fn left_alone(id: WindowId) -> bool {
+    use WindowId::*;
+    matches!(
+        id,
+        PickList
+            | GradeEnchant
+            | Roulette
+            | ShortcutSettings
+            | ChatRoom
+            | Memorial
+            | SellHistory
+            | AwayMessage
+            | PartyInvite
+            | GuildInvite
+            | FriendAsked
+            | AdoptAsked
+            | Amount
+    )
+}
+
+/// Puts `id` at the front (just opened, or pressed). A second press of the same window moves it. The navigation
+/// window goes to the back instead: Esc reaches it last.
 pub fn touch(order: &mut Vec<WindowId>, id: WindowId) {
     order.retain(|&window| window != id);
-    order.insert(0, id);
+    if id == WindowId::Navigation {
+        order.push(id);
+    } else {
+        order.insert(0, id);
+    }
 }
 
 /// Drops `id` (the window closed).
@@ -270,7 +306,7 @@ pub fn sync(order: &mut Vec<WindowId>, open: &[WindowId]) {
     order.retain(|id| open.contains(id));
     let fresh: Vec<WindowId> = open.iter().copied().filter(|id| !order.contains(id)).collect();
     for id in fresh {
-        order.insert(0, id);
+        touch(order, id);
     }
 }
 
@@ -279,8 +315,6 @@ pub fn sync(order: &mut Vec<WindowId>, open: &[WindowId]) {
 pub enum EscAct {
     /// Battle-mode chat: close the line. The whisper-name list goes with it.
     CloseBattleChat,
-    /// A text box in this window has focus: the window cancels.
-    Cancel(WindowId),
     /// A question is up: answer it No.
     AnswerNo,
     /// Close this window.
@@ -291,12 +325,12 @@ pub enum EscAct {
     ToggleMenu,
 }
 
-/// What Esc looks at. `battle_line` is the battle-mode chat line from #179; the always-on chat line is not it,
-/// so a closed line leaves this false and Esc moves on.
+/// What Esc looks at. `battle_line` is the battle-mode chat line from #179, open and holding the caret; the always-on
+/// chat line is not it, so a closed line leaves this false and Esc moves on. A caret in a window's text box changes
+/// nothing else: Esc goes on to a question, then to the newest window, whatever has the caret.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EscView {
     pub battle_line: bool,
-    pub focused: Option<WindowId>,
     /// An NPC's text window or choice menu is up.
     pub conversation: bool,
     pub question: bool,
@@ -312,20 +346,15 @@ pub fn decide(repeat: bool, view: EscView) -> Option<EscAct> {
     if view.battle_line {
         return Some(EscAct::CloseBattleChat);
     }
-    // 2. A text box in a window, not the chat line. An NPC's input box and the storage's search keep Esc and do
-    // nothing with it.
-    if let Some(id) = view.focused {
-        return (!matches!(id, WindowId::NpcInput | WindowId::Storage)).then_some(EscAct::Cancel(id));
-    }
-    // 3. A question: No.
+    // 2. A question: No.
     if view.question {
         return Some(EscAct::AnswerNo);
     }
-    // 4. The newest window. An NPC shop's Cancel tells the server.
+    // 3. The newest window. An NPC shop's Cancel tells the server.
     if let Some(id) = view.newest {
         return Some(if id == WindowId::Shop { EscAct::ShopCancel } else { EscAct::Close(id) });
     }
-    // 5. The game menu, but not over a conversation with an NPC.
+    // 4. The game menu, but not over a conversation with an NPC.
     (!view.conversation).then_some(EscAct::ToggleMenu)
 }
 
@@ -399,9 +428,22 @@ impl Assets {
 pub struct Menu {
     /// Opened because the player died.
     pub dead: bool,
+    /// Its place: where it opens (`menu_origin`), then where a drag by the title bar leaves it.
+    pub frame: Frame,
 }
 
 impl Menu {
+    pub fn new(dead: bool) -> Self {
+        let mut frame = Frame::new(menu_origin(screen()), WIDTH);
+        frame.open = true;
+        Self { dead, frame }
+    }
+
+    /// The title bar off its buttons: a press there drags the menu.
+    pub fn on_title(&self, cursor: [f32; 2]) -> bool {
+        self.frame.local(cursor, crate::window::TITLE_HEIGHT).and_then(|local| self.frame.title_hit(local)) == Some(crate::window::TitleHit::Title)
+    }
+
     /// Alive: character select, game settings, shortcut settings, exit, return.
     /// Dead: save point and return; resurrect here when something can stand the player up.
     pub fn choices(&self, resurrect: bool) -> Vec<Choice> {
@@ -418,27 +460,21 @@ impl Menu {
         }
     }
 
-    fn height(&self, resurrect: bool) -> f32 {
+    pub fn height(&self, resurrect: bool) -> f32 {
         BUTTON_Y + self.choices(resurrect).len() as f32 * STEP + BOTTOM
     }
 
     fn corner(&self) -> [f32; 2] {
-        menu_origin(screen())
+        self.frame.position
     }
 
     pub fn button_corner(&self, row: usize) -> [f32; 2] {
-        self.button_corner_at(row, screen())
-    }
-
-    pub fn button_corner_at(&self, row: usize, screen: [f32; 2]) -> [f32; 2] {
-        let corner = menu_origin(screen);
-        [corner[0] + BUTTON_X, corner[1] + BUTTON_Y + row as f32 * STEP]
+        self.frame.at([BUTTON_X, BUTTON_Y + row as f32 * STEP])
     }
 
     /// The buttons, for the control socket: name and box.
     pub fn button_boxes(&self, resurrect: bool) -> Vec<(&'static str, [f32; 4])> {
-        let frame = Frame::new(self.corner(), WIDTH);
-        let [x, y] = frame.at(frame.close_button());
+        let [x, y] = self.frame.at(self.frame.close_button());
         self.choices(resurrect)
             .into_iter()
             .enumerate()
@@ -453,9 +489,7 @@ impl Menu {
     /// The title's close button under the pointer: it does what Return does.
     // ponytail: the title's minimize is drawn but does nothing.
     pub fn on_close(&self, cursor: [f32; 2]) -> bool {
-        let corner = self.corner();
-        let frame = Frame::new(corner, WIDTH);
-        contains(frame.at(frame.close_button()), BUTTON_SIZE, cursor)
+        contains(self.frame.at(self.frame.close_button()), BUTTON_SIZE, cursor)
     }
 
     /// Over the menu: the button under the pointer, if any. `Some(None)` is the menu, off a button.
@@ -487,9 +521,7 @@ impl Menu {
         let height = self.height(resurrect);
         layer.sprites.push((&chrome.white, corner, [WIDTH, height]));
         layer.sprites.push((&assets.title, corner, [WIDTH, assets.title.size[1]]));
-        let mut frame = Frame::new(corner, WIDTH);
-        frame.open = true;
-        frame.draw_title(layer, chrome, &Self::title(messages.get(TITLE_MESSAGE).map_or("", String::as_str), character), pointer.0);
+        self.frame.draw_title(layer, chrome, &Self::title(messages.get(TITLE_MESSAGE).map_or("", String::as_str), character), pointer.0);
         let hovered = self.hit(pointer.0, resurrect).flatten();
         for (row, choice) in self.choices(resurrect).into_iter().enumerate() {
             let images = &assets.buttons.iter().find(|(which, _)| *which == choice).unwrap().1;
@@ -531,19 +563,16 @@ mod tests {
 
     #[test]
     fn esc_follows_the_first_rule() {
-        let window = EscView { battle_line: false, focused: None, conversation: false, question: false, newest: Some(WindowId::Inventory) };
+        let window = EscView { battle_line: false, conversation: false, question: false, newest: Some(WindowId::Inventory) };
         // A repeating key does nothing, even with a window up.
         assert_eq!(decide(true, window), None);
         // A closed battle-mode line is not the first case: the window closes.
         assert_eq!(decide(false, window), Some(EscAct::Close(WindowId::Inventory)));
         // An open battle-mode line is first, even while the whisper list is up. Windows and questions wait.
-        let battle = EscView { battle_line: true, focused: Some(WindowId::Mailbox), conversation: false, question: true, newest: Some(WindowId::Skills) };
+        let battle = EscView { battle_line: true, conversation: false, question: true, newest: Some(WindowId::Skills) };
         assert_eq!(decide(false, battle), Some(EscAct::CloseBattleChat));
-        // A text box beats a question and the newest window.
-        let typing = EscView { battle_line: false, focused: Some(WindowId::VendSetup), conversation: false, question: true, newest: Some(WindowId::Shop) };
-        assert_eq!(decide(false, typing), Some(EscAct::Cancel(WindowId::VendSetup)));
-        // A question beats the newest window.
-        let question = EscView { focused: None, ..typing };
+        // A question beats the newest window, whatever text box has the caret.
+        let question = EscView { battle_line: false, ..battle };
         assert_eq!(decide(false, question), Some(EscAct::AnswerNo));
         // The newest window. A shop presses Cancel.
         assert_eq!(decide(false, EscView { question: false, newest: Some(WindowId::Shop), ..question }), Some(EscAct::ShopCancel));
@@ -551,38 +580,97 @@ mod tests {
         // Nothing open: the menu.
         let idle = EscView { newest: None, question: false, ..question };
         assert_eq!(decide(false, idle), Some(EscAct::ToggleMenu));
-        // Talking to an NPC: nothing, unless another window is newer (it closes). Its input box keeps Esc, even with
-        // a newer window. The warp list isn't a conversation: the menu toggles over it.
+        // Talking to an NPC: nothing, unless another window is newer (it closes), also with the NPC's input box up.
+        // The warp list isn't a conversation: the menu toggles over it.
         let talking = EscView { conversation: true, ..idle };
         assert_eq!(decide(false, talking), None);
         assert_eq!(decide(false, EscView { newest: Some(WindowId::Inventory), ..talking }), Some(EscAct::Close(WindowId::Inventory)));
-        assert_eq!(decide(false, EscView { focused: Some(WindowId::NpcInput), newest: Some(WindowId::Inventory), ..talking }), None);
+    }
+
+    #[test]
+    fn the_game_menu_is_an_entry_of_the_order() {
+        // Dead with the inventory open: the menu opened last, so the first Esc closes it and the next the inventory.
+        let mut order = vec![WindowId::Inventory];
+        sync(&mut order, &[WindowId::Inventory, WindowId::GameMenu]);
+        assert_eq!(order, [WindowId::GameMenu, WindowId::Inventory]);
+        let view = |order: &[WindowId]| EscView { battle_line: false, conversation: false, question: false, newest: order.first().copied() };
+        assert_eq!(decide(false, view(&order)), Some(EscAct::Close(WindowId::GameMenu)));
+        remove(&mut order, WindowId::GameMenu);
+        assert_eq!(decide(false, view(&order)), Some(EscAct::Close(WindowId::Inventory)));
+        // A window opened from the menu is newer than it.
+        let mut order = vec![WindowId::GameMenu];
+        sync(&mut order, &[WindowId::GameSettings, WindowId::GameMenu]);
+        assert_eq!(order, [WindowId::GameSettings, WindowId::GameMenu]);
+    }
+
+    #[test]
+    fn the_navigation_window_joins_at_the_back() {
+        let mut order = vec![WindowId::Skills];
+        sync(&mut order, &[WindowId::Skills, WindowId::Navigation, WindowId::Inventory]);
+        assert_eq!(order, [WindowId::Inventory, WindowId::Skills, WindowId::Navigation]);
+        touch(&mut order, WindowId::Skills);
+        touch(&mut order, WindowId::Navigation);
+        assert_eq!(order, [WindowId::Skills, WindowId::Inventory, WindowId::Navigation]);
+    }
+
+    #[test]
+    fn esc_leaves_lists_invitations_and_the_amount_box_alone() {
+        use WindowId::*;
+        for id in [
+            PickList,
+            GradeEnchant,
+            Roulette,
+            ShortcutSettings,
+            ChatRoom,
+            Memorial,
+            SellHistory,
+            AwayMessage,
+            PartyInvite,
+            GuildInvite,
+            FriendAsked,
+            AdoptAsked,
+            Amount,
+        ] {
+            assert!(left_alone(id), "{id:?}");
+        }
+        for id in
+            [Inventory, Shop, Stylist, Bank, CashShop, VendSetup, DealChoice, GameMenu, QuestNotice, ChatSettings, PartyBooking, Navigation, Whisper, RoomMake]
+        {
+            assert!(!left_alone(id), "{id:?}");
+        }
     }
 
     #[test]
     fn menu_buttons_and_place() {
-        let alive = Menu { dead: false };
+        let alive = Menu::new(false);
         assert_eq!(alive.choices(false), [Choice::CharSelect, Choice::GameSettings, Choice::Shortcuts, Choice::Exit, Choice::Return]);
         assert_eq!(alive.choices(true), alive.choices(false), "a living player has no resurrect button");
-        let dead = Menu { dead: true };
+        let mut dead = Menu::new(true);
         assert_eq!(dead.choices(false), [Choice::SavePoint, Choice::Return]);
         assert_eq!(dead.choices(true), [Choice::Resurrect, Choice::SavePoint, Choice::Return]);
 
         assert_eq!(menu_origin([1024.0, 768.0]), [377.0, 480.0]);
         assert_eq!(menu_origin([1280.0, 720.0]), [505.0, 450.0]);
-        assert_eq!(alive.button_corner_at(0, [1024.0, 768.0]), [377.0 + 29.0, 480.0 + 22.0]);
-        assert_eq!(alive.button_corner_at(1, [1280.0, 720.0]), [505.0 + 29.0, 450.0 + 22.0 + 23.0]);
+        let [x, y] = menu_origin(screen());
+        assert_eq!([alive.button_corner(0), alive.button_corner(1)], [[x + 29.0, y + 22.0], [x + 29.0, y + 22.0 + 23.0]]);
+        // 139 px with five buttons, 93 with three, 70 with two.
+        assert_eq!([alive.height(false), dead.height(true), dead.height(false)], [139.0, 93.0, 70.0]);
         let first = alive.button_corner(0);
         assert_eq!(alive.hit([first[0] + 5.0, first[1] + 5.0], false), Some(Some(Choice::CharSelect)));
         assert_eq!(alive.hit([0.0, 0.0], false), None);
         let save = dead.button_corner(0);
         assert_eq!(dead.hit([save[0] + 5.0, save[1] + 5.0], false), Some(Some(Choice::SavePoint)));
         assert_eq!(dead.hit([save[0] + 5.0, save[1] + 5.0], true), Some(Some(Choice::Resurrect)));
+        // A press on the title bar, off its buttons, drags it; the buttons go along.
+        assert!(dead.on_title([x + 100.0, y + 8.0]) && !dead.on_title([x + 100.0, y + 30.0]) && !dead.on_title([x + 270.0, y + 8.0]));
+        dead.frame.start_drag([x + 100.0, y + 8.0]);
+        assert!(dead.frame.drag_to([x + 60.0, y - 92.0], dead.height(false)) && dead.frame.drop_drag());
+        assert_eq!(dead.button_corner(0), [x - 40.0 + 29.0, y - 100.0 + 22.0]);
     }
 
     #[test]
     fn the_title_close_is_return() {
-        let menu = Menu { dead: false };
+        let menu = Menu::new(false);
         let [x, y] = menu_origin(screen());
         assert!(menu.on_close([x + 266.0 + 5.0, y + 3.0 + 5.0]));
         let first = menu.button_corner(0);

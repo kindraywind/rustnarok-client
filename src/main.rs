@@ -1306,6 +1306,8 @@ struct Game {
     effects: effects::Effects,
     /// An NPC shop asking whether to buy or sell, its box's frame, and the open shop.
     deal_choice: Option<u32>,
+    /// Buy or Sell was pressed in that box: the shop that opens next came through it.
+    deal_chosen: bool,
     deal_frame: window::Frame,
     shop: Option<shop::Shop>,
     /// A vendor's deal, waiting in "Confirm Deal".
@@ -2215,6 +2217,10 @@ fn esc_reached(top: Option<Top>, menu: bool) -> Option<escape::WindowId> {
     match top {
         _ if menu => Some(escape::WindowId::Menu),
         Some(Top::Esc(id)) => Some(id),
+        Some(Top::GameMenu) => Some(escape::WindowId::GameMenu),
+        Some(Top::QuestIcon) => Some(escape::WindowId::QuestNotice),
+        Some(Top::ChatSettings) => Some(escape::WindowId::ChatSettings),
+        Some(Top::PartyBooking) => Some(escape::WindowId::PartyBooking),
         Some(Top::Panel(panel)) => esc_panel(panel),
         _ => None,
     }
@@ -2698,13 +2704,6 @@ enum Picking {
     Hatch,
     /// Stacks of one item to merge (several picked; OK and Cancel are handled apart).
     Merge,
-}
-
-impl Picking {
-    /// Esc does not close Repair, Upgrade Weapon and making lists.
-    pub fn escapable(&self) -> bool {
-        !matches!(self, Self::Repair | Self::Upgrade | Self::Make)
-    }
 }
 
 /// The talking state an NPC packet sets, for that NPC: a page, Next or a menu holds the player; the script's close
@@ -6520,6 +6519,11 @@ mod tests {
         assert_eq!(esc_reached(Some(Top::Panel(Panel::Hotkeys)), false), None);
         assert_eq!(esc_reached(Some(Top::Chat), false), None);
         assert_eq!(esc_reached(None, false), None);
+        // The game menu, the new-quest notice, a chat tab's settings and the booking board are entries too.
+        assert_eq!(esc_reached(Some(Top::GameMenu), false), Some(GameMenu));
+        assert_eq!(esc_reached(Some(Top::QuestIcon), false), Some(QuestNotice));
+        assert_eq!(esc_reached(Some(Top::ChatSettings), false), Some(ChatSettings));
+        assert_eq!(esc_reached(Some(Top::PartyBooking), false), Some(PartyBooking));
         // A press anywhere while the right-click menu is up is the menu's.
         assert_eq!(esc_reached(Some(Top::Panel(Panel::Inventory)), true), Some(Menu));
     }
@@ -6555,16 +6559,8 @@ mod tests {
         assert!(!frees_quick_move(&MapEvent::StorageClosed));
         // Cart and storage: none moves one, too many moves all.
         assert_eq!([0, 3, 9].map(|asked| between_one_and(asked, 5)), [1, 3, 5]);
-        // Esc never closes the storage, and its search box keeps Esc.
+        // Esc never closes the storage.
         assert_eq!(esc_panel(Panel::Storage), None);
-        let typing = escape::EscView {
-            battle_line: false,
-            focused: Some(escape::WindowId::Storage),
-            conversation: false,
-            question: false,
-            newest: Some(escape::WindowId::Inventory),
-        };
-        assert_eq!(escape::decide(false, typing), None);
         assert_eq!(quick_target(true, true, true), Some(QuickTo::Storage));
         assert_eq!(quick_target(false, true, true), Some(QuickTo::Trade));
         assert_eq!(quick_target(false, false, true), Some(QuickTo::Cart));
@@ -7580,12 +7576,6 @@ mod tests {
     #[test]
     fn empty_lists_give_424_box_and_no_packet() {
         assert_eq!(NOTHING_TO_MAKE, 424);
-        assert!(!Picking::Repair.escapable());
-        assert!(!Picking::Upgrade.escapable());
-        assert!(!Picking::Make.escapable());
-        assert!(Picking::Arrow.escapable());
-        assert!(Picking::Identify.escapable());
-        assert!(Picking::Spell.escapable());
     }
 
     #[test]

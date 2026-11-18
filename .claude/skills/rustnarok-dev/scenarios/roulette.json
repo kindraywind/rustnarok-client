@@ -24,7 +24,9 @@
     {"expect": {"windows_closed": ["Roulette"]}},
     {"say": "@roulette"}, {"wait_for": {"packet": "0x0a1a", "ms": 5000}}, {"wait": 500},
     {"expect": {"windows_open": ["Roulette"], "state": {"roulette.prizes": 42}}},
-    {"key": "Escape"}, {"wait": 300},
+    {"key": "Escape"}, {"wait": 300}, {"expect": {"windows_open": ["Roulette", "GameMenu"]}},
+    {"key": "Escape"}, {"wait": 300}, {"expect": {"windows_open": ["Roulette"], "windows_closed": ["GameMenu"]}},
+    {"click_on": {"button": "close"}}, {"wait": 300},
     {"expect": {"windows_closed": ["Roulette"]}},
     {"say": "@itemreset"}, {"wait": 800}
   ]

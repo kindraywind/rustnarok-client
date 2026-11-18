@@ -1442,7 +1442,7 @@ impl App {
                             }
                             // The game menu, as Esc opens it (the dead layout when dead); the shortcut settings.
                             Some("option") => {
-                                game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: game.player.dead }) };
+                                game.escape = if game.escape.is_some() { None } else { Some(escape::Menu::new(game.player.dead)) };
                             }
                             Some("keyboard") => {
                                 game.shortcuts_window =
@@ -1980,6 +1980,11 @@ impl App {
             }
             if game.deal_choice.is_some() {
                 game.deal_frame.drag_to(self.cursor, shop::DEAL_SIZE[1]);
+            }
+            let resurrect = game.can_resurrect();
+            if let Some(menu) = &mut game.escape {
+                let height = menu.height(resurrect);
+                menu.frame.drag_to(self.cursor, height);
             }
             let party_height = game.party_window.height();
             game.party_window.frame.drag_to(self.cursor, party_height);
@@ -2959,7 +2964,8 @@ impl App {
                     | game.cutin.as_mut().is_some_and(|cutin| cutin.frame.drop_drag())
                     | game.npc_menu.drop_drag()
                     | game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()).is_some_and(|menu| menu.frame_mut(&mut game.npc_menu).drop_drag())
-                    | (game.deal_choice.is_some() && game.deal_frame.drop_drag());
+                    | (game.deal_choice.is_some() && game.deal_frame.drop_drag())
+                    | game.escape.as_mut().is_some_and(|menu| menu.frame.drop_drag());
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
             _ => false,
@@ -3092,6 +3098,14 @@ impl App {
         if let Scene::Game(game) = &self.scene
             && game.menu.as_ref().is_some_and(|menu| menu.hit(cursor).is_some())
         {
+            return;
+        }
+        // The game menu is dragged by its title bar.
+        if let Scene::Game(game) = &mut self.scene
+            && game.menu_takes(cursor)
+            && let Some(menu) = game.escape.as_mut().filter(|menu| menu.on_title(cursor))
+        {
+            menu.frame.start_drag(cursor);
             return;
         }
         // So is a press on the message box or Confirm Deal, and any press while the game menu keeps the pointer
@@ -3736,7 +3750,7 @@ impl App {
         }
     }
 
-    /// One Esc in the game: the battle-mode line, a focused text box, a question's No, the newest window, or the menu.
+    /// One Esc in the game: the battle-mode line, a question's No, the newest window, or the menu.
     pub(crate) fn game_escape(&mut self) {
         let Scene::Game(game) = &mut self.scene else { return };
         // A tab's rename box goes first: a tab keeps its name, a torn-off window takes the typed one.
@@ -3752,8 +3766,7 @@ impl App {
         game.sync_esc();
         let view = escape::EscView {
             // The always-on line is not this. An open battle-mode line is the first Esc.
-            battle_line: game.chat_mode.battle_line_open(),
-            focused: game.focused_text(),
+            battle_line: game.chat_mode.battle_line_open() && !game.window_text_focused(),
             conversation: game.dialog.as_ref().is_some_and(|dialog| dialog.warp.is_none()),
             question: game.question_open(),
             // Esc never closes the own shop or buying store.
@@ -3766,13 +3779,13 @@ impl App {
                 game.chat.close_battle_line();
                 game.chat_mode.close_line();
             }
-            Some(escape::EscAct::Cancel(id) | escape::EscAct::Close(id)) => game.close_esc(id),
+            Some(escape::EscAct::Close(id)) => game.close_esc(id),
             Some(escape::EscAct::ShopCancel) => game.close_esc(escape::WindowId::Shop),
             Some(escape::EscAct::AnswerNo) => game.answer_no(&self.messages),
             // Nothing left to close while a navigation runs: Esc asks whether to cancel it, before the menu.
             Some(escape::EscAct::ToggleMenu) if game.navigation.is_some() && game.escape.is_none() => game.question_box = Some(BoxQuestion::StopNavigation),
             Some(escape::EscAct::ToggleMenu) => {
-                game.escape = if game.escape.is_some() { None } else { Some(escape::Menu { dead: game.player.dead }) };
+                game.escape = if game.escape.is_some() { None } else { Some(escape::Menu::new(game.player.dead)) };
             }
             None => {}
         }

@@ -908,9 +908,6 @@ fn clicked_on(app: &App, at: [f32; 2], shift: bool) -> Value {
     if play::mode() == Grade::Fair { json!({"kind": "ground"}) } else { json!({"kind": "ground", "cell": cell}) }
 }
 
-/// The game menu's name in `windows` and in a click's `hit`.
-const GAME_MENU: &str = "GameMenu";
-
 /// The window a click at `at` reaches, by name: the game menu while it keeps the pointer (`menu_takes`), else the one
 /// drawn on top there (`Game::top_at`); a member's small window by their name, as `windows` has it.
 fn window_named(game: &Game, at: [f32; 2], message: [f32; 2]) -> Option<String> {
@@ -1715,7 +1712,6 @@ fn game_state(app: &App, game: &Game) -> Value {
             ("QuickSlot", game.hotkeys.quick_window.open),
             ("BasicInfo", game.basic_info.frame.open),
             ("Shop", game.shop.as_ref().is_some_and(crate::shop::Shop::plain)),
-            (GAME_MENU, game.escape.is_some()),
         ]
         .into_iter()
         .filter(|(_, open)| *open)

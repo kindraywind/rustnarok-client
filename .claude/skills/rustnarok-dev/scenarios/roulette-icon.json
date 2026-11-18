@@ -10,6 +10,7 @@
     {"shot": "roulette-icon-wide", "crop": [965, 0, 400, 260], "threshold": 30},
     {"click_on": {"button": "roulette"}}, {"wait_for": {"packet": "0x0a1c", "ms": 5000}}, {"wait": 300},
     {"expect": {"windows_open": ["Roulette"]}},
-    {"key": "Escape"}, {"wait": 300}
+    {"click_on": {"button": "close"}}, {"wait": 300},
+    {"expect": {"windows_closed": ["Roulette"]}}
   ]
 }
