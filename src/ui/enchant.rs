@@ -49,6 +49,11 @@ const ACTION_SIZE: [f32; 2] = [140.0, 40.0];
 const ROW_AT: [f32; 2] = page(300.0, 0.0);
 const ROW_SIZE: [f32; 2] = [150.0, 30.0];
 const VISIBLE: usize = 12;
+/// Each list's scroll bar: 16 px wide, an arrow at each end, the track between them and a 16×16 thumb on it. Drawn
+/// even when every row fits.
+const BAR: f32 = 16.0;
+/// The left list's bar (top-left, height), then the right list's.
+const BARS: [([f32; 2], f32); 2] = [([204.0, TARGET_TOP], 400.0), (page(453.0, 0.0), PAGE_SIZE[1])];
 /// The box across the bottom.
 const NOTE_AT: [f32; 2] = [14.0, 425.0];
 
@@ -60,6 +65,9 @@ const CARD_ICON: [f32; 2] = [10.0, 10.0];
 /// enough carried, red without an outline when short.
 const MATERIAL_NUMBERS: [f32; 2] = [70.0, 17.0];
 const ENOUGH: [u8; 3] = [240, 240, 240];
+/// The names down the left list (grey) and the right list (soft blue).
+const TARGET_NAME: [u8; 3] = [149, 149, 149];
+const ROW_NAME: [u8; 3] = [130, 150, 200];
 const ENOUGH_OUTLINE: [u8; 3] = [50, 85, 150];
 const SHORT: [u8; 3] = [230, 60, 90];
 
@@ -79,6 +87,8 @@ pub const CONDITIONS: usize = 3860;
 pub const NO_ZENY: usize = 2968;
 /// "Insufficient amount of materials."
 pub const NO_MATERIALS: usize = 3709;
+/// "Do you want to enchant it?", asked before each request.
+pub const ASKS: usize = 3846;
 const TITLE: usize = 3838;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,13 +234,24 @@ pub enum Hit {
     Target(usize),
     /// A row of the enchants on the right.
     Row(usize),
+    /// A scroll bar's part: the left list's (false) or the right's (true).
+    Bar(bool, BarPart),
     Action,
     Window,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BarPart {
+    Up,
+    Down,
+    /// Between the arrows: the thumb, if it's there.
+    Track,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Action {
-    Send(Request),
+    /// Ask "Do you want to enchant it?"; yes sends what `confirm` gives.
+    Ask,
     Refuse(usize),
     Close,
 }
@@ -264,6 +285,10 @@ pub struct Assets {
     /// The enchant button: out, pointed at, held, off.
     action: [Texture; 4],
     grades: [Texture; 4],
+    /// The scroll bars: the up and down arrows, the track and the thumb.
+    arrows: [Texture; 2],
+    track: Texture,
+    thumb: Texture,
 }
 
 impl Assets {
@@ -283,6 +308,10 @@ impl Assets {
             material: [image("bg_enc_off"), image("bg_enc_on")],
             action: [image("btn_enc"), image("btn_enc_over"), image("btn_enc_press"), image("btn_enc_dis")],
             grades: [1, 2, 3, 4].map(|grade| load(format!("{UI}grade_enchant\\grade_icon{grade}.bmp"))),
+            // "dowm" is the file's own spelling.
+            arrows: [image("scroll_arrow_up"), image("scroll_arrow_dowm")],
+            track: image("scroll_bg"),
+            thumb: image("scroll_btn"),
         }
     }
 }
@@ -298,13 +327,30 @@ pub struct Enchant {
     scroll: usize,
     target_scroll: usize,
     sent: Option<Sent>,
+    /// The request the question is about, and what it does once sent.
+    asked: Option<(Request, Sent)>,
+    /// A thumb held: which list's, the pointer's height at the press and the list's first row then.
+    held: Option<(bool, f32, usize)>,
 }
 
 impl Enchant {
     pub fn open(table_id: u64, table: EnchantTable) -> Self {
         let mut frame = Frame::new(POSITION, WIDTH);
         frame.open = true;
-        Self { frame, table_id, table, item: None, item_slots: 0, tab: Tab::Normal, picked: None, scroll: 0, target_scroll: 0, sent: None }
+        Self {
+            frame,
+            table_id,
+            table,
+            item: None,
+            item_slots: 0,
+            tab: Tab::Normal,
+            picked: None,
+            scroll: 0,
+            target_scroll: 0,
+            sent: None,
+            asked: None,
+            held: None,
+        }
     }
 
     /// Takes an item in (a row on the left, or one dropped on the window). `Err(Some(id))` is a message; `Err(None)`
@@ -352,6 +398,49 @@ impl Enchant {
         *scroll = (*scroll as i32 + rows).clamp(0, count.saturating_sub(shown) as i32) as usize;
     }
 
+    /// Each list's length and how many rows it shows: the left's, then the right's.
+    fn lengths(&self, carried: &[InventoryItem]) -> [(usize, usize); 2] {
+        [(self.targets(carried).len(), TARGETS_SHOWN), (self.rows(self.chosen(carried)).len(), VISIBLE)]
+    }
+
+    fn scroll_mut(&mut self, right: bool) -> &mut usize {
+        if right { &mut self.scroll } else { &mut self.target_scroll }
+    }
+
+    /// The thumb's top-left in the window: at the list's scroll share of the track.
+    fn thumb_at(&self, right: bool, carried: &[InventoryItem]) -> [f32; 2] {
+        let (count, shown) = self.lengths(carried)[usize::from(right)];
+        let range = count.saturating_sub(shown);
+        let first = if right { self.scroll } else { self.target_scroll };
+        let (at, height) = BARS[usize::from(right)];
+        let share = if range == 0 { 0.0 } else { first.min(range) as f32 / range as f32 };
+        offset(at, [0.0, BAR + ((height - 3.0 * BAR) * share).floor()])
+    }
+
+    /// A press on a thumb holds it until the button is let go.
+    pub fn hold(&mut self, hit: &Hit, cursor: [f32; 2], carried: &[InventoryItem]) {
+        if let Hit::Bar(right, BarPart::Track) = *hit
+            && self.frame.local(cursor, HEIGHT).is_some_and(|local| contains(self.thumb_at(right, carried), [BAR, BAR], local))
+        {
+            self.held = Some((right, cursor[1], if right { self.scroll } else { self.target_scroll }));
+        }
+    }
+
+    /// The held thumb follows the pointer, a row at a time.
+    pub fn drag_thumb(&mut self, cursor: [f32; 2], carried: &[InventoryItem]) {
+        let Some((right, from, first)) = self.held else { return };
+        let (count, shown) = self.lengths(carried)[usize::from(right)];
+        let range = count.saturating_sub(shown);
+        let travel = BARS[usize::from(right)].1 - 3.0 * BAR;
+        let rows = ((cursor[1] - from) * range as f32 / travel).round() as i64;
+        *self.scroll_mut(right) = (first as i64 + rows).clamp(0, range as i64) as usize;
+    }
+
+    /// Lets go of a thumb; whether one was held.
+    pub fn drop_thumb(&mut self) -> bool {
+        self.held.take().is_some()
+    }
+
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = self.frame.local(cursor, HEIGHT)?;
         if let Some(hit) = self.frame.title_hit(local) {
@@ -363,7 +452,19 @@ impl Enchant {
         let target = (0..TARGETS_SHOWN).find(|&row| contains(target_at(row), TARGET_SIZE, local)).map(Hit::Target);
         let row = (0..VISIBLE).find(|&row| contains(row_at(row), ROW_SIZE, local)).map(Hit::Row);
         let action = contains(ACTION_AT, ACTION_SIZE, local).then_some(Hit::Action);
-        Some(page.or(sub).or(target).or(row).or(action).unwrap_or(Hit::Window))
+        let bar = (0..2).find_map(|list| {
+            let (at, height) = BARS[list];
+            let y = local[1] - at[1];
+            let part = if y < BAR {
+                BarPart::Up
+            } else if y >= height - BAR {
+                BarPart::Down
+            } else {
+                BarPart::Track
+            };
+            contains(at, [BAR, height], local).then_some(Hit::Bar(list == 1, part))
+        });
+        Some(page.or(sub).or(target).or(row).or(bar).or(action).unwrap_or(Hit::Window))
     }
 
     /// The item under the pointer: anywhere on a row of either list, or on the picture, a material's icon or a card's.
@@ -419,6 +520,16 @@ impl Enchant {
                 let index = self.scroll + row;
                 if index < self.rows(item).len() {
                     self.picked = Some(index);
+                }
+                return None;
+            }
+            Hit::Bar(right, part) => {
+                let (count, shown) = self.lengths(carried)[usize::from(right)];
+                let scroll = self.scroll_mut(right);
+                match part {
+                    BarPart::Up => *scroll = scroll.saturating_sub(1),
+                    BarPart::Down => *scroll = (*scroll + 1).min(count.saturating_sub(shown)),
+                    BarPart::Track => {}
                 }
                 return None;
             }
@@ -478,8 +589,7 @@ impl Enchant {
                 if let Some(message) = refuse_cost(info.cost.zeny, &info.cost.materials, zeny, count) {
                     return Some(Action::Refuse(message));
                 }
-                self.sent = Some(Sent::Fill { slot });
-                Request::Random { table: self.table_id, index: item.index }
+                (Request::Random { table: self.table_id, index: item.index }, Sent::Fill { slot })
             }
             Tab::Perfect => {
                 let slot = next_slot(&self.table.slot_order, cards, self.item_slots)?;
@@ -487,16 +597,14 @@ impl Enchant {
                 if let Some(message) = refuse_cost(row.zeny, &row.materials, zeny, count) {
                     return Some(Action::Refuse(message));
                 }
-                self.sent = Some(Sent::Fill { slot });
-                Request::Perfect { table: self.table_id, index: item.index, item: row.pick }
+                (Request::Perfect { table: self.table_id, index: item.index, item: row.pick }, Sent::Fill { slot })
             }
             Tab::Upgrade => {
                 let row = rows.get(self.picked?)?;
                 if let Some(message) = refuse_cost(row.zeny, &row.materials, zeny, count) {
                     return Some(Action::Refuse(message));
                 }
-                self.sent = Some(Sent::Upgrade { slot: row.slot });
-                Request::Upgrade { table: self.table_id, index: item.index, slot: u16::from(row.slot) }
+                (Request::Upgrade { table: self.table_id, index: item.index, slot: u16::from(row.slot) }, Sent::Upgrade { slot: row.slot })
             }
             Tab::Reset => {
                 let reset = self.table.reset.as_ref()?;
@@ -506,11 +614,18 @@ impl Enchant {
                 if let Some(message) = refuse_cost(reset.cost.zeny, &reset.cost.materials, zeny, count) {
                     return Some(Action::Refuse(message));
                 }
-                self.sent = Some(Sent::Reset);
-                Request::Reset { table: self.table_id, index: item.index }
+                (Request::Reset { table: self.table_id, index: item.index }, Sent::Reset)
             }
         };
-        Some(Action::Send(request))
+        self.asked = Some(request);
+        Some(Action::Ask)
+    }
+
+    /// The question answered yes: the request to send, now waited on.
+    pub fn confirm(&mut self) -> Option<Request> {
+        let (request, sent) = self.asked.take().filter(|_| self.sent.is_none())?;
+        self.sent = Some(sent);
+        Some(request)
     }
 
     fn rows(&self, item: Option<&InventoryItem>) -> Vec<Shown> {
@@ -613,6 +728,12 @@ impl Enchant {
                 .enumerate()
                 .map(|(index, (id, _))| (format!("material_{id}"), self.place(offset(material_at(index), MATERIAL_ICON), ICON_SIZE))),
         );
+        for (list, (bar, height)) in BARS.into_iter().enumerate() {
+            let name = ["target", "row"][list];
+            boxes.push((format!("{name}_up"), self.place(bar, [BAR, BAR])));
+            boxes.push((format!("{name}_down"), self.place(offset(bar, [0.0, height - BAR]), [BAR, BAR])));
+            boxes.push((format!("{name}_thumb"), self.place(self.thumb_at(list == 1, carried), [BAR, BAR])));
+        }
         let targets = self.targets(carried).into_iter().skip(self.target_scroll).take(TARGETS_SHOWN);
         boxes.extend(targets.enumerate().map(|(row, item)| (format!("target_{}", item.id), self.place(target_at(row), TARGET_SIZE))));
         boxes
@@ -691,7 +812,7 @@ impl Enchant {
                 layer.sprites.push((&assets.grades[usize::from(target.grade) - 1], at(offset(place, [166.0, 7.0])), [12.0, 12.0]));
             }
             let name = window::fit(font, &inventory::item_name(items, target.id, target.identified, target.refine), 152.0);
-            layer.texts.push((name, at(offset(place, [38.0, 19.0])), BLACK));
+            layer.texts.push((name, at(offset(place, [38.0, 19.0])), TARGET_NAME));
         }
 
         let page = self.tab.page();
@@ -733,9 +854,11 @@ impl Enchant {
             if let Some(texture) = icon(card) {
                 layer.sprites.push((texture, at(offset(socket, CARD_ICON)), ICON_SIZE));
             }
-            let name = window::fit(font, &name_of(card), SLOT_NAME_WIDTH);
-            let name_at = offset(SLOTS[slot], [name_x + (SLOT_NAME_WIDTH - font.width(&name)) / 2.0, 44.0]);
-            layer.texts.push((name, at(name_at), BLACK));
+            // Up to three lines in the 96 px name box, each centred.
+            for (line, name) in window::wrap(font, &name_of(card), SLOT_NAME_WIDTH, 3).into_iter().enumerate() {
+                let name_at = offset(SLOTS[slot], [name_x + (SLOT_NAME_WIDTH - font.width(&name)) / 2.0, 44.0 + 13.0 * line as f32]);
+                layer.texts.push((name, at(name_at), BLACK));
+            }
         }
 
         if let Some((zeny, materials)) = self.cost(item) {
@@ -780,7 +903,13 @@ impl Enchant {
             if let Some(texture) = icon(shown) {
                 layer.sprites.push((texture, at(offset(place, [2.0, 3.0])), [24.0, 24.0]));
             }
-            layer.texts.push((window::fit(font, &name_of(shown), 101.0), at(offset(place, [28.0, 9.0])), BLACK));
+            layer.texts.push((window::fit(font, &name_of(shown), 101.0), at(offset(place, [28.0, 9.0])), ROW_NAME));
+        }
+        for (list, (bar, height)) in BARS.into_iter().enumerate() {
+            layer.sprites.push((&assets.track, at(bar), [BAR, height]));
+            layer.sprites.push((&assets.arrows[0], at(bar), [BAR, BAR]));
+            layer.sprites.push((&assets.arrows[1], at(offset(bar, [0.0, height - BAR])), [BAR, BAR]));
+            layer.sprites.push((&assets.thumb, at(self.thumb_at(list == 1, carried)), [BAR, BAR]));
         }
         if let Some(note) = self.note(item) {
             layer.texts.push((note, at(NOTE_AT), BLACK));
@@ -931,8 +1060,17 @@ mod tests {
         let count = |id: u32| if id == 25669 { 20 } else { 0 };
         assert_eq!(window.click(Hit::Action, std::slice::from_ref(&item), |_| 2, count, 50_000), Some(Action::Refuse(NO_ZENY)));
         assert!(window.sent.is_none());
-        let sent = window.click(Hit::Action, std::slice::from_ref(&item), |_| 2, count, 100_000);
-        assert_eq!(sent, Some(Action::Send(Request::Perfect { table: 33, index: 4, item: 4818 })));
+        // Enough of both: it asks first, and sends nothing until a yes.
+        assert_eq!(window.click(Hit::Action, std::slice::from_ref(&item), |_| 2, count, 100_000), Some(Action::Ask));
+        assert!(window.sent.is_none());
+        // A no leaves it as it was, and the next press asks again.
+        window.asked = None;
+        assert_eq!(window.click(Hit::Action, std::slice::from_ref(&item), |_| 2, count, 100_000), Some(Action::Ask));
+        assert_eq!(window.confirm(), Some(Request::Perfect { table: 33, index: 4, item: 4818 }));
+        assert_eq!(window.sent, Some(Sent::Fill { slot: 3 }));
+        // A second yes (or a press while waiting) sends nothing more.
+        assert_eq!(window.confirm(), None);
+        assert_eq!(window.click(Hit::Action, std::slice::from_ref(&item), |_| 2, count, 100_000), None);
         // Another drop while that request is out would forget the slot, so it's refused and the item stays.
         let other = InventoryItem { index: 9, ..item };
         assert_eq!(window.try_item(&other, 2), Err(None));
@@ -978,6 +1116,56 @@ mod tests {
         assert_eq!(window.hit(at(window.frame.minimize_button())), Some(Hit::Title(TitleHit::Title)));
         assert_eq!(window.hit(at(window.frame.close_button())), Some(Hit::Title(TitleHit::Close)));
         assert_eq!(window.hit(at([300.0, 300.0])), Some(Hit::Window));
+    }
+
+    #[test]
+    fn the_scroll_bars_step_a_row_and_their_thumbs_drag() {
+        let mut window = Enchant::open(33, table());
+        let carried: Vec<InventoryItem> = (0..12).map(|index| InventoryItem { index, ..item([0; 4]) }).collect();
+        let at = |window: &Enchant, local: [f32; 2]| window.frame.at(offset(local, [3.0, 3.0]));
+        // Each bar's arrows and the track between them; the rows and the pages beside them aren't the bar's.
+        assert_eq!(window.hit(at(&window, [204.0, 17.0])), Some(Hit::Bar(false, BarPart::Up)));
+        assert_eq!(window.hit(at(&window, [204.0, 401.0])), Some(Hit::Bar(false, BarPart::Down)));
+        assert_eq!(window.hit(at(&window, [204.0, 200.0])), Some(Hit::Bar(false, BarPart::Track)));
+        assert_eq!(window.hit(at(&window, [673.0, 40.0])), Some(Hit::Bar(true, BarPart::Up)));
+        assert_eq!(window.hit(at(&window, [673.0, 401.0])), Some(Hit::Bar(true, BarPart::Down)));
+        assert_eq!(window.hit(at(&window, [190.0, 401.0])), Some(Hit::Target(7)));
+        // The thumb at the top, the middle and the end of the track: 12 items, 8 shown, so 4 steps.
+        assert_eq!(window.thumb_at(false, &carried), [204.0, 33.0]);
+        let none = |_| 0;
+        for _ in 0..2 {
+            window.click(Hit::Bar(false, BarPart::Down), &carried, |_| 2, none, 0);
+        }
+        assert_eq!((window.target_scroll, window.thumb_at(false, &carried)), (2, [204.0, 33.0 + 176.0]));
+        for _ in 0..5 {
+            window.click(Hit::Bar(false, BarPart::Down), &carried, |_| 2, none, 0);
+        }
+        // It stops at the last page.
+        assert_eq!((window.target_scroll, window.thumb_at(false, &carried)), (4, [204.0, 401.0 - 16.0]));
+        window.click(Hit::Bar(false, BarPart::Up), &carried, |_| 2, none, 0);
+        assert_eq!(window.target_scroll, 3);
+        // The thumb is held on a press on it (not on the rest of the track) and follows the pointer by whole rows.
+        let thumb = window.frame.at(offset(window.thumb_at(false, &carried), [8.0, 8.0]));
+        window.hold(&Hit::Bar(false, BarPart::Track), offset(thumb, [0.0, 30.0]), &carried);
+        assert!(!window.drop_thumb());
+        window.hold(&Hit::Bar(false, BarPart::Track), thumb, &carried);
+        window.drag_thumb(offset(thumb, [0.0, -2.0 * 88.0]), &carried);
+        assert_eq!(window.target_scroll, 1);
+        window.drag_thumb(offset(thumb, [0.0, -1000.0]), &carried);
+        assert_eq!(window.target_scroll, 0);
+        assert!(window.drop_thumb());
+        // A list where every row fits doesn't move.
+        window.click(Hit::Bar(true, BarPart::Down), &carried, |_| 2, none, 0);
+        assert_eq!((window.scroll, window.thumb_at(true, &carried)), (0, [673.0, 56.0]));
+    }
+
+    #[test]
+    fn a_refusal_comes_without_a_question() {
+        let mut window = Enchant::open(33, table());
+        let item = item([0; 4]);
+        window.try_item(&item, 2).unwrap();
+        assert_eq!(window.click(Hit::Action, std::slice::from_ref(&item), |_| 2, |_| 0, 1_000_000), Some(Action::Refuse(NO_MATERIALS)));
+        assert_eq!((window.asked.clone(), window.confirm()), (None, None));
     }
 
     #[test]

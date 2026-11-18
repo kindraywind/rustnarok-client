@@ -2642,6 +2642,8 @@ enum BoxQuestion {
     StopNavigation,
     /// The style shop's Buy: "Item cannot be restored, are you sure want to apply it?" (2818), for these picks.
     BuyStyle(net::StylePicks),
+    /// The enchant window's button: "Do you want to enchant it?" (3846).
+    Enchant,
 }
 
 impl BoxQuestion {
@@ -2661,6 +2663,7 @@ impl BoxQuestion {
             Self::OpenStall { .. } => catalog::OPEN_STALL_ASKS,
             Self::StopNavigation => navigation::ASKS_STOP,
             Self::BuyStyle(_) => stylist::ASKS_BUY,
+            Self::Enchant => enchant::ASKS,
         }
     }
 
