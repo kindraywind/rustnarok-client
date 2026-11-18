@@ -1343,6 +1343,9 @@ impl Game {
             }
             BoxQuestion::ResetSettings => self.reset_settings = true,
             BoxQuestion::StopNavigation => self.navigation = None,
+            BoxQuestion::BuyStyle(picks) => {
+                let _ = self.session.buy_style(picks);
+            }
             BoxQuestion::RebindKey(_) | BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) | BoxQuestion::Said(_) => {}
         }
     }

@@ -1717,7 +1717,18 @@ impl App {
             .chain(game.hotkeys.keys.iter().flatten().filter(|key| key.skill).filter_map(|key| skill_info.get(&(key.id as u16)).map(skills::icon_path)));
         let status_paths =
             game.status_icons.iter().filter_map(|(kind, ..)| status_icon_files.get(kind).map(|(_, file)| format!("data\\texture\\effect\\{file}")));
+        // The style shop's list of what will be bought, by the zeny and coupons carried.
+        let style_zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0);
+        let style_carried: HashMap<u32, u32> = game.inventory.items.iter().fold(HashMap::new(), |mut carried, item| {
+            *carried.entry(item.id).or_default() += u32::from(item.amount);
+            carried
+        });
+        let style_has = |id: u32| style_carried.get(&id).copied().unwrap_or(0);
+        let style_job = game.player.look.as_ref().map_or(game.me.job, |look| look.job);
+        let style_rows =
+            game.stylist.as_ref().map(|window| stylist::list(&self.styling_shop, style_job, window.picks, style_zeny, style_has)).unwrap_or_default();
         let mut shop_icons = game.shop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default();
+        shop_icons.extend(game.stylist.as_ref().map(|window| window.icons(items, &style_rows)).unwrap_or_default());
         shop_icons.extend(game.cashshop.as_ref().map(|shop| shop.icons(items)).unwrap_or_default());
         let mut pick_icons = game.pick.as_ref().map(|(list, _)| list.icons(items, skill_info)).unwrap_or_default();
         pick_icons.extend(game.refine.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
@@ -2588,14 +2599,16 @@ impl App {
             );
         }
         if let Some(window) = &game.stylist {
-            let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
             window.draw(
                 shop_layer.esc(W::Stylist),
                 &assets.chrome,
                 &assets.stylist,
+                icons,
                 items,
                 &self.styling_shop,
-                job,
+                &style_rows,
+                style_zeny,
+                style_has,
                 messages,
                 font,
                 pointer,

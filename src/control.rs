@@ -48,8 +48,9 @@
 //!   name.
 //!   `homunculus` is `{id, name, level, hunger, intimacy, hp, skill_points, vaporized, following}` or null; the skill
 //!   list's level up buttons are targets named `raise:<skill id>`. `player.look` is the real look (hair, hair color,
-//!   clothes color, head top, mid and bottom, and `body` for the 2nd outfit). The stylist's buttons are targets (`hair_style_<row>`, `hair_color_<row>`,
-//!   `clothes_color_<row>`, `tab_hair`, `tab_accessory`, `buy`, `refresh`, `rotate_left`, `rotate_right`, `close`).
+//!   clothes color, head top, mid and bottom, and `body` for the 2nd outfit). The stylist's buttons are targets (`hair_style_prev`, `hair_style_next`,
+//!   `clothes_prev`, `clothes_next`, `hair_color_<row>`, `hair_color_none`, `head_top_<row>`, `tab_hair`, `tab_accessory`, `buy`, `refresh`,
+//!   `rotate_left`, `rotate_right`, `close`); `stylist` is `{buy, rows: [{part, payable}]}`: its list of what will be bought, or null.
 //!   An NPC dialog's buttons are targets while they show: `npc_next` or `npc_close`, `npc_menu:<index>` for each menu row
 //!   in view, `npc_menu_ok`, `npc_menu_cancel` and `npc_input_ok`. An item's picture in its text is a target of kind
 //!   `item_picture` with the item's `id`, and `dialog.pointed_item` is the name shown for the one under the pointer.
@@ -1686,10 +1687,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(
             game.stylist
                 .iter()
-                .flat_map(|window| {
-                    let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
-                    window.button_boxes(&app.styling_shop, job)
-                })
+                .flat_map(|window| window.button_boxes(&app.styling_shop))
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(
@@ -2294,6 +2292,14 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["vend_size"] = json!({"width": game.vend_size.width, "rows": game.vend_size.rows});
     state["shop_size"] = game.shop.as_ref().and_then(crate::shop::Shop::sizes).map(|(width, rows)| json!({"width": width, "rows": rows})).into();
     state["shop_scroll"] = game.shop.as_ref().map(crate::shop::Shop::scrolls).into();
+    // The style shop: each row of its list of what will be bought, and whether Buy is live.
+    state["stylist"] = json!(game.stylist.as_ref().map(|window| {
+        let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0);
+        let has = |id: u32| game.inventory.items.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
+        let job = game.player.look.as_ref().map_or(game.me.job, |look| look.job);
+        let rows = crate::stylist::list(&app.styling_shop, job, window.picks, zeny, has);
+        json!({"buy": crate::stylist::can_buy(&rows), "rows": rows.iter().map(|row| json!({"part": format!("{:?}", row.part), "payable": row.payable})).collect::<Vec<_>>()})
+    }));
     // The ranking board.
     state["ranking"] = json!(game.ranking.as_ref().map(|board| {
         let rows = board.rows(&game.char_names);
@@ -2542,6 +2548,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("shop_prices", Fair),
         ("shop_size", Fair),
         ("shop_scroll", Fair),
+        ("stylist", Fair),
         ("shop_whole", Fair),
         ("shop_points", Fair),
         ("shortcuts", Fair),

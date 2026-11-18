@@ -1195,32 +1195,24 @@ impl App {
                     None => {}
                 }
             }
-            Scene::Game(game)
-                if on(Esc(W::Stylist))
-                    && game.stylist.as_ref().is_some_and(|window| {
-                        let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
-                        window.hit(cursor, &self.styling_shop, job).is_some()
-                    }) =>
-            {
-                let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
-                let hair = game.player.look.as_ref().map(|look| look.hair).unwrap_or(0);
+            Scene::Game(game) if on(Esc(W::Stylist)) && game.stylist.as_ref().is_some_and(|window| window.covers(cursor)) => {
+                let look = game.player.look.clone().unwrap_or_else(|| Look { job: game.me.job, ..Look::default() });
                 let zeny = game.status.get(&net::STATUS_ZENY).copied().unwrap_or(0);
                 let carried = &game.inventory.items;
                 let has = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
                 let window = game.stylist.as_mut().unwrap();
-                let hit = window.hit(cursor, &self.styling_shop, job).unwrap();
-                match window.click(hit, &self.styling_shop, job, hair, zeny, has) {
-                    Some(stylist::Action::Buy(picks)) => {
-                        let _ = game.session.buy_style(picks);
-                    }
-                    Some(stylist::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
+                let rows = stylist::list(&self.styling_shop, look.job, window.picks, zeny, has);
+                let hit = window.hit(cursor, &self.styling_shop, rows.len()).unwrap();
+                // Buy asks first; hair that can't be dyed says so in a box.
+                match window.click(hit, &self.styling_shop, &look, stylist::can_buy(&rows)) {
+                    Some(stylist::Action::Ask(picks)) => game.question_box = Some(BoxQuestion::BuyStyle(picks)),
+                    Some(stylist::Action::Notice(id)) => game.question_box = Some(BoxQuestion::Notice(id)),
                     Some(stylist::Action::Close) => {
                         let _ = game.session.close_stylist();
                         game.stylist = None;
                     }
                     None => {}
                 }
-                let look = game.player.look.clone().unwrap_or_default();
                 if let Some(window) = &mut game.stylist {
                     dress_stylist(window, &self.grf, &self.look_tables, &look, &self.items, &self.styling_shop);
                 }
@@ -3245,8 +3237,7 @@ impl App {
         if let Scene::Game(game) = &mut self.scene
             && top == Some(Esc(W::Stylist))
         {
-            let job = game.player.look.as_ref().map(|look| look.job).unwrap_or(game.me.job);
-            let hit = game.stylist.as_ref().and_then(|window| window.hit(cursor, &self.styling_shop, job));
+            let hit = game.stylist.as_ref().and_then(|window| window.hit(cursor, &self.styling_shop, 0));
             if let Some(hit) = hit {
                 if hit == stylist::Hit::Title(TitleHit::Title) {
                     game.stylist.as_mut().unwrap().frame.start_drag(cursor);
