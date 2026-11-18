@@ -45,8 +45,16 @@ const NAME_Y: f32 = 246.0;
 const RATE_Y: f32 = 31.0;
 const REFINE: [f32; 2] = [84.0, 262.0];
 const BUTTON: [f32; 2] = [96.0, 48.0];
+/// The footer strip along the bottom, under the notice bar and Cancel.
+const FOOTER: f32 = 29.0;
+const BASE_BUTTON: [f32; 2] = [3.0, 3.0];
+/// The notice bar: 194 x 22, its mark at (0, 3) and the text from x 18, wrapped to the 176 px left, 11 px a line.
 const NOTICE: [f32; 2] = [6.0, 322.0];
+const NOTICE_HEIGHT: f32 = 22.0;
+const NOTICE_TEXT: f32 = 18.0;
 const NOTICE_WIDTH: f32 = 176.0;
+const NOTICE_LINE: f32 = 11.0;
+const NOTICE_LINES: usize = 2;
 const CANCEL: [f32; 2] = [204.0, 322.0];
 const CANCEL_SIZE: [f32; 2] = [56.0, 20.0];
 const RED: [u8; 3] = [0xCA, 0x15, 0x2E];
@@ -116,6 +124,17 @@ pub fn result_frame(success: bool, n: usize) -> usize {
 /// How many 100 ms frames have passed since `since`.
 fn frames(since: Instant, now: Instant) -> usize {
     (now.saturating_duration_since(since).as_millis() / FRAME_MS) as usize
+}
+
+/// Where a notice of `lines` lines puts each, down from the bar's top: the block in the bar's middle.
+fn notice_tops(lines: usize) -> Vec<f32> {
+    let top = ((NOTICE_HEIGHT - NOTICE_LINE * lines as f32) / 2.0).trunc();
+    (0..lines).map(|line| top + NOTICE_LINE * line as f32).collect()
+}
+
+/// A slot's count as its two parts, "carried" and "/needed", and whether the first is red: fewer carried than needed.
+fn count_parts(carried: u32, needed: u32) -> (String, String, bool) {
+    (carried.to_string(), format!("/{needed}"), carried < needed)
 }
 
 /// The message a below-100% ore warns with (Use off), if its kind does.
@@ -414,12 +433,16 @@ impl Refine {
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = self.frame.local(cursor, SIZE[1])?;
-        if let Some(hit) = self.frame.title_hit(local) {
-            return Some(Hit::Title(hit));
+        // The title bar has the base and close buttons only: where others have minimize, it is plain title bar.
+        match self.frame.title_hit(local) {
+            Some(TitleHit::Minimize) => return Some(Hit::Title(TitleHit::Title)),
+            Some(hit) => return Some(Hit::Title(hit)),
+            None => {}
         }
-        // The hammering takes everything; the result shows Back and Again beside the item.
+        // The hammering takes everything but the item (a right press still describes it); the result shows Back and
+        // Again beside the item.
         if self.process.is_some() {
-            return Some(Hit::Window);
+            return Some(if contains(ITEM_SLOT, ITEM_SLOT_SIZE, local) { Hit::Item } else { Hit::Window });
         }
         if let Some(shown) = &self.shown {
             return Some(if contains(BACK, BACK_SIZE, local) {
@@ -453,6 +476,44 @@ impl Refine {
         } else {
             Hit::Window
         })
+    }
+
+    /// Whether the hammering is under way.
+    pub fn hammering(&self) -> bool {
+        self.process.is_some()
+    }
+
+    /// Whether an item dropped at `cursor` goes in: on the item slot, and only while the machine is empty or ready.
+    pub fn takes_drop(&self, cursor: [f32; 2]) -> bool {
+        self.process.is_none() && self.shown.is_none() && self.hit(cursor) == Some(Hit::Item)
+    }
+
+    /// What can be pressed, on screen (for the test driver): `refine_item`, `refine_close`, `refine_cancel`; with an
+    /// item in, `refine_ore:<slot>`, `refine_blessing` and `refine_start`; after a result, `refine_back` and
+    /// `refine_again`.
+    pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
+        let place = |local: [f32; 2], size: [f32; 2]| {
+            let [x, y] = self.frame.at(local);
+            [x, y, size[0], size[1]]
+        };
+        let mut boxes = vec![
+            ("refine_item".to_owned(), place(ITEM_SLOT, ITEM_SLOT_SIZE)),
+            ("refine_close".to_owned(), place(self.frame.close_button(), window::BUTTON_SIZE)),
+            ("refine_cancel".to_owned(), place(CANCEL, CANCEL_SIZE)),
+        ];
+        if self.shown.is_some() {
+            boxes.push(("refine_back".to_owned(), place(BACK, BACK_SIZE)));
+            boxes.push(("refine_again".to_owned(), place(AGAIN, AGAIN_SIZE)));
+        } else if self.item.is_some() && self.process.is_none() {
+            boxes.extend(
+                (0..SLOTS.min(self.materials.len())).map(|slot| (format!("refine_ore:{slot}"), place([11.0 + SLOT_STEP * slot as f32, SLOT_Y], SLOT_SIZE))),
+            );
+            if self.blessings > 0 {
+                boxes.push(("refine_blessing".to_owned(), place([BLESSING_X, SLOT_Y], SLOT_SIZE)));
+            }
+            boxes.push(("refine_start".to_owned(), place(REFINE, BUTTON)));
+        }
+        boxes
     }
 
     /// The item an icon on the window stands for: the ore of a slot or the anvil, the blessing, the item in the machine.
@@ -579,15 +640,23 @@ impl Refine {
     ) {
         let message = |id: usize| messages.get(id).map_or("", String::as_str);
         let at = |local: [f32; 2]| self.frame.at(local);
-        self.frame.draw_title(layer, chrome, message(TITLE), pointer.0);
-        if self.frame.minimized {
-            return;
+        // The title bar with the base and close buttons (no minimize).
+        self.frame.draw_title_only(layer, chrome, message(TITLE));
+        for (button, place) in [(0, BASE_BUTTON), (2, self.frame.close_button())] {
+            let image = chrome.button(button, contains(at(place), window::BUTTON_SIZE, pointer.0));
+            layer.sprites.push((image, at(place), image.size));
         }
         let icon = |id: u32| items.get(&id).and_then(|info| icons.get(&inventory::icon_path(info, true))).and_then(Option::as_ref);
         let count = |id: u32| carried.iter().filter(|item| item.id == id).map(|item| u32::from(item.amount)).sum::<u32>();
         let item = self.item.and_then(|index| carried.iter().find(|item| item.index == index));
         let centered = |text: &str, left: f32, width: f32, top: f32, color: [u8; 3], layer: &mut Layer<'a>| {
             layer.texts.push((text.to_owned(), at([left + ((width - font.width(text)) / 2.0).floor(), top]), color));
+        };
+        // A slot's count, centred in the 48 px from `left`: only the carried number turns red when it is too few.
+        let counted = |(carried, needed, short): (String, String, bool), left: f32, layer: &mut Layer<'a>| {
+            let x = left + ((48.0 - font.width(&carried) - font.width(&needed)) / 2.0).floor();
+            layer.texts.push((needed, at([x + font.width(&carried), COUNT_Y]), [0, 0, 0]));
+            layer.texts.push((carried, at([x, COUNT_Y]), if short { RED } else { [0, 0, 0] }));
         };
         // The machine: a grey fill and its picture (the hammering, the result, or waiting with or without an item).
         let hammer = self.process.as_ref().map(|process| (process, frames(process.start, now).min(PROCESS_FRAMES - 1)));
@@ -630,8 +699,7 @@ impl Refine {
                 if let Some(texture) = icon(ore) {
                     layer.sprites.push((texture, at([22.0 + x, ICON_Y]), texture.size));
                 }
-                let carried_ore = count(ore);
-                centered(&format!("{carried_ore}/1"), 10.0 + x, 48.0, COUNT_Y, if carried_ore == 0 { RED } else { [0, 0, 0] }, layer);
+                counted(count_parts(count(ore), 1), 10.0 + x, layer);
             }
             if self.blessings > 0 {
                 if self.use_blessings {
@@ -640,8 +708,7 @@ impl Refine {
                 if let Some(texture) = icon(BLESSING_ITEM) {
                     layer.sprites.push((texture, at([218.0, ICON_Y]), texture.size));
                 }
-                let have = count(BLESSING_ITEM);
-                centered(&format!("{have}/{}", self.blessings), 206.0, 48.0, COUNT_Y, if have < u32::from(self.blessings) { RED } else { [0, 0, 0] }, layer);
+                counted(count_parts(count(BLESSING_ITEM), u32::from(self.blessings)), 206.0, layer);
             }
         }
         // The anvil: the picked ore (on the hammering's first frame only), and the blessing when Use is on (to frame 12).
@@ -720,15 +787,19 @@ impl Refine {
                 layer.texts.push((text.clone(), at([REFINE[0] + 83.0 - font.width(&text), REFINE[1] + 28.0 + down]), [255; 3]));
             }
         }
-        // The notice bar and Cancel.
+        // The footer strip, and on it the notice bar (its text on up to two lines) and Cancel, switched off while it
+        // hammers.
+        chrome.draw_footer(layer, at([0.0, SIZE[1]]), SIZE[0], FOOTER);
         if let Some(notice) = self.notice_at(now) {
             layer.sprites.push((&assets.notice, at(offset(NOTICE, [0.0, 3.0])), assets.notice.size));
-            let text = window::fit(font, message(notice.message), NOTICE_WIDTH);
-            layer.texts.push((text, at(offset(NOTICE, [18.0, 3.0])), if notice.red { RED } else { BLUE }));
+            let lines = window::wrap(font, message(notice.message), NOTICE_WIDTH, NOTICE_LINES);
+            for (line, top) in lines.iter().zip(notice_tops(lines.len())) {
+                layer.texts.push((line.clone(), at(offset(NOTICE, [NOTICE_TEXT, top])), if notice.red { RED } else { BLUE }));
+            }
         }
         let hovered = self.hit(pointer.0) == Some(Hit::Cancel);
-        layer.sprites.push((chrome.button(0, hovered), at(CANCEL), CANCEL_SIZE));
-        centered(message(CANCEL_LABEL), CANCEL[0], CANCEL_SIZE[0], CANCEL[1] + 3.0, [0, 0, 0], layer);
+        let look = if hammer.is_some() { 3 } else { usize::from(hovered) + usize::from(hovered && pointer.1) };
+        chrome.draw_text_button(layer, font, at(CANCEL), CANCEL_SIZE[0], message(CANCEL_LABEL), look);
         // The name over an ore, the blessing and the anvil's icons.
         if let Some(hit) = self.hit(pointer.0)
             && matches!(hit, Hit::Ore(_) | Hit::Blessing | Hit::AnvilOre | Hit::AnvilBlessing)
@@ -762,6 +833,57 @@ mod tests {
 
     fn at(window: &Refine, local: [f32; 2]) -> Option<Hit> {
         window.hit([window.frame.position[0] + local[0], window.frame.position[1] + local[1]])
+    }
+
+    #[test]
+    fn the_title_bar_has_no_minimize_button() {
+        let now = Instant::now();
+        let mut window = Refine::new([1024.0, 768.0], now);
+        // Where other windows have minimize, it is title bar; a click there rolls nothing up. Close is close.
+        let spot = window.frame.minimize_button();
+        let hit = at(&window, [spot[0] + 3.0, spot[1] + 3.0]);
+        assert_eq!(hit, Some(Hit::Title(TitleHit::Title)));
+        assert_eq!(window.click(hit.unwrap(), |_| 0, 0, now), None);
+        assert!(!window.frame.minimized);
+        assert_eq!(at(&window, [252.0, 5.0]), Some(Hit::Title(TitleHit::Close)));
+    }
+
+    #[test]
+    fn the_notice_sits_in_the_bars_middle_on_one_or_two_lines() {
+        assert_eq!((notice_tops(1), notice_tops(2)), (vec![5.0], vec![0.0, 11.0]));
+    }
+
+    #[test]
+    fn only_the_carried_number_of_a_count_turns_red() {
+        // An ore needs 1: none carried is red, some isn't. A blessing count: fewer than needed is red.
+        assert_eq!(count_parts(0, 1), ("0".into(), "/1".into(), true));
+        assert_eq!(count_parts(3, 1), ("3".into(), "/1".into(), false));
+        assert_eq!(count_parts(1, 2), ("1".into(), "/2".into(), true));
+        assert_eq!(count_parts(2, 2), ("2".into(), "/2".into(), false));
+    }
+
+    #[test]
+    fn the_item_slot_takes_a_drop_only_while_empty_or_ready() {
+        let start = Instant::now();
+        let slot = |window: &Refine| window.frame.at([120.0, 212.0]);
+        let carried = [InventoryItem { index: 4, id: 1201, ..InventoryItem::default() }];
+        // Empty, then ready: a drop goes in.
+        let mut window = Refine::new([1024.0, 768.0], start);
+        assert!(window.takes_drop(slot(&window)) && !window.takes_drop(window.frame.at([20.0, 300.0])));
+        window.listed(4, 0, vec![(1010, 100, 50)], start);
+        assert!(window.takes_drop(slot(&window)));
+        assert!(window.button_boxes().iter().any(|(name, area)| name == "refine_ore:0" && area[..2] == window.frame.at([11.0, 55.0])));
+        // Hammering: no drop, and nothing else is hit, but the slot still names the item for a right press.
+        let mut window = hammering(0, false, start);
+        assert!(window.hammering() && !window.takes_drop(slot(&window)));
+        assert_eq!(window.hit(slot(&window)).and_then(|hit| window.item_at(hit, &carried)), Some(ItemAt::Carried(4)));
+        assert_eq!(at(&window, [100.0, 280.0]), Some(Hit::Window));
+        assert!(!window.button_boxes().iter().any(|(name, _)| name == "refine_start" || name == "refine_back"));
+        // The result: no drop either; the item is still described; Back and Again are the buttons.
+        window.advance(start + Duration::from_millis(1400), |_| 1, 99_999);
+        assert!(!window.hammering() && !window.takes_drop(slot(&window)));
+        assert_eq!(window.hit(slot(&window)), Some(Hit::Item));
+        assert!(window.button_boxes().iter().any(|(name, _)| name == "refine_again"));
     }
 
     #[test]
