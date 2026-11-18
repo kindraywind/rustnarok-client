@@ -1115,35 +1115,26 @@ impl App {
                     game.materials = None;
                 }
             }
-            Scene::Game(game) if on(Esc(W::LaphineSynthesis)) => {
-                let hit = game.synthesis.as_ref().unwrap().hit(cursor).unwrap();
-                match game.synthesis.as_mut().unwrap().click(hit) {
+            Scene::Game(game) if on(Esc(W::LaphineSynthesis)) || on(Esc(W::LaphineUpgrade)) => {
+                let upgrade = on(Esc(W::LaphineUpgrade));
+                let window = if upgrade { game.upgrade.as_mut() } else { game.synthesis.as_mut() }.unwrap();
+                let hit = window.hit(cursor).unwrap();
+                match window.click(hit, &game.inventory.items, control::now()) {
+                    Some(laphine::Action::Make) if upgrade => {
+                        if let Some(index) = window.index() {
+                            let _ = game.session.upgrade_item(window.box_id, index);
+                        }
+                    }
                     Some(laphine::Action::Make) => {
-                        let (box_id, entries) = {
-                            let window = game.synthesis.as_ref().unwrap();
-                            (window.box_id, window.entries())
-                        };
-                        let _ = game.session.synthesize(box_id, &entries);
+                        let _ = game.session.synthesize(window.box_id, &window.entries());
+                    }
+                    Some(laphine::Action::Close) if upgrade => {
+                        let _ = game.session.close_upgrade();
+                        game.upgrade = None;
                     }
                     Some(laphine::Action::Close) => {
                         let _ = game.session.close_synthesis();
                         game.synthesis = None;
-                    }
-                    None => {}
-                }
-            }
-            Scene::Game(game) if on(Esc(W::LaphineUpgrade)) => {
-                let hit = game.upgrade.as_ref().unwrap().hit(cursor).unwrap();
-                match game.upgrade.as_mut().unwrap().click(hit) {
-                    Some(laphine::Action::Make) => {
-                        if let Some(index) = game.upgrade.as_ref().unwrap().index() {
-                            let box_id = game.upgrade.as_ref().unwrap().box_id;
-                            let _ = game.session.upgrade_item(box_id, index);
-                        }
-                    }
-                    Some(laphine::Action::Close) => {
-                        let _ = game.session.close_upgrade();
-                        game.upgrade = None;
                     }
                     None => {}
                 }
@@ -2035,11 +2026,9 @@ impl App {
             if let Some(window) = &mut game.grade {
                 window.frame.drag_to(self.cursor, grade::HEIGHT);
             }
-            if let Some(window) = &mut game.synthesis {
-                window.frame.drag_to(self.cursor, laphine::Synthesis::height());
-            }
-            if let Some(window) = &mut game.upgrade {
-                window.frame.drag_to(self.cursor, laphine::Upgrade::height());
+            for window in [&mut game.synthesis, &mut game.upgrade].into_iter().flatten() {
+                window.frame.drag_to(self.cursor, laphine::SIZE[1]);
+                window.drag_thumb(self.cursor[1], &game.inventory.items);
             }
             if let Some(window) = &mut game.reform {
                 window.frame.drag_to(self.cursor, reform::HEIGHT);
@@ -2123,6 +2112,14 @@ impl App {
             };
             game.show_item(shown);
             return;
+        }
+        // A right press on a Laphine row or slot describes its item.
+        if let (Scene::Game(game), ElementState::Pressed) = (&mut self.scene, state) {
+            let index = [&game.upgrade, &game.synthesis].into_iter().flatten().find_map(|window| window.item_at(self.cursor, &game.inventory.items));
+            if let Some(shown) = index.and_then(|index| game.inventory.get(index).map(iteminfo::Shown::of)) {
+                game.show_item(shown);
+                return;
+            }
         }
         // Alt + right press orders the homunculus (when it's out), off the windows.
         if let (Scene::Game(game), Some(assets)) = (&mut self.scene, &self.assets)
@@ -2560,8 +2557,8 @@ impl App {
                 }
                 // Over Game Settings' open skin list, the wheel scrolls it.
                 _ if game.settings_window.as_mut().is_some_and(|window| window.wheel(self.cursor, rows)) => {}
-                _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows),
-                _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows),
+                _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
+                _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
                 _ if on_npc_menu => game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()).unwrap().wheel(rows),
                 _ if game.dialog.as_ref().is_some_and(Dialog::say_window) && game.say.contains(self.cursor) => {
                     game.say.scroll_by(rows as f32 * npc_say::SCROLL_STEP);
@@ -2682,7 +2679,9 @@ impl App {
                         | Dragged::ShopOffer(_)
                         | Dragged::ShopDeal(_)
                         | Dragged::VendMirror(_)
-                        | Dragged::VendGood(_) => None,
+                        | Dragged::VendGood(_)
+                        | Dragged::LaphineRow(_)
+                        | Dragged::LaphineSlot(_) => None,
                     };
                     if let Some(key) = key {
                         for (slot, key) in hotkeys::drop_on(&game.hotkeys.keys, key, slot) {
@@ -2771,25 +2770,18 @@ impl App {
                 let on_enchant = game.enchant.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_materials = game.materials.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 let on_forge = game.forge.as_ref().is_some_and(|window| window.covers(self.cursor));
-                let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
-                let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
                 match (item, game.window_at(self.cursor)) {
-                    (Some((Dragged::Item(index), _, true)), _) if on_synthesis || on_upgrade => {
-                        if let Some(item) = game.inventory.get(index).cloned() {
-                            let said = if on_synthesis {
-                                game.synthesis.as_mut().and_then(|window| match window.put(&item) {
-                                    laphine::Put::Say(id) => Some(id),
-                                    _ => None,
-                                })
-                            } else {
-                                game.upgrade.as_mut().and_then(|window| match window.put(&item) {
-                                    laphine::Put::Say(id) => Some(id),
-                                    _ => None,
-                                })
-                            };
-                            if let Some(id) = said {
-                                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
-                            }
+                    // A Laphine row let go on its window goes in; a slot's item let go on the list comes out. An
+                    // inventory item goes in only from the list.
+                    (Some((Dragged::LaphineRow(index), _, true)), _) => {
+                        let now = control::now();
+                        for window in [&mut game.synthesis, &mut game.upgrade].into_iter().flatten() {
+                            window.drop_row(index, self.cursor, &game.inventory.items, now);
+                        }
+                    }
+                    (Some((Dragged::LaphineSlot(index), _, true)), _) => {
+                        for window in [&mut game.synthesis, &mut game.upgrade].into_iter().flatten() {
+                            window.drop_slot(index, self.cursor);
                         }
                     }
                     (Some((Dragged::Item(index), _, true)), _) if on_mail => game.move_item(Asked::Mail(index)),
@@ -2882,8 +2874,8 @@ impl App {
                     | game.quest_window.frame.drop_drag()
                     | game.quest_window.detail.drop_drag()
                     | game.achievement_window.frame.drop_drag()
-                    | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag())
-                    | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
+                    | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
                     | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.reform.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.refine.as_mut().is_some_and(|window| window.frame.drop_drag())
@@ -3409,21 +3401,18 @@ impl App {
             }
             return;
         }
+        // A Laphine window: its title bar, its list's thumb, or a row's or a slot's item to drag.
         if let Scene::Game(game) = &mut self.scene
-            && top == Some(Esc(W::LaphineSynthesis))
-            && let Some(hit) = game.synthesis.as_ref().and_then(|window| window.hit(cursor))
-        {
-            if hit == laphine::Hit::Title(TitleHit::Title) {
-                game.synthesis.as_mut().unwrap().frame.start_drag(cursor);
+            && let Some(window) = match top {
+                Some(Esc(W::LaphineSynthesis)) => game.synthesis.as_mut(),
+                Some(Esc(W::LaphineUpgrade)) => game.upgrade.as_mut(),
+                _ => None,
             }
-            return;
-        }
-        if let Scene::Game(game) = &mut self.scene
-            && top == Some(Esc(W::LaphineUpgrade))
-            && let Some(hit) = game.upgrade.as_ref().and_then(|window| window.hit(cursor))
         {
-            if hit == laphine::Hit::Title(TitleHit::Title) {
-                game.upgrade.as_mut().unwrap().frame.start_drag(cursor);
+            match window.press(cursor, &game.inventory.items) {
+                Some(laphine::Grab::Row(index)) => game.dragging = Some((Dragged::LaphineRow(index), cursor, false)),
+                Some(laphine::Grab::Slot(index)) => game.dragging = Some((Dragged::LaphineSlot(index), cursor, false)),
+                None => {}
             }
             return;
         }

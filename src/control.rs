@@ -1566,6 +1566,13 @@ fn game_state(app: &App, game: &Game) -> Value {
         .chain(game.synthesis.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.upgrade.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
+            [&game.synthesis, &game.upgrade]
+                .into_iter()
+                .flatten()
+                .flat_map(|window| window.row_boxes(&game.inventory.items))
+                .map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})),
+        )
+        .chain(
             game.reform.iter().flat_map(|window| window.row_boxes(&game.inventory.items)).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})),
         )
         .chain(game.reform.iter().flat_map(|window| window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))

@@ -1205,12 +1205,12 @@ impl App {
             }
             // A box the data doesn't know opens too, empty; its close goes out when the player closes it.
             MapEvent::SynthesisOpen(id) => {
-                game.synthesis = Some(laphine::Synthesis::new(id, &self.synthesis_boxes.get(&id).cloned().unwrap_or_default()));
+                game.synthesis = Some(laphine::Laphine::synthesis(id, &self.synthesis_boxes.get(&id).cloned().unwrap_or_default()));
                 game.inventory.frame.open = true;
                 game.raise(Panel::Inventory);
             }
             MapEvent::UpgradeOpen(id) => {
-                game.upgrade = Some(laphine::Upgrade::new(id, &self.upgrade_boxes.get(&id).cloned().unwrap_or_default()));
+                game.upgrade = Some(laphine::Laphine::upgrade(id, &self.upgrade_boxes.get(&id).cloned().unwrap_or_default()));
                 game.inventory.frame.open = true;
                 game.raise(Panel::Inventory);
             }
@@ -1226,32 +1226,18 @@ impl App {
                     let _ = game.session.close_reform();
                 }
             },
+            // 0 closes the window (and so sends its close); the window shows the rest itself.
             MapEvent::Synthesized(result) => {
-                if result == 0
-                    && let Some(window) = &mut game.synthesis
-                {
-                    window.clear();
-                }
-                let id = match result {
-                    5 => Some(laphine::NOT_ENOUGH),
-                    7 => Some(laphine::NOTHING),
-                    _ => None,
-                };
-                if let Some(id) = id {
-                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR);
+                if game.synthesis.as_mut().is_some_and(|window| window.answer(result, control::now())) {
+                    game.synthesis = None;
+                    let _ = game.session.close_synthesis();
                 }
             }
             MapEvent::LaphineUpgraded(result) => {
-                // ponytail: 2971 and 2972 are guesses for the upgrade's result lines.
-                let (id, color) = if result == 0 {
-                    if let Some(window) = &mut game.upgrade {
-                        window.clear();
-                    }
-                    (laphine::UPGRADE_OK, CHAT_ITEM)
-                } else {
-                    (laphine::UPGRADE_FAIL, CHAT_ERROR)
-                };
-                game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
+                if game.upgrade.as_mut().is_some_and(|window| window.answer(result, control::now())) {
+                    game.upgrade = None;
+                    let _ = game.session.close_upgrade();
+                }
             }
             MapEvent::ItemPreview { index, cards, options, refine, broken, grade } => {
                 let shown = game.inventory.items.iter_mut().find(|item| item.index == index).map(|item| {

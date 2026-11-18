@@ -2318,7 +2318,7 @@ impl App {
         layers.push(member_tooltip);
         // A dragged item's or skill's icon follows the pointer.
         let dragged_icon = match game.dragging {
-            Some((Dragged::Item(index) | Dragged::Worn(index), _, true)) => {
+            Some((Dragged::Item(index) | Dragged::Worn(index) | Dragged::LaphineRow(index) | Dragged::LaphineSlot(index), _, true)) => {
                 game.inventory.get(index).and_then(|item| items.get(&item.id).map(|info| inventory::icon_path(info, item.identified)))
             }
             Some((Dragged::Skill(id), _, true)) => skill_info.get(&id).map(skills::icon_path),
