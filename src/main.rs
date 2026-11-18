@@ -1379,8 +1379,8 @@ struct Game {
     /// The grade enchant window.
     grade: Option<grade::GradeEnchant>,
     /// Laphine synthesis and upgrade, open until their close packet or a map change.
-    synthesis: Option<laphine::Synthesis>,
-    upgrade: Option<laphine::Upgrade>,
+    synthesis: Option<laphine::Laphine>,
+    upgrade: Option<laphine::Laphine>,
     /// The item reform window (a reform box or an NPC).
     reform: Option<reform::Reform>,
     /// The enchant window (perfect, random, upgrade, reset).
@@ -2573,6 +2573,9 @@ enum Dragged {
     /// Out of the vending setup's cart mirror (by cart index), or a row on sale (by place).
     VendMirror(u16),
     VendGood(usize),
+    /// A Laphine list's row, or what's in one of its slots, by inventory index.
+    LaphineRow(u16),
+    LaphineSlot(u16),
 }
 
 /// What a sprite on the map belongs to.

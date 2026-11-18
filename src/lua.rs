@@ -1666,12 +1666,14 @@ pub struct SynthesisSource {
     pub id: u32,
 }
 
-/// A synthesis box, keyed later by `ItemID`. `NeedSource_String` is left out.
+/// A synthesis box, keyed later by `ItemID`.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SynthesisBox {
     pub need_count: u32,
     pub refine_min: u32,
     pub refine_max: u32,
+    /// `NeedSource_String`: the window's line saying what goes in.
+    pub need_text: String,
     pub sources: Vec<SynthesisSource>,
 }
 
@@ -1687,10 +1689,12 @@ pub struct UpgradeTarget {
 pub struct UpgradeBox {
     pub refine_min: u32,
     pub refine_max: u32,
-    /// Random options the item must have. The client doesn't track those, so the window doesn't check it.
+    /// Random options the item must have.
     pub option_min: u32,
     /// `NotSocketEnchantItem`: no cards allowed.
     pub no_cards: bool,
+    /// `NeedSource_String`: the window's line saying what goes in.
+    pub need_text: String,
     pub targets: Vec<UpgradeTarget>,
 }
 
@@ -1709,6 +1713,10 @@ fn lua_flag(table: &mlua::Table, key: &str) -> bool {
 
 fn lua_name(table: &mlua::Table, index: i64) -> String {
     table.get::<mlua::LuaString>(index).map(|text| decode(&text)).unwrap_or_default()
+}
+
+fn lua_text(table: &mlua::Table, key: &str) -> String {
+    table.get::<mlua::LuaString>(key).map(|text| decode(&text)).unwrap_or_default()
 }
 
 /// `tblLapineDdukddakBox.sources` from the file's bytes. Its functions aren't called.
@@ -1738,7 +1746,13 @@ pub fn synthesis_table(source: Vec<u8>) -> io::Result<HashMap<u32, SynthesisBox>
         let refine_max = entry.get::<Option<u32>>("NeedRefineMax").ok().flatten().unwrap_or(u32::from(u8::MAX));
         boxes.insert(
             item_id,
-            SynthesisBox { need_count: lua_u32(&entry, "NeedCount"), refine_min: lua_u32(&entry, "NeedRefineMin"), refine_max, sources: items },
+            SynthesisBox {
+                need_count: lua_u32(&entry, "NeedCount"),
+                refine_min: lua_u32(&entry, "NeedRefineMin"),
+                refine_max,
+                need_text: lua_text(&entry, "NeedSource_String"),
+                sources: items,
+            },
         );
     }
     Ok(boxes)
@@ -1776,6 +1790,7 @@ pub fn upgrade_table(source: Vec<u8>) -> io::Result<HashMap<u32, UpgradeBox>> {
                 refine_max,
                 option_min: lua_u32(&entry, "NeedOptionNumMin"),
                 no_cards: lua_flag(&entry, "NotSocketEnchantItem"),
+                need_text: lua_text(&entry, "NeedSource_String"),
                 targets: items,
             },
         );
@@ -2654,7 +2669,7 @@ mod tests {
                 sources = {
                     IDTest = {
                         ItemID = 100000, NeedCount = 3, NeedRefineMin = 0, NeedRefineMax = 6,
-                        NeedSource_String = "leave this out",
+                        NeedSource_String = "Jellopy, Fluff, Shell",
                         SourceItems = { { "Jellopy", 1, 909 }, { "Fluff", 1, 914 }, { "Shell", 1, 935 } }
                     }
                 }
@@ -2663,7 +2678,7 @@ mod tests {
         "#;
         let boxes = super::synthesis_table(synthesis.as_bytes().to_vec()).unwrap();
         let test = &boxes[&100000];
-        assert_eq!((test.need_count, test.refine_min, test.refine_max), (3, 0, 6));
+        assert_eq!((test.need_count, test.refine_min, test.refine_max, test.need_text.as_str()), (3, 0, 6, "Jellopy, Fluff, Shell"));
         assert_eq!(
             test.sources,
             [
@@ -2679,7 +2694,7 @@ mod tests {
                     GrayWolf = {
                         ItemID = 100626, NeedRefineMin = 0, NeedRefineMax = 6,
                         NeedOptionNumMin = 2, NotSocketEnchantItem = true,
-                        NeedSource_String = "leave this out",
+                        NeedSource_String = "Gray Wolf Suit",
                         TargetItems = { { "Gray Wolf Suit", 450177 } }
                     },
                     Open = { ItemID = 100001, NeedRefineMin = 1, TargetItems = { { "Knife", 1201 } } }
@@ -2688,10 +2703,10 @@ mod tests {
         "#;
         let boxes = super::upgrade_table(upgrade.as_bytes().to_vec()).unwrap();
         let wolf = &boxes[&100626];
-        assert_eq!((wolf.refine_min, wolf.refine_max, wolf.option_min, wolf.no_cards), (0, 6, 2, true));
+        assert_eq!((wolf.refine_min, wolf.refine_max, wolf.option_min, wolf.no_cards, wolf.need_text.as_str()), (0, 6, 2, true, "Gray Wolf Suit"));
         assert_eq!(wolf.targets, [super::UpgradeTarget { name: "Gray Wolf Suit".into(), id: 450177 }]);
         let open = &boxes[&100001];
-        assert_eq!((open.refine_max, open.no_cards, open.targets[0].id), (u32::from(u8::MAX), false, 1201));
+        assert_eq!((open.refine_max, open.no_cards, open.targets[0].id, open.need_text.as_str()), (u32::from(u8::MAX), false, 1201, ""));
     }
 
     #[test]
