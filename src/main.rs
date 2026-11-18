@@ -1417,6 +1417,8 @@ struct Game {
     web_emblems: (std::sync::mpsc::Sender<WebEmblem>, std::sync::mpsc::Receiver<WebEmblem>),
     /// The NPC shop windows' sizes (goods width, goods and deal rows): kept, and given to the next shop.
     shop_sizes: (f32, [usize; 2]),
+    /// Where an NPC shop's goods, Buying and Selling windows were left: kept, and given to the next shop.
+    shop_places: [[f32; 2]; 3],
     /// The NPC shops' "Toggle Item Amount." box: given to the next shop (saved).
     shop_whole: bool,
     trade_with: String,
@@ -3406,6 +3408,8 @@ const STORAGE_SIZE: &str = "storage_size";
 const STORAGE_CATEGORIES: &str = "storage_categories";
 const SHOP_SIZE: &str = "shop_size";
 const SHOP_DEAL_SIZE: &str = "shop_deal_size";
+/// An NPC shop's goods, Buying and Selling windows' places.
+const SHOP_PLACES: [&str; 3] = ["shop_goods", "shop_buying", "shop_selling"];
 /// The party window's size mode, kept with the places.
 const PARTY_MODE: &str = "party_mode";
 /// Each party window mode's corner grip rows (0: the mode's own height).

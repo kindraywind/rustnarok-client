@@ -538,13 +538,14 @@ impl Game {
     }
 
     /// A shop's windows open at the sizes the last one was left at (an NPC's shop or a market; the others keep
-    /// theirs), with "Toggle Item Amount." as it was left.
+    /// theirs), an NPC's shop where its windows were left, with "Toggle Item Amount." as it was left.
     pub(crate) fn open_shop(&mut self, mut shop: shop::Shop) {
         // A plain shop that the Buy / Sell / Cancel box led to (a script can open one without the box).
         // ponytail: a Buy or Sell the server never answered leaves the mark for the next shop.
         let chosen = std::mem::take(&mut self.deal_chosen);
         shop.dealt = chosen && shop.plain();
         shop.apply_sizes(self.shop_sizes);
+        shop.apply_places(&self.shop_places);
         shop.whole = self.shop_whole;
         self.shop = Some(shop);
     }
@@ -1011,6 +1012,9 @@ impl Game {
             Some((list, Picking::Card(_))) => self.pick_places[1] = list.frame.position,
             _ => {}
         }
+        if let Some(shop) = &self.shop {
+            shop.keep_places(&mut self.shop_places);
+        }
         if control::driven() {
             return;
         }
@@ -1037,6 +1041,9 @@ impl Game {
         places += &format!("{IDENTIFY_LIST_PLACE} {} {} 0\n{CARD_LIST_PLACE} {} {} 0\n", identify[0], identify[1], card[0], card[1]);
         let quest = self.quest_window.frame.position;
         places += &format!("{QUEST_PLACE} {} {} 0\n", quest[0], quest[1]);
+        for (name, [x, y]) in SHOP_PLACES.into_iter().zip(self.shop_places) {
+            places += &format!("{name} {x} {y} 0\n");
+        }
         if places != self.saved_places {
             if let Some(path) = settings_path("windows") {
                 let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, &places));
@@ -1147,6 +1154,11 @@ impl Game {
         for (slot, name) in [IDENTIFY_LIST_PLACE, CARD_LIST_PLACE].into_iter().enumerate() {
             if let Some(&(place, _)) = saved.get(name) {
                 self.pick_places[slot] = pick_list::restored_place(place, screen());
+            }
+        }
+        for (which, name) in SHOP_PLACES.into_iter().enumerate() {
+            if let Some(&(place, _)) = saved.get(name) {
+                self.shop_places[which] = shop::restored_place(place, which, screen());
             }
         }
         if let (Some(&([width, goods], _)), Some(&([_, deal], _))) = (saved.get(SHOP_SIZE), saved.get(SHOP_DEAL_SIZE)) {

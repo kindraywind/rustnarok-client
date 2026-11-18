@@ -34,12 +34,21 @@ pub fn default_sizes() -> (f32, [usize; 2]) {
     (WIDTH, ROWS)
 }
 
-/// A window's height with `rows` rows.
+/// A window's height with `rows` rows: 312 for the goods' 8, 152 for the deal's 3.
 fn height(rows: usize) -> f32 {
     TITLE_HEIGHT + PADDING * 2.0 + rows as f32 * ROW + FOOTER
 }
 /// The goods on the inventory's spot, the deal beside and under it.
 const POSITIONS: [[f32; 2]; 2] = [[0.0, 120.0], [280.0, 280.0]];
+/// An NPC shop's three windows' first places, then where each was left: the goods, Buying and Selling.
+pub const FIRST_PLACES: [[f32; 2]; 3] = [POSITIONS[0], POSITIONS[1], POSITIONS[1]];
+
+/// A saved place of an NPC shop's window (`which` of FIRST_PLACES): its first place when its title bar would be off
+/// the screen.
+pub fn restored_place(saved: [f32; 2], which: usize, screen: [f32; 2]) -> [f32; 2] {
+    let fits = saved[0] >= 0.0 && saved[1] >= 0.0 && saved[0] + WIDTH <= screen[0] && saved[1] + TITLE_HEIGHT <= screen[1];
+    if fits { saved } else { FIRST_PLACES[which] }
+}
 /// A market's goods: where the icon and name go, and how wide the name may be.
 const MARKET_ICON: f32 = 34.0;
 const MARKET_NAME: f32 = 70.0;
@@ -65,7 +74,7 @@ const TIP_STEP: [f32; 2] = [40.0, 32.0];
 const WHOLE_MESSAGE: usize = 295;
 const WHOLE_BOX: [f32; 2] = [200.0, 12.0];
 const WHOLE_UP: f32 = 20.0;
-const FOOTER: f32 = 27.0;
+const FOOTER: f32 = 29.0;
 /// A list's scroll bar: 15 px from the right edge, from 14 px down, 10 px longer than the goods' rows and 18 px longer
 /// than the deal's.
 const BAR_AT: [f32; 2] = [15.0, 14.0];
@@ -102,7 +111,11 @@ pub fn deal_hit(position: [f32; 2], cursor: [f32; 2]) -> Option<DealHit> {
     }
     Some(DealHit::Body)
 }
-const SELECTED: [u8; 4] = [0x34, 0x6A, 0xE1, 0x80];
+/// The selected row's fill: the skin's colour, pixel (2, 6) of colorchip.bmp, #567FCF without it.
+fn selection_color(chip: Option<[u8; 4]>) -> [u8; 4] {
+    let [red, green, blue, _] = chip.unwrap_or([0x56, 0x7F, 0xCF, 0xFF]);
+    [red, green, blue, 0xFF]
+}
 /// Titles: the goods when buying and selling, the deal when buying and selling.
 const TITLES: [[usize; 2]; 2] = [[186, 185], [166, 168]];
 /// "합계 : %d z": a market's total.
@@ -133,6 +146,8 @@ pub const OVER_STOCK: usize = 1706;
 pub struct Assets {
     /// The list's left and right edges, repeated every 8 px.
     side: [Texture; 2],
+    /// An item's enchant grade, 1 to 4.
+    grades: [Texture; 4],
     /// The empty cell behind each row's icon.
     cell: Texture,
     /// Buy, sell, cancel and exchange: normal, hovered, pressed.
@@ -156,7 +171,10 @@ impl Assets {
             side: ["left", "right"].map(|part| image(format!("{UI}basic_interface\\itemwin_{part}.bmp"))),
             cell: image(format!("{UI}basic_interface\\itemwin_mid.bmp")),
             buttons: [button("buy"), button("sell"), button("cancel"), button("exchange")],
-            selected: gpu.solid(SELECTED),
+            selected: gpu.solid(selection_color(
+                crate::render::load_image(grf, &format!("{UI}colorchip.bmp")).ok().and_then(|chip| chip.get_pixel_checked(2, 6).map(|pixel| pixel.0)),
+            )),
+            grades: std::array::from_fn(|grade| image(format!("{UI}grade_enchant\\grade_icon{}.bmp", grade + 1))),
             resize: image(format!("{UI}btn_resize.bmp")),
             check: ["0", "1"].map(|look| image(format!("{UI}checkbox_{look}.bmp"))),
         }
@@ -371,6 +389,22 @@ impl Shop {
         self.kept().then_some((self.width, self.rows))
     }
 
+    /// Notes where an NPC shop's windows are, in `places` (FIRST_PLACES' order): the goods, and Buying or Selling.
+    pub fn keep_places(&self, places: &mut [[f32; 2]; 3]) {
+        if self.plain() {
+            places[0] = self.frames[0].position;
+            places[1 + usize::from(self.selling)] = self.frames[1].position;
+        }
+    }
+
+    /// Puts an NPC shop's windows where they were left (`keep_places`).
+    pub fn apply_places(&mut self, places: &[[f32; 2]; 3]) {
+        if self.plain() {
+            self.frames[0].position = places[0];
+            self.frames[1].position = places[1 + usize::from(self.selling)];
+        }
+    }
+
     /// Puts back kept sizes.
     pub fn apply_sizes(&mut self, (width, rows): (f32, [usize; 2])) {
         if !self.kept() {
@@ -547,9 +581,10 @@ impl Shop {
         self.deal.iter().map(|&(offer, amount)| u64::from(self.offers[offer].price) * u64::from(amount)).sum()
     }
 
+    /// Buy (or Sell) and Cancel in the deal window: (w − 106, h − 24) and (w − 61, h − 24).
     fn deal_button(&self, window: usize) -> ([f32; 2], [f32; 2]) {
-        let top = self.height(window) - FOOTER + 4.0;
-        if window == 1 { ([WIDTH - 62.0 - BUTTON[0], top], [WIDTH - 15.0 - BUTTON[0], top]) } else { ([-100.0; 2], [-100.0; 2]) }
+        let top = self.height(window) - 24.0;
+        if window == 1 { ([WIDTH - 106.0, top], [WIDTH - 61.0, top]) } else { ([-100.0; 2], [-100.0; 2]) }
     }
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
@@ -888,12 +923,18 @@ impl Shop {
                 if let Some(icon) = icon {
                     layer.sprites.push((icon, frame.at([icon_x, top + ICON[1]]), icon.size));
                 }
+                // The inventory's number on the cell (the icon less 4, 4), outlined in white; and the enchant grade.
+                let cell = [icon_x - 4.0, top];
                 if let Some(count) = self.icon_count(window, offer_index, amount) {
                     let text = count.to_string();
-                    // From 1000 up the number starts at the icon's left.
-                    let place = frame.at([icon_x + if count < 1000 { 14.0 } else { 0.0 }, top + ICON[1] + 14.0]);
-                    layer.texts.push((text.clone(), offset(place, [-1.0, -1.0]), [255; 3]));
+                    let place = frame.at(offset(cell, inventory::amount_at(count.min(u32::from(u16::MAX)) as u16)));
+                    for step in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+                        layer.texts.push((text.clone(), offset(place, step), [255; 3]));
+                    }
                     layer.texts.push((text, place, [0, 0, 0]));
+                }
+                if let Some(grade) = offer.whole.as_ref().and_then(|item| assets.grades.get(usize::from(item.grade).wrapping_sub(1))) {
+                    layer.sprites.push((grade, frame.at(offset(cell, [4.0, 16.0])), grade.size));
                 }
                 let name = offer.name(items, naming, messages);
                 // A barter: what it costs on the right, its icon and how many.
@@ -922,7 +963,6 @@ impl Shop {
                 layer.texts.push((price.clone(), frame.at([width - PRICE_RIGHT - font.width(&price), top + NAME[1]]), [0, 0, 0]));
             }
             // Footer: the deal's total and buttons.
-            let footer = height - FOOTER;
             chrome.draw_footer(layer, frame.at([0.0, height]), width, FOOTER);
             if self.resizable() {
                 layer.sprites.push((&assets.resize, frame.at([width - window::GRIP, height - window::GRIP]), assets.resize.size));
@@ -934,7 +974,7 @@ impl Shop {
             }
             if let (Some((_, _, limit)), 0) = (self.buying_store, window) {
                 let text = rustnarok_client::messages::fill(message(LIMIT_MESSAGE), &[&group(u64::from(limit))]);
-                layer.texts.push((window::fit(font, &text, width - 20.0), frame.at([10.0, footer + 7.0]), [0, 0, 0]));
+                layer.texts.push((window::fit(font, &text, width - 20.0), frame.at([10.0, height - 20.0]), [0, 0, 0]));
             }
             // A point shop's goods: "[name]'s Points: N Points".
             // ponytail: the game's "[name]'s Free Cash" line above it, 20 px more footer, isn't drawn (rathena's item and
@@ -972,18 +1012,17 @@ impl Shop {
             let corner = if on_icon { [TIP_STEP[0], top - TIP_ABOVE] } else { [NAME[0] - 6.0, top + NAME[1] - 4.0] };
             window::tooltip(layer.window(), chrome, font, &text, frame.at(corner), inventory::name_color(&item, items));
         }
-        // An NPC shop's row with the pointer on its icon: its name and price over the icon's cell.
+        // An NPC shop's row with the pointer anywhere on it: its name and price, 16 px over the row, stepping 32 px
+        // with the pointer.
         if let (Some(Hit::Row(window, row)), true) = (hit, self.plain()) {
             let (Some(offer), frame) = (self.offer_at(window, row), &self.frames[window]) else { return };
-            if !(TIP_STEP[0]..TIP_STEP[0] + TIP_STEP[1]).contains(&(pointer.0[0] - frame.position[0])) {
-                return;
-            }
             let count = if window == 0 { self.left(row) } else { self.deal[row].1 };
             let item = offer.described();
             let text = tooltip_text(&offer.name(items, naming, messages), offer, count, self.selling, self.units().1);
             let place = if window == 0 { self.rows(0).iter().position(|&(offer, _)| offer == row).unwrap_or(row) } else { row };
             let top = TITLE_HEIGHT + place.saturating_sub(self.scroll[window]) as f32 * ROW - TIP_ABOVE;
-            window::tooltip(layer.window(), chrome, font, &text, frame.at([TIP_STEP[0], top]), inventory::name_color(&item, items));
+            let x = tip_x(pointer.0[0] - frame.position[0]);
+            window::tooltip(layer.window(), chrome, font, &text, frame.at([x, top]), inventory::name_color(&item, items));
         }
     }
 
@@ -1066,6 +1105,11 @@ pub fn kept_whole(path: &std::path::Path) -> bool {
 
 pub fn keep_whole(path: &std::path::Path, on: bool) {
     let _ = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, if on { "1" } else { "0" }));
+}
+
+/// A row tooltip's left edge for the pointer at `x` in the window: 40, then a step of 32 for each 32 px past it.
+fn tip_x(x: f32) -> f32 {
+    TIP_STEP[0] + TIP_STEP[1] * ((x - TIP_STEP[0]) / TIP_STEP[1]).floor()
 }
 
 /// An NPC shop row's tooltip: buying "name 1,200 Zeny" or "name 1500 -> 1,200 Zeny"; selling the count carried (or
@@ -1174,6 +1218,53 @@ impl Confirm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_games_heights_and_deal_buttons() {
+        assert_eq!((height(8), height(3), height(4) - height(3)), (312.0, 152.0, 32.0));
+        let mut shop = Shop::new(false, Vec::new());
+        assert_eq!(shop.deal_button(1), ([174.0, 128.0], [219.0, 128.0]));
+        // A row more on the deal window: both follow its bottom.
+        shop.set_size(1, None, 4);
+        assert_eq!(shop.deal_button(1), ([174.0, 160.0], [219.0, 160.0]));
+    }
+
+    #[test]
+    fn the_row_tooltip_steps_with_the_pointer() {
+        assert_eq!([39.0, 40.0, 71.0, 72.0, 200.0].map(tip_x), [8.0, 40.0, 40.0, 72.0, 200.0]);
+    }
+
+    #[test]
+    fn the_selection_is_the_skins_colour() {
+        assert_eq!(selection_color(Some([0x10, 0x20, 0x30, 0x00])), [0x10, 0x20, 0x30, 0xFF]);
+        assert_eq!(selection_color(None), [0x56, 0x7F, 0xCF, 0xFF]);
+    }
+
+    #[test]
+    fn an_npc_shops_places_are_kept() {
+        let mut places = FIRST_PLACES;
+        let mut buying = Shop::new(false, Vec::new());
+        buying.frames[0].position = [10.0, 20.0];
+        buying.frames[1].position = [300.0, 40.0];
+        buying.keep_places(&mut places);
+        assert_eq!(places, [[10.0, 20.0], [300.0, 40.0], [280.0, 280.0]]);
+        // Selling keeps its own deal place and opens there; the goods where any shop's were left.
+        let mut selling = Shop::new(true, Vec::new());
+        selling.apply_places(&places);
+        assert_eq!(selling.frames.each_ref().map(|frame| frame.position), [[10.0, 20.0], [280.0, 280.0]]);
+        selling.frames[1].position = [500.0, 500.0];
+        selling.keep_places(&mut places);
+        assert_eq!(places[2], [500.0, 500.0]);
+        // A player's shop neither keeps nor takes them.
+        let mut vendor = Shop::from_vendor(1, 2, String::new(), Vec::new());
+        vendor.apply_places(&places);
+        assert_eq!(vendor.frames[0].position, POSITIONS[0]);
+        // Saved places come back, or the first ones when off the screen.
+        let screen = [1024.0, 768.0];
+        assert_eq!(restored_place([100.0, 200.0], 1, screen), [100.0, 200.0]);
+        assert_eq!(restored_place([900.0, 200.0], 1, screen), FIRST_PLACES[1]);
+        assert_eq!(restored_place([10.0, -5.0], 0, screen), FIRST_PLACES[0]);
+    }
 
     #[test]
     fn resizes_by_the_corner_grips() {
