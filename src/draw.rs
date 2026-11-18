@@ -1832,9 +1832,9 @@ impl App {
                 }
             }
             if let Some(menu) = &dialog.menu {
-                let corner = game.npc_menu.position;
+                let corner = menu.frame(&game.npc_menu).position;
                 menu.draw(overlay.window(), &assets.chrome, &assets.pickup, &assets.npc_menu, corner, font);
-                let [ok, cancel] = npc_menu::buttons(menu.items.len()).map(|place| offset(corner, place));
+                let [ok, cancel] = menu.buttons().map(|place| offset(corner, place));
                 overlay.sprites.push(button_sprite(pointer, ok, &assets.ok));
                 overlay.sprites.push(button_sprite(pointer, cancel, &assets.cancel));
             }

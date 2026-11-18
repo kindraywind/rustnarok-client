@@ -1838,7 +1838,7 @@ impl App {
                     game.press_dialog_button(true);
                 } else if let Some(menu) = &dialog.menu {
                     // Rows go on the press; the buttons on the click.
-                    let [ok, cancel] = npc_menu::buttons(menu.items.len()).map(|place| game.npc_menu.at(place));
+                    let [ok, cancel] = menu.buttons().map(|place| menu.frame(&game.npc_menu).at(place));
                     if hit(ok, &assets.ok) {
                         game.menu_ok(false);
                     } else if hit(cancel, &assets.cancel) {
@@ -2032,8 +2032,10 @@ impl App {
                 let height = cutin.height();
                 cutin.frame.drag_to(self.cursor, height);
             }
-            let menu_height = game.dialog.as_ref().and_then(|dialog| dialog.menu.as_ref()).map_or(0.0, |menu| menu.size()[1]);
-            game.npc_menu.drag_to(self.cursor, menu_height);
+            if let Some(menu) = game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()) {
+                let height = menu.size()[1];
+                menu.frame_mut(&mut game.npc_menu).drag_to(self.cursor, height);
+            }
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
             if let Some(window) = &mut game.roulette {
                 window.frame.drag_to(self.cursor, roulette::HEIGHT);
@@ -2550,8 +2552,11 @@ impl App {
             let on_synthesis = game.synthesis.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_upgrade = game.upgrade.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_reform = game.reform.as_ref().is_some_and(|window| window.hit(self.cursor, &game.inventory.items).is_some());
-            let on_npc_menu =
-                game.dialog.as_ref().and_then(|dialog| dialog.menu.as_ref()).is_some_and(|menu| game.npc_menu.local(self.cursor, menu.size()[1]).is_some());
+            let on_npc_menu = game
+                .dialog
+                .as_ref()
+                .and_then(|dialog| dialog.menu.as_ref())
+                .is_some_and(|menu| menu.frame(&game.npc_menu).local(self.cursor, menu.size()[1]).is_some());
             match game.window_at(self.cursor) {
                 // Aiming, the wheel picks the level (up raises it), wherever the pointer is.
                 _ if game.targeting.is_some() => {
@@ -2951,6 +2956,7 @@ impl App {
                     | game.say.frame.drop_drag()
                     | game.cutin.as_mut().is_some_and(|cutin| cutin.frame.drop_drag())
                     | game.npc_menu.drop_drag()
+                    | game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()).is_some_and(|menu| menu.frame_mut(&mut game.npc_menu).drop_drag())
                     | (game.deal_choice.is_some() && game.deal_frame.drop_drag());
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
@@ -3265,10 +3271,10 @@ impl App {
         if let Scene::Game(game) = &mut self.scene
             && top == Some(Top::NpcDialog)
             && let Some(menu) = game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut())
-            && let Some(local) = game.npc_menu.local(cursor, menu.size()[1])
+            && let Some(local) = menu.frame(&game.npc_menu).local(cursor, menu.size()[1])
         {
             if menu.grips(local) {
-                game.npc_menu.start_drag(cursor);
+                menu.frame_mut(&mut game.npc_menu).start_drag(cursor);
             } else if menu.press(local, Instant::now()) {
                 game.menu_ok(false);
             }

@@ -195,10 +195,10 @@ impl Game {
         }
         if let Some(menu) = &dialog.menu {
             for (index, [x, y, width, height]) in menu.row_boxes() {
-                let [x, y] = self.npc_menu.at([x, y]);
+                let [x, y] = menu.frame(&self.npc_menu).at([x, y]);
                 boxes.push((format!("npc_menu:{index}"), [x, y, width, height]));
             }
-            let [ok_at, cancel_at] = npc_menu::buttons(menu.items.len()).map(|place| self.npc_menu.at(place));
+            let [ok_at, cancel_at] = menu.buttons().map(|place| menu.frame(&self.npc_menu).at(place));
             boxes.push(("npc_menu_ok".to_owned(), [ok_at[0], ok_at[1], ok[0], ok[1]]));
             boxes.push(("npc_menu_cancel".to_owned(), [cancel_at[0], cancel_at[1], cancel[0], cancel[1]]));
         }
@@ -628,7 +628,7 @@ impl Game {
     pub(crate) fn on_npc_window(&self, cursor: [f32; 2]) -> bool {
         let Some(dialog) = &self.dialog else { return false };
         (dialog.warp.is_none() && self.say.contains(cursor))
-            || dialog.menu.as_ref().is_some_and(|menu| self.npc_menu.local(cursor, menu.size()[1]).is_some())
+            || dialog.menu.as_ref().is_some_and(|menu| menu.frame(&self.npc_menu).local(cursor, menu.size()[1]).is_some())
             || dialog.input.as_ref().is_some_and(|input| input.contains(screen(), cursor))
     }
 
