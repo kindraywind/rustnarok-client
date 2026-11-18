@@ -437,6 +437,7 @@ impl App {
                     item_lines: 0,
                     quick_moving: false,
                     item_place: iteminfo::DEFAULT_PLACE,
+                    pick_places: [pick_list::icon_position(screen()); 2],
                     whispered: VecDeque::new(),
                     whisper_asked: VecDeque::new(),
                     pick: None,
@@ -3276,7 +3277,9 @@ impl App {
                 if items.is_empty() {
                     let _ = game.session.identify(None);
                 } else {
-                    game.pick = Some((pick_list::PickList::new(ITEM_APPRAISAL, items), Picking::Identify));
+                    let mut list = pick_list::PickList::new(ITEM_APPRAISAL, items);
+                    list.frame.position = game.pick_places[0];
+                    game.pick = Some((list, Picking::Identify));
                 }
             }
             // What to make, cook or craft: the pick list with the items by ID.
@@ -3300,9 +3303,7 @@ impl App {
             MapEvent::CookList { items, .. } | MapEvent::ArrowList(items) => {
                 let picking = event_kind.unwrap_or(Picking::Arrow);
                 let rows = items.into_iter().map(|id| net::InventoryItem { id, identified: true, ..Default::default() }).collect();
-                let mut list = pick_list::PickList::new(if matches!(picking, Picking::Arrow) { ARROW_TITLE } else { MAKING_TITLE }, rows);
-                list.making = !matches!(picking, Picking::Arrow);
-                game.pick = Some((list, picking));
+                game.pick = Some((pick_list::PickList::named(pick_list::LIST_TITLE.into(), rows), picking));
             }
             // Blacksmith services: the target's broken items, the caster's weapons; an empty list opens nothing.
             // ponytail: the results in the chat; whether the real client uses a box isn't known.
@@ -3367,7 +3368,12 @@ impl App {
                 if let Some(card) = game.card_asked.take()
                     && !items.is_empty()
                 {
-                    game.pick = Some((pick_list::PickList::new(INSERT_CARD, items), Picking::Card(card)));
+                    // Titled with the card's own name.
+                    let name = game.inventory.get(card).map_or_else(String::new, |card| pick_list::plain_item_name(&self.items, card.id));
+                    let insert = self.messages.get(INSERT_CARD).map_or("", String::as_str);
+                    let mut list = pick_list::PickList::named(pick_list::card_title(insert, &name), items);
+                    list.frame.position = game.pick_places[1];
+                    game.pick = Some((list, Picking::Card(card)));
                 }
             }
             // rathena takes the card without telling; it goes into the equipment's first empty slot.

@@ -1914,6 +1914,8 @@ fn game_state(app: &App, game: &Game) -> Value {
                 name.map(|name| (name.clone(), json!({"party": tag.party, "guild": tag.guild, "position": tag.position})))
             })
             .collect::<serde_json::Map<String, Value>>(),
+        // A pick list (identify, card, making, spells, eggs): where it is and how many rows it has.
+        "pick_list": game.pick.as_ref().map(|(list, _)| json!({"position": list.frame.position, "rows": list.items.len()})),
         // The item merge window: how many rows, and the picked stacks' indexes.
         "merge": game.pick.as_ref().filter(|(list, _)| list.merging).map(|(list, _)| json!({"rows": list.items.len(), "picked": list.picked_indexes()})),
         "monster_info": game.monster_window.as_ref().map(|window| {
@@ -2499,6 +2501,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("marks", Test),
         ("mercenary", Fair),
         ("merge", Fair),
+        ("pick_list", Fair),
         ("minimap", Fair),
         ("minimap_window", Fair),
         ("world_map", Fair),

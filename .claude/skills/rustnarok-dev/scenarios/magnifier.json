@@ -1,5 +1,5 @@
 {
-  "about": "Magnifier: double-clicking one with an unidentified Knife carried shows the list of what it can identify (the pick list); picking the Knife identifies it (issue #18). Esc leaves the list up and sends nothing: it closes the inventory behind it (issue #1363).",
+  "about": "Magnifier: double-clicking one with an unidentified Knife carried shows the list of what it can identify (the pick list) at (392, 320); dragged by its title bar and cancelled, it opens again where it was left; picking the Knife identifies it (issue #18). Esc leaves the list up and sends nothing: it closes the inventory behind it (issue #1363).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -17,7 +17,7 @@
       "wait": 800
     },
     {
-      "say": "@item 611 1"
+      "say": "@item 611 2"
     },
     {
       "wait_for": {
@@ -90,6 +90,14 @@
         ]
       ]
     },
+    {"expect": {"windows_open": ["PickList"], "state": {"pick_list.position": [392.0, 320.0], "pick_list.rows": 1}}},
+    {"drag": [[492, 328], [700, 500]]}, {"wait": 300},
+    {"expect": {"state": {"pick_list.position": [600.0, 492.0]}}},
+    {"click_on": {"button": "cancel"}}, {"wait": 500},
+    {"expect": {"windows_closed": ["PickList"]}},
+    {"click_on": {"inventory_item": 611}, "count": 2},
+    {"wait_for": {"event": "IdentifyList", "ms": 5000}}, {"wait": 300},
+    {"expect": {"windows_open": ["PickList"], "state": {"pick_list.position": [600.0, 492.0]}}},
     {
       "key": "Escape"
     },

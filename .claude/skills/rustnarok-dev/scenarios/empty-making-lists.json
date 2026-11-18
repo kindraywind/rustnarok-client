@@ -9,7 +9,7 @@
     {"say": "@useskill 147 1 self"}, {"wait_for": {"event": "ArrowList", "ms": 5000}},
     {"wait": 300}, {"move": [900, 700]},
     {"expect": {"windows_open": ["PickList"]}},
-    {"shot": "empty-arrow-list", "crop": [362, 267, 300, 234]},
+    {"shot": "empty-arrow-list", "crop": [382, 310, 220, 220]},
     {"click_on": {"button": "cancel"}}, {"wait_for": {"sent": "0x01ae", "ms": 2000}}, {"wait": 300},
     {"expect": {"windows_closed": ["PickList"]}},
     {"say": "@item 12125 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
@@ -18,7 +18,7 @@
     {"click_on": {"inventory_item": 12125}, "count": 2}, {"wait_for": {"event": "CookList", "ms": 5000}},
     {"key": "Alt+E"}, {"wait": 300}, {"move": [900, 700]},
     {"expect": {"windows_open": ["PickList"]}},
-    {"shot": "empty-cooking-list", "crop": [362, 267, 300, 234]},
+    {"shot": "empty-cooking-list", "crop": [382, 310, 220, 220]},
     {"click_on": {"button": "cancel"}}, {"wait_for": {"sent": "0x025b", "ms": 2000}}, {"wait": 300},
     {"expect": {"windows_closed": ["PickList"]}},
     {"say": "@itemreset"}, {"wait": 500}

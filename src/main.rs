@@ -252,10 +252,9 @@ pub const fn non_window_refine_result(refine_open: bool, result: u16) -> (Option
         _ => (None, None),
     }
 }
-/// Making lists' titles (things to make, Arrow Crafting's), nothing to make, and the results: made, not made.
-// ponytail: the titles per list and the result lines (428/429 exist too) are estimates.
+/// The making list's title, nothing to make, and the results: made, not made.
+// ponytail: the result lines (428/429 exist too) are estimates.
 const MAKING_TITLE: usize = 425;
-const ARROW_TITLE: usize = 658;
 const NOTHING_TO_MAKE: usize = 424;
 /// Blacksmith services: the lists' titles, a repair done or not, and Upgrade Weapon's results (refined, failed,
 /// skill too low, ore missing) in rathena's colors for them.
@@ -1357,6 +1356,8 @@ struct Game {
     quick_moving: bool,
     /// Where the item description window opens: where it was last (saved), else its first place.
     item_place: [f32; 2],
+    /// Where the identify list and the card list open: where each was last (saved), else the icon lists' first place.
+    pick_places: [[f32; 2]; 2],
     /// A card's picture, opened from its info.
     card_view: Option<iteminfo::CardView>,
     /// Whispers sent and not yet answered: to whom, and what.
@@ -3379,6 +3380,8 @@ const COMPANION_SKILLS_SIZE: &str = "companion_skills_size";
 const ITEM_PLACE: &str = "item_info";
 const QUEST_PLACE: &str = "quest";
 const CARD_PLACE: &str = "card_info";
+const IDENTIFY_LIST_PLACE: &str = "identify_list";
+const CARD_LIST_PLACE: &str = "card_list";
 
 /// The sizes' lines of the window places: the inventory's and the cart's columns and rows, the storage's rows, an NPC
 /// shop's goods width and rows, then its deal's rows.
