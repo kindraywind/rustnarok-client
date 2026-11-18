@@ -1172,20 +1172,7 @@ impl App {
                     window.click(hit, carried, slots, count, zeny)
                 };
                 match action {
-                    Some(enchant::Action::Send(request)) => {
-                        let result = match request {
-                            enchant::Request::Random { table, index } => game.session.enchant_random(table, index),
-                            enchant::Request::Perfect { table, index, item } => game.session.enchant_perfect(table, index, item),
-                            enchant::Request::Upgrade { table, index, slot } => game.session.enchant_upgrade(table, index, slot),
-                            enchant::Request::Reset { table, index } => game.session.enchant_reset(table, index),
-                        };
-                        // Nothing went out, so the window must not sit waiting for an answer that never comes.
-                        if result.is_err()
-                            && let Some(window) = &mut game.enchant
-                        {
-                            window.forget_request();
-                        }
-                    }
+                    Some(enchant::Action::Ask) => game.question_box = Some(BoxQuestion::Enchant),
                     Some(enchant::Action::Refuse(id)) => game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), CHAT_ERROR),
                     // Until the server hears the close, it holds the player and ignores the next request.
                     Some(enchant::Action::Close) => {
@@ -2058,6 +2045,7 @@ impl App {
             }
             if let Some(window) = &mut game.enchant {
                 window.frame.drag_to(self.cursor, enchant::HEIGHT);
+                window.drag_thumb(self.cursor, &game.inventory.items);
             }
             if let Some(window) = &mut game.monster_window {
                 window.frame.drag_to(self.cursor, monster_info::MonsterWindow::height());
@@ -2899,7 +2887,7 @@ impl App {
                     | game.reform.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.refine.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.grade.as_mut().is_some_and(|window| window.frame.drop_drag())
-                    | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag())
+                    | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.memorial.frame.drop_drag()
@@ -3442,9 +3430,11 @@ impl App {
             && top == Some(Esc(W::Enchant))
             && let Some(hit) = game.enchant.as_ref().and_then(|window| window.hit(cursor))
         {
+            let window = game.enchant.as_mut().unwrap();
             if hit == enchant::Hit::Title(TitleHit::Title) {
-                game.enchant.as_mut().unwrap().frame.start_drag(cursor);
+                window.frame.start_drag(cursor);
             }
+            window.hold(&hit, cursor, &game.inventory.items);
             return;
         }
         if let Scene::Game(game) = &mut self.scene

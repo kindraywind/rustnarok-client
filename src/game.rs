@@ -1351,6 +1351,20 @@ impl Game {
             BoxQuestion::BuyStyle(picks) => {
                 let _ = self.session.buy_style(picks);
             }
+            BoxQuestion::Enchant => {
+                let Some(window) = &mut self.enchant else { return };
+                let result = match window.confirm() {
+                    Some(enchant::Request::Random { table, index }) => self.session.enchant_random(table, index),
+                    Some(enchant::Request::Perfect { table, index, item }) => self.session.enchant_perfect(table, index, item),
+                    Some(enchant::Request::Upgrade { table, index, slot }) => self.session.enchant_upgrade(table, index, slot),
+                    Some(enchant::Request::Reset { table, index }) => self.session.enchant_reset(table, index),
+                    None => return,
+                };
+                // Nothing went out, so the window must not sit waiting for an answer that never comes.
+                if result.is_err() {
+                    window.forget_request();
+                }
+            }
             BoxQuestion::RebindKey(_) | BoxQuestion::OnlyLeader | BoxQuestion::LastRow | BoxQuestion::Notice(_) | BoxQuestion::Said(_) => {}
         }
     }
