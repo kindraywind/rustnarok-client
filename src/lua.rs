@@ -591,19 +591,26 @@ fn decoded<K: TryFrom<i64> + std::hash::Hash + Eq>(table: &mlua::Table, decode: 
     Ok(names)
 }
 
-/// The dress room's lists (`_DressHeadstyleList`, `_DressHeadPaletteList`, `_DressBodyPaletteList`): the values of
-/// their `{label, value}` rows, in order.
-pub fn dress_lists(grf: &Grf) -> io::Result<[Vec<u16>; 3]> {
-    let lua = run(grf, &[DRESS_LIST, DRESS_F])?;
-    let values = |name: &str| -> io::Result<Vec<u16>> {
-        let table: mlua::Table = lua.globals().get(name).map_err(lua_error)?;
-        let mut values = Vec::new();
-        for row in table.sequence_values::<mlua::Table>() {
-            values.push(row.map_err(lua_error)?.get::<u16>(2).map_err(lua_error)?);
+/// The dress room's lists for a character of `sex` (0 female), as the data's getters give them: hairstyles
+/// (`_get_Headstylelist`), hair colours (`_get_DressHeadPaletteList`), clothes colours (`_get_DressBodyPaletteList`),
+/// each row a label and a value. Some data keeps one table per list, some one per sex: the getters hide which.
+pub fn dress_lists(grf: &Grf, sex: u8) -> io::Result<[Vec<(String, u16)>; 3]> {
+    read_dress_lists(&run(grf, &[DRESS_LIST, DRESS_F])?, sex)
+}
+
+fn read_dress_lists(lua: &Lua, sex: u8) -> io::Result<[Vec<(String, u16)>; 3]> {
+    let rows = |getter: &str| -> io::Result<Vec<(String, u16)>> {
+        let function: mlua::Function = lua.globals().get(getter).map_err(lua_error)?;
+        let mut rows = Vec::new();
+        // ponytail: a getter that never ends its list stops at 1000 rows.
+        for index in 1..=1000 {
+            let (label, value): (Option<mlua::LuaString>, Option<u16>) = function.call((sex, index)).map_err(lua_error)?;
+            let (Some(label), Some(value)) = (label, value) else { break };
+            rows.push((decode(&label), value));
         }
-        Ok(values)
+        Ok(rows)
     };
-    Ok([values("_DressHeadstyleList")?, values("_DressHeadPaletteList")?, values("_DressBodyPaletteList")?])
+    Ok([rows("_get_Headstylelist")?, rows("_get_DressHeadPaletteList")?, rows("_get_DressBodyPaletteList")?])
 }
 
 /// Sprite names of NPCs and monsters by job ID (`JobNameTable`), e.g. 45 → "1_ETC_01".
@@ -2666,6 +2673,39 @@ mod tests {
         assert!(hunter.counted);
         assert_eq!(hunter.objectives, [("Porings".to_owned(), 10), ("Lunatics".to_owned(), 5)]);
         assert_eq!((hunter.reward_title, hunter.details.as_str()), (0, ""));
+    }
+
+    #[test]
+    fn reads_the_dress_lists() {
+        let lua = super::new_lua().unwrap();
+        lua.load(
+            r#"
+            _DressHeadstyleList_f = { { "(1) Short", 1 }, { "(2) Long", 2 } }
+            _DressHeadstyleList_m = { { "(1) Spiky", 1 } }
+            _DressHeadPaletteList = { { "(0) Basic", 0 } }
+            _DressBodyPaletteList = { { "(0) Basic", 0 }, { "(3) Red", 3 } }
+            function _get_Headstylelist(sex, index)
+                local list = sex == 0 and _DressHeadstyleList_f or _DressHeadstyleList_m
+                if nil == list[index] then return nil, nil end
+                return list[index][1], list[index][2]
+            end
+            function _get_DressHeadPaletteList(sex, index)
+                if nil == _DressHeadPaletteList[index] then return nil, nil end
+                return _DressHeadPaletteList[index][1], _DressHeadPaletteList[index][2]
+            end
+            function _get_DressBodyPaletteList(sex, index)
+                if nil == _DressBodyPaletteList[index] then return nil, nil end
+                return _DressBodyPaletteList[index][1], _DressBodyPaletteList[index][2]
+            end
+            "#,
+        )
+        .exec()
+        .unwrap();
+        let [hair, hair_color, clothes_color] = super::read_dress_lists(&lua, 0).unwrap();
+        assert_eq!(hair, [("(1) Short".to_owned(), 1), ("(2) Long".to_owned(), 2)]);
+        assert_eq!(hair_color, [("(0) Basic".to_owned(), 0)]);
+        assert_eq!(clothes_color, [("(0) Basic".to_owned(), 0), ("(3) Red".to_owned(), 3)]);
+        assert_eq!(super::read_dress_lists(&lua, 1).unwrap()[0], [("(1) Spiky".to_owned(), 1)]);
     }
 
     #[test]

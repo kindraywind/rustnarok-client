@@ -2038,6 +2038,9 @@ impl App {
                 window.frame.drag_to(self.cursor, laphine::SIZE[1]);
                 window.drag_thumb(self.cursor[1], &game.inventory.items);
             }
+            if let Some(room) = &mut game.dressroom {
+                room.frame.drag_to(self.cursor, dressroom::SIZE[1]);
+            }
             if let Some(window) = &mut game.reform {
                 window.frame.drag_to(self.cursor, reform::SIZE[1]);
                 window.drag_thumb(self.cursor[1]);
@@ -2569,6 +2572,9 @@ impl App {
                 }
                 // Over Game Settings' open skin list, the wheel scrolls it.
                 _ if game.settings_window.as_mut().is_some_and(|window| window.wheel(self.cursor, rows)) => {}
+                _ if game.dressroom.as_ref().is_some_and(|room| room.hit(self.cursor).is_some()) => {
+                    game.dressroom.as_mut().unwrap().scroll_by(rows, &game.dress_lists)
+                }
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
                 _ if on_npc_menu => game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()).unwrap().wheel(rows),
@@ -2902,6 +2908,7 @@ impl App {
                     | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
                     | game.roulette.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.reform.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
+                    | game.dressroom.as_mut().is_some_and(|room| room.frame.drop_drag())
                     | game.refine.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.grade.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
@@ -3472,6 +3479,16 @@ impl App {
         {
             if hit == roulette::Hit::Title(TitleHit::Title) {
                 game.roulette.as_mut().unwrap().frame.start_drag(cursor);
+            }
+            return;
+        }
+        // The dress room is dragged by any part of it but its tabs, list and arrows.
+        if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::DressRoom))
+            && let Some(room) = &mut game.dressroom
+        {
+            if matches!(room.hit(cursor), Some(dressroom::Hit::Title(TitleHit::Title) | dressroom::Hit::Window)) {
+                room.frame.start_drag(cursor);
             }
             return;
         }
