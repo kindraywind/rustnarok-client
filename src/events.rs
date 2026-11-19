@@ -443,6 +443,7 @@ impl App {
                     whisper_asked: VecDeque::new(),
                     pick: None,
                     forge: None,
+                    merge: None,
                     card_asked: None,
                     item_skill: None,
                     trade: None,
@@ -1542,6 +1543,7 @@ impl App {
                 game.storage.close();
                 game.pick = None;
                 game.forge = None;
+                game.merge = None;
                 game.cart_choice = None;
                 game.party_invite = None;
                 game.guild_invite = None;
@@ -3349,24 +3351,28 @@ impl App {
                 game.question_box = Some(BoxQuestion::Notice(NOTHING_TO_MAKE));
             }
             MapEvent::RepairList(items) => game.pick = Some((pick_list::PickList::text(REPAIR_TITLE, items), Picking::Repair)),
+            // The stacks in the server's order: the first checked one keeps everything.
             MapEvent::MergeOpen(indexes) => {
                 let stacks = indexes.iter().filter_map(|&index| game.inventory.get(index).cloned()).collect();
-                game.pick = Some((pick_list::PickList::merging(stacks), Picking::Merge));
+                game.merge = Some(merge::Merge::new(stacks));
             }
-            // Merged: the stack that kept everything has its new amount (the others' deletions came first).
-            // ponytail: which line the official client prints for each result isn't knowable.
+            // Every answer closes the window. Merged: the stack that kept everything has its new amount (the others'
+            // deletions came first).
             MapEvent::Merged { index, amount, result } => {
-                let message = |id: usize| self.messages.get(id).cloned().unwrap_or_default();
-                if result == 0 {
-                    if let Some(stack) = game.inventory.items.iter_mut().find(|item| item.index == index) {
-                        stack.amount = amount;
+                game.merge = None;
+                let line = match result {
+                    0 => {
+                        if let Some(stack) = game.inventory.items.iter_mut().find(|item| item.index == index) {
+                            stack.amount = amount;
+                        }
+                        Some((merge::MERGED, merge::MERGED_COLOR))
                     }
-                    game.chat_line(message(MERGED), CHAT_ITEM);
-                    if matches!(game.pick, Some((_, Picking::Merge))) {
-                        game.pick = None;
-                    }
-                } else {
-                    game.chat_line(message(MERGE_TOO_MANY), CHAT_ERROR);
+                    1 => Some((merge::ONE_KIND, CHAT_ERROR)),
+                    2 => Some((merge::TOO_MANY, CHAT_ERROR)),
+                    _ => None,
+                };
+                if let Some((id, color)) = line {
+                    game.chat_line(self.messages.get(id).cloned().unwrap_or_default(), color);
                 }
             }
             MapEvent::UpgradeList(items) => game.pick = Some((pick_list::PickList::text(UPGRADE_TITLE, items), Picking::Upgrade)),

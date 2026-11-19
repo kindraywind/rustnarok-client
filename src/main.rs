@@ -845,9 +845,6 @@ const BOUND: usize = 1328;
 const RENTAL_MINUTES: usize = 1256;
 const RENTAL_SECONDS: usize = 1270;
 const RENTAL_ENDED: usize = 1258;
-/// Item merge: done, and the total too big.
-const MERGED: usize = 2171;
-const MERGE_TOO_MANY: usize = 2173;
 /// EFST_BLADESTOP, EFST_CURSEDCIRCLE_ATKER and EFST_CURSEDCIRCLE_TARGET: a unit locked with another.
 const LOCK_ICONS: [u16; 3] = [85, 416, 417];
 /// "<item> have been placed on / removed from the Swap Equipment window."
@@ -1367,6 +1364,8 @@ struct Game {
     /// A list of carried items to pick from, and what the pick is for.
     pick: Option<(pick_list::PickList, Picking)>,
     forge: Option<forge::Forge>,
+    /// Item merge's grid of stacks.
+    merge: Option<merge::Merge>,
     /// The card whose list was asked for (the list doesn't name it).
     card_asked: Option<u16>,
     /// A skill an item cast that needs aiming (the player may not know it).
@@ -2719,8 +2718,6 @@ enum Picking {
     SkillSelect(u32),
     /// The egg to hatch.
     Hatch,
-    /// Stacks of one item to merge (several picked; OK and Cancel are handled apart).
-    Merge,
 }
 
 /// The talking state an NPC packet sets, for that NPC: a page, Next or a menu holds the player; the script's close

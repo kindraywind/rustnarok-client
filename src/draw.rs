@@ -1737,6 +1737,7 @@ impl App {
         pick_icons.extend(game.enchant.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.materials.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.forge.as_ref().map(|window| window.icons(items)).unwrap_or_default());
+        pick_icons.extend(game.merge.as_ref().map(|window| window.icons(items)).unwrap_or_default());
         pick_icons.extend(game.synthesis.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.upgrade.as_ref().map(|window| window.icons(items, &game.inventory.items)).unwrap_or_default());
         pick_icons.extend(game.achievement_window.icons(achievement_info));
@@ -2433,6 +2434,10 @@ impl App {
                 font,
                 pointer,
             );
+        }
+        if let Some(merge) = &game.merge {
+            let naming = (card_names, &game.char_names);
+            merge.draw(shop_layer.window_of(Top::ItemMerge), &assets.chrome, &assets.vend, icons, items, naming, messages, font, pointer);
         }
         if let Some(forge) = &game.forge {
             forge.draw(shop_layer.window_of(Top::MakingMaterial), &assets.chrome, &assets.forge, icons, items, messages, font, pointer);

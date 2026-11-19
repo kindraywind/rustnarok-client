@@ -45,6 +45,7 @@ pub(crate) enum Top {
     RouletteIcon,
     ConfirmDeal,
     MakingMaterial,
+    ItemMerge,
     ChatSettings,
     /// A party member's small window, by their account.
     PartyHp(u32),
@@ -856,6 +857,7 @@ impl Game {
             self.deal_confirm.as_ref().is_some_and(|confirm| confirm.hit(cursor).is_some()).then_some(Top::ConfirmDeal),
             esc(Shop, self.shop.as_ref().is_some_and(|shop| shop.covers(cursor))),
             self.forge.as_ref().is_some_and(|forge| forge.covers(cursor)).then_some(Top::MakingMaterial),
+            self.merge.as_ref().is_some_and(|merge| merge.hit(cursor).is_some()).then_some(Top::ItemMerge),
             esc(PickList, self.pick.as_ref().is_some_and(|(list, _)| list.covers(cursor))),
             esc(SkillDescription, self.skill_description.as_ref().is_some_and(|window| window.contains(cursor))),
             self.chat.settings.as_ref().is_some_and(|settings| settings.hit(cursor).is_some()).then_some(Top::ChatSettings),
@@ -3637,7 +3639,7 @@ impl Game {
         if self.equipment.frame.open && self.equipment.swapping {
             names.push("SwapEquipment".into());
         }
-        if self.pick.as_ref().is_some_and(|(list, _)| list.merging) {
+        if self.merge.is_some() {
             names.push("ItemMerge".into());
         }
         if self.forge.as_ref().is_some_and(|forge| forge.frame.open) {
@@ -4172,7 +4174,6 @@ impl Game {
                 self.session.hatch(egg.index)
             }
             (Picking::Hatch, None) => Ok(()),
-            (Picking::Merge, _) => self.session.cancel_merge(),
         };
     }
 

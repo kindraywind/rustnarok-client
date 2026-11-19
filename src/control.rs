@@ -1469,6 +1469,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         )
         .chain(game.refine.iter().flat_map(crate::refine::Refine::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.forge.iter().flat_map(|forge| forge.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(game.merge.iter().flat_map(crate::merge::Merge::cell_boxes).map(|(id, area)| json!({"kind": "pick_item", "id": id, "box": area})))
+        .chain(game.merge.iter().flat_map(crate::merge::Merge::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(game.menu.iter().flat_map(|menu| menu.entry_boxes()).map(|(label, area)| json!({"kind": "menu_item", "label": label, "box": area})))
         .chain(game.pet.iter().flat_map(|_| game.pet_window.button_boxes()).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
@@ -1940,8 +1942,13 @@ fn game_state(app: &App, game: &Game) -> Value {
             .collect::<serde_json::Map<String, Value>>(),
         // A pick list (identify, card, making, spells, eggs): where it is and how many rows it has.
         "pick_list": game.pick.as_ref().map(|(list, _)| json!({"position": list.frame.position, "rows": list.items.len()})),
-        // The item merge window: how many rows, and the picked stacks' indexes.
-        "merge": game.pick.as_ref().filter(|(list, _)| list.merging).map(|(list, _)| json!({"rows": list.items.len(), "picked": list.picked_indexes()})),
+        // The item merge window: how many stacks (`rows`) and their indexes in its order, the checked ones' indexes,
+        // its columns, rows and first row shown, and where it is.
+        "merge": game.merge.as_ref().map(|merge| {
+            let [columns, rows, first] = merge.grid();
+            json!({"rows": merge.stacks.len(), "listed": merge.stacks.iter().map(|item| item.index).collect::<Vec<_>>(), "picked": merge.picked(),
+                "grid": [columns, rows], "first": first, "position": merge.frame.position})
+        }),
         "monster_info": game.monster_window.as_ref().map(|window| {
             let info = &window.info;
             json!({"class": info.class, "level": info.level, "hp": info.hp, "size": info.size, "race": info.race, "element": info.element})
