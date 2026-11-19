@@ -7,7 +7,7 @@ use rustnarok_client::net::InventoryItem;
 use rustnarok_client::text::Font;
 
 use crate::render::{Gpu, Texture};
-use crate::window::{Chrome, Frame, TitleHit};
+use crate::window::{Chrome, Frame, TITLE_HEIGHT, TitleHit};
 use crate::{Layer, UI, contains, inventory};
 
 pub const WIDTH: f32 = 280.0;
@@ -130,8 +130,9 @@ impl Forge {
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = self.frame.local(cursor, HEIGHT)?;
-        if let Some(hit) = self.frame.title_hit(local) {
-            return Some(Hit::Title(hit));
+        // The title bar has no buttons: all of it is the bar.
+        if local[1] < TITLE_HEIGHT {
+            return Some(Hit::Title(TitleHit::Title));
         }
         if contains(OK, BUTTON, local) {
             return Some(Hit::Ok);
@@ -155,11 +156,8 @@ impl Forge {
 
     pub fn click(&mut self, hit: Hit) -> Option<Action> {
         match hit {
-            Hit::Title(TitleHit::Close) | Hit::Cancel => Some(Action::Cancel),
-            Hit::Title(title) => {
-                self.frame.click_title(title);
-                None
-            }
+            Hit::Cancel => Some(Action::Cancel),
+            Hit::Title(_) => None,
             Hit::Slot(i) if self.slots.get(i).is_some_and(Option::is_some) => Some(Action::Take(i)),
             Hit::Slot(_) => None,
             Hit::Ok => {
@@ -172,9 +170,6 @@ impl Forge {
     }
 
     pub fn button_boxes(&self) -> Vec<(String, [f32; 4])> {
-        if self.frame.minimized {
-            return Vec::new();
-        }
         let mut buttons = [("btn_ok", OK), ("btn_cancel", CANCEL)]
             .map(|(name, corner)| {
                 let [x, y] = self.frame.at(corner);
@@ -208,14 +203,10 @@ impl Forge {
         if !self.frame.open {
             return;
         }
-        // Minimized: the title bar alone, so its buttons can bring it back.
-        if self.frame.minimized {
-            self.frame.draw_title(layer, chrome, "", pointer.0);
-            return;
-        }
         let pos = self.frame.position;
         chrome.draw_body(layer, pos, [WIDTH, HEIGHT]);
-        self.frame.draw_title(layer, chrome, "", pointer.0);
+        // The bar alone, under the "<item> Create" line: no picture, no buttons.
+        self.frame.draw_bar(layer, chrome);
 
         // Footer strip:
         chrome.draw_footer(layer, [pos[0], pos[1] + HEIGHT], WIDTH, FOOTER);
@@ -356,7 +347,10 @@ mod tests {
         forge.put_item(item(994));
 
         assert_eq!(forge.click(Hit::Cancel), Some(Action::Cancel));
-        assert_eq!(forge.click(Hit::Title(TitleHit::Close)), Some(Action::Cancel));
+        // The bar has no close or minimize button: where they were is the bar, which answers nothing and stays open.
+        assert_eq!([forge.hit([100.0 + 270.0, 105.0]), forge.hit([100.0 + 255.0, 105.0])], [Some(Hit::Title(TitleHit::Title)); 2]);
+        assert_eq!(forge.click(Hit::Title(TitleHit::Title)), None);
+        assert!(!forge.frame.minimized && forge.button_boxes().len() == 5);
         assert_eq!(forge.click(Hit::Ok), Some(Action::Ok([1000, 994, 0])));
 
         // Take slot 0:
