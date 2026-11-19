@@ -4818,6 +4818,10 @@ impl App {
             (server, *selected, accepted.clone())
         };
         remember_server(selected);
+        // That server's own attendance file, when the data has one; a scenario's event (the switch) wins over both.
+        if std::env::var_os("RUSTNAROK_CLIENT_ATTENDANCE").is_none() {
+            self.attendance = lua::server_attendance(&|path| self.grf.read(path), &server.name);
+        }
         let proxy = self.proxy.clone();
         self.account = Some(accepted.clone());
         self.char_server = selected;
