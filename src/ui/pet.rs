@@ -219,16 +219,29 @@ pub fn hunger_word(hunger: u16) -> usize {
     if hunger > 100 { UNKNOWN } else { HUNGER_WORDS + usize::from(hunger_band(hunger)) }
 }
 
+/// For a player of jobs 4050–4052 the low end has two more words: (up to, word, the bar's band).
+const HATE_WORDS: [(u16, usize, [u16; 2]); 3] = [(20, 1022, [0, 100]), (40, 1021, [20, 40]), (100, 672, [40, 100])];
+
+/// The intimacy's word and the bar's band (low, high) for a player of `job`; None past 1000.
+fn intimacy_band(job: u16, intimacy: u16) -> Option<(usize, [u16; 2])> {
+    if matches!(job, 4050..=4052)
+        && let Some(&(_, word, band)) = HATE_WORDS.iter().find(|&&(bound, ..)| intimacy <= bound)
+    {
+        return Some((word, band));
+    }
+    let band = INTIMACY_WORDS.iter().position(|&(bound, _)| intimacy <= bound)?;
+    let low = if band == 0 { 0 } else { INTIMACY_WORDS[band - 1].0 };
+    Some((INTIMACY_WORDS[band].1, [low, INTIMACY_WORDS[band].0]))
+}
+
 /// The message naming how fond the pet is: each word up to its bound, "Unknown" past 1000.
-pub fn intimacy_word(intimacy: u16) -> usize {
-    INTIMACY_WORDS.iter().find(|&&(bound, _)| intimacy <= bound).map_or(UNKNOWN, |&(_, word)| word)
+pub fn intimacy_word(job: u16, intimacy: u16) -> usize {
+    intimacy_band(job, intimacy).map_or(UNKNOWN, |(word, _)| word)
 }
 
 /// How far into its word's band the intimacy is, 0 to 100 (0 outside 0–1000).
-pub fn intimacy_bar(intimacy: u16) -> u32 {
-    let Some(band) = INTIMACY_WORDS.iter().position(|&(bound, _)| intimacy <= bound) else { return 0 };
-    let low = if band == 0 { 0 } else { INTIMACY_WORDS[band - 1].0 };
-    let high = INTIMACY_WORDS[band].0;
+pub fn intimacy_bar(job: u16, intimacy: u16) -> u32 {
+    let Some((_, [low, high])) = intimacy_band(job, intimacy) else { return 0 };
     100 * u32::from(intimacy.saturating_sub(low)) / u32::from(high - low)
 }
 
@@ -331,8 +344,8 @@ impl PetWindow {
 
     /// The list's row under a window-local point, while it's open.
     fn list_row(&self, local: [f32; 2]) -> Option<usize> {
-        let [x, y, width, _] = COMMAND_BOX;
-        let top = y + COMMAND_BOX[3];
+        // The list opens on the box itself: its first row where the box is.
+        let [x, top, width, _] = COMMAND_BOX;
         (self.list_open && contains([x, top], [width, LIST.len() as f32 * LIST_ROW], local)).then(|| ((local[1] - top) / LIST_ROW) as usize)
     }
 
@@ -364,8 +377,8 @@ impl PetWindow {
             ("pet_command".to_owned(), place([cx, cy], [cw, ch])),
         ];
         if self.list_open {
-            let [lx, ly, lw, lh] = COMMAND_BOX;
-            boxes.extend((0..LIST.len()).map(|row| (format!("pet_command:{row}"), place([lx, ly + lh + row as f32 * LIST_ROW], [lw, LIST_ROW]))));
+            let [lx, ly, lw, _] = COMMAND_BOX;
+            boxes.extend((0..LIST.len()).map(|row| (format!("pet_command:{row}"), place([lx, ly + row as f32 * LIST_ROW], [lw, LIST_ROW]))));
         }
         if self.auto_allowed {
             boxes.push(("pet_auto_feed".to_owned(), place(self.auto_box(), AUTO_BOX)));
@@ -398,6 +411,7 @@ impl PetWindow {
         font: &Font,
         messages: &[String],
         pet: &Pet,
+        job: u16,
         pointer: ([f32; 2], bool),
         blink: bool,
     ) {
@@ -442,13 +456,13 @@ impl PetWindow {
         layer.texts.push((message(HUNGER).to_owned(), at([LABEL, HUNGER_TOP]), TEXT));
         layer.texts.push((message(hunger_word(pet.hunger)).to_owned(), at([WORD, HUNGER_TOP]), TEXT));
         layer.texts.push((message(INTIMACY).to_owned(), at([LABEL, INTIMACY_TOP]), TEXT));
-        layer.texts.push((message(intimacy_word(pet.intimacy)).to_owned(), at([WORD, INTIMACY_TOP]), TEXT));
+        layer.texts.push((message(intimacy_word(job, pet.intimacy)).to_owned(), at([WORD, INTIMACY_TOP]), TEXT));
         let [x, y, w, h] = BAR;
         let [track_left, track_middle, track_right] = &assets.track;
         layer.sprites.push((track_left, at([x, y]), [track_left.size[0], h]));
         layer.sprites.push((track_middle, at([x + track_left.size[0], y]), [w - track_left.size[0] - track_right.size[0], h]));
         layer.sprites.push((track_right, at([x + w - track_right.size[0], y]), [track_right.size[0], h]));
-        let value = intimacy_bar(pet.intimacy);
+        let value = intimacy_bar(job, pet.intimacy);
         if value > 0 {
             let [fill_left, fill_middle, fill_right] = &assets.fill;
             let middle = bar_middle(value, fill_left.size[0] + fill_right.size[0]);
@@ -467,8 +481,7 @@ impl PetWindow {
         // The open command list over everything, the window's text included.
         if self.list_open {
             let layer = layer.window();
-            let [x, y, w, h] = COMMAND_BOX;
-            let top = y + h;
+            let [x, top, w, _] = COMMAND_BOX;
             layer.sprites.push((&assets.line, at([x, top]), [w, LIST.len() as f32 * LIST_ROW + 1.0]));
             layer.sprites.push((&chrome.white, at([x + 1.0, top]), [w - 2.0, LIST.len() as f32 * LIST_ROW]));
             for (row, (label, _)) in LIST.iter().enumerate() {
@@ -500,10 +513,16 @@ mod tests {
         assert_eq!([0, 10, 11, 25, 26, 75, 76, 90, 91, 100].map(hunger_band), [0, 0, 1, 1, 2, 2, 3, 3, 4, 4]);
         assert_eq!([0, 10, 11, 90, 91, 100, 101].map(hunger_word), [667, 667, 668, 670, 671, 671, 676]);
         let edges = [0, 100, 101, 250, 251, 750, 751, 900, 901, 1000, 1001];
-        assert_eq!(edges.map(intimacy_word), [672, 672, 673, 673, 669, 669, 674, 674, 675, 675, 676]);
+        assert_eq!(edges.map(|intimacy| intimacy_word(0, intimacy)), [672, 672, 673, 673, 669, 669, 674, 674, 675, 675, 676]);
         // How far into its band: full at 100, empty again at 101; nothing past 1000.
-        assert_eq!(edges.map(intimacy_bar), [0, 100, 0, 100, 0, 100, 0, 100, 1, 100, 0]);
-        assert_eq!([intimacy_bar(175), intimacy_bar(905)], [50, 5]);
+        assert_eq!(edges.map(|intimacy| intimacy_bar(0, intimacy)), [0, 100, 0, 100, 0, 100, 0, 100, 1, 100, 0]);
+        assert_eq!([intimacy_bar(0, 175), intimacy_bar(0, 905)], [50, 5]);
+        // Jobs 4050–4052: two more words at the low end, over other bands; above 100 as for every job.
+        let low = [0, 20, 21, 40, 41, 100, 101];
+        assert_eq!(low.map(|intimacy| intimacy_word(4050, intimacy)), [1022, 1022, 1021, 1021, 672, 672, 673]);
+        assert_eq!(low.map(|intimacy| intimacy_bar(4050, intimacy)), [0, 20, 5, 100, 1, 100, 0]);
+        assert_eq!(low.map(|intimacy| intimacy_word(4052, intimacy)), low.map(|intimacy| intimacy_word(4050, intimacy)));
+        assert_eq!(low.map(|intimacy| intimacy_word(4053, intimacy)), [672, 672, 672, 672, 672, 672, 673]);
         // The blue middle between ends 3 px wide each: 114 px at 100.
         assert_eq!([bar_middle(100, 6.0), bar_middle(50, 6.0), bar_middle(1, 6.0)], [114.0, 57.0, 1.0]);
     }
@@ -549,11 +568,16 @@ mod tests {
         assert_eq!(window.hit(at([231.0, 22.0])), Some(Hit::Rename));
         assert_eq!(window.hit(at([136.0, 25.0])), Some(Hit::NameBox));
         assert_eq!(window.hit(at([151.0, 45.0])), Some(Hit::OpenList));
+        assert_eq!(window.hit(at([165.0, 45.0])), Some(Hit::OpenList));
         assert_eq!(window.hit(at([20.0, 150.0])), Some(Hit::Window), "it drags from the picture");
-        // The list under the command box: Feed, Performance, Unequip, Return.
+        // The list opens on the command box, from y 44 to 108: Feed, Performance, Unequip, Return.
         window.list_open = true;
-        assert_eq!(window.hit(at([170.0, 63.0])), Some(Hit::Command(0)));
-        assert_eq!(window.hit(at([170.0, 62.0 + 3.0 * 16.0 + 1.0])), Some(Hit::Command(3)));
+        assert_eq!(window.hit(at([165.0, 45.0])), Some(Hit::Command(0)));
+        assert_eq!(window.hit(at([165.0, 107.0])), Some(Hit::Command(3)));
+        assert!(!matches!(window.hit(at([165.0, 109.0])), Some(Hit::Command(_))));
+        let boxes = window.button_boxes();
+        let row0 = boxes.iter().find(|(name, _)| name == "pet_command:0").unwrap().1;
+        assert_eq!(row0[1] - window.frame.position[1], 44.0);
         assert_eq!(LIST.map(|(_, command)| command), [net::PET_FEED, net::PET_PERFORM, net::PET_UNEQUIP, net::PET_RETURN]);
         // The automatic feeding box after its label, only when the egg allows it.
         window.list_open = false;

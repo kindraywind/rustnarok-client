@@ -2176,7 +2176,7 @@ impl App {
                 Panel::Pet => {
                     if let Some(pet) = &game.pet {
                         let blink = (game.entered.elapsed().as_millis() / CARET_BLINK.as_millis()).is_multiple_of(2);
-                        game.pet_window.draw(&mut layer, &assets.chrome, &assets.pet, font, messages, pet, pointer, blink);
+                        game.pet_window.draw(&mut layer, &assets.chrome, &assets.pet, font, messages, pet, game.me.job, pointer, blink);
                     }
                 }
                 Panel::Mercenary => {
