@@ -971,9 +971,13 @@
 0x0BB1 client
 0x0BDD client
 0x0BE2 client
+0x0BE3 unsent: the macro report's result; newer than rathena
 0x0BE9 client
 0x0BF3 client
 0x0BF5 unsent: a PACKETVER 20250402 packet
 0x0C0B client
 0x0C0C unsent
 0x0C22 client
+0x0C71 unsent: newer than rathena
+0x0C72 unsent: newer than rathena
+0x0C73 unsent: newer than rathena

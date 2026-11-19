@@ -7,6 +7,8 @@
 # far, no such player, busy).
 # 0x0B25: rathena names it (ZC_PAR_4JOB_CHANGE, PACKETVER 20200916 on) but has no struct for it and never sends it;
 # the game reads it as the trait raise's answer, 0x00BC's form for traits: id u16, result u8, value u8.
+# 0x0BE3 (the macro report's result), 0x0C71, 0x0C72, 0x0C73: newer ids rathena doesn't have yet, at the lengths the
+# game's own packet table gives them in its signed 2026-09 client. A server that sends one would otherwise drop the link.
 0x0073 11
 0x0078 55
 0x0086 16
@@ -70,3 +72,7 @@
 0x0A96 51
 0x0AB9 39
 0x0B25 6
+0x0BE3 34
+0x0C71 8
+0x0C72 4
+0x0C73 5
