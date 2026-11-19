@@ -694,13 +694,29 @@ pub fn attendance(grf: &Grf) -> io::Result<Attendance> {
     attendance_table(grf.read(ATTENDANCE)?)
 }
 
+/// The attendance event once character server `name` is picked: its own `System\CheckAttendance_<name>.lub`, when
+/// the data (`read`) has one and it runs, over the base file's event; else the base file's.
+pub fn server_attendance(read: &dyn Fn(&str) -> io::Result<Vec<u8>>, name: &str) -> Attendance {
+    let base = read(ATTENDANCE).and_then(attendance_table).unwrap_or_default();
+    match read(&format!("system\\CheckAttendance_{name}.lub")) {
+        Ok(source) => attendance_over(base.clone(), source).unwrap_or(base),
+        Err(_) => base,
+    }
+}
+
 /// Runs the file's `main()` as the game does: its `InsertCheckAttendanceConfig(_, start, end)` and
 /// `InsertCheckAttendanceReward(day, item, amount)` calls make the event. Only the calls count: kRO's tables are a global
 /// `Reward` of {day, item, amount} rows, other servers keep `Config.Reward[day] = {item, amount}`.
 // ponytail: the game's checks (item 0, amount 0, a day twice) aren't made; no data seen breaks them.
 pub fn attendance_table(source: Vec<u8>) -> io::Result<Attendance> {
+    attendance_over(Attendance::default(), source)
+}
+
+/// A file run over an event already read: its rewards replace the event's, and its dates (if it gives them) are the
+/// event's.
+fn attendance_over(base: Attendance, source: Vec<u8>) -> io::Result<Attendance> {
     let lua = new_lua()?;
-    let event = std::rc::Rc::new(std::cell::RefCell::new((Attendance::default(), BTreeMap::new())));
+    let event = std::rc::Rc::new(std::cell::RefCell::new((Attendance { rewards: Vec::new(), ..base }, BTreeMap::new())));
     let (dated, rewarded) = (event.clone(), event.clone());
     let config = lua
         .create_function(move |_, (_, start, end): (mlua::Value, f64, f64)| {
@@ -2356,6 +2372,27 @@ mod tests {
         assert_eq!((event.start, event.end, event.rewards), (20260730, 20260831, vec![(12264, 3), (12263, 3)]));
         assert!(super::attendance_table(b"Config = {}".to_vec()).is_err(), "no main");
         assert!(super::attendance_table(b"function main() return false, 'bad' end".to_vec()).is_err(), "main refused");
+        // A character server's own file replaces the base file's rewards and dates; a missing one leaves them.
+        let base = format!("Config = {{ StartDate = 20261101, EndDate = 20271231 }}\nReward = {{ {{1, 501, 3}}, {{2, 502, 5}} }}\n{}", main_rows());
+        let own = format!("Config = {{ StartDate = 20261201, EndDate = 20261231 }}\nReward = {{ {{1, 607, 1}} }}\n{}", main_rows());
+        let read = |path: &str| match path {
+            super::ATTENDANCE => Ok(base.clone().into_bytes()),
+            "system\\CheckAttendance_Rust.lub" => Ok(own.clone().into_bytes()),
+            _ => Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
+        };
+        let event = super::server_attendance(&read, "Rust");
+        assert_eq!((event.start, event.end, event.rewards), (20261201, 20261231, vec![(607, 1)]));
+        let event = super::server_attendance(&read, "Other");
+        assert_eq!((event.start, event.end, event.rewards), (20261101, 20271231, vec![(501, 3), (502, 5)]));
+    }
+
+    /// A `main` that inserts the config's dates and the `Reward` rows.
+    fn main_rows() -> &'static str {
+        "function main()
+            InsertCheckAttendanceConfig(nil, Config.StartDate, Config.EndDate)
+            for k, row in pairs(Reward) do InsertCheckAttendanceReward(row[1], row[2], row[3]) end
+            return true, \"success\"
+        end"
     }
 
     #[test]

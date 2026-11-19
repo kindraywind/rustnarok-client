@@ -1,6 +1,7 @@
 //! The attendance check: a calendar of an event's daily rewards. The server opens it, at login while today's reward
 //! waits or when the menu's button asks, with the days attended; a click on today's slot asks for the reward, which
-//! comes by mail. The event's dates and rewards are the client's own (System/CheckAttendance.lub).
+//! comes by mail. The event's dates and rewards are the client's own (System/CheckAttendance.lub, or the picked
+//! character server's CheckAttendance_<name>.lub).
 //!
 //! rathena `clif_parse_open_ui` (IN_UI_ATTENDANCE), `clif_ui_open` (OUT_UI_ATTENDANCE), `pc_attendance_counter`,
 //! `pc_attendance_claim_reward`.
@@ -44,12 +45,11 @@ const ICON_AT: [f32; 2] = [17.0, 14.0];
 const AMOUNT_AT: [[f32; 2]; 2] = [[31.0, 29.0], [17.0, 29.0]];
 const DAY_DOWN: f32 = 45.0;
 /// Text places: the title and the dates centred across the window; the bubble's lines centred in 112 px from x 343
-/// (two lines at y 118 and 130, one at 126); "D-day" centred in 109 px from x 345, the days left in 54 px from x 368
+/// (`bubble_tops`); "D-day" centred in 109 px from x 345, the days left in 54 px from x 368
 /// (22 px high), their unit after them.
 const TITLE_Y: f32 = 41.0;
 const PERIOD_Y: f32 = 70.0;
 const BUBBLE: [f32; 2] = [343.0, 112.0];
-const BUBBLE_TOP: [f32; 2] = [126.0, 118.0];
 const D_DAY_AT: ([f32; 2], f32) = ([345.0, 109.0], 289.0);
 const LEFT_AT: ([f32; 2], f32) = ([368.0, 54.0], 309.0);
 const LEFT_SIZE: f32 = 22.0;
@@ -100,7 +100,7 @@ pub struct Window {
     pub claimable: bool,
     /// Today's slot was pressed: it keeps that look.
     pressed: bool,
-    /// Whole days until the event's last one, counted when the window opened.
+    /// The days left as the game counts them (`days_left`), when the window opened.
     days_left: i64,
     opened: Instant,
     /// The days left, in their own size.
@@ -117,6 +117,33 @@ fn day_number(date: u32) -> i64 {
     era * 146_097 + of_era * 365 + of_era / 4 - of_era / 100 + of_year - 719_468
 }
 
+/// The days left at Unix time `now`: D, the seconds to 15:00 UTC on the event's last day (YYYYMMDD); 0 when D ≤ 0,
+/// else the day of the year (January 1 = 0) of the moment D seconds after 1970-01-01. Below a year that is the whole
+/// days left; past one it starts again from 0, as the game's count does.
+pub fn days_left(end: u32, now: i64) -> i64 {
+    let left = day_number(end) * 86_400 + 15 * 3600 - now;
+    if left <= 0 {
+        return 0;
+    }
+    let mut day = left / 86_400;
+    let mut year = 1970;
+    loop {
+        let length = day_number((year + 1) * 10000 + 101) - day_number(year * 10000 + 101);
+        if day < length {
+            return day;
+        }
+        day -= length;
+        year += 1;
+    }
+}
+
+/// The bubble's line tops for `lines` lines: the block centred on y 95 to 172, the later lines opened up
+/// (126; 118, 130; 111, 123, 138; 103, 115, 130, 145).
+fn bubble_tops(lines: usize) -> Vec<f32> {
+    let first = ((77.0 - 15.0 * lines as f32) / 2.0 + 95.0).trunc();
+    (0..lines).map(|line| first + 3.0 * (line.saturating_sub(1) + 4 * line) as f32).collect()
+}
+
 /// Where the window stands: the middle of the screen.
 fn corner() -> [f32; 2] {
     [((screen()[0] - SIZE[0]) / 2.0).trunc(), ((screen()[1] - SIZE[1]) / 2.0).trunc()]
@@ -128,11 +155,24 @@ fn slot(index: usize) -> [f32; 2] {
 }
 
 impl Window {
-    /// The server's `data`: ten times the days attended, plus one when today's reward was taken. `today` is YYYYMMDD.
-    pub fn open(data: u32, event: &Attendance, today: u32, now: Instant) -> Self {
-        let claimed = (data / 10) as usize;
-        let days_left = (day_number(event.end) - day_number(today)).max(0);
-        Self { claimed, claimable: data.is_multiple_of(10) && claimed < event.rewards.len(), pressed: false, days_left, opened: now, left_text: None }
+    /// The server's `data`: ten times the days attended, plus one when today's reward was taken. `unix` is the Unix
+    /// time now, for the days left.
+    pub fn open(data: u32, event: &Attendance, unix: i64, now: Instant) -> Self {
+        let mut window = Self { claimed: 0, claimable: false, pressed: false, days_left: days_left(event.end, unix), opened: now, left_text: None };
+        window.refresh(data, event);
+        window
+    }
+
+    /// The server's `data` again while it is open: the days attended and whether today's reward waits change; today's
+    /// pressed look and the days left stay.
+    pub fn refresh(&mut self, data: u32, event: &Attendance) {
+        self.claimed = (data / 10) as usize;
+        self.claimable = data.is_multiple_of(10) && self.claimed < event.rewards.len();
+    }
+
+    /// The days left it shows (0 shows no number).
+    pub fn days_left(&self) -> i64 {
+        self.days_left
     }
 
     /// Today's reward was given: `days` attended now.
@@ -221,9 +261,8 @@ impl Window {
         // The bubble: today's day to click, or the last one done.
         let bubble = if self.claimable { messages::fill(message(CLICK), &[&(self.claimed + 1)]) } else { messages::fill(message(DONE), &[&self.claimed]) };
         let lines: Vec<String> = bubble.replace("\\n", "\n").lines().flat_map(|line| window::wrap(font, line, BUBBLE[1], usize::MAX)).collect();
-        let top = BUBBLE_TOP[usize::from(lines.len() > 1)];
-        for (row, line) in lines.iter().enumerate() {
-            centred(layer, line, BUBBLE, top + 12.0 * row as f32, BUBBLE_COLOR);
+        for (line, top) in lines.iter().zip(bubble_tops(lines.len())) {
+            centred(layer, line, BUBBLE, top, BUBBLE_COLOR);
         }
         if self.claimable {
             let blink = (now.saturating_duration_since(self.opened).as_millis() / BLINK_MS) as usize & 1;
@@ -269,6 +308,11 @@ fn close_size() -> [f32; 2] {
 mod tests {
     use super::*;
 
+    /// The Unix time at hour:minute UTC on a YYYYMMDD date.
+    fn utc(date: u32, hour: i64, minute: i64) -> i64 {
+        day_number(date) * 86_400 + hour * 3600 + minute * 60
+    }
+
     fn event() -> Attendance {
         Attendance { start: 20261101, end: 20261130, rewards: (0..20).map(|day| (501 + day, 1)).collect() }
     }
@@ -277,7 +321,7 @@ mod tests {
     fn opens_from_the_servers_count() {
         let now = Instant::now();
         // 3 days attended, today's reward waiting: day 4 is the one to click.
-        let mut window = Window::open(30, &event(), 20261115, now);
+        let mut window = Window::open(30, &event(), utc(20261115, 0, 0), now);
         assert_eq!((window.claimed, window.claimable, window.days_left), (3, true, 15));
         let middle = |index: usize| offset(offset(corner(), slot(index)), [29.0, 30.0]);
         assert_eq!(window.hit(middle(3)), Some(Hit::Slot(3)));
@@ -291,10 +335,35 @@ mod tests {
         window.rewarded(4);
         assert_eq!((window.claimed, window.claimable), (4, false));
         // Today's reward already taken (the 1), or every day done: nothing to click.
-        assert!(!Window::open(31, &event(), 20261115, now).claimable);
-        assert!(!Window::open(200, &event(), 20261115, now).claimable);
-        // The last day and after it: no days left.
-        assert_eq!([20261130, 20261201].map(|today| Window::open(0, &event(), today, now).days_left), [0, 0]);
+        assert!(!Window::open(31, &event(), utc(20261115, 0, 0), now).claimable);
+        assert!(!Window::open(200, &event(), utc(20261115, 0, 0), now).claimable);
+        // The last day's afternoon and after it: no days left.
+        assert_eq!([20261130, 20261201].map(|today| Window::open(0, &event(), utc(today, 15, 0), now).days_left), [0, 0]);
+        // Opened again while open: the days change, today's pressed look and the days left stay.
+        let mut window = Window::open(30, &event(), utc(20261115, 0, 0), now);
+        window.press(Hit::Slot(3));
+        window.refresh(40, &event());
+        assert_eq!((window.claimed, window.claimable, window.pressed, window.days_left), (4, true, true, 15));
+    }
+
+    #[test]
+    fn counts_days_left_as_the_game() {
+        assert_eq!(days_left(20260106, utc(20251203, 0, 0)), 34);
+        // 408 days away: the count starts again after a year.
+        assert_eq!(days_left(20271231, utc(20261118, 3, 0)), 43);
+        // It turns at 15:00 UTC.
+        assert_eq!(days_left(20261130, utc(20261130, 14, 59)), 0);
+        assert_eq!(days_left(20261130, utc(20261129, 14, 59)), 1);
+        assert_eq!(days_left(20261130, utc(20261129, 15, 1)), 0);
+        assert_eq!(days_left(20261130, utc(20261201, 0, 0)), 0);
+    }
+
+    #[test]
+    fn places_the_bubbles_lines() {
+        assert_eq!(bubble_tops(1), [126.0]);
+        assert_eq!(bubble_tops(2), [118.0, 130.0]);
+        assert_eq!(bubble_tops(3), [111.0, 123.0, 138.0]);
+        assert_eq!(bubble_tops(4), [103.0, 115.0, 130.0, 145.0]);
     }
 
     #[test]

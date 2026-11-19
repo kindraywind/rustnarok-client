@@ -1156,9 +1156,11 @@ impl App {
                     // ponytail: a driven client keeps the login's own window shut, so a server with an event doesn't
                     // put the calendar into every scenario's shots; the menu's button still opens it.
                     let asked = std::mem::take(&mut game.attendance_asked);
-                    if self.assets.as_ref().is_some_and(|assets| assets.attendance.is_some()) && (asked || !control::driven()) {
-                        let today = rustnarok_client::lua::local_date("%Y%m%d", memorial::unix_now() as i64).parse().unwrap_or(0);
-                        game.attendance = Some(attendance::Window::open(data, &self.attendance, today, control::now()));
+                    if let Some(window) = &mut game.attendance {
+                        // Again while it's open: the same window, its days refreshed.
+                        window.refresh(data, &self.attendance);
+                    } else if self.assets.as_ref().is_some_and(|assets| assets.attendance.is_some()) && (asked || !control::driven()) {
+                        game.attendance = Some(attendance::Window::open(data, &self.attendance, memorial::unix_now() as i64, control::now()));
                         escape::touch(&mut game.esc_order, escape::WindowId::Attendance);
                     }
                 } else if kind == grade::UI_KIND {

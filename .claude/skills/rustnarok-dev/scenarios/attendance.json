@@ -1,38 +1,307 @@
 {
-  "about": "The attendance check: with three days attended, the menu's button opens the calendar (day 4 blinking, days 1 to 3 covered); a click on day 4 takes today's reward and marks it; a right click on a slot describes its reward; Close shuts it. The server needs an event in db/import/attendance.yml: Start 20261101, End 20271231 and the twenty rewards of attendance.lua. The reward's mail stays in the inbox: delete the character's mail in the scenario reset.",
+  "about": "The attendance check: with three days attended, the menu's button opens the calendar (day 4 blinking, days 1 to 3 covered); a click on day 4 takes today's reward and marks it; a right click on a slot describes its reward; Close shuts it. Opened again with twelve days attended, the bubble's longer line (day 13) takes the game's places for its lines (issue #1385); the days left are the game's count, which starts again after a year (End 20271231 reads 43 on 2026-11-18). The server needs an event in db/import/attendance.yml: Start 20261101, End 20271231 and the twenty rewards of attendance.lua. The reward's mail stays in the inbox: delete the character's mail in the scenario reset.",
   "account": "",
   "slot": 0,
-  "env": {"RUSTNAROK_CLIENT_ATTENDANCE": "{scenarios}/attendance.lua"},
+  "env": {
+    "RUSTNAROK_CLIENT_ATTENDANCE": "{scenarios}/attendance.lua"
+  },
   "steps": [
-    {"say": "@warp prontera 156 180"}, {"settle": 1500},
-    {"say": "@reloadattendancedb"}, {"wait": 500},
-    {"say": "@set #AttendanceCounter 3"}, {"wait": 300},
-    {"say": "@set #AttendanceDate 20261101"}, {"wait": 300},
-    {"click_on": {"button": "menu"}}, {"wait": 300},
-    {"click_on": {"menu_item": "attendance"}}, {"wait_for": {"packet": "0x0ae2", "ms": 5000}}, {"wait": 300},
-    {"move": [900, 720]},
-    {"expect": {"windows_open": ["Attendance"], "state": {"attendance.claimed": 3, "attendance.claimable": true}}},
-    {"shot": "attendance-open", "threshold": 5},
-    {"click_on": {"button": "attendance_day_2"}}, {"wait": 500},
-    {"expect": {"state": {"attendance.claimed": 3, "attendance.claimable": true}}},
-    {"click_on": {"button": "attendance_day_4"}}, {"wait_for": {"packet": "0x0af0", "ms": 5000}}, {"wait": 300},
-    {"expect": {"state": {"attendance.claimed": 4, "attendance.claimable": false}}},
-    {"move": [900, 720]},
-    {"shot": "attendance-taken", "threshold": 5},
-    {"move": {"button": "attendance_day_20"}}, {"wait": 300},
-    {"shot": "attendance-hover", "crop": [268, 177, 488, 413], "threshold": 5},
-    {"click_on": {"button": "attendance_day_1"}, "button": "right"}, {"wait": 400},
-    {"expect": {"state": {"item_window": 501}}},
-    {"click_on": {"button": "attendance_day_1"}, "button": "right"}, {"wait": 400},
-    {"expect": {"state": {"item_window": null}}},
-    {"click_on": {"button": "attendance_close"}}, {"wait": 300},
-    {"expect": {"windows_closed": ["Attendance"]}},
-    {"click_on": {"menu_item": "attendance"}}, {"wait_for": {"packet": "0x0ae2", "ms": 5000}}, {"wait": 300},
-    {"expect": {"windows_open": ["Attendance"], "state": {"attendance.claimed": 4, "attendance.claimable": false}}},
-    {"key": "Escape"}, {"wait": 300},
-    {"expect": {"windows_closed": ["Attendance"]}},
-    {"click_on": {"button": "menu"}}, {"wait": 300},
-    {"say": "@set #AttendanceCounter 0"}, {"wait": 300},
-    {"say": "@set #AttendanceDate 0"}, {"wait": 300}
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@reloadattendancedb"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@set #AttendanceCounter 3"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@set #AttendanceDate 20261101"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "menu"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "attendance"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0ae2",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        900,
+        720
+      ]
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Attendance"
+        ],
+        "state": {
+          "attendance.claimed": 3,
+          "attendance.claimable": true
+        }
+      }
+    },
+    {
+      "shot": "attendance-open",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "attendance_day_2"
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "attendance.claimed": 3,
+          "attendance.claimable": true
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "attendance_day_4"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0af0",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "attendance.claimed": 4,
+          "attendance.claimable": false
+        }
+      }
+    },
+    {
+      "move": [
+        900,
+        720
+      ]
+    },
+    {
+      "shot": "attendance-taken",
+      "threshold": 5
+    },
+    {
+      "move": {
+        "button": "attendance_day_20"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "shot": "attendance-hover",
+      "crop": [
+        268,
+        177,
+        488,
+        413
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "attendance_day_1"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "state": {
+          "item_window": 501
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "attendance_day_1"
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "state": {
+          "item_window": null
+        }
+      }
+    },
+    {
+      "click_on": {
+        "button": "attendance_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Attendance"
+        ]
+      }
+    },
+    {
+      "click_on": {
+        "menu_item": "attendance"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0ae2",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Attendance"
+        ],
+        "state": {
+          "attendance.claimed": 4,
+          "attendance.claimable": false
+        }
+      }
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "Attendance"
+        ]
+      }
+    },
+    {
+      "say": "@set #AttendanceCounter 12"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@set #AttendanceDate 20261101"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "menu_item": "attendance"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x0ae2",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        900,
+        720
+      ]
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Attendance"
+        ],
+        "state": {
+          "attendance.claimed": 12,
+          "attendance.claimable": true
+        }
+      }
+    },
+    {
+      "shot": "attendance-two-digits",
+      "crop": [
+        268,
+        177,
+        488,
+        413
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "menu"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@set #AttendanceCounter 0"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@set #AttendanceDate 0"
+    },
+    {
+      "wait": 300
+    }
   ]
 }
