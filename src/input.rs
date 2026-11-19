@@ -2213,8 +2213,9 @@ impl App {
             game.menu = Some(menu::Menu::new(self.cursor, choices, &self.font));
             return;
         }
-        // A right click on a skill in the skill window or the guild window's skills: its description (the hotkey bar's
-        // opens on the press), the same skill again closes it. Only the guild's has a close button; Esc closes either.
+        // A right click on a skill in the skill window, the guild window's skills or the homunculus's or mercenary's skill
+        // list: its description (the hotkey bar's opens on the press), the same skill again closes it. Only the skill
+        // window's has no close button; Esc closes any.
         if let Scene::Game(game) = &mut self.scene
             && state == ElementState::Released
             && let Some((start, None)) = game.right_press
@@ -2233,6 +2234,20 @@ impl App {
                     };
                     game.skill_window.pin(skill);
                     skill.map(|id| (id, false))
+                }
+                // A homunculus's or a mercenary's skill: closable, as the guild's.
+                Some(panel @ (Panel::HomunculusSkills | Panel::MercenarySkills)) => {
+                    let (list, skills) = if panel == Panel::HomunculusSkills {
+                        (&game.homunculus_skill_list, &game.homunculus_skills)
+                    } else {
+                        (&game.mercenary_skill_list, &game.mercenary_skills)
+                    };
+                    let points = game.homunculus.as_ref().filter(|_| panel == Panel::HomunculusSkills).map_or(0, |homunculus| homunculus.skill_points);
+                    match list.hit(cursor, skills, points) {
+                        Some(homunculus::SkillHit::Row(row)) => skills.get(row).map(|skill| (skill.id, true)),
+                        Some(homunculus::SkillHit::Raise(id)) => Some((id, true)),
+                        _ => None,
+                    }
                 }
                 // A guild skill: a one-entry menu, "View Skill Info".
                 Some(Panel::Guild) => {
@@ -2344,11 +2359,12 @@ impl App {
                 return;
             }
             // A right press on a skill on the hotkey bar or the quick slot window: its description under or over that row
-            // (the same skill again closes it).
+            // (the same skill again closes it). Only for a skill the character has.
             if state == ElementState::Pressed
                 && game.window_at(self.cursor) == Some(Panel::Hotkeys)
                 && let Some(hotkeys::Hit::Slot(slot)) = game.hotkeys.hit(self.cursor)
-                && let Some(key) = game.hotkeys.keys.get(slot).copied().flatten().filter(|key| key.skill)
+                && let Some(key) =
+                    game.hotkeys.keys.get(slot).copied().flatten().filter(|key| key.skill && game.skills.iter().any(|skill| u32::from(skill.id) == key.id))
                 && let Some((bar_y, row)) = game.hotkeys.slot_place(slot)
             {
                 let id = key.id as u16;

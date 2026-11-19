@@ -1,5 +1,5 @@
 {
-  "about": "A mercenary (issue #47): a Bowman Scroll hires Mina, who shows with her bow and follows; the window (Ctrl+R, the game's layout with the contract's end as a red date) and the skill list; her right-click menu (View Status, Stand By); Alt+Shift+click sends her at a Poring (Alt+click twice would too); Ctrl+T stops her following; Dismiss asks, then lets her go. Then a Spearman Scroll hires a lancer (job 6027) and sends her at a Poring so the weapon glow is in the attack (issue #310). RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's mercenary (rathena's `mercenary` table) and zero its `mercenary_owner` row, or a mercenary from an earlier run is already there and the scroll does nothing.",
+  "about": "A mercenary (issue #47): a Bowman Scroll hires Mina, who shows with her bow and follows; the window (Ctrl+R, the game's layout with the contract's end as a red date) and the skill list, where a right click on Double Strafe opens its description and a second closes it (issue #1383); her right-click menu (View Status, Stand By); Alt+Shift+click sends her at a Poring (Alt+click twice would too); Ctrl+T stops her following; Dismiss asks, then lets her go. Then a Spearman Scroll hires a lancer (job 6027) and sends her at a Poring so the weapon glow is in the attack (issue #310). RUSTNAROK_CLIENT_SCENARIO_RESET must delete the first character's mercenary (rathena's `mercenary` table) and zero its `mercenary_owner` row, or a mercenary from an earlier run is already there and the scroll does nothing.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -99,6 +99,52 @@
     {
       "shot": "mercenary-skills",
       "threshold": 20
+    },
+    {
+      "click_on": {
+        "skill": 8207
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "SkillDescription"
+        ],
+        "state": {
+          "skill_description.skill": 8207,
+          "skill_description.closable": true
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "mercenary-skill-description",
+      "threshold": 20
+    },
+    {
+      "click_on": {
+        "skill": 8207
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "SkillDescription"
+        ]
+      }
     },
     {
       "key": "Escape"

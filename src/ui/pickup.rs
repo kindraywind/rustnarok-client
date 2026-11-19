@@ -150,10 +150,12 @@ impl Popup {
             }
             first.push(character);
         }
-        let second_start = self.text.len() - rest.trim_start().len();
-        let mut second = rest.trim_start().to_owned();
+        // The second line starts at the very next character, a space too; still too wide, it is cut at 15 px less
+        // and "..." follows.
+        let second_start = self.text.len() - rest.len();
+        let mut second = rest.to_owned();
         if font.width(&second) > room {
-            while !second.is_empty() && font.width(&format!("{second}...")) > room {
+            while !second.is_empty() && font.width(&second) > room - 15.0 {
                 second.pop();
             }
             second.push_str("...");
@@ -218,5 +220,23 @@ mod tests {
         // Each refusal's line: 1 and 6 can't get it, 2 overweight, 4 the weight limit, 5 30,000 of a kind, 7 another
         // item's limit, 9 its own; 8 nothing.
         assert_eq!([1, 2, 4, 5, 6, 7, 8, 9].map(failure_line), [Some(53), Some(52), Some(220), Some(279), Some(53), Some(1418), None, Some(3984)]);
+    }
+
+    #[test]
+    fn cuts_the_second_line_at_w_less_64() {
+        let font = Font::load();
+        let now = Instant::now();
+        let text = "Elunium Elunium Elunium Elunium Elunium Elunium Elunium Elunium Elunium Elunium - 1 obtained.".to_owned();
+        let popup = Popup::new(text.clone(), String::new(), 100.0, now);
+        let room = popup.width - 49.0;
+        let lines = popup.lines(&font);
+        assert_eq!(lines.len(), 2);
+        // The second line starts right where the first stopped: nothing is trimmed, a leading space neither.
+        let (first, (second, start)) = (&lines[0].0, &lines[1]);
+        assert_eq!(*start, first.len());
+        let cut = second.strip_suffix("...").unwrap();
+        assert!(text[*start..].starts_with(cut));
+        assert!(font.width(cut) <= room - 15.0);
+        assert!(font.width(&text[*start..*start + cut.len() + 1]) > room - 15.0);
     }
 }

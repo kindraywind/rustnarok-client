@@ -1686,7 +1686,7 @@ impl App {
             }
             MapEvent::Status { id, value } => {
                 let before = game.status.insert(id, value);
-                game.level_ups.changed(id, before, value);
+                game.level_ups.changed(id, before);
                 // Our walking speed. ponytail: a walk under way keeps its times; the next one goes at the new speed.
                 if id == net::STATUS_SPEED && value > 0 {
                     game.player.step_ms = value as f32;

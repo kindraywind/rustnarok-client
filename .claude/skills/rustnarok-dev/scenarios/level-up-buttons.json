@@ -1,5 +1,5 @@
 {
-  "about": "Level up buttons (issue #222): @blvl 1 leaves the base level button in the bottom right corner (and marks the menu's status button new); clicking it opens the status window and it goes. @jlvl 1 does the same at the bottom left for the skill window (the open menu shows the skill button's mark). The levels are lowered again at the end.",
+  "about": "Level up buttons (issue #222): @blvl 1 leaves the base level button in the bottom right corner (and marks the menu's status button new); clicking it opens the status window and it goes. @jlvl 1 does the same at the bottom left for the skill window (the open menu shows the skill button's mark). The levels are lowered again at the end, and each lowered level puts its button up again, as any level the server sends does (issue #1383).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -131,10 +131,24 @@
       "wait": 500
     },
     {
+      "expect": {
+        "state": {
+          "level_ups.base": true
+        }
+      }
+    },
+    {
       "say": "@jlvl -1"
     },
     {
       "wait": 500
+    },
+    {
+      "expect": {
+        "state": {
+          "level_ups.job": true
+        }
+      }
     }
   ]
 }

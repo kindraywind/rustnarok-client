@@ -129,9 +129,9 @@ pub fn blocks(quests: &[Quest], texts: &HashMap<u32, QuestText>, hidden: &HashSe
         .collect()
 }
 
-/// The quest whose title is under the pointer.
+/// The quest whose title row (the title's width, 10 px from the block's top) is under the pointer.
 pub fn title_at(blocks: &[Block], font: &Font, cursor: [f32; 2]) -> Option<u32> {
-    blocks.iter().find(|block| contains([corner()[0], corner()[1] + block.top], [font.width(&block.title).max(1.0), 14.0], cursor)).map(|block| block.id)
+    blocks.iter().find(|block| contains([corner()[0], corner()[1] + block.top], [font.width(&block.title).max(1.0), 10.0], cursor)).map(|block| block.id)
 }
 
 pub fn draw(layer: &mut Layer<'_>, blocks: &[Block]) {
@@ -174,6 +174,17 @@ mod tests {
         // A cooldown timer is never listed, whatever its switch.
         let texts = [(3, QuestText { cooldown: true, ..Default::default() })].into_iter().collect();
         assert_eq!(ids(&HashSet::new(), &texts), [1, 2, 7, 8, 9]);
+    }
+
+    #[test]
+    fn takes_a_title_row_10_high() {
+        let font = Font::load();
+        let block = Block { id: 7, title: "Ninja".into(), summary: String::new(), hunts: Vec::new(), top: 40.0 };
+        let [x, y] = corner();
+        let blocks = [block];
+        assert_eq!(title_at(&blocks, &font, [x + 1.0, y + 40.0]), Some(7));
+        assert_eq!(title_at(&blocks, &font, [x + 1.0, y + 49.5]), Some(7));
+        assert_eq!(title_at(&blocks, &font, [x + 1.0, y + 50.5]), None);
     }
 
     #[test]
