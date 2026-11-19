@@ -4085,7 +4085,10 @@ impl Game {
     /// The shop's windows close without a deal: a market or barter says so, and so does an NPC shop.
     pub(crate) fn close_shop(&mut self) {
         let _ = match self.shop.take() {
-            Some(shop) if shop.plain() => self.session.quit_npc_trade(),
+            Some(shop) if shop.plain() => {
+                self.end_deal_talk();
+                self.session.quit_npc_trade()
+            }
             Some(shop) => shop.market.map_or(Ok(()), |kind| self.session.close_market(kind)),
             None => Ok(()),
         };
@@ -4133,8 +4136,26 @@ impl Game {
     /// shop marks the player busy as it asks, and until then every NPC refuses to talk.
     pub(crate) fn close_deal_choice(&mut self) {
         if self.drop_deal_choice().is_some() {
+            self.end_deal_talk();
             let _ = self.session.quit_npc_trade();
         }
+    }
+
+    /// An NPC deal ends (the Buy / Sell box's Cancel, the shop's Buy, Sell or Cancel): the talk that led to it closes as
+    /// its Cancel and Close do, which the server hears. Already over (death, a map change), there's nothing to close.
+    pub(crate) fn end_deal_talk(&mut self) {
+        let Some(dialog) = &self.dialog else { return };
+        if dialog.warp.is_some() {
+            return;
+        }
+        if dialog.menu.is_some() {
+            self.choose(true);
+            return;
+        }
+        if dialog.say_window() {
+            let _ = self.session.close_dialog(dialog.npc);
+        }
+        self.dismiss_dialog();
     }
 
     /// The deal-type question's Buy or Sell.

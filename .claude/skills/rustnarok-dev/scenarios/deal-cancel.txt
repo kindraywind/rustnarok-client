@@ -6,3 +6,11 @@ morocc,160,123,4	script	Deal Tester	4_M_01,{
 	callshop "RustnarokDealShop",0;
 	end;
 }
+// One that talks first, as many do: rathena sends the text, then the question, and no Close (the script has ended).
+-	shop	RustnarokTalkShop	-1,501:-1
+morocc,162,123,4	script	Talk Shop Tester	4_M_01,{
+	mes "[Talk Shop]";
+	mes "Have a look.";
+	callshop "RustnarokTalkShop",0;
+	end;
+}

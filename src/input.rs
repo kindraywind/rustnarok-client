@@ -1305,9 +1305,10 @@ impl App {
                     }
                     Some(shop::Action::Deal) => {
                         let _ = shop.send(&mut game.session);
-                        // An NPC shop closes as the deal goes.
+                        // An NPC shop closes as the deal goes, and the deal ends.
                         if shop.plain() {
                             game.shop = None;
+                            game.end_deal_talk();
                         }
                     }
                     Some(shop::Action::Close) => game.close_shop(),
