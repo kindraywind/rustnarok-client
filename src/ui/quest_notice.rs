@@ -18,7 +18,8 @@ pub const DELETED: usize = 1611;
 /// "Complete", for a hunt done.
 const COMPLETE: usize = 2030;
 pub const YELLOW: [u8; 3] = [255, 255, 0];
-const BANNER_LIFE: Duration = Duration::from_secs(2);
+/// A banner line stays 20 s, then goes at once.
+const BANNER_LIFE: Duration = Duration::from_secs(20);
 /// The banner's strip, 130/480 of the way down.
 fn banner_top() -> f32 {
     screen()[1] * 130.0 / 480.0
@@ -71,16 +72,18 @@ pub fn banner_line(messages: &[String], hunt: &Hunt) -> String {
     }
 }
 
-/// The banners showing, each until its time is up.
+/// The banner showing, until its time is up: one line at most, the newest.
 #[derive(Default)]
 pub struct Banners(Vec<(String, Instant)>);
 
 impl Banners {
+    /// Replaces the line showing, with a fresh 20 s.
     pub fn show(&mut self, text: String, now: Instant) {
+        self.0.clear();
         self.0.push((text, now + BANNER_LIFE));
     }
 
-    /// Drops those whose two seconds are over; the rest, oldest first.
+    /// Drops the line once its time is over; what is left.
     pub fn current(&mut self, now: Instant) -> Vec<String> {
         self.0.retain(|(_, until)| *until > now);
         self.0.iter().map(|(text, _)| text.clone()).collect()
@@ -165,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn says_progress_and_keeps_banners_two_seconds() {
+    fn says_progress_and_keeps_the_newest_banner_twenty_seconds() {
         let mut messages = vec![String::new(); 2031];
         messages[PROGRESS] = "[%s] quest - defeating [%s] progress (%d/%d).".into();
         messages[COMPLETE] = "Complete".into();
@@ -176,7 +179,13 @@ mod tests {
         let start = Instant::now();
         let mut banners = Banners::default();
         banners.show("Drops [ 3 / 10 ]".into(), start);
-        assert_eq!(banners.current(start + Duration::from_millis(1_999)).len(), 1);
-        assert!(banners.current(start + BANNER_LIFE).is_empty());
+        assert_eq!(banners.current(start + Duration::from_millis(19_999)).len(), 1);
+        assert!(banners.current(start + Duration::from_millis(20_000)).is_empty());
+        // A second line replaces the first and starts its own 20 s.
+        banners.show("Drops [ 3 / 10 ]".into(), start);
+        let later = start + Duration::from_secs(5);
+        banners.show("Drops [ 4 / 10 ]".into(), later);
+        assert_eq!(banners.current(later + Duration::from_millis(19_999)), ["Drops [ 4 / 10 ]"]);
+        assert!(banners.current(later + Duration::from_millis(20_000)).is_empty());
     }
 }
