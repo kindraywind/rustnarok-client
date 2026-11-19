@@ -1,5 +1,5 @@
 {
-  "about": "Quest notices (issue #221): the test NPC (quests.txt) gives two quests: the line 'You have received a new quest.' and the quest icon at the bottom right. Killing a Drops for the hunt prints the progress line and shows 'Drops [ 1 / 10 ]' across the screen for two seconds. The icon opens the quest window and goes; erasing the quests prints their deleted lines.",
+  "about": "Quest notices (issue #221): the test NPC (quests.txt) gives two quests: the line 'You have received a new quest.' and the quest icon at the bottom right. Killing a Drops for the hunt prints the progress line and shows 'Drops [ 1 / 10 ]' across the screen for 20 seconds (issue #1382): still there 5 s on (the clock stepped); a second kill replaces it with 'Drops [ 2 / 10 ]', gone 20 s after that kill. The icon opens the quest window and goes; erasing the quests prints their deleted lines.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -128,13 +128,103 @@
       "threshold": 5
     },
     {
-      "wait": 2200
+      "cmd": {
+        "cmd": "clock",
+        "action": "pause"
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 5000
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "quest_banners": [
+            "Drops [ 1 / 10 ]"
+          ]
+        }
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "say": "@monster 1113 1"
+    },
+    {
+      "wait": 1200
+    },
+    {
+      "click_on": {
+        "unit": "Drops"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x09fa",
+        "ms": 20000
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "chat": "progress (2/10).",
+        "state": {
+          "quest_banners": [
+            "Drops [ 2 / 10 ]"
+          ]
+        }
+      }
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "quest-progress-second",
+      "threshold": 5
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "pause"
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 20000
+      }
+    },
+    {
+      "wait": 300
     },
     {
       "expect": {
         "state": {
           "quest_banners": []
         }
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
       }
     },
     {
