@@ -952,11 +952,18 @@
 0x0B6C todo: a summoned monster's HP bar (clif_summon_hp_bar)
 0x0B6D client
 0x0B72 unasked: the character list by pages; the client reads the full list
+0x0B7E unsent: newer than rathena
+0x0B7F unsent: newer than rathena
+0x0B80 unsent: newer than rathena
 0x0B90 client
 0x0B91 client
 0x0B93 client
+0x0B94 unsent: newer than rathena
+0x0B95 unsent: newer than rathena
+0x0B96 unsent: newer than rathena
 0x0B97 client
 0x0B98 client
+0x0B99 unsent: newer than rathena
 0x0B9A todo: the enchant window opened by a script (clif_enchantwindow_open)
 0x0B9B client
 0x0B9C client
@@ -964,20 +971,202 @@
 0x0B9E client
 0x0BA0 client
 0x0BA1 todo: an NPC dialog's text alignment (clif_set_dialog_align)
+0x0BA6 unsent: newer than rathena
+0x0BA7 unsent: newer than rathena
 0x0BA8 client
+0x0BA9 unsent: newer than rathena
+0x0BAA unsent: newer than rathena
+0x0BAB unsent: newer than rathena
+0x0BAC unsent: newer than rathena
 0x0BAD client
 0x0BAF client
 0x0BB0 client
 0x0BB1 client
+0x0BB2 unsent: newer than rathena
+0x0BB3 unsent: newer than rathena
+0x0BB4 unsent: newer than rathena
+0x0BB6 unsent: newer than rathena
+0x0BB7 unsent: newer than rathena
+0x0BB8 unsent: newer than rathena
+0x0BB9 unsent: newer than rathena
+0x0BBB unsent: newer than rathena
+0x0BBC unsent: newer than rathena
+0x0BBD unsent: newer than rathena
+0x0BBF unsent: newer than rathena
+0x0BC0 unsent: newer than rathena
+0x0BC1 unsent: newer than rathena
+0x0BC2 unsent: newer than rathena
+0x0BC3 unsent: newer than rathena
+0x0BC4 unsent: newer than rathena
+0x0BC5 unsent: newer than rathena
+0x0BC6 unsent: newer than rathena
+0x0BC7 unsent: newer than rathena
+0x0BC8 unsent: newer than rathena
+0x0BC9 unsent: newer than rathena
+0x0BCA unsent: newer than rathena
+0x0BCB unsent: newer than rathena
+0x0BCC unsent: newer than rathena
+0x0BCD unsent: newer than rathena
+0x0BCE unsent: newer than rathena
+0x0BCF unsent: newer than rathena
+0x0BD0 unsent: newer than rathena
+0x0BD1 unsent: newer than rathena
+0x0BD2 unsent: newer than rathena
+0x0BD3 unsent: newer than rathena
+0x0BD4 unsent: newer than rathena
+0x0BD5 unsent: newer than rathena
+0x0BD6 unsent: newer than rathena
+0x0BD7 unsent: newer than rathena
+0x0BD8 unsent: newer than rathena
+0x0BD9 unsent: newer than rathena
+0x0BDA unsent: newer than rathena
+0x0BDB unsent: newer than rathena
+0x0BDC unsent: newer than rathena
 0x0BDD client
+0x0BDE unsent: newer than rathena
+0x0BDF unsent: newer than rathena
+0x0BE0 unsent: newer than rathena
+0x0BE1 unsent: newer than rathena
 0x0BE2 client
 0x0BE3 unsent: the macro report's result; newer than rathena
+0x0BE4 unsent: newer than rathena
+0x0BE5 unsent: newer than rathena
+0x0BE6 unsent: newer than rathena
+0x0BE7 unsent: newer than rathena
+0x0BE8 unsent: newer than rathena
 0x0BE9 client
+0x0BEA unsent: newer than rathena
+0x0BEB unsent: newer than rathena
+0x0BEC unsent: newer than rathena
+0x0BED unsent: newer than rathena
+0x0BEE unsent: newer than rathena
+0x0BEF unsent: newer than rathena
+0x0BF0 unsent: newer than rathena
+0x0BF1 unsent: newer than rathena
+0x0BF2 unsent: newer than rathena
 0x0BF3 client
+0x0BF4 unsent: newer than rathena
 0x0BF5 unsent: a PACKETVER 20250402 packet
+0x0BF6 unsent: newer than rathena
+0x0BF7 unsent: newer than rathena
+0x0BF8 unsent: newer than rathena
+0x0BF9 unsent: newer than rathena
+0x0BFA unsent: newer than rathena
+0x0BFB unsent: newer than rathena
+0x0BFC unsent: newer than rathena
+0x0BFD unsent: newer than rathena
+0x0BFE unsent: newer than rathena
+0x0BFF unsent: newer than rathena
+0x0C00 unsent: newer than rathena
+0x0C01 unsent: newer than rathena
+0x0C02 unsent: newer than rathena
+0x0C03 unsent: newer than rathena
+0x0C04 unsent: newer than rathena
+0x0C05 unsent: newer than rathena
+0x0C06 unsent: newer than rathena
+0x0C07 unsent: newer than rathena
+0x0C08 unsent: newer than rathena
+0x0C09 unsent: newer than rathena
+0x0C0A unsent: newer than rathena
 0x0C0B client
 0x0C0C unsent
+0x0C0D unsent: newer than rathena
+0x0C0E unsent: newer than rathena
+0x0C0F unsent: newer than rathena
+0x0C10 unsent: newer than rathena
+0x0C11 unsent: newer than rathena
+0x0C13 unsent: newer than rathena
+0x0C14 unsent: newer than rathena
+0x0C15 unsent: newer than rathena
+0x0C16 unsent: newer than rathena
+0x0C17 unsent: newer than rathena
+0x0C18 unsent: newer than rathena
+0x0C19 unsent: newer than rathena
+0x0C1A unsent: newer than rathena
+0x0C1B unsent: newer than rathena
+0x0C1C unsent: newer than rathena
+0x0C1D unsent: newer than rathena
+0x0C1E unsent: newer than rathena
+0x0C1F unsent: newer than rathena
+0x0C20 unsent: newer than rathena
+0x0C21 unsent: newer than rathena
 0x0C22 client
+0x0C23 unsent: newer than rathena
+0x0C24 unsent: newer than rathena
+0x0C25 unsent: newer than rathena
+0x0C27 unsent: newer than rathena
+0x0C28 unsent: newer than rathena
+0x0C29 unsent: newer than rathena
+0x0C2A unsent: newer than rathena
+0x0C2B unsent: newer than rathena
+0x0C2C unsent: newer than rathena
+0x0C2D unsent: newer than rathena
+0x0C2E unsent: newer than rathena
+0x0C2F unsent: newer than rathena
+0x0C30 unsent: newer than rathena
+0x0C31 unsent: newer than rathena
+0x0C32 unsent: newer than rathena
+0x0C33 unsent: newer than rathena
+0x0C34 unsent: newer than rathena
+0x0C35 unsent: newer than rathena
+0x0C36 unsent: newer than rathena
+0x0C37 unsent: newer than rathena
+0x0C38 unsent: newer than rathena
+0x0C39 unsent: newer than rathena
+0x0C3A unsent: newer than rathena
+0x0C3B unsent: newer than rathena
+0x0C3C unsent: newer than rathena
+0x0C3D unsent: newer than rathena
+0x0C3E unsent: newer than rathena
+0x0C3F unsent: newer than rathena
+0x0C40 unsent: newer than rathena
+0x0C41 unsent: newer than rathena
+0x0C42 unsent: newer than rathena
+0x0C43 unsent: newer than rathena
+0x0C44 unsent: newer than rathena
+0x0C45 unsent: newer than rathena
+0x0C46 unsent: newer than rathena
+0x0C47 unsent: newer than rathena
+0x0C48 unsent: newer than rathena
+0x0C49 unsent: newer than rathena
+0x0C4A unsent: newer than rathena
+0x0C4B unsent: newer than rathena
+0x0C4C unsent: newer than rathena
+0x0C4D unsent: newer than rathena
+0x0C4E unsent: newer than rathena
+0x0C4F unsent: newer than rathena
+0x0C50 unsent: newer than rathena
+0x0C51 unsent: newer than rathena
+0x0C52 unsent: newer than rathena
+0x0C53 unsent: newer than rathena
+0x0C54 unsent: newer than rathena
+0x0C55 unsent: newer than rathena
+0x0C56 unsent: newer than rathena
+0x0C57 unsent: newer than rathena
+0x0C58 unsent: newer than rathena
+0x0C59 unsent: newer than rathena
+0x0C5A unsent: newer than rathena
+0x0C5B unsent: newer than rathena
+0x0C5C unsent: newer than rathena
+0x0C5E unsent: newer than rathena
+0x0C5F unsent: newer than rathena
+0x0C60 unsent: newer than rathena
+0x0C61 unsent: newer than rathena
+0x0C62 unsent: newer than rathena
+0x0C63 unsent: newer than rathena
+0x0C70 unsent: newer than rathena
 0x0C71 unsent: newer than rathena
 0x0C72 unsent: newer than rathena
 0x0C73 unsent: newer than rathena
+0x0C74 unsent: newer than rathena
+0x0C75 unsent: newer than rathena
+0x0C76 unsent: newer than rathena
+0x0C77 unsent: newer than rathena
+0x0C78 unsent: newer than rathena
+0x0C79 unsent: newer than rathena
+0x0C7C unsent: newer than rathena
+0x0C7D unsent: newer than rathena
+0x0C7E unsent: newer than rathena
+0x0C7F unsent: newer than rathena
+0x0C80 unsent: newer than rathena
+0x0C81 unsent: newer than rathena

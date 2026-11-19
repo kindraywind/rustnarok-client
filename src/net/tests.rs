@@ -2965,7 +2965,7 @@ fn reads_the_first_stand_entry() {
 fn reads_past_the_2026_packets() {
     // 0x0C73 used to be unknown and dropped the map connection; the game's own lengths (its 2026-09 client) for it and
     // its neighbours let the packet after it read.
-    assert_eq!([0x0BE3, 0x0C71, 0x0C72, 0x0C73].map(packet_length), [Some(34), Some(8), Some(4), Some(5)]);
+    assert_eq!([0x0BE3, 0x0BF6, 0x0C71, 0x0C72, 0x0C73].map(packet_length), [Some(34), Some(-1), Some(8), Some(4), Some(5)]);
     let mut stream = vec![0x73, 0x0C, 0x00, 0x00, 0x00];
     stream.extend_from_slice(&ZC_ACK_EXCHANGE_ITEM.to_le_bytes());
     stream.push(5);
