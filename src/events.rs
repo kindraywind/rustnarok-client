@@ -4342,7 +4342,8 @@ impl App {
                 }
             }
             MapEvent::DealChoice { npc } => {
-                game.dismiss_dialog();
+                // An open say window stays (a script that talks, then opens its shop, never sends Close): the end of
+                // the deal closes it.
                 game.deal_choice = Some(npc);
                 game.deal_frame.open = true;
                 // Dev switch: answer at once.
