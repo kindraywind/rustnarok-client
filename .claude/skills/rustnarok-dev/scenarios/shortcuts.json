@@ -1,5 +1,5 @@
 {
-  "about": "Shortcuts: Alt+V switches the basic info window to its small look and back (it stays open), F1 uses a hotkey, a repeat of that held key uses it again, and F11 closes the open windows.",
+  "about": "Shortcuts: Alt+V switches the basic info window to its small look and back (it stays open), F1 uses a hotkey, a repeat of that held key uses it again, and F11 closes the open windows (the quick slot window follows its setting and stays).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -169,7 +169,11 @@
     },
     {
       "expect": {
-        "windows_open": []
+        "windows_closed": [
+          "BasicInfo",
+          "Party",
+          "Inventory"
+        ]
       }
     }
   ]
