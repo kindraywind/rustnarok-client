@@ -180,12 +180,13 @@ impl PickList {
         Self { named: Some(title), ..Self::new(0, items) }
     }
 
-    /// The 280×150 text list window: repair 812, upgrade 910, making 425.
+    /// The 280×150 text list window: repair 812, upgrade 910, making 425. It opens with its first row selected.
     pub fn text(title: usize, items: Vec<InventoryItem>) -> Self {
         let mut frame = Frame::new(text_position(screen()), WIDTH);
         frame.open = true;
         let making = title == crate::MAKING_TITLE;
-        Self { frame, making, text_list: true, ..Self::new(title, items) }
+        let selected = (!items.is_empty()).then_some(0);
+        Self { frame, making, text_list: true, selected, ..Self::new(title, items) }
     }
 
     /// The icon list's look, not the text list's.
@@ -219,12 +220,9 @@ impl PickList {
 
     pub fn hit(&self, cursor: [f32; 2]) -> Option<Hit> {
         let local = self.frame.local(cursor, self.height())?;
-        // The icon list's title bar has no buttons: all of it is the bar.
-        if self.icon_look() && local[1] < TITLE_HEIGHT {
+        // No list's title bar has buttons: all of it is the bar.
+        if local[1] < TITLE_HEIGHT {
             return Some(Hit::Title(TitleHit::Title));
-        }
-        if let Some(hit) = self.frame.title_hit(local) {
-            return Some(Hit::Title(hit));
         }
         let (ok, cancel) = self.buttons();
         if contains(ok, BUTTON, local) {
@@ -254,12 +252,23 @@ impl PickList {
         self.hit(cursor).is_some()
     }
 
-    /// A press: the title bar drags the window; the scroll bar steps, pages or has its thumb held.
+    /// A press: the title bar drags the window, and a text list's body too, off its list box; the scroll bar steps,
+    /// pages or has its thumb held.
     pub fn press(&mut self, cursor: [f32; 2]) {
         if let Some(first) = self.bar().and_then(|bar| bar.press(cursor, &mut self.thumb)) {
             self.scroll = first;
-        } else if self.hit(cursor) == Some(Hit::Title(TitleHit::Title)) {
+        } else if self.grips(cursor) {
             self.frame.start_drag(cursor);
+        }
+    }
+
+    /// Whether a press at `cursor` drags the window.
+    fn grips(&self, cursor: [f32; 2]) -> bool {
+        let on_list = self.frame.local(cursor, self.height()).is_some_and(|local| contains(TEXT_LIST_AT, TEXT_LIST_SIZE, local));
+        match self.hit(cursor) {
+            Some(Hit::Title(_)) => true,
+            Some(Hit::Window) => self.text_list && !on_list,
+            _ => false,
         }
     }
 
@@ -279,12 +288,8 @@ impl PickList {
     /// What a click answers: Some(PickChoice) answers or closes, None is no answer yet.
     pub fn click(&mut self, hit: Hit) -> Option<PickChoice> {
         match hit {
-            Hit::Title(_) if self.icon_look() => None,
-            Hit::Title(TitleHit::Close) | Hit::Cancel => Some(PickChoice::Cancel),
-            Hit::Title(title) => {
-                self.frame.click_title(title);
-                None
-            }
+            Hit::Title(_) => None,
+            Hit::Cancel => Some(PickChoice::Cancel),
             Hit::Row(row) => {
                 self.selected = Some(row);
                 if self.clicks.double(row as u16) { Some(PickChoice::Pick(row)) } else { None }
@@ -428,10 +433,10 @@ impl PickList {
             }
             return;
         }
-        frame.draw_title(layer, chrome, title, pointer.0);
-        if frame.minimized {
-            return;
-        }
+        // The bar, the title and the base picture, which is no button.
+        frame.draw_title_only(layer, chrome, title);
+        let base = chrome.button(0, false);
+        layer.sprites.push((base, frame.at([3.0, 3.0]), base.size));
         chrome.draw_body(layer, frame.position, [WIDTH, TEXT_HEIGHT]);
         chrome.draw_footer(layer, frame.at([0.0, TEXT_HEIGHT]), WIDTH, FOOTER);
         layer.sprites.push((&npc_menu.list, frame.at(TEXT_LIST_AT), TEXT_LIST_SIZE));
@@ -583,34 +588,45 @@ mod tests {
     fn text_list_answers() {
         let item = |index: u16, id: u32| InventoryItem { index, id, identified: true, ..Default::default() };
 
-        // 1. Repair: OK with row -> Pick(row), OK nothing selected -> None, OK no rows -> Cancel, Cancel -> Cancel
+        // Each opens with its first row selected: OK answers it at once; a row picked first is answered; Cancel cancels.
         let mut repair = PickList::text(crate::REPAIR_TITLE, vec![item(1, 1201), item(2, 1202)]);
-        assert_eq!(repair.click(Hit::Ok), None);
-        assert_eq!(repair.click(Hit::Row(0)), None);
         assert_eq!(repair.click(Hit::Ok), Some(PickChoice::Pick(0)));
+        assert_eq!(repair.click(Hit::Row(1)), None);
+        assert_eq!(repair.click(Hit::Ok), Some(PickChoice::Pick(1)));
         assert_eq!(repair.click(Hit::Cancel), Some(PickChoice::Cancel));
-        let mut empty_repair = PickList::text(crate::REPAIR_TITLE, Vec::new());
-        assert_eq!(empty_repair.click(Hit::Ok), Some(PickChoice::Cancel));
-
-        // 2. Upgrade: OK with row -> Pick(row), OK nothing selected -> None, OK no rows -> Cancel, Cancel -> Cancel (-1 bytes)
         let mut upgrade = PickList::text(crate::UPGRADE_TITLE, vec![item(5, 1201)]);
-        assert_eq!(upgrade.click(Hit::Ok), None);
-        assert_eq!(upgrade.click(Hit::Row(0)), None);
         assert_eq!(upgrade.click(Hit::Ok), Some(PickChoice::Pick(0)));
         assert_eq!(upgrade.click(Hit::Cancel), Some(PickChoice::Cancel));
-        let mut empty_upgrade = PickList::text(crate::UPGRADE_TITLE, Vec::new());
-        assert_eq!(empty_upgrade.click(Hit::Ok), Some(PickChoice::Cancel));
         // Upgrade's -1 bytes:
         assert_eq!(rustnarok_client::net::encode_upgrade(u32::MAX), [0x22, 0x02, 0xFF, 0xFF, 0xFF, 0xFF]);
-
-        // 3. Making: OK with row -> Pick(row), OK nothing selected -> Close, OK no rows -> Close, Cancel -> Cancel
         let mut make = PickList::text(crate::MAKING_TITLE, vec![item(0, 501)]);
-        assert_eq!(make.click(Hit::Ok), Some(PickChoice::Close));
-        assert_eq!(make.click(Hit::Row(0)), None);
         assert_eq!(make.click(Hit::Ok), Some(PickChoice::Pick(0)));
         assert_eq!(make.click(Hit::Cancel), Some(PickChoice::Cancel));
+
+        // With no rows (the server sends none so): repair and upgrade cancel, making closes.
+        let mut empty_repair = PickList::text(crate::REPAIR_TITLE, Vec::new());
+        assert_eq!((empty_repair.selected, empty_repair.click(Hit::Ok)), (None, Some(PickChoice::Cancel)));
+        let mut empty_upgrade = PickList::text(crate::UPGRADE_TITLE, Vec::new());
+        assert_eq!(empty_upgrade.click(Hit::Ok), Some(PickChoice::Cancel));
         let mut empty_make = PickList::text(crate::MAKING_TITLE, Vec::new());
         assert_eq!(empty_make.click(Hit::Ok), Some(PickChoice::Close));
+    }
+
+    /// A text list's title bar has only the base picture; it drags by any part but its list box and buttons.
+    #[test]
+    fn text_list_has_no_title_buttons_and_drags_by_its_body() {
+        let mut list = PickList::text(crate::REPAIR_TITLE, vec![InventoryItem { index: 1, id: 1201, identified: true, ..Default::default() }]);
+        list.frame.position = [0.0, 0.0];
+        assert_eq!([list.hit([270.0, 5.0]), list.hit([255.0, 5.0])], [Some(Hit::Title(TitleHit::Title)); 2]);
+        assert_eq!(list.click(Hit::Title(TitleHit::Title)), None);
+        assert!(list.frame.open && !list.frame.minimized);
+        // The title bar and the body off the list drag; the list (a row or below the rows) and the buttons don't.
+        assert!(list.grips([270.0, 5.0]) && list.grips([100.0, 122.0]) && list.grips([5.0, 60.0]));
+        assert!(!list.grips([50.0, 25.0]) && !list.grips([50.0, 100.0]) && !list.grips([195.0, 130.0]) && !list.grips([240.0, 130.0]));
+        list.press([100.0, 122.0]);
+        list.drag_to([150.0, 172.0]);
+        assert!(list.drop_drag());
+        assert_eq!(list.frame.position, [50.0, 50.0]);
     }
 
     #[test]
