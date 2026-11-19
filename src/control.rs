@@ -1856,6 +1856,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         "windows": windows,
         // Every window from the bottom up, as drawn: the last opened or pressed on top.
         "front": game.front.windows().iter().map(|&top| top.name()).collect::<Vec<_>>(),
+        // F11's stage, and the windows it hid (not drawn, not pressed), by name.
+        "close_tabs": json!({"stage": game.close_tabs.stage, "hidden": game.close_tabs.hidden.iter().map(|&top| top.name()).collect::<std::collections::BTreeSet<_>>()}),
         // An open shop's deal: what's in it and how many.
         "shop_deal": game.shop.as_ref().map(|shop| shop.deal.iter().map(|&(offer, amount)| json!({"item": shop.offers[offer].item, "amount": amount})).collect::<Vec<_>>()),
         // Its goods by item ID with the number on their icons (selling to an NPC: what's left to sell), and the
@@ -2503,6 +2505,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("exp_shown", Fair),
         ("first_place_seconds", Fair),
         ("front", Fair),
+        ("close_tabs", Fair),
         ("ground_cursor", Assist),
         ("ground_items", Fair),
         ("ground_skills", Assist),

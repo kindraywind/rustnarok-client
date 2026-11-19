@@ -657,6 +657,7 @@ impl App {
                     save_asked: false,
                     apply_asked: false,
                     front: front::Front::default(),
+                    close_tabs: front::CloseTabs::default(),
                     windows: vec![
                         Panel::Hotkeys,
                         Panel::BasicInfo,
@@ -1498,6 +1499,8 @@ impl App {
             MapEvent::MapChange { map, position } => {
                 self.map_loaded = true;
                 game.pickups_asked.clear();
+                // F11 starts over at its first stage, the interface shown.
+                game.close_tabs = front::CloseTabs::default();
                 // A map change or teleport leaves the NPC behind: its windows and picture go, and nothing is sent.
                 game.dismiss_dialog();
                 game.special_popup = None;

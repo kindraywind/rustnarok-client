@@ -1686,6 +1686,8 @@ struct Game {
     windows: Vec<Panel>,
     /// Every window from the bottom up, as drawn: the last opened or pressed on top (`front`).
     front: front::Front,
+    /// F11's stage and the windows it hid.
+    close_tabs: front::CloseTabs,
     /// Windows Esc closes, newest first. Pushed on open and on a press, dropped on close.
     esc_order: Vec<escape::WindowId>,
     /// The save-point question (messages[1548]) is up.

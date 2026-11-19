@@ -869,7 +869,7 @@ impl Game {
             (self.quest_icon && quest_notice::on_icon(cursor)).then_some(Top::QuestIcon),
             self.level_ups.hit(cursor).is_some().then_some(Top::LevelUp),
         ];
-        self.front.pick(hits.into_iter().flatten())
+        self.front.pick(hits.into_iter().flatten().filter(|&top| !self.close_tabs.hides(top)))
     }
 
     /// The item under `cursor` in a trade, a letter or one being written, the vending setup (a row or its mirror),
@@ -1510,7 +1510,7 @@ impl Game {
 
     /// Whether the small minimap is there: outdoors and not hidden.
     pub(crate) fn minimap_shown(&self) -> bool {
-        minimap::shown(self.minimap_view, self.camera_goal.indoor)
+        minimap::shown(self.minimap_view, self.camera_goal.indoor) && !self.close_tabs.hiding()
     }
 
     /// The navigation window's button or key: opens it; open, it's the window's own close.
@@ -2945,23 +2945,40 @@ impl Game {
         escape::remove(&mut self.esc_order, escape::WindowId::MemorialAsked);
     }
 
-    /// F11 closes the player's windows. A talk with an NPC stays until the server ends it.
-    pub(crate) fn close_windows(&mut self) {
-        // The storage and the mailbox are closed the way their close buttons close them: the server is told.
-        if self.storage.frame.open {
-            let _ = self.session.close_storage();
+    /// F11 ("Close Tabs"), by its stage (`front::CloseTabs`): the basic close, or what Esc can close closed each as Esc
+    /// closes it, or the whole interface hidden or shown again.
+    pub(crate) fn close_tabs(&mut self) {
+        // A Buy / Sell box hidden behind its shop isn't closed this way.
+        let closable: Vec<(escape::WindowId, Top)> =
+            self.esc_open().into_iter().filter(|&id| id != escape::WindowId::DealChoice || self.deal_choice.is_some()).map(|id| (id, drawn_as(id))).collect();
+        let step = self.close_tabs.press(self.front.windows(), &closable);
+        for id in step.close {
+            self.close_esc(id);
         }
+        if step.basic {
+            self.close_windows();
+        }
+    }
+
+    /// F11's basic close: the player's own windows and the hotbar. The storage stays (its lists close), and so does a
+    /// talk with an NPC.
+    pub(crate) fn close_windows(&mut self) {
+        // The mailbox is closed the way its close button closes it: the server is told.
         if self.mail.list.frame.open {
             let _ = self.session.close_mailbox();
         }
-        self.storage.close();
+        for tab in 0..self.storage.categories.len() {
+            if self.storage.categories[tab].frame.open {
+                self.storage.close_category(tab);
+            }
+        }
+        self.storage.search_window.frame.open = false;
         for frame in [
             &mut self.hotkeys.frame,
             &mut self.basic_info.frame,
             &mut self.inventory.frame,
             &mut self.equipment.frame,
             &mut self.skill_window.frame,
-            &mut self.storage.frame,
             &mut self.party_window.frame,
             &mut self.status_window.frame,
             &mut self.guild_window.frame,
@@ -2976,11 +2993,9 @@ impl Game {
             &mut self.achievement_window.frame,
             &mut self.mail.list.frame,
             &mut self.queue_window.frame,
-            &mut self.memorial.frame,
         ] {
             frame.open = false;
         }
-        self.memorial_asked = false;
         self.basic_info.menu_open = false;
         self.equipment.swapping = false;
         if self.macro_window.take().is_some() {
@@ -2990,7 +3005,6 @@ impl Game {
         self.world_map = None;
         self.minimap_window.close();
         self.settings_window = None;
-        self.shortcuts_window = None;
         self.item_window = None;
         self.card_window = None;
         self.card_view = None;
@@ -3002,7 +3016,6 @@ impl Game {
         self.talks = whisper::Talks::default();
         self.friend_setup = None;
         self.block_list = None;
-        self.away_prompt = None;
         self.escape = None;
         self.room_make = None;
         self.viewing = None;
@@ -3010,7 +3023,6 @@ impl Game {
         self.drop_compose();
         self.bank = None;
         self.close_catalog();
-        self.cancel_forge();
     }
 
     /// The game settings or shortcut settings window under the pointer.
@@ -4660,6 +4672,33 @@ impl Game {
 }
 
 /// When a hit lands: `hit_ms` from now, else after the swing's `speed`.
+/// The key the window Esc knows as `id` is drawn under (`front::place`): a panel's own, or its part's window.
+fn drawn_as(id: escape::WindowId) -> Top {
+    use escape::WindowId as W;
+    let panel = match id {
+        W::Inventory => Panel::Inventory,
+        W::Equipment => Panel::Equipment,
+        W::Skills => Panel::Skills,
+        W::StorageCategory(tab) => Panel::StorageCategory(tab),
+        W::StorageSearch => Panel::StorageSearch,
+        W::Party => Panel::Party,
+        W::Status => Panel::Status,
+        W::Guild => Panel::Guild,
+        W::Clan => Panel::Clan,
+        W::Cart => Panel::Cart,
+        W::Pet => Panel::Pet,
+        W::Mercenary => Panel::Mercenary,
+        W::MercenarySkills => Panel::MercenarySkills,
+        W::Homunculus => Panel::Homunculus,
+        W::HomunculusSkills => Panel::HomunculusSkills,
+        _ => match front::place(Top::Esc(id)) {
+            front::Place::Window(key) => return key,
+            _ => return Top::Esc(id),
+        },
+    };
+    Top::Panel(panel)
+}
+
 fn hit_lands(hit_ms: Option<f32>, speed: i32) -> Instant {
     Instant::now() + Duration::from_secs_f32(hit_ms.unwrap_or(speed.max(0) as f32) / 1000.0)
 }

@@ -117,10 +117,110 @@ impl Front {
     }
 }
 
+/// F11 ("Close Tabs"): its stage (0 after a map load) and the windows it hid. The first press does only the basic
+/// close; then a press closes every window Esc can close, or, with none to close, hides every window; hidden, a
+/// press closes or hides what opened since, or with nothing new shows the hidden ones again.
+#[derive(Debug, Default)]
+pub struct CloseTabs {
+    pub stage: u8,
+    /// The windows hidden (by their `Place::Window` key); a window that closes leaves the list (`drawn`).
+    pub hidden: Vec<Top>,
+}
+
+/// What one F11 press does: the windows to close as Esc does, and whether the basic close follows.
+#[derive(Debug, Default, PartialEq)]
+pub struct CloseStep {
+    pub close: Vec<WindowId>,
+    pub basic: bool,
+}
+
+impl CloseTabs {
+    /// One press. `shown` is every window drawn now (hidden or not, `Front::windows`), `closable` every window Esc
+    /// can close now with the key it's drawn under.
+    pub fn press(&mut self, shown: &[Top], closable: &[(WindowId, Top)]) -> CloseStep {
+        self.drawn(shown);
+        let all = |keep: &dyn Fn(Top) -> bool| closable.iter().filter(|(_, key)| keep(*key)).map(|(id, _)| *id).collect::<Vec<_>>();
+        match self.stage {
+            0 => {
+                self.stage = 1;
+                CloseStep { close: Vec::new(), basic: true }
+            }
+            1 if !closable.is_empty() => CloseStep { close: all(&|_| true), basic: true },
+            1 => {
+                self.hidden = shown.to_vec();
+                self.stage = 2;
+                CloseStep::default()
+            }
+            _ => {
+                // Opened since the interface went: what Esc can close closes, the rest is hidden with the others.
+                // ponytail: the game closes a new window Esc can't close too, without telling the server (a storage
+                // opened again would stay open there); hiding it keeps the two in step.
+                let close = all(&|key| !self.hidden.contains(&key));
+                let hide: Vec<Top> =
+                    shown.iter().copied().filter(|key| !self.hidden.contains(key) && !closable.iter().any(|(_, other)| other == key)).collect();
+                if close.is_empty() && hide.is_empty() {
+                    self.hidden.clear();
+                    self.stage = 1;
+                    return CloseStep::default();
+                }
+                self.hidden.extend(hide);
+                CloseStep { close, basic: true }
+            }
+        }
+    }
+
+    /// The windows drawn this frame: a hidden one that closed leaves the list, so it shows when it opens again.
+    pub fn drawn(&mut self, shown: &[Top]) {
+        self.hidden.retain(|key| shown.contains(key));
+    }
+
+    /// The interface is hidden (the small minimap goes too).
+    pub fn hiding(&self) -> bool {
+        self.stage == 2
+    }
+
+    /// `top` is part of a hidden window: not drawn, not pressed.
+    pub fn hides(&self, top: Top) -> bool {
+        matches!(place(top), Place::Window(key) if self.hidden.contains(&key))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Panel;
+
+    #[test]
+    fn f11_closes_then_hides_then_shows() {
+        const CASH: Top = Top::Esc(WindowId::CashShop);
+        const STORAGE: Top = Top::Panel(Panel::Storage);
+        let cash = (WindowId::CashShop, CASH);
+        let mail = (WindowId::Mailbox, MAIL);
+        let mut tabs = CloseTabs::default();
+        // Stage 0: the basic close only, even with the cash shop open.
+        assert_eq!(tabs.press(&[Top::Chat, STORAGE, CASH], &[cash]), CloseStep { close: vec![], basic: true });
+        assert_eq!(tabs.stage, 1);
+        // Stage 1 with something Esc can close: it closes, then the basic close; the storage stays.
+        assert_eq!(tabs.press(&[Top::Chat, STORAGE, CASH, MAIL], &[cash, mail]), CloseStep { close: vec![WindowId::CashShop, WindowId::Mailbox], basic: true });
+        assert_eq!((tabs.stage, tabs.hidden.len()), (1, 0));
+        // Stage 1 with nothing to close: every window is hidden, nothing closes.
+        assert_eq!(tabs.press(&[Top::Chat, STORAGE], &[]), CloseStep::default());
+        assert_eq!((tabs.stage, tabs.hidden.as_slice()), (2, [Top::Chat, STORAGE].as_slice()));
+        assert!(tabs.hiding() && tabs.hides(Top::Chat) && tabs.hides(STORAGE) && !tabs.hides(INVENTORY));
+        // Stage 2 with windows opened since: what Esc can close closes, the rest is hidden too; still hidden.
+        assert_eq!(tabs.press(&[Top::Chat, STORAGE, MAIL, Top::NpcDialog], &[mail]), CloseStep { close: vec![WindowId::Mailbox], basic: true });
+        assert_eq!((tabs.stage, tabs.hidden.as_slice()), (2, [Top::Chat, STORAGE, Top::NpcDialog].as_slice()));
+        // A hidden window that closes leaves the list: opened again, it shows.
+        tabs.drawn(&[Top::Chat, STORAGE]);
+        assert!(!tabs.hides(Top::NpcDialog));
+        // Stage 2 with nothing new: the hidden windows show again, stage 1.
+        assert_eq!(tabs.press(&[Top::Chat, STORAGE], &[]), CloseStep::default());
+        assert_eq!((tabs.stage, tabs.hidden.len()), (1, 0));
+        assert!(!tabs.hiding() && !tabs.hides(Top::Chat));
+        // A map load starts it over at stage 0.
+        tabs = CloseTabs::default();
+        assert_eq!(tabs.press(&[Top::Chat], &[]), CloseStep { close: vec![], basic: true });
+    }
 
     const INVENTORY: Top = Top::Panel(Panel::Inventory);
     const MAIL: Top = Top::Esc(WindowId::Mailbox);
