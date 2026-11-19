@@ -189,9 +189,16 @@ impl SkillDescription {
     ) {
         let [x, y] = self.corner;
         let [w, h] = self.size();
-        // ponytail: the rounded corners are left square.
-        layer.sprites.push((&assets.frame, [x, y], [w, h]));
-        layer.sprites.push((&chrome.white, [x + 2.0, y + 2.0], [w - 4.0, h - 4.0]));
+        // A rounded grey box with a rounded white one 2 px inside.
+        let framed = |layer: &mut Layer<'a>, [x, y, w, h]: [f32; 4]| {
+            for [px, py, pw, ph] in window::rounded_fill([w, h]) {
+                layer.sprites.push((&assets.frame, [x + px, y + py], [pw, ph]));
+            }
+            for [px, py, pw, ph] in window::rounded_fill([w - 4.0, h - 4.0]) {
+                layer.sprites.push((&chrome.white, [x + 2.0 + px, y + 2.0 + py], [pw, ph]));
+            }
+        };
+        framed(layer, [x, y, w, h]);
         if self.closable {
             let button = chrome.button(2, self.on_close(pointer));
             layer.sprites.push((button, [x + ESC[0], y + ESC[1]], button.size));
@@ -210,8 +217,7 @@ impl SkillDescription {
             rows.sort_by(|a, b| a.0.cmp(&b.0));
             rows.truncate(DELAYS_ROWS);
             let [dx, dy, dw, dh] = self.delays_box();
-            layer.sprites.push((&assets.frame, [dx, dy], [dw, dh]));
-            layer.sprites.push((&chrome.white, [dx + 2.0, dy + 2.0], [dw - 4.0, dh - 4.0]));
+            framed(layer, [dx, dy, dw, dh]);
             layer.texts.push((DELAY_TITLE.to_owned(), [dx + 6.0, dy + 5.0], [0, 0, 0]));
             if rows.is_empty() {
                 layer.texts.push((DELAY_NONE.to_owned(), [dx + 6.0, dy + 5.0 + LINE], [0x60; 3]));

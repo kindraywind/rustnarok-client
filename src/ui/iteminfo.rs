@@ -182,9 +182,9 @@ impl Shown {
         Self { options, grade: link.grade, kind, ..self }
     }
 
-    /// The same item to describe: ID, refine, cards and options (not which stack, how many, or where it was clicked).
+    /// The same item to describe: ID, refine and cards (not its options, which stack, how many, or where it was clicked).
     pub fn same_item(&self, other: &Shown) -> bool {
-        (self.item, self.refine, self.cards, &self.options) == (other.item, other.refine, other.cards, &other.options)
+        (self.item, self.refine, self.cards) == (other.item, other.refine, other.cards)
     }
 
     /// Its random options' rows: an identified item's options that have a text.
@@ -854,6 +854,8 @@ mod tests {
         let sword = Shown { refine: 4, ..shown(1201, net::ITEM_WEAPON, [4035, 0, 0, 0]) };
         // Another stack, unidentified or broken: still the same.
         assert!(sword.same_item(&Shown { identified: false, broken: true, ..sword.clone() }));
+        // A twin with other random options: the same too.
+        assert!(sword.same_item(&Shown { options: vec![ItemOption { id: 3, value: 1, param: 0 }], ..sword.clone() }));
         assert!(!sword.same_item(&Shown { refine: 5, ..sword.clone() }));
         assert!(!sword.same_item(&Shown { cards: [0; 4], ..sword.clone() }));
         assert!(!sword.same_item(&Shown { item: 1202, ..sword.clone() }));

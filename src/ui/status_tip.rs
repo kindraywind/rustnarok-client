@@ -71,7 +71,8 @@ pub fn on_icon(corner: [f32; 2], pointer: [f32; 2]) -> bool {
     (corner[0]..corner[0] + 30.0).contains(&pointer[0]) && pointer[1] > corner[1] - 1.0 && pointer[1] <= corner[1] + 29.0
 }
 
-/// The time left as the tooltip says it: hours, minutes and seconds, each left out when 0.
+/// The time left as the tooltip says it: hours, minutes and seconds, each left out when 0. The minutes' and seconds'
+/// texts start with a space, kept also with nothing before them (" 59 second(s)").
 pub fn time_text(messages: &[String], seconds: u64) -> String {
     let parts = [seconds / 3600, seconds / 60 % 60, seconds % 60];
     let mut text = String::new();
@@ -83,10 +84,11 @@ pub fn time_text(messages: &[String], seconds: u64) -> String {
         if unit.contains("%d") {
             text.push_str(&messages::fill(unit, &[&value]));
         } else {
-            text.push_str(&format!(" {value} {}", unit.trim()));
+            let gap = if text.is_empty() { "" } else { " " };
+            text.push_str(&format!("{gap}{value} {}", unit.trim()));
         }
     }
-    text.trim_start().to_owned()
+    text
 }
 
 /// The tooltip's lines and colours: the time line filled in, or left out when there's no time limit (`left` None).
@@ -146,7 +148,8 @@ mod tests {
         messages[1807] = " %d minute(s)".into();
         messages[1808] = " %d second(s)".into();
         assert_eq!(time_text(&messages, 3725), "1 hour(s) 2 minute(s) 5 second(s)");
-        assert_eq!(time_text(&messages, 59), "59 second(s)");
+        assert_eq!(time_text(&messages, 59), " 59 second(s)");
+        assert_eq!(time_text(&messages, 60), " 1 minute(s)");
         // Older data: the unit after the number.
         let mut older = messages.clone();
         older[1697] = "hour".into();
@@ -159,7 +162,7 @@ mod tests {
         };
         assert_eq!(
             lines(&blessing, Some(59), &messages),
-            [("Blessing".into(), [155, 202, 155]), ("59 second(s)".into(), [255, 176, 98]), ("Increases STR".into(), [255; 3])]
+            [("Blessing".into(), [155, 202, 155]), (" 59 second(s)".into(), [255, 176, 98]), ("Increases STR".into(), [255; 3])]
         );
         // No time limit: no time line.
         assert_eq!(lines(&blessing, None, &messages).len(), 2);

@@ -1,5 +1,5 @@
 {
-  "about": "Skill descriptions (issues #223, #323): a Swordman gets its skills (@allskill) and puts Bash and Endure on the hotbar. A right click on Bash in the skill window opens its description (the data's SKILL_DESCRIPT, in its colours) without a close button; a right click on it on the hotbar closes it, another opens it under the bar with one. Endure is used (a 10 s cooldown) and its description's delay button opens the skill delays beside it, listing Endure's; Esc closes the delays first, the close button the rest. The character goes back to a Novice with no skills at the end.",
+  "about": "Skill descriptions (issues #223, #323): a Swordman gets its skills (@allskill) and puts Bash and Endure on the hotbar. A right click on Bash in the skill window opens its description (the data's SKILL_DESCRIPT, in its colours) without a close button; a right click on it on the hotbar closes it, another opens it under the bar with one. Endure is used (a 10 s cooldown) and its description's delay button opens the skill delays beside it, listing Endure's; Esc closes the delays first, the close button the rest. The character goes back to a Novice with no skills at the end; Bash, still on the hotbar but not the Novice's, then describes nothing (issue #1383).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -266,6 +266,25 @@
     },
     {
       "wait": 800
+    },
+    {
+      "wait": 500
+    },
+    {
+      "click_on": {
+        "hotkey": 0
+      },
+      "button": "right"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "windows_closed": [
+          "SkillDescription"
+        ]
+      }
     }
   ]
 }

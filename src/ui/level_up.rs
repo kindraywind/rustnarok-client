@@ -34,12 +34,13 @@ pub struct LevelUps {
 }
 
 impl LevelUps {
-    /// A status changed from `before` (None: not known yet, as at login) to `now`: a level that rose leaves its button.
-    pub fn changed(&mut self, id: u16, before: Option<i64>, now: i64) {
-        let rose = before.is_some_and(|before| now > before);
+    /// A status came from `before` (None: not known yet, as at login): any base or job level the server sends after
+    /// the first leaves its button, also one that went down or stayed (a reset).
+    pub fn changed(&mut self, id: u16, before: Option<i64>) {
+        let known = before.is_some();
         match id {
-            STATUS_BASE_LEVEL if rose => self.base = true,
-            STATUS_JOB_LEVEL if rose => self.job = true,
+            STATUS_BASE_LEVEL if known => self.base = true,
+            STATUS_JOB_LEVEL if known => self.job = true,
             _ => {}
         }
     }
@@ -104,7 +105,7 @@ mod tests {
         frame.open = true;
         frame.minimized = true;
         let mut ups = LevelUps::default();
-        ups.changed(STATUS_BASE_LEVEL, Some(1), 2);
+        ups.changed(STATUS_BASE_LEVEL, Some(1));
         ups.seen(opened(&frame), false);
         assert!(ups.button_boxes().is_empty());
     }
@@ -112,13 +113,14 @@ mod tests {
     #[test]
     fn stays_until_its_window_opens() {
         let mut ups = LevelUps::default();
-        // Levels arriving at login don't count; a level that rises does.
-        ups.changed(STATUS_BASE_LEVEL, None, 10);
+        // Levels arriving at login don't count; any level packet after that does, lower or equal too.
+        ups.changed(STATUS_BASE_LEVEL, None);
+        ups.changed(STATUS_JOB_LEVEL, None);
         assert_eq!(ups, LevelUps::default());
-        ups.changed(STATUS_BASE_LEVEL, Some(10), 11);
-        ups.changed(STATUS_JOB_LEVEL, Some(5), 5);
+        ups.changed(STATUS_BASE_LEVEL, Some(10));
         assert_eq!(ups, LevelUps { base: true, job: false });
-        ups.changed(STATUS_JOB_LEVEL, Some(5), 6);
+        ups.changed(STATUS_JOB_LEVEL, Some(5));
+        assert_eq!(ups, LevelUps { base: true, job: true });
         // The skill window seen: only the job button goes.
         ups.seen(false, true);
         assert_eq!(ups, LevelUps { base: true, job: false });

@@ -3634,7 +3634,13 @@ impl Game {
     /// Whether a skill is used rather than passive (an unknown one counts as used).
     pub(crate) fn skill_active(&self, id: u16) -> bool {
         let guild = self.guild.iter().flat_map(|guild| &guild.skills);
-        self.skills.iter().chain(guild).find(|skill| skill.id == id).is_none_or(|skill| skill.kind != 0)
+        self.skills
+            .iter()
+            .chain(guild)
+            .chain(&self.homunculus_skills)
+            .chain(&self.mercenary_skills)
+            .find(|skill| skill.id == id)
+            .is_none_or(|skill| skill.kind != 0)
     }
 
     /// Brings the Esc list in line with what's open.
