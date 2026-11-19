@@ -1,5 +1,5 @@
 {
-  "about": "Level up buttons (issue #222): @blvl 1 leaves the base level button in the bottom right corner (and marks the menu's status button new); clicking it opens the status window and it goes. @jlvl 1 does the same at the bottom left for the skill window (the open menu shows the skill button's mark). The levels are lowered again at the end, and the lowered base level puts its button up again, as any level the server sends does (issue #1383).",
+  "about": "Level up buttons (issue #222): @blvl 1 leaves the base level button in the bottom right corner (and marks the menu's status button new); clicking it opens the status window and it goes. @jlvl 1 does the same at the bottom left for the skill window, under the chat window, which is dragged off it first (the open menu shows the skill button's mark). The levels are lowered again at the end, and the lowered base level puts its button up again, as any level the server sends does (issue #1383).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -98,6 +98,28 @@
       "threshold": 5
     },
     {
+      "mouse_down": {
+        "button": "chat_grip"
+      }
+    },
+    {
+      "move": [
+        300,
+        400
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          300,
+          400
+        ]
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
       "click_on": {
         "button": "level_up_job"
       }
@@ -123,6 +145,44 @@
     },
     {
       "wait": 300
+    },
+    {
+      "mouse_down": {
+        "button": "chat_grip"
+      }
+    },
+    {
+      "move": [
+        100,
+        700
+      ]
+    },
+    {
+      "move": [
+        8,
+        749
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          8,
+          749
+        ]
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "chat_corner": [
+            0,
+            768
+          ]
+        }
+      }
     },
     {
       "say": "@blvl -1"
