@@ -3953,7 +3953,7 @@ impl App {
             shortcuts::Action::Emotions => game.toggle_emotion_list(),
             shortcuts::Action::Sit => game.toggle_sit(),
             shortcuts::Action::Macros => game.toggle_macro_window(),
-            shortcuts::Action::CloseWindows => game.close_windows(),
+            shortcuts::Action::CloseWindows => game.close_tabs(),
             shortcuts::Action::HotkeyBar => game.hotkeys.frame.toggle(),
             shortcuts::Action::Chat => game.chat.toggle_hidden(),
             shortcuts::Action::ChatSize => game.chat.cycle_size(),

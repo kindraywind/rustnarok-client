@@ -3082,6 +3082,9 @@ impl App {
         layers.extend([catalog_layer, shop_layer, navi_layer, popup_layer, minimap_layer, overlay, menu_layer, tooltip, minimap_tooltip, world_layer]);
         let mut composed = compose(gpu, font, layers);
         order_windows(&mut composed, &mut game.front);
+        // What F11 hid isn't drawn; one that closed since is forgotten, to show when it opens again.
+        game.close_tabs.drawn(game.front.windows());
+        composed.retain(|piece| !matches!(piece.3, front::Place::Window(key) if game.close_tabs.hidden.contains(&key)));
         let (mut sprites, alphas) = flatten(&composed);
 
         // The cursor shows what a click would do.
