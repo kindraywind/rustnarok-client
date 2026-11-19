@@ -1262,27 +1262,25 @@ impl App {
                 }
             }
             Scene::Game(game) if on(Esc(W::PickList)) => {
-                let (list, picking) = game.pick.as_mut().unwrap();
+                let (list, _) = game.pick.as_mut().unwrap();
                 let hit = list.hit(cursor).unwrap();
-                // Item merge: rows pick and unpick, OK sends the picked stacks and waits for the answer.
-                let refused = match (*picking, hit) {
-                    (Picking::Merge, pick_list::Hit::Row(row)) => list.toggle(row).err(),
-                    (Picking::Merge, pick_list::Hit::Ok) => match list.merge_request() {
-                        Ok(indexes) => {
-                            let _ = game.session.merge_items(&indexes);
-                            None
-                        }
-                        Err(line) => Some(line),
-                    },
-                    _ => {
-                        if let Some(answer) = list.click(hit) {
-                            game.answer_pick(answer);
-                        }
-                        None
+                if let Some(answer) = list.click(hit) {
+                    game.answer_pick(answer);
+                }
+            }
+            // Item merge: OK sends the checked stacks and waits for the answer; Cancel and the close button cancel.
+            Scene::Game(game) if on(Top::ItemMerge) => {
+                let merge = game.merge.as_ref().unwrap();
+                match merge.hit(cursor).and_then(|hit| merge.click(hit)) {
+                    Some(merge::Action::Merge(indexes)) => {
+                        let _ = game.session.merge_items(&indexes);
                     }
-                };
-                if let Some(line) = refused {
-                    game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
+                    Some(merge::Action::Refused(line)) => game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR),
+                    Some(merge::Action::Cancel) => {
+                        game.merge = None;
+                        let _ = game.session.cancel_merge();
+                    }
+                    None => {}
                 }
             }
             Scene::Game(game) if on(Top::MakingMaterial) => {
@@ -1982,6 +1980,9 @@ impl App {
             if let Some(forge) = &mut game.forge {
                 forge.frame.drag_to(self.cursor, forge::HEIGHT);
             }
+            if let Some(merge) = &mut game.merge {
+                merge.drag_to(self.cursor);
+            }
             if let Some(setup) = &mut game.friend_setup {
                 setup.frame.drag_to(self.cursor, whisper::FriendSetup::height());
             }
@@ -2544,6 +2545,7 @@ impl App {
             // Over the inventory the wheel scrolls it; elsewhere it zooms (away from you zooms out).
             let on_shop = game.shop.as_ref().is_some_and(|shop| shop.covers(self.cursor));
             let on_pick = game.pick.as_ref().is_some_and(|(list, _)| list.covers(self.cursor));
+            let on_merge = game.merge.as_ref().is_some_and(|merge| merge.hit(self.cursor).is_some());
             let on_item = game.item_window.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_card = game.card_window.as_ref().is_some_and(|window| window.hit(self.cursor).is_some());
             let on_setup = game.vend_setup.as_ref().is_some_and(|setup| setup.covers(self.cursor));
@@ -2609,6 +2611,7 @@ impl App {
                     game.skill_description.as_mut().unwrap().scroll_by(rows);
                 }
                 _ if on_pick => game.pick.as_mut().unwrap().0.scroll_by(rows),
+                _ if on_merge => game.merge.as_mut().unwrap().scroll_by(rows),
                 _ if game.achievement_window.covers(self.cursor) => game.achievement_window.scroll_by(rows, &self.achievement_info),
                 _ if game.quest_window.on_details(self.cursor) => game.quest_window.scroll_details(rows, self.cursor, &game.quests, &self.quest_texts),
                 _ if game.quest_window.covers(self.cursor) => game.quest_window.scroll_by(rows, &game.quests, &self.quest_texts),
@@ -2914,6 +2917,7 @@ impl App {
                     | game.memorial.frame.drop_drag()
                     | game.forge.as_mut().is_some_and(|forge| forge.frame.drop_drag())
                     | game.pick.as_mut().is_some_and(|(list, _)| list.drop_drag())
+                    | game.merge.as_mut().is_some_and(merge::Merge::drop_drag)
                     | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag)
                     | game.cart_choice.as_mut().is_some_and(|choice| choice.frame.drop_drag());
                 // A slider let go keeps its volume for next time.
@@ -3433,6 +3437,17 @@ impl App {
             && let Some((list, _)) = &mut game.pick
         {
             list.press(cursor);
+            return;
+        }
+        // Item merge: a stack's box toggles on the press (Ctrl: its whole item), and the window is dragged, resized
+        // and scrolled.
+        if let Scene::Game(game) = &mut self.scene
+            && top == Some(Top::ItemMerge)
+            && let Some(merge) = &mut game.merge
+        {
+            if let Err(line) = merge.press(cursor, self.modifiers.control_key()) {
+                game.chat_line(self.messages.get(line).cloned().unwrap_or_default(), CHAT_ERROR);
+            }
             return;
         }
         if let Scene::Game(game) = &mut self.scene
