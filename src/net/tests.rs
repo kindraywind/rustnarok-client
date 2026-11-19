@@ -2962,6 +2962,21 @@ fn reads_the_first_stand_entry() {
 }
 
 #[test]
+fn reads_past_the_2026_packets() {
+    // 0x0C73 used to be unknown and dropped the map connection; the game's own lengths (its 2026-09 client) for it and
+    // its neighbours let the packet after it read.
+    assert_eq!([0x0BE3, 0x0C71, 0x0C72, 0x0C73].map(packet_length), [Some(34), Some(8), Some(4), Some(5)]);
+    let mut stream = vec![0x73, 0x0C, 0x00, 0x00, 0x00];
+    stream.extend_from_slice(&ZC_ACK_EXCHANGE_ITEM.to_le_bytes());
+    stream.push(5);
+    stream.extend_from_slice(&150_001u32.to_le_bytes());
+    stream.extend_from_slice(&42u16.to_le_bytes());
+    let mut reader = &stream[..];
+    assert_eq!(read_packet(&mut reader).unwrap().len(), 5);
+    assert!(matches!(decode_map_packet(&read_packet(&mut reader).unwrap()), Some(MapEvent::TradeAnswer { result: 5, id: 150_001, level: 42 })));
+}
+
+#[test]
 fn reads_the_old_trade_answer() {
     // 00e7: result.B, what rathena before #8581 answers a deal request that fails at once (#1266). It used to be an
     // unknown packet, which dropped the connection; now it reads as the answer, and the packet after it still reads.
