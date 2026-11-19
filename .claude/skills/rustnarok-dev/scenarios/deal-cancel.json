@@ -46,7 +46,7 @@
     {"expect": {"windows_closed": ["NpcDialog", "DealChoice"]}},
     {"wait": 700},
     {"click_on": {"unit": "Talk Shop Tester"}},
-    {"wait_for": {"packet": "0x00c4", "ms": 3000}},
+    {"wait_for": {"packet": "0x00c4", "ms": 3000}}, {"wait": 300},
     {"key": "Escape"},
     {"wait_for": {"sent": "0x0146", "ms": 1500}}, {"wait_for": {"sent": "0x09d4", "ms": 1500}},
     {"expect": {"windows_closed": ["NpcDialog", "DealChoice"]}},
