@@ -10,6 +10,10 @@ No Wine, no wrapper, no official client underneath: an open-source reimplementat
 network protocol to the last window. The windows, fonts, sounds and behavior of the official client, drawn from the
 player's own game data at runtime. As good as the original, and better where it can be.
 
+**One client for every server from 2022 to 2026.** The official client needs a separate exe for each server's packet
+version; this one speaks every PACKETVER from 20220406 to 2026's clients, so a server just names its own in
+clientinfo.xml ([Packet versions](#packet-versions)).
+
 <img alt="100% Rust" src="https://img.shields.io/badge/100%25-Rust-b7410e?style=flat-square&logo=rust">
 <img alt="Windows · macOS · Linux" src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-native-2f7bf5?style=flat-square">
 <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-3a3a3a?style=flat-square">
@@ -78,9 +82,10 @@ ships in this repository.
 <tr>
 <td width="50%" valign="top">
 
-### 📡 The real protocol
-Login, char and map servers at PACKETVER 20220406 up to 2026 clients ([Packet versions](#packet-versions)). Every
-packet length is generated from the server's own headers.
+### 📡 One client, 2022 to 2026
+No exe per packet version: one client plays login, char and map servers at every PACKETVER from 20220406 to 2026,
+set per server in clientinfo.xml ([Packet versions](#packet-versions)). Every packet length is generated from the
+server's own headers.
 
 </td>
 <td width="50%" valign="top">
@@ -306,8 +311,9 @@ read.
 
 ### Packet versions
 
-A server is built for one client date, its PACKETVER, and the client has to speak the same one. Like the official
-client, it can't tell by itself, so each connection in clientinfo.xml says it:
+A server is built for one client date, its PACKETVER, and the client has to speak the same one. The official client
+solves that with a different exe for each date; this client is one program for all of them from 20220406 on. It
+can't tell the server's date by itself, so each connection in clientinfo.xml says it:
 
 ```xml
 <connection>
