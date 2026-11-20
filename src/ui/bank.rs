@@ -12,7 +12,7 @@ use crate::{Layer, UI, contains};
 // Places inside the window, title bar included, over bg_bank.bmp (280x136 at (0, 17): a white top with the two
 // amounts, a grey band with the money bag, the box and Deposit over Withdraw, a striped footer with the quick buttons).
 const WIDTH: f32 = 280.0;
-const HEIGHT: f32 = TITLE_HEIGHT + 136.0;
+pub const HEIGHT: f32 = TITLE_HEIGHT + 136.0;
 /// The labels; both amounts start at the width of "In Bank:" plus VALUE_GAP.
 const BALANCE: [f32; 2] = [30.0, 29.0];
 const CARRIED: [f32; 2] = [30.0, 46.0];

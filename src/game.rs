@@ -3522,6 +3522,50 @@ impl Game {
         escape::can_stand_up(self.inventory.items.iter().map(|item| item.id), self.status_icons.iter().map(|(id, ..)| *id))
     }
 
+    /// The windows moved by their title bar and nothing else, each with its `top_at` key and its height: the one list
+    /// the press, the drag and the drop all go by.
+    pub(crate) fn plain_frames(&mut self) -> Vec<(Top, &mut window::Frame, f32)> {
+        use escape::WindowId::*;
+        let mut frames: Vec<(Top, &mut window::Frame, f32)> = vec![(Top::Esc(BattleQueue), &mut self.queue_window.frame, battle_queue::HEIGHT)];
+        if let Some(shop) = &mut self.cashshop {
+            frames.push((Top::Esc(CashShop), &mut shop.frame, cashshop::HEIGHT));
+        }
+        if let Some(bank) = &mut self.bank {
+            frames.push((Top::Esc(Bank), &mut bank.frame, bank::HEIGHT));
+        }
+        if let Some(window) = &mut self.booking {
+            frames.push((Top::PartyBooking, &mut window.frame, booking_window::HEIGHT));
+        }
+        if let Some(catalog) = &mut self.catalog {
+            frames.push((Top::Esc(Catalog), &mut catalog.frame, catalog::HEIGHT));
+        }
+        if let Some(window) = &mut self.materials {
+            frames.push((Top::Esc(Materials), &mut window.frame, material::Materials::height()));
+        }
+        if let Some(board) = &mut self.ranking {
+            frames.push((Top::Esc(Ranking), &mut board.frame, ranking::HEIGHT));
+        }
+        if let Some(window) = &mut self.reputation_window {
+            let height = window.height;
+            frames.push((Top::Esc(Reputation), &mut window.frame, height));
+        }
+        if let Some(store) = &mut self.my_buying_store {
+            let height = store.height();
+            frames.push((Top::Esc(MyBuyingStore), &mut store.frame, height));
+        }
+        if let Some(setup) = &mut self.buying_setup {
+            frames.push((Top::Esc(BuyingStoreSetup), &mut setup.frame, buying::Setup::height()));
+        }
+        if let Some(shop) = &mut self.my_shop {
+            let height = shop.height();
+            frames.push((Top::Esc(MyShop), &mut shop.frame, height));
+        }
+        if let Some(history) = &mut self.sell_history {
+            frames.push((Top::Esc(SellHistory), &mut history.frame, vend::HISTORY_SIZE[1]));
+        }
+        frames
+    }
+
     /// Every window Esc may close that is open now, questions included.
     pub(crate) fn esc_open(&self) -> Vec<escape::WindowId> {
         self.open_windows().into_iter().filter(|&id| !escape::left_alone(id)).collect()

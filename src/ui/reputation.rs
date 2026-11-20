@@ -171,7 +171,7 @@ pub enum Hit {
 pub struct Window {
     pub frame: Frame,
     /// How tall the rows shown make it (set by `refresh`).
-    height: f32,
+    pub height: f32,
 }
 
 impl Window {

@@ -18,7 +18,7 @@ const MEMO_TOP: f32 = ROLES_TOP + ROW + 4.0;
 const BUTTONS_TOP: f32 = MEMO_TOP + ROW + 4.0;
 const POSTS_TOP: f32 = BUTTONS_TOP + ROW + 8.0;
 const STATUS_TOP: f32 = POSTS_TOP + ROWS as f32 * ROW + 4.0;
-const HEIGHT: f32 = STATUS_TOP + ROW + 4.0;
+pub const HEIGHT: f32 = STATUS_TOP + ROW + 4.0;
 /// The two level fields, the purpose, the roles and the buttons along their rows.
 const LEVEL_FIELDS: [[f32; 2]; 2] = [[LEFT + 24.0, 40.0], [LEFT + 80.0, 40.0]];
 const PURPOSE: [f32; 2] = [LEFT + 140.0, 120.0];

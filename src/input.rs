@@ -2065,6 +2065,9 @@ impl App {
                 input.frame.drag_to(self.cursor, height);
             }
             game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
+            for (_, frame, height) in game.plain_frames() {
+                frame.drag_to(self.cursor, height);
+            }
             if let Some(window) = &mut game.refine {
                 window.frame.drag_to(self.cursor, refine::SIZE[1]);
             }
@@ -2984,6 +2987,7 @@ impl App {
                     | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag())
                     | game.memorial.frame.drop_drag()
+                    | game.plain_frames().into_iter().fold(false, |moved, (_, frame, _)| frame.drop_drag() | moved)
                     | game.forge.as_mut().is_some_and(|forge| forge.frame.drop_drag())
                     | game.pick.as_mut().is_some_and(|(list, _)| list.drop_drag())
                     | game.merge.as_mut().is_some_and(merge::Merge::drop_drag)
@@ -3259,6 +3263,14 @@ impl App {
             (Scene::Game(game), Some(assets)) => game.top_at(cursor, assets.message.size),
             _ => None,
         };
+        // The windows that only move (`plain_frames`): a press on the title bar of the one on top grabs it.
+        if let Scene::Game(game) = &mut self.scene {
+            for (key, frame, height) in game.plain_frames() {
+                if top == Some(key) && frame.local(cursor, height).is_some_and(|local| frame.title_hit(local) == Some(TitleHit::Title)) {
+                    frame.start_drag(cursor);
+                }
+            }
+        }
         // The big minimap is above the other windows, under the world map.
         if let Scene::Game(game) = &mut self.scene
             && top == Some(Esc(W::Minimap))

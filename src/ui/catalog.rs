@@ -130,7 +130,7 @@ pub enum Hit {
 }
 
 const WIDTH: f32 = 445.0;
-const HEIGHT: f32 = 380.0;
+pub const HEIGHT: f32 = 380.0;
 /// Where it opens, in 1024 × 768 screen units.
 const PLACE: [f32; 2] = [300.0, 100.0];
 const BASE_BUTTON: [f32; 2] = [3.0, 3.0];
