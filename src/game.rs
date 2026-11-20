@@ -3710,128 +3710,122 @@ impl Game {
     }
 
     /// The windows open now that `windows` names by their `WindowId`: Esc's, and the ones it leaves alone
-    /// (`escape::left_alone`).
+    /// (`escape::left_alone`), in `WindowId::ALL`'s order.
     fn open_windows(&self) -> Vec<escape::WindowId> {
+        escape::WindowId::ALL.iter().copied().filter(|&id| self.is_open(id)).collect()
+    }
+
+    /// Whether the window is open. Every `WindowId` has its arm: a new one doesn't build until it says when it's up.
+    fn is_open(&self, id: escape::WindowId) -> bool {
         use escape::WindowId::*;
-        let mut open = Vec::new();
-        let mut push = |id: escape::WindowId, shown: bool| {
-            if shown {
-                open.push(id);
-            }
-        };
-        for panel in [
-            Panel::Inventory,
-            Panel::Equipment,
-            Panel::Skills,
-            Panel::Party,
-            Panel::Status,
-            Panel::Guild,
-            Panel::Clan,
-            Panel::Cart,
-            Panel::Pet,
-            Panel::Mercenary,
-            Panel::MercenarySkills,
-            Panel::Homunculus,
-            Panel::HomunculusSkills,
-        ] {
-            if let Some(id) = esc_panel(panel) {
-                push(id, self.panel_open(panel));
-            }
-        }
-        for (tab, category) in self.storage.categories.iter().enumerate() {
-            push(StorageCategory(tab), category.frame.open);
-        }
-        push(StorageSearch, self.storage.search_window.frame.open);
-        // An NPC's window and the warp list aren't Esc's to close: they end with their own buttons.
-        // An NPC shop isn't Esc's to close.
-        push(Shop, self.shop.as_ref().is_some_and(|shop| !shop.plain()));
-        push(GradeEnchant, self.grade.is_some());
-        push(LaphineSynthesis, self.synthesis.is_some());
-        push(LaphineUpgrade, self.upgrade.is_some());
-        push(ItemReform, self.reform.is_some());
-        push(Enchant, self.enchant.is_some());
-        push(Stylist, self.stylist.is_some());
-        push(Attendance, self.attendance.is_some());
-        push(Materials, self.materials.is_some());
         let docked = self.party_dialog.as_ref().map(|dialog| dialog.kind);
-        push(PartySetup, docked == Some(party::DialogKind::Setup));
-        push(PartyCreate, docked == Some(party::DialogKind::Create));
-        push(PartyInviteName, docked == Some(party::DialogKind::Invite));
-        push(Whisper, !self.talks.is_empty());
-        push(FriendSetup, self.friend_setup.is_some());
-        push(BlockList, self.block_list.is_some());
-        push(AwayMessage, self.away_prompt.is_some());
-        push(DressRoom, self.dressroom.is_some());
-        push(Ranking, self.ranking.is_some());
-        push(Reputation, self.reputation_window.is_some());
-        push(Navigation, self.navi_window.is_some());
-        push(Catalog, self.catalog.is_some());
-        push(SkillDescription, self.skill_description.is_some());
-        push(SkillDelay, self.skill_description.as_ref().is_some_and(|window| window.delays));
-        push(Roulette, self.roulette.is_some());
-        push(MonsterInfo, self.monster_window.is_some());
-        push(Achievements, self.achievement_window.frame.open);
-        push(OtherEquipment, self.viewing.is_some());
-        push(Bank, self.bank.is_some());
-        push(CashShop, self.cashshop.is_some());
-        push(PickList, self.pick.is_some());
-        push(CardPicture, self.card_view.is_some());
-        push(ItemInfo, self.item_window.is_some());
-        push(CardInfo, self.card_window.is_some());
-        push(ChatRoom, self.room.is_some());
-        push(RoomMake, self.room_make.is_some());
-        push(EmotionList, self.emotion_list.is_some());
-        push(Macros, self.macro_window.is_some());
-        push(VendSetup, self.vend_setup.is_some());
-        push(MyShop, self.my_shop.is_some());
-        push(SellHistory, self.sell_history.is_some());
-        push(BuyingStoreSetup, self.buying_setup.is_some());
-        push(MyBuyingStore, self.my_buying_store.is_some());
-        push(Mailbox, self.mail.list.frame.open);
-        push(MailRead, self.mail.letter.is_some());
-        push(MailWrite, self.mail.compose.is_some());
-        push(GameSettings, self.settings_window.is_some());
-        push(ShortcutSettings, self.shortcuts_window.is_some());
-        push(WorldMap, self.world_map.is_some());
-        push(Minimap, self.minimap_window.frame.open);
-        push(Quests, self.quest_window.frame.open || self.quest_window.picked.is_some());
-        push(Menu, self.menu.is_some());
-        push(Capturing, self.capturing);
-        push(Amount, self.amount.is_some());
-        push(SaveAsked, self.save_asked);
-        push(SkillApplyAsked, self.apply_asked);
-        push(BindAsked, self.bind_asked.is_some());
-        push(ExpansionAsked, self.expansion_asked.is_some());
-        push(LeaderAsked, self.leader_asked.is_some());
-        push(GuildCompanion, self.guild_companion.frame.open);
-        push(GuildCreate, self.guild_companion.create.as_ref().is_some_and(|create| !create.disband));
-        push(GuildDisband, self.guild_companion.create.as_ref().is_some_and(|create| create.disband));
-        push(GuildTip, self.guild_companion.tip.is_some());
-        push(PartyAsked, self.question_box.as_ref().is_some_and(|asked| !matches!(asked, BoxQuestion::Notice(_) | BoxQuestion::Said(_))));
-        push(Notice, matches!(self.question_box, Some(BoxQuestion::Notice(_) | BoxQuestion::Said(_))));
-        push(DismissAsked, self.dismiss_asked);
-        push(HomunculusAsked, self.homunculus_asked.is_some());
-        push(PetAsked, self.pet_asked.is_some());
-        push(CashShopBuy, self.cashshop_buy_asked);
-        push(GuildAsked, self.guild_asked.is_some());
-        push(GuildInvite, self.guild_invite.is_some());
-        push(PartyInvite, self.party_invite.is_some());
-        push(FriendAsked, self.friend_asked.is_some());
-        // The Buy / Sell / Cancel box stays an entry, hidden, while the shop it led to is open: Esc stops at it.
-        push(DealChoice, self.deal_choice.is_some() || self.shop.as_ref().is_some_and(|shop| shop.dealt));
-        push(QuestNotice, self.quest_icon);
-        push(ChatSettings, self.chat.settings.is_some());
-        push(PartyBooking, self.booking.is_some());
-        push(BattleQueue, self.queue_window.frame.open);
-        push(Memorial, self.memorial.frame.open);
-        push(MemorialAsked, self.memorial_asked);
-        push(PackagePick, self.package_pick.is_some());
-        push(PackageAsked, self.package_pick.as_ref().is_some_and(|pick| pick.asked));
-        push(AdoptAsked, self.adopt_asked.is_some());
-        push(QueueAsked, self.queue_asked.is_some());
-        // Last, so it is the newest of what shows in one frame: dying opens it over the windows already up.
-        push(GameMenu, self.escape.is_some());
-        open
+        match id {
+            Inventory => self.panel_open(Panel::Inventory),
+            Equipment => self.panel_open(Panel::Equipment),
+            Skills => self.panel_open(Panel::Skills),
+            Party => self.panel_open(Panel::Party),
+            Status => self.panel_open(Panel::Status),
+            Guild => self.panel_open(Panel::Guild),
+            Clan => self.panel_open(Panel::Clan),
+            Cart => self.panel_open(Panel::Cart),
+            Pet => self.panel_open(Panel::Pet),
+            Mercenary => self.panel_open(Panel::Mercenary),
+            MercenarySkills => self.panel_open(Panel::MercenarySkills),
+            Homunculus => self.panel_open(Panel::Homunculus),
+            HomunculusSkills => self.panel_open(Panel::HomunculusSkills),
+            StorageCategory(tab) => self.storage.categories.get(tab).is_some_and(|category| category.frame.open),
+            StorageSearch => self.storage.search_window.frame.open,
+            // An NPC's window and the warp list aren't Esc's to close: they end with their own buttons.
+            // An NPC shop isn't Esc's to close.
+            Shop => self.shop.as_ref().is_some_and(|shop| !shop.plain()),
+            GradeEnchant => self.grade.is_some(),
+            LaphineSynthesis => self.synthesis.is_some(),
+            LaphineUpgrade => self.upgrade.is_some(),
+            ItemReform => self.reform.is_some(),
+            Enchant => self.enchant.is_some(),
+            Stylist => self.stylist.is_some(),
+            Attendance => self.attendance.is_some(),
+            Materials => self.materials.is_some(),
+            PartySetup => docked == Some(party::DialogKind::Setup),
+            PartyCreate => docked == Some(party::DialogKind::Create),
+            PartyInviteName => docked == Some(party::DialogKind::Invite),
+            Whisper => !self.talks.is_empty(),
+            FriendSetup => self.friend_setup.is_some(),
+            BlockList => self.block_list.is_some(),
+            AwayMessage => self.away_prompt.is_some(),
+            DressRoom => self.dressroom.is_some(),
+            Ranking => self.ranking.is_some(),
+            Reputation => self.reputation_window.is_some(),
+            Navigation => self.navi_window.is_some(),
+            Catalog => self.catalog.is_some(),
+            SkillDescription => self.skill_description.is_some(),
+            SkillDelay => self.skill_description.as_ref().is_some_and(|window| window.delays),
+            Roulette => self.roulette.is_some(),
+            MonsterInfo => self.monster_window.is_some(),
+            Achievements => self.achievement_window.frame.open,
+            OtherEquipment => self.viewing.is_some(),
+            Bank => self.bank.is_some(),
+            CashShop => self.cashshop.is_some(),
+            PickList => self.pick.is_some(),
+            CardPicture => self.card_view.is_some(),
+            ItemInfo => self.item_window.is_some(),
+            CardInfo => self.card_window.is_some(),
+            ChatRoom => self.room.is_some(),
+            RoomMake => self.room_make.is_some(),
+            EmotionList => self.emotion_list.is_some(),
+            Macros => self.macro_window.is_some(),
+            VendSetup => self.vend_setup.is_some(),
+            MyShop => self.my_shop.is_some(),
+            SellHistory => self.sell_history.is_some(),
+            BuyingStoreSetup => self.buying_setup.is_some(),
+            MyBuyingStore => self.my_buying_store.is_some(),
+            Mailbox => self.mail.list.frame.open,
+            MailRead => self.mail.letter.is_some(),
+            MailWrite => self.mail.compose.is_some(),
+            GameSettings => self.settings_window.is_some(),
+            ShortcutSettings => self.shortcuts_window.is_some(),
+            WorldMap => self.world_map.is_some(),
+            Minimap => self.minimap_window.frame.open,
+            Quests => self.quest_window.frame.open || self.quest_window.picked.is_some(),
+            Menu => self.menu.is_some(),
+            Capturing => self.capturing,
+            Amount => self.amount.is_some(),
+            SaveAsked => self.save_asked,
+            SkillApplyAsked => self.apply_asked,
+            BindAsked => self.bind_asked.is_some(),
+            ExpansionAsked => self.expansion_asked.is_some(),
+            LeaderAsked => self.leader_asked.is_some(),
+            GuildCompanion => self.guild_companion.frame.open,
+            GuildCreate => self.guild_companion.create.as_ref().is_some_and(|create| !create.disband),
+            GuildDisband => self.guild_companion.create.as_ref().is_some_and(|create| create.disband),
+            GuildTip => self.guild_companion.tip.is_some(),
+            PartyAsked => self.question_box.as_ref().is_some_and(|asked| !matches!(asked, BoxQuestion::Notice(_) | BoxQuestion::Said(_))),
+            Notice => matches!(self.question_box, Some(BoxQuestion::Notice(_) | BoxQuestion::Said(_))),
+            DismissAsked => self.dismiss_asked,
+            HomunculusAsked => self.homunculus_asked.is_some(),
+            PetAsked => self.pet_asked.is_some(),
+            CashShopBuy => self.cashshop_buy_asked,
+            GuildAsked => self.guild_asked.is_some(),
+            GuildInvite => self.guild_invite.is_some(),
+            PartyInvite => self.party_invite.is_some(),
+            FriendAsked => self.friend_asked.is_some(),
+            // The Buy / Sell / Cancel box stays an entry, hidden, while the shop it led to is open: Esc stops at it.
+            DealChoice => self.deal_choice.is_some() || self.shop.as_ref().is_some_and(|shop| shop.dealt),
+            QuestNotice => self.quest_icon,
+            ChatSettings => self.chat.settings.is_some(),
+            PartyBooking => self.booking.is_some(),
+            BattleQueue => self.queue_window.frame.open,
+            Memorial => self.memorial.frame.open,
+            MemorialAsked => self.memorial_asked,
+            PackagePick => self.package_pick.is_some(),
+            PackageAsked => self.package_pick.as_ref().is_some_and(|pick| pick.asked),
+            AdoptAsked => self.adopt_asked.is_some(),
+            QueueAsked => self.queue_asked.is_some(),
+            // Last, so it is the newest of what shows in one frame: dying opens it over the windows already up.
+            GameMenu => self.escape.is_some(),
+            // The deal isn't Esc's and `windows` names it itself (`esc_names`); it is a `WindowId` as what a press reaches.
+            Trade => false,
+        }
     }
 
     /// Whether a skill is used rather than passive (an unknown one counts as used).
@@ -5083,6 +5077,49 @@ mod tests {
         // The 1:1 chat windows move by `Talks::drag_to`.
         ("whisper", 2, 1),
     ];
+
+    /// The windows a press reaches without an entry of their own in `top_at`, and why.
+    const REACHED_OTHERWISE: &[(&str, &str)] = &[
+        ("Inventory", "a panel: `window_at`"),
+        ("Equipment", "a panel"),
+        ("Skills", "a panel"),
+        ("StorageCategory", "a panel"),
+        ("StorageSearch", "a panel"),
+        ("Party", "a panel"),
+        ("Status", "a panel"),
+        ("Guild", "a panel"),
+        ("Clan", "a panel"),
+        ("Cart", "a panel"),
+        ("Pet", "a panel"),
+        ("Mercenary", "a panel"),
+        ("MercenarySkills", "a panel"),
+        ("Homunculus", "a panel"),
+        ("HomunculusSkills", "a panel"),
+        ("SkillDelay", "beside the description, inside its area"),
+        ("Capturing", "the taming cursor: no area"),
+        ("GuildCreate", "the Guild Companion's hit"),
+        ("GuildDisband", "the Guild Companion's hit"),
+        ("GuildTip", "the Guild Companion's hit"),
+        ("QuestNotice", "the quest icon, `Top::QuestIcon`"),
+    ];
+
+    /// A window missing from `top_at` is drawn but lets every press through to the world: each `WindowId` is named
+    /// there, or here with what reaches it instead.
+    #[test]
+    fn top_at_names_every_window() {
+        let source = include_str!("game.rs");
+        let body = &source[source.find("pub(crate) fn top_at(").unwrap()..source.find("self.front.pick(hits").unwrap()];
+        let whole = |at: usize, len: usize| {
+            !body[..at].ends_with(|before: char| before.is_alphanumeric()) && !body[at + len..].starts_with(|next: char| next.is_alphanumeric())
+        };
+        let named = |name: &str| body.match_indices(name).any(|(at, _)| whole(at, name.len()));
+        for id in escape::WindowId::ALL {
+            let name = format!("{id:?}");
+            let name = name.split('(').next().unwrap();
+            let otherwise = REACHED_OTHERWISE.iter().any(|&(other, _)| other == name);
+            assert!(named(name) != otherwise, "{name}: in `top_at` or in REACHED_OTHERWISE, one of the two");
+        }
+    }
 
     /// A window whose frame is in no list can be grabbed but never moves: every `Frame` field of a window module is
     /// counted here, so a new one is put in `Game::frames` (or its module's own code moves it, and `FRAMES` says so).
