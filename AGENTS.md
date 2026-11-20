@@ -52,10 +52,12 @@ Start from a recent one, e.g. `ui/memorial.rs`. Besides its own module, it's wir
   keeps it on a resized screen (`Grab::Title` with its `Top` and a press on its title bar grabs it too: no code in
   `press`, `pointer_moved` or `left_button`); the test `frames_are_all_listed` fails until it's there.
 - `game.rs` also: `top_at`, at the place `redraw_game` draws it (presses and clicks go by that order; `on_ui` follows
-  it), `close_windows`, `esc_open`, `esc_names`, `close_esc`, plus `window_at`, `titled_frame`,
+  it), `close_windows`, `is_open`, `esc_names`, `close_esc`, plus `window_at`, `titled_frame`,
   `panel_open` and `panel_frames` for a panel. If it has text boxes or questions, also `text_box_focused`,
   `focused_text`, `question_open` and `answer_no`.
-- `ui/escape.rs`: a `WindowId` and its `name`.
+- `ui/escape.rs`: a `WindowId`, its `name`, and its place in `WindowId::ALL`. The compiler then asks for its arms in
+  `Game::is_open` (when it's up) and `close_esc`, and the tests `all_lists_every_window_once` and
+  `top_at_names_every_window` for the rest.
 - `control.rs` `game_state`: its state and click targets, so a scenario can see and press it.
 
 ## Quick checks

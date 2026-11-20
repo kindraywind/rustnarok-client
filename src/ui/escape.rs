@@ -160,6 +160,117 @@ pub enum WindowId {
 }
 
 impl WindowId {
+    /// Every window, in the order ones that open in the same frame count as opened (the later, the newer).
+    pub const ALL: &[Self] = &[
+        Self::Inventory,
+        Self::Equipment,
+        Self::Skills,
+        Self::Party,
+        Self::Status,
+        Self::Guild,
+        Self::Clan,
+        Self::Cart,
+        Self::Pet,
+        Self::Mercenary,
+        Self::MercenarySkills,
+        Self::Homunculus,
+        Self::HomunculusSkills,
+        Self::StorageCategory(0),
+        Self::StorageCategory(1),
+        Self::StorageCategory(2),
+        Self::StorageCategory(3),
+        Self::StorageCategory(4),
+        Self::StorageCategory(5),
+        Self::StorageCategory(6),
+        Self::StorageCategory(7),
+        Self::StorageSearch,
+        Self::Shop,
+        Self::GradeEnchant,
+        Self::LaphineSynthesis,
+        Self::LaphineUpgrade,
+        Self::ItemReform,
+        Self::Enchant,
+        Self::Stylist,
+        Self::Attendance,
+        Self::Materials,
+        Self::PartySetup,
+        Self::PartyCreate,
+        Self::PartyInviteName,
+        Self::Whisper,
+        Self::FriendSetup,
+        Self::BlockList,
+        Self::AwayMessage,
+        Self::DressRoom,
+        Self::Ranking,
+        Self::Reputation,
+        Self::Navigation,
+        Self::Catalog,
+        Self::SkillDescription,
+        Self::SkillDelay,
+        Self::Roulette,
+        Self::MonsterInfo,
+        Self::Achievements,
+        Self::OtherEquipment,
+        Self::Bank,
+        Self::CashShop,
+        Self::PickList,
+        Self::CardPicture,
+        Self::ItemInfo,
+        Self::CardInfo,
+        Self::ChatRoom,
+        Self::RoomMake,
+        Self::EmotionList,
+        Self::Macros,
+        Self::VendSetup,
+        Self::MyShop,
+        Self::SellHistory,
+        Self::BuyingStoreSetup,
+        Self::MyBuyingStore,
+        Self::Mailbox,
+        Self::MailRead,
+        Self::MailWrite,
+        Self::GameSettings,
+        Self::ShortcutSettings,
+        Self::WorldMap,
+        Self::Minimap,
+        Self::Quests,
+        Self::Menu,
+        Self::Capturing,
+        Self::Amount,
+        Self::SaveAsked,
+        Self::SkillApplyAsked,
+        Self::BindAsked,
+        Self::ExpansionAsked,
+        Self::LeaderAsked,
+        Self::GuildCompanion,
+        Self::GuildCreate,
+        Self::GuildDisband,
+        Self::GuildTip,
+        Self::PartyAsked,
+        Self::Notice,
+        Self::DismissAsked,
+        Self::HomunculusAsked,
+        Self::PetAsked,
+        Self::CashShopBuy,
+        Self::GuildAsked,
+        Self::GuildInvite,
+        Self::PartyInvite,
+        Self::FriendAsked,
+        Self::DealChoice,
+        Self::QuestNotice,
+        Self::ChatSettings,
+        Self::PartyBooking,
+        Self::BattleQueue,
+        Self::Memorial,
+        Self::MemorialAsked,
+        Self::PackagePick,
+        Self::PackageAsked,
+        Self::AdoptAsked,
+        Self::QueueAsked,
+        Self::GameMenu,
+        Self::Trade,
+    ];
+
     /// The name `windows` uses in the control state.
     pub fn name(self) -> &'static str {
         match self {
@@ -539,6 +650,33 @@ impl Menu {
 
 #[cfg(test)]
 mod tests {
+    /// `WindowId::ALL` is what "every window" means to the Esc list and `windows`: a variant missing from it would
+    /// never count as open. The variants are read from this file, so a new one fails here until it's listed.
+    #[test]
+    fn all_lists_every_window_once() {
+        let source = include_str!("escape.rs");
+        let body = &source[source.find("pub enum WindowId {").unwrap()..source.find("impl WindowId {").unwrap()];
+        let mut variants: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.ends_with(',') && line.starts_with(char::is_uppercase))
+            .map(|line| line.trim_end_matches(',').trim_end_matches("(usize)"))
+            .collect();
+        let mut listed: Vec<String> = WindowId::ALL.iter().map(|id| format!("{id:?}")).collect();
+        // The eight storage categories are one variant.
+        listed.retain(|name| !name.starts_with("StorageCategory(") || name == "StorageCategory(0)");
+        let mut listed: Vec<&str> = listed.iter().map(|name| name.trim_end_matches("(0)")).collect();
+        variants.sort_unstable();
+        listed.sort_unstable();
+        assert_eq!(listed, variants);
+        // And `windows` tells them apart.
+        let mut names: Vec<&str> = WindowId::ALL.iter().filter(|id| !matches!(id, WindowId::StorageCategory(_))).map(|id| id.name()).collect();
+        names.sort_unstable();
+        let count = names.len();
+        names.dedup();
+        assert_eq!(names.len(), count, "two windows share a name");
+    }
+
     use super::*;
 
     #[test]
