@@ -1605,7 +1605,7 @@ impl App {
             MapEvent::NpcSay { npc, text } => {
                 let name_of = |item: &links::ItemLink| inventory::item_name(&self.items, item.id, true, item.refine);
                 let text = npc_say::item_names(&npc_say::unescape(&text), |id| inventory::item_name(&self.items, id, true, 0));
-                let text = npc_say::item_pictures(&links::mark(&text, &name_of));
+                let text = npc_say::picture_runs(&links::mark(&text, &name_of));
                 game.front.settle_npc();
                 let dialog = game.dialog_for(npc);
                 dialog.said = true;

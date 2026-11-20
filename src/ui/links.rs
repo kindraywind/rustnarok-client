@@ -42,6 +42,8 @@ pub enum Target {
     Tip,
     /// The item whose picture is drawn here.
     Picture(u32),
+    /// The emotion (its ET_* number) whose picture plays here.
+    Emotion(u16),
 }
 
 impl Target {
@@ -51,7 +53,7 @@ impl Target {
             Target::Item(_) => COLOR,
             Target::Navi { .. } | Target::Place { .. } => NAVI_COLOR,
             Target::Url(_) => URL_COLOR,
-            Target::Quest(_) | Target::Tip | Target::Picture(_) => NPC_COLOR,
+            Target::Quest(_) | Target::Tip | Target::Picture(_) | Target::Emotion(_) => NPC_COLOR,
         }
     }
 
@@ -79,6 +81,7 @@ impl Target {
             Target::Quest(id) => format!("q {id}"),
             Target::Tip => "t -".into(),
             Target::Picture(id) => format!("c {id}"),
+            Target::Emotion(id) => format!("e {id}"),
         }
     }
 
@@ -102,6 +105,7 @@ impl Target {
             ("q", id) => id.parse().ok().map(Target::Quest),
             ("t", _) => Some(Target::Tip),
             ("c", id) => id.parse().ok().map(Target::Picture),
+            ("e", id) => id.parse().ok().map(Target::Emotion),
             _ => None,
         }
     }

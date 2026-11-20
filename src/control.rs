@@ -1551,6 +1551,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             crate::links::Target::Quest(id) => json!({"kind": "quest_link", "id": id, "box": area}),
             crate::links::Target::Tip => json!({"kind": "tip_link", "box": area}),
             crate::links::Target::Picture(id) => json!({"kind": "item_picture", "id": id, "box": area}),
+            crate::links::Target::Emotion(id) => json!({"kind": "emotion_picture", "id": id, "box": area}),
         }))
         .chain(
             // The navigation window's controls; a row comes with its words and the place it stands for.

@@ -2805,6 +2805,8 @@ fn decodes_packetver_20250402() {
     }
     let ids = [0x0972, 0x0973, 0x0B8C, 0x0BA2, 0x0BA3, 0x0BB5, 0x0BBA, 0x0BBE, 0x0BF5];
     assert_eq!(ids.map(|id| new.get(&id).copied()), [Some(-1), Some(7), Some(-1), Some(10), Some(10), Some(10), Some(-1), Some(6), Some(6)]);
+    // A server between the tables (20220504 to 20250401) sends them too: they're known at the default version.
+    assert_eq!(ids.map(packet_length), ids.map(|id| new.get(&id).copied()));
 
     // ZC_SAY_DIALOG2: npc, a type byte, then the message. ZC_WAIT_DIALOG2 is the Next button.
     let mut say = ZC_SAY_DIALOG2.to_le_bytes().to_vec();

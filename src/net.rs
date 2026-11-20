@@ -805,11 +805,13 @@ fn lengths_for(version: u32) -> &'static HashMap<u16, i32> {
     if version >= PACKETVER_20250402 { &NEW } else { &OLD }
 }
 
-/// Then the lengths of older packets some servers still send (packet_lengths_extra.txt), so they don't drop the
-/// connection.
+/// A packet's length at any PACKETVER: rathena never gives an id two lengths across versions, it only adds and drops
+/// ids, so the server's version's table, then the other, then the older packets some servers still send
+/// (packet_lengths_extra.txt). A server between the two tables' versions (20220504 sends `0x0972`) stays connected.
 fn packet_length(id: u16) -> Option<i32> {
     static EXTRA: LazyLock<HashMap<u16, i32>> = LazyLock::new(|| load_lengths(include_str!("net/packet_lengths_extra.txt")));
-    lengths_for(packetver()).get(&id).or_else(|| EXTRA.get(&id)).copied()
+    let other = if packetver() >= PACKETVER_20250402 { PACKETVER_20220406 } else { PACKETVER_20250402 };
+    lengths_for(packetver()).get(&id).or_else(|| lengths_for(other).get(&id)).or_else(|| EXTRA.get(&id)).copied()
 }
 
 /// Dev hook (the client's control socket): sees every packet read from the char and map servers.

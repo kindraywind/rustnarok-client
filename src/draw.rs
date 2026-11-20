@@ -1062,6 +1062,20 @@ impl App {
             (Some(list), Some(sprite)) => list.icons(gpu, sprite),
             _ => Vec::new(),
         };
+        // The emotions in the NPC's text, each looping on the clock in its box.
+        // ponytail: they loop from the client's start, not from when their line came; nobody can tell the phase.
+        let say_emotions: Vec<(u16, Vec<actor::Placed>)> = match (&game.dialog, &mut game.emotion_sprite) {
+            (Some(dialog), Some(sprite)) => {
+                let ms = now.duration_since(*crate::START).as_secs_f32() * 1000.0;
+                let mut ids: Vec<u16> = npc_say::emotions(&dialog.lines).collect();
+                ids.sort_unstable();
+                ids.dedup();
+                ids.into_iter()
+                    .filter_map(|id| Some((id, sprite.frame_at(gpu, emotion::sprite_action(u8::try_from(id).ok()?)?, 0, Timing::Loop(ms)))))
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
         // Taming's slot machine: its result played once, then held a moment.
         // The PvP counter while the map counts and a rank came, the first-place clock while we're first among more than
         // one, and the banner its first 3 s: each glyph's frame at its anchor.
@@ -1833,6 +1847,21 @@ impl App {
                                 dialog_links.push((area, links::Target::Picture(*id)));
                             }
                             x += npc_say::PICTURE;
+                            continue;
+                        }
+                        // An emotion's picture: its frame with the sprite's origin at the box's middle.
+                        if let Some(links::Target::Emotion(id)) = item {
+                            let size = npc_say::EMOTION_PICTURE;
+                            let middle = [x + size / 2.0, top + height - size / 2.0];
+                            if let (Some(sprite), Some((_, placed))) = (&game.emotion_sprite, say_emotions.iter().find(|(shown, _)| shown == id)) {
+                                for (key, position, part, _) in placed {
+                                    overlay.sprites.push((sprite.texture(*key), offset(middle, *position), *part));
+                                }
+                            }
+                            if let Some(area) = npc_say::cut([x, top + height - size, size, size], panel) {
+                                dialog_links.push((area, links::Target::Emotion(*id)));
+                            }
+                            x += size;
                             continue;
                         }
                         let width = font.width(piece);

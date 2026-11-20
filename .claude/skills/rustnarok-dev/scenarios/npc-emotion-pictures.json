@@ -1,0 +1,69 @@
+{
+  "about": "Emotion pictures in NPC text: the `^e[<emotion>]` code (rathena's mesemotion, PACKETVER 2023-03-02 on) plays that emotion in a 50 px box on the line, the line as tall as the box. Two emotions in a sentence; the pack form `^e[1,2]` is taken and draws nothing; `^e[1234]` (four digits) stays text. The NPC (npc/emotion-pictures.txt) is loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/emotion-pictures.txt"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/emotion-pictures.txt"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "click_unit": {
+        "kind": "npc",
+        "name": "Emotion Clerk"
+      }
+    },
+    {
+      "wait_for": {
+        "packet": "0x00b4",
+        "ms": 3000
+      }
+    },
+    {
+      "wait": 600
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "NpcDialog"
+        ]
+      }
+    },
+    {
+      "shot": "npc-emotion-pictures",
+      "crop": [
+        190,
+        90,
+        300,
+        200
+      ],
+      "threshold": 15
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/emotion-pictures.txt"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

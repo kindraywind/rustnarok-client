@@ -4351,12 +4351,12 @@ fn wrap_linked_by(font: &text::Font, text: &str, width: f32, by_char: bool, colo
     let mut color = [0, 0, 0];
     for (part, item) in links::pieces(text) {
         // An item's picture is one piece, never split: it starts the next line when it doesn't fit on this one.
-        if let Some(links::Target::Picture(_)) = item {
-            if line_width + npc_say::PICTURE > width {
+        if let Some(size) = npc_say::picture_size(item.as_ref()) {
+            if line_width + size > width {
                 wrapped.push(Vec::new());
                 line_width = 0.0;
             }
-            line_width += npc_say::PICTURE;
+            line_width += size;
             wrapped.last_mut().unwrap().push((color, part, item));
             continue;
         }
@@ -7506,7 +7506,7 @@ mod tests {
     #[test]
     fn an_item_picture_takes_its_width_on_the_line() {
         let font = Font::load();
-        let text = npc_say::item_pictures("^i[501]ab^i[502]");
+        let text = npc_say::picture_runs("^i[501]ab^i[502]");
         let shape = |width: f32| -> Vec<Vec<String>> {
             let lines = wrap_linked_by(&font, &text, width, true, links::Target::npc_color);
             let name = |(_, piece, item): &([u8; 3], String, Option<links::Target>)| match item {

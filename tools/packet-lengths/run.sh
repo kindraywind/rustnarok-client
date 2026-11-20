@@ -7,6 +7,13 @@ set -euo pipefail
 G="$(cd "$(dirname "$0")" && pwd)"
 VER="${3:-20220406}"
 cd "$1/src/map"
+# A PACKETVER pinned in custom/defines_pre.hpp (kindraywind/rathena pins 20220406 there) beats -DPACKETVER, and every
+# table would silently come out at the pinned version. config/packets.hpp's default is under #ifndef, so it doesn't.
+PINNED=$(sed -nE 's/^[[:space:]]*#define[[:space:]]+PACKETVER[[:space:]]+([0-9]+).*/\1/p' ../custom/defines_pre.hpp 2>/dev/null | head -1)
+if [ -n "$PINNED" ] && [ "$PINNED" != "$VER" ]; then
+  echo "rathena pins PACKETVER $PINNED in src/custom/defines_pre.hpp: use a copy without that line for $VER" >&2
+  exit 1
+fi
 FLAGS=(-std=c++17 -ferror-limit=0 -Wno-everything -I"$G" -I. -I../common/ -I../ -I../../3rdparty/libconfig -I/opt/homebrew/opt/pcre/include
        -I../../3rdparty/rapidyaml/src -I../../3rdparty/rapidyaml/ext/c4core/src -I/opt/homebrew/opt/mysql-client/include/mysql
        -DPACKETVER="$VER" -DHAS_TLS -DHAVE_GETADDRINFO -DHAVE_SETRLIMIT -DHAVE_STRNLEN -DHAVE_MONOTONIC_CLOCK)

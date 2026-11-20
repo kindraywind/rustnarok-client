@@ -160,7 +160,7 @@ impl App {
                             game.question_box = Some(BoxQuestion::Said(format!("Not found Quest Info = {id}")));
                         }
                     }
-                    links::Target::Tip | links::Target::Picture(_) => {}
+                    links::Target::Tip | links::Target::Picture(_) | links::Target::Emotion(_) => {}
                 }
             }
             Scene::Game(game) if game.deal_choice.is_some() => match shop::deal_hit(game.deal_frame.position, cursor) {
