@@ -46,9 +46,12 @@ Start from a recent one, e.g. `ui/memorial.rs`. Besides its own module, it's wir
 - `main.rs`: a `Game` field, its images in `Assets`/`load`; a draggable panel also needs a `Panel` and `esc_panel`.
 - `events.rs`: the field's first value in `enter_map`; open and fill it in `map_event`.
 - `draw.rs`: `redraw_game`.
-- `input.rs`: `click` and `press`, their arms gated on its `Top` (`top == ...`); `left_button`, `pointer_moved`; also
-  `wheel`, `key` and `perform_shortcut` if it uses them.
-- `game.rs`: `top_at`, at the place `redraw_game` draws it (presses and clicks go by that order; `on_ui` follows
+- `input.rs`: `click` and `press`, their arms gated on its `Top` (`top == ...`); `left_button` and `pointer_moved`
+  only for a scroll thumb or a corner grip; also `wheel`, `key` and `perform_shortcut` if it uses them.
+- `game.rs`: its `Frame` in `Game::frames`, the one list that moves a held window with the pointer, lets it go and
+  keeps it on a resized screen (`Grab::Title` with its `Top` and a press on its title bar grabs it too: no code in
+  `press`, `pointer_moved` or `left_button`); the test `frames_are_all_listed` fails until it's there.
+- `game.rs` also: `top_at`, at the place `redraw_game` draws it (presses and clicks go by that order; `on_ui` follows
   it), `close_windows`, `esc_open`, `esc_names`, `close_esc`, plus `window_at`, `titled_frame`,
   `panel_open` and `panel_frames` for a panel. If it has text boxes or questions, also `text_box_focused`,
   `focused_text`, `question_open` and `answer_no`.
