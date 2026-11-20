@@ -4270,7 +4270,8 @@ impl App {
                     self.game_escape();
                 }
             }
-            Scene::Game(game) if game.dialog.is_some() => {
+            // The Amount box is modal over an NPC's talk: a shop opened from its menu leaves the talk up behind it.
+            Scene::Game(game) if game.dialog.is_some() && game.amount.is_none() => {
                 let dialog = game.dialog.as_mut().unwrap();
                 // Enter and Space: the input box's, else (Space only with nothing in the chat line) the menu's OK or
                 // Next and Close (see npc_say::dialog_key).

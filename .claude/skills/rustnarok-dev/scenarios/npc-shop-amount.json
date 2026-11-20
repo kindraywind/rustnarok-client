@@ -1,0 +1,27 @@
+{
+  "about": "A shop opened from an NPC's menu (npc/menu-shop.txt) leaves the NPC's talk up behind it. Butterfly Wings dragged onto the Buying Items window ask how many: Backspace, 10 typed and Enter go to the Amount box, not to the talk behind it, so the deal holds 10 and the talk is still up. Cancel ends the deal, Esc closes the talk; the NPC is loaded with @loadnpc and unloaded at both ends.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@zeny -2000000000"}, {"wait": 400}, {"say": "@zeny 10000"}, {"wait": 400},
+    {"say": "@warp iz_int01 18 26"}, {"settle": 1500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/menu-shop.txt"}, {"wait": 500},
+    {"say": "@loadnpc {repo}/.claude/skills/rustnarok-dev/npc/menu-shop.txt"}, {"wait": 1000},
+    {"click_unit": {"kind": "npc", "name": "Menu Shopkeeper"}}, {"wait": 1000},
+    {"expect": {"windows_open": ["NpcDialog"], "state": {"dialog.menu.selected": 0}}},
+    {"click_on": {"button": "npc_menu:0"}, "count": 2}, {"wait_for": {"sent": "0x00b8", "ms": 3000}}, {"wait": 1000},
+    {"expect": {"windows_open": ["NpcDialog", "Shop"]}},
+    {"drag_on": [{"pick_item": 602}, {"point": [420, 340]}]}, {"wait": 400},
+    {"expect": {"windows_open": ["Amount"]}},
+    {"key": "Backspace"}, {"type": "10"}, {"wait": 200},
+    {"move": [800, 600]},
+    {"shot": "npc-shop-amount-typed", "crop": [0, 110, 720, 400]},
+    {"key": "Enter"}, {"wait": 300},
+    {"expect": {"windows_open": ["NpcDialog", "Shop"], "windows_closed": ["Amount"], "state": {"shop_deal": [{"item": 602, "amount": 10}]}}},
+    {"click_on": {"button": "shop_cancel"}}, {"wait": 500},
+    {"expect": {"windows_closed": ["Shop"]}},
+    {"key": "Escape"}, {"wait": 500},
+    {"say": "@unloadnpcfile {repo}/.claude/skills/rustnarok-dev/npc/menu-shop.txt"}, {"wait": 500},
+    {"say": "@zeny -2000000000"}, {"wait": 400}
+  ]
+}

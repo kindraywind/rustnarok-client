@@ -4947,6 +4947,8 @@ impl App {
     fn commit(&mut self, text: &str) {
         let typed = text.chars().filter(|character| !character.is_control());
         match &mut self.scene {
+            // The Amount box first, over any NPC talk behind it.
+            Scene::Game(game) if game.amount.is_some() => game.amount.as_mut().unwrap().type_text(text),
             Scene::Game(game) => match &mut game.dialog {
                 // The NPC's input box takes it; plain dialogs don't.
                 Some(dialog) => {
