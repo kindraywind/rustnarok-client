@@ -523,19 +523,27 @@ pub fn speaker(text: &str, kind: Kind) -> Option<String> {
     (!name.is_empty() && name.len() < NAME_MOST).then(|| name.to_owned())
 }
 
-/// A line cut into pieces of at most 94 bytes, at a space or a newline where it can; a line with links stays whole.
+/// A line cut into pieces of at most 94 bytes as the data's code page counts them (a Thai letter 1, a Hangul letter 2),
+/// at a space or a newline where it can, or between Thai letters; a line with links stays whole.
 pub fn pieces(text: &str) -> Vec<String> {
     if links::has_links(text) {
         return vec![text.to_owned()];
     }
+    let bytes = |text: &str| text.chars().map(rustnarok_client::net::text_bytes).sum::<usize>();
     let mut pieces = Vec::new();
     let mut rest = text;
-    while rest.len() > PIECE_BYTES {
-        let mut cut = PIECE_BYTES;
-        while !rest.is_char_boundary(cut) {
-            cut -= 1;
+    while bytes(rest) > PIECE_BYTES {
+        // The most whole characters that fit.
+        let (mut used, mut cut) = (0, 0);
+        for (at, character) in rest.char_indices() {
+            used += rustnarok_client::net::text_bytes(character);
+            if used > PIECE_BYTES {
+                break;
+            }
+            cut = at + character.len_utf8();
         }
-        let at = rest[..cut].rfind([' ', '\n']).filter(|&at| at > 0).unwrap_or(cut);
+        let thai = rustnarok_client::text::last_break(rest, cut);
+        let at = rest[..cut].rfind([' ', '\n']).filter(|&at| at > 0).max(thai).unwrap_or(cut);
         pieces.push(rest[..at].to_owned());
         rest = rest[at..].trim_start_matches([' ', '\n']);
     }
@@ -543,7 +551,8 @@ pub fn pieces(text: &str) -> Vec<String> {
     pieces
 }
 
-/// A piece wrapped at `width` as `measure` measures it: at the last space that fits, else between characters.
+/// A piece wrapped at `width` as `measure` measures it: at the last space that fits (in Thai, the last letter with
+/// its marks), else between characters.
 pub fn wrap(text: &str, width: f32, measure: &dyn Fn(&str) -> f32) -> Vec<String> {
     let mut lines = Vec::new();
     let mut rest = text;
@@ -552,7 +561,9 @@ pub fn wrap(text: &str, width: f32, measure: &dyn Fn(&str) -> f32) -> Vec<String
         let first = rest.chars().next().map_or(rest.len(), char::len_utf8);
         let fit =
             rest.char_indices().map(|(at, character)| at + character.len_utf8()).take_while(|&end| measure(&rest[..end]) <= width).last().unwrap_or(first);
-        let at = rest[..fit].rfind(' ').filter(|&at| at > 0).unwrap_or(fit);
+        // The last space that fits or, in Thai (no spaces between its words), the last letter that does.
+        let thai = rustnarok_client::text::last_break(rest, fit).filter(|_| fit < rest.len());
+        let at = rest[..fit].rfind(' ').filter(|&at| at > 0).max(thai).unwrap_or(fit);
         lines.push(rest[..at].to_owned());
         rest = rest[at..].trim_start_matches(' ');
     }
@@ -746,12 +757,12 @@ pub fn battle_line(messages: &[String], source: (Role, &str), target: (Role, &st
     })
 }
 
-/// How much of `text` fits in `most` bytes as sent (CP949), whole characters.
+/// How much of `text` fits in `most` bytes as sent (in the connection's code page), whole characters.
 pub fn capped(text: &str, most: usize) -> &str {
     let mut used = 0;
     for (at, character) in text.char_indices() {
         let mut buffer = [0; 4];
-        used += encoding_rs::EUC_KR.encode(character.encode_utf8(&mut buffer)).0.len();
+        used += rustnarok_client::net::codepage().encode(character.encode_utf8(&mut buffer)).0.len();
         if used > most {
             return &text[..at];
         }
@@ -2712,7 +2723,11 @@ mod tests {
         let long = format!("{} {}", "a".repeat(90), "b".repeat(20));
         assert_eq!(pieces(&long), ["a".repeat(90), "b".repeat(20)]);
         assert_eq!(pieces(&"c".repeat(100)), ["c".repeat(94), "c".repeat(6)]);
-        assert_eq!(pieces(&"가".repeat(40)).iter().map(String::len).collect::<Vec<_>>(), [93, 27]);
+        // A Hangul letter is two bytes of the 94: 47 to a piece.
+        assert_eq!(pieces(&"가".repeat(50)).iter().map(|piece| piece.chars().count()).collect::<Vec<_>>(), [47, 3]);
+        // Thai is cut between letters, a mark staying on its letter, not sent down whole after the last space.
+        let thai = pieces(&format!("abc {}", "นี่".repeat(40)));
+        assert!(thai[0].len() > "abc".len() && thai.iter().all(|piece| !piece.starts_with(rustnarok_client::text::is_thai_mark)), "{thai:?}");
         let link = format!("{} <ITEM>Apple<INFO>512</INFO></ITEM>", "x".repeat(100));
         assert_eq!(pieces(&link).len(), 1);
         // Wrapped at 576 px: 6 px a character here, so 96 to a row.

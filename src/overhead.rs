@@ -176,12 +176,25 @@ pub fn lines(text: &str) -> Vec<String> {
                 line = joined;
                 continue;
             }
+            // A word that doesn't fit starts a line; Thai (no spaces between its words) goes on in the line it's in.
+            let thai = word.chars().any(|character| ('\u{E00}'..='\u{E7F}').contains(&character));
             if !line.is_empty() {
-                lines.push(std::mem::take(&mut line));
+                if thai {
+                    line.push(' ');
+                } else {
+                    lines.push(std::mem::take(&mut line));
+                }
             }
             for character in word.chars() {
                 if width(&line) + width(&character.to_string()) > LINE_BYTES {
-                    lines.push(std::mem::take(&mut line));
+                    // Cut where the line may break, so a mark stays on its letter.
+                    let breaks_here = line.chars().last().is_none_or(|last| !thai || last == ' ' || rustnarok_client::text::breaks_between(last, character));
+                    let tail = match rustnarok_client::text::last_break(&line, line.len()) {
+                        Some(at) if !breaks_here => line.split_off(at),
+                        _ => String::new(),
+                    };
+                    lines.push(std::mem::take(&mut line).trim_end().to_owned());
+                    line = tail;
                 }
                 line.push(character);
             }
@@ -395,6 +408,19 @@ mod tests {
             (Some("Meteor !!"), Some("Carrot Beat !!"))
         );
         assert_eq!(shout_text(19, name_of, Some("Juliet"), words).as_deref(), Some("Fire Bolt !!"));
+    }
+
+    #[test]
+    fn thai_fills_a_line_and_keeps_marks_on_their_letters() {
+        // A run of letters and a space, then a phrase with marks that doesn't fit whole: it goes on in the first line
+        // and is cut between letters, each tone mark staying with its letter (whatever a letter counts in the page).
+        let first = "ก".repeat(12);
+        let lines = lines(&format!("{first} นี่นี่นี่นี่นี่นี่นี่นี่นี่นี่นี่นี่"));
+        assert!(lines.len() >= 2);
+        assert!(lines[0].starts_with(&first) && lines[0].len() > first.len() + 1, "the phrase started a new line: {lines:?}");
+        assert!(lines.iter().all(|line| !line.starts_with(rustnarok_client::text::is_thai_mark)), "a mark starts a line: {lines:?}");
+        // Latin words still go down whole.
+        assert_eq!(super::lines(&format!("{} word", "a".repeat(33))), ["a".repeat(33), "word".to_owned()]);
     }
 
     #[test]
