@@ -137,7 +137,7 @@ pub fn state(game: &Game, items: &HashMap<u32, ItemInfo>) -> Value {
         .iter()
         .map(|(id, unit)| {
             json!({"id": id, "kind": unit.kind, "job": unit.job, "name": unit.name, "level": unit.level, "cell": unit.cell, "dead": unit.dead,
-                   "gone": unit.remove_at.is_some(), "hidden": unit.hidden, "hp": game.unit_hp.get(id)})
+                   "gone": unit.remove_at.is_some(), "hidden": unit.hidden, "cloaked": unit.cloaked, "hp": game.unit_hp.get(id)})
         })
         .collect();
     let ground: Vec<Value> = game
