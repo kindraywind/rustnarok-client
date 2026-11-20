@@ -1,5 +1,5 @@
 {
-  "about": "Guild Member tab (issue #514): the grid of 5 rows 44 px tall, both members online with the band and their heads, the access date; two presses on Level put the highest level first with the down arrow; the login status box keeps them by level (both online).",
+  "about": "Guild Member tab (issue #514): the grid of 5 rows 44 px tall, both members online with the band and their heads, the access date; two presses on Name put the names last to first with the down arrow (by name, not level: the test characters' levels move); the login status box keeps that order (both online). The second selects its own row and leaves by its menu.",
   "account": "",
   "slot": 0,
   "second": {
@@ -136,7 +136,7 @@
     },
     {
       "click_on": {
-        "button": "sort:level"
+        "button": "sort:name"
       }
     },
     {
@@ -144,7 +144,7 @@
     },
     {
       "click_on": {
-        "button": "sort:level"
+        "button": "sort:name"
       }
     },
     {
@@ -154,7 +154,7 @@
       "expect": {
         "state": {
           "guild_window.sort": [
-            3,
+            0,
             false
           ],
           "guild_window.order": [
@@ -230,6 +230,16 @@
     {
       "as": "second",
       "wait": 300
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "member:{second}"
+      }
+    },
+    {
+      "as": "second",
+      "wait": 200
     },
     {
       "as": "second",
