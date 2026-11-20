@@ -479,11 +479,14 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             }
             let length = usize::from(u16_at(2));
             let count = i16::from_le_bytes([packet[4], packet[5]]);
-            if count < 0 || length != 8 + count as usize * 8 || packet.len() < length {
+            // 8-byte items, or 14 when the server has rathena's cash shop preview
+            // option on (a look id and an equip location follow; unused here).
+            let size = if count > 0 { length.saturating_sub(8) / count as usize } else { 8 };
+            if count < 0 || ![8, 14].contains(&size) || length != 8 + count as usize * size || packet.len() < length {
                 return None;
             }
             let tab = i16::from_le_bytes([packet[6], packet[7]]);
-            let items = packet[8..length].chunks_exact(8).map(|entry| (self::u32_at(entry, 0), self::u32_at(entry, 4))).collect();
+            let items = packet[8..length].chunks_exact(size).map(|entry| (self::u32_at(entry, 0), self::u32_at(entry, 4))).collect();
             MapEvent::CashShopList { tab, items }
         }
         ZC_SE_PC_BUY_CASHITEM_RESULT => MapEvent::CashShopBuyResult { item: u32_at(2), result: u16_at(6), cash: u32_at(8), free: u32_at(12) },

@@ -880,6 +880,18 @@ fn decodes_cash_shop() {
     let Some(MapEvent::CashShopList { tab: 4, items }) = decode_map_packet(&list) else { panic!() };
     assert_eq!(items, [(501, 10), (1201, 250)]);
     assert!(decode_map_packet(&list[..list.len() - 1]).is_none());
+    // With the preview option each item has a look id and an equip location after it.
+    let mut preview = ZC_ACK_SCHEDULER_CASHITEM.to_le_bytes().to_vec();
+    preview.extend_from_slice(&36u16.to_le_bytes());
+    preview.extend_from_slice(&2i16.to_le_bytes());
+    preview.extend_from_slice(&0i16.to_le_bytes());
+    for (id, price) in [(19211u32, 550u32), (400083, 900)] {
+        preview.extend_from_slice(&id.to_le_bytes());
+        preview.extend_from_slice(&price.to_le_bytes());
+        preview.extend_from_slice(&[0xFF, 0x04, 0x00, 0x01, 0x00, 0x00]);
+    }
+    let Some(MapEvent::CashShopList { tab: 0, items }) = decode_map_packet(&preview) else { panic!() };
+    assert_eq!(items, [(19211, 550), (400083, 900)]);
 
     let bought =
         [&ZC_SE_PC_BUY_CASHITEM_RESULT.to_le_bytes()[..], &501u32.to_le_bytes(), &0u16.to_le_bytes(), &990u32.to_le_bytes(), &65u32.to_le_bytes()].concat();
