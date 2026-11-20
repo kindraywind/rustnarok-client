@@ -396,6 +396,8 @@ impl App {
                     talkie_spots: HashMap::new(),
                     cooldown_line: self.messages.get(COOLDOWN_REFUSED).cloned().unwrap_or_default(),
                     cart_choice: None,
+                    packages: self.packages.clone(),
+                    package_pick: None,
                     cart_sprites: HashMap::new(),
                     cart_refusals: cart_choice::REFUSALS.map(|id| self.messages.get(id).cloned().unwrap_or_default()),
                     effects: effects::Effects::default(),

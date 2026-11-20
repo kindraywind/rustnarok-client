@@ -1272,6 +1272,9 @@ struct Game {
     slot: Option<taming::Machine>,
     /// Change Cart's (or Change Cart 2's) choice, each cart's sprite once loaded, and the red lines when it can't open.
     cart_choice: Option<cart_choice::CartChoice>,
+    /// The package boxes the data knows, and the set pick a used one opened.
+    packages: std::rc::Rc<lua::Packages>,
+    package_pick: Option<package::PackagePick>,
     cart_sprites: HashMap<u16, Option<SpriteSet>>,
     cart_refusals: [String; 2],
     /// Units casting (None = the player): when it began and how long it takes.
@@ -3145,6 +3148,7 @@ struct Assets {
     npc_input: npc_input::Assets,
     captcha: captcha::Assets,
     cart_choice: cart_choice::Assets,
+    package: package::Assets,
     cutin: cutin::Assets,
     next: ButtonImages,
     close: ButtonImages,
@@ -3277,6 +3281,7 @@ impl Assets {
             npc_input: npc_input::Assets::load(gpu),
             captcha: captcha::Assets::load(gpu),
             cart_choice: cart_choice::Assets::load(gpu, grf),
+            package: package::Assets::load(gpu, grf),
             cutin: cutin::Assets::load(gpu, grf),
             next: button(UI, "btn_next"),
             close: button(UI, "btn_close"),
@@ -4607,6 +4612,8 @@ struct App {
     styling_shop: lua::StylingShop,
     /// The attendance check's event; no rewards when the data has none.
     attendance: lua::Attendance,
+    /// The package boxes and their sets (SelectPackageItem_Cln); empty when the data has none.
+    packages: std::rc::Rc<lua::Packages>,
     messages: Vec<String>,
     /// Item icons by file, loaded when first shown.
     icons: HashMap<String, Option<Texture>>,
@@ -5745,6 +5752,10 @@ fn main() {
         Err(_) => lua::attendance(&grf),
     }
     .unwrap_or_default();
+    let packages = std::rc::Rc::new(lua::packages(&grf).unwrap_or_else(|error| {
+        eprintln!("no package boxes: {error}");
+        HashMap::new()
+    }));
     let messages = messages::load(&grf).unwrap_or_else(|error| {
         eprintln!("no client messages: {error}");
         Vec::new()
@@ -5829,6 +5840,7 @@ fn main() {
         enchant_tables,
         styling_shop,
         attendance,
+        packages,
         messages,
         icons: HashMap::new(),
         modifiers: ModifiersState::empty(),

@@ -648,6 +648,11 @@ impl MapSession {
         self.stream.write_all(&encode_card_list(card))
     }
 
+    /// Takes a set out of a package box.
+    pub fn use_package(&mut self, index: u16, account: u32, item: u32, set: u32) -> io::Result<()> {
+        self.stream.write_all(&encode_use_package(index, account, item, set))
+    }
+
     pub fn insert_card(&mut self, card: u16, equip: u16) -> io::Result<()> {
         self.stream.write_all(&encode_insert_card(card, equip))
     }

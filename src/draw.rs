@@ -1776,6 +1776,7 @@ impl App {
             trade_icons.extend(vend::icons(items, store.items.iter().map(|item| (item.item_id, true))));
         }
         trade_icons.extend(game.mail.icons(items));
+        trade_icons.extend(game.package_pick.iter().flat_map(|pick| pick.icons(items)));
         trade_icons.extend(game.pickup_popup.as_ref().map(|popup| popup.icon.clone()).filter(|icon| !icon.is_empty()));
         trade_icons.extend(game.catalog.as_ref().map(|catalog| catalog.icons(items)).unwrap_or_default());
         let said = game.dialog.iter().flat_map(|dialog| npc_say::pictures(&dialog.lines));
@@ -2790,6 +2791,9 @@ impl App {
                 window::tooltip(&mut tooltip, &assets.chrome, font, name, offset(pointer.0, [0.0, -20.0]), [255; 3]);
             }
         }
+        if let Some(pick) = &game.package_pick {
+            pick.draw(shop_layer.esc(W::PackagePick), &assets.chrome, &assets.package, icons, items, messages, font, pointer.0);
+        }
         if game.memorial.frame.open {
             game.memorial.draw(shop_layer.esc(W::Memorial), &assets.chrome, font, messages, pointer.0, memorial::unix_now());
         }
@@ -2909,6 +2913,18 @@ impl App {
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
             shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
             for (row, line) in message_lines(font, question, MESSAGE_WIDTH).into_iter().enumerate() {
+                shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
+            }
+        }
+        if game.package_pick.as_ref().is_some_and(|pick| pick.asked) {
+            let pick = game.package_pick.as_ref().unwrap();
+            let dialog = dialog_position(&assets.message);
+            let name = pick.picked_set().map_or("", |set| set.name.as_str());
+            let question = messages.get(package::QUESTION).map_or(String::new(), |line| line.replacen("%s", name, 1));
+            shop_layer.window().sprites.push((&assets.message, dialog, assets.message.size));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, LEFT_BUTTON), &assets.ok));
+            shop_layer.sprites.push(button_sprite(pointer, offset(dialog, RIGHT_BUTTON), &assets.cancel));
+            for (row, line) in message_lines(font, &question, MESSAGE_WIDTH).into_iter().enumerate() {
                 shop_layer.texts.push((line, offset(dialog, [MESSAGE_TEXT[0], MESSAGE_TEXT[1] + row as f32 * font.line_height()]), TEXT_COLOR));
             }
         }

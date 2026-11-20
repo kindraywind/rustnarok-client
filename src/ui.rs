@@ -53,6 +53,7 @@ pub(crate) mod npc_input;
 pub(crate) mod npc_menu;
 pub(crate) mod npc_say;
 pub(crate) mod options;
+pub(crate) mod package;
 pub(crate) mod party;
 pub(crate) mod pet;
 pub(crate) mod pick_list;

@@ -145,6 +145,10 @@ pub enum WindowId {
     Memorial,
     /// Destroy asks yes or no in the message box.
     MemorialAsked,
+    /// A package box's set pick.
+    PackagePick,
+    /// Its Confirm asks yes or no.
+    PackageAsked,
     /// The game menu Esc opens when nothing is left to close: an entry like any other once it is up.
     GameMenu,
     /// The new-quest notice.
@@ -253,6 +257,8 @@ impl WindowId {
             Self::AwayMessage => "AwayMessage",
             Self::Memorial => "Memorial",
             Self::MemorialAsked => "MemorialAsked",
+            Self::PackagePick => "PackagePick",
+            Self::PackageAsked => "PackageAsked",
             Self::GameMenu => "GameMenu",
             Self::QuestNotice => "QuestNotice",
             Self::ChatSettings => "ChatSettings",
