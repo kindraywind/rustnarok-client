@@ -1279,6 +1279,8 @@ const ZC_ACTION_FAILURE: u16 = 0x013B;
 const ZC_EQUIP_ARROW: u16 = 0x013C;
 const ZC_ACK_REMEMBER_WARPPOINT: u16 = 0x011E;
 const ZC_WARPLIST: u16 = 0x0ABE;
+/// rathena before PACKETVER 20170502 (packets.hpp): the same list at a fixed 68 bytes, no length field, four maps.
+const ZC_WARPLIST_OLD: u16 = 0x011C;
 const ZC_SOUND: u16 = 0x01D3;
 const ZC_PLAY_NPC_BGM: u16 = 0x07FE;
 /// PACKETVER 20220504: the same music, variable length, with a play type before the name.
