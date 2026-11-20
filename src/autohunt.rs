@@ -160,18 +160,30 @@ pub fn state(game: &Game, items: &HashMap<u32, ItemInfo>) -> Value {
         .inventory
         .items
         .iter()
-        .map(|item| json!({"index": item.index, "id": item.id, "amount": item.amount, "worn": item.worn, "name": name(item.id)}))
+        .map(|item| json!({"index": item.index, "id": item.id, "kind": item.kind, "amount": item.amount, "worn": item.worn, "name": name(item.id)}))
         .collect();
     // Skills' units on the ground in sight (a Fire Wall's cells, a monster's burning ground): rathena's UNT_ kind, the cell, and
     // the unit's own range (a ranged single unit like Gravitation Field covers that many cells around its one cell).
     let ground_skills: Vec<Value> =
         game.skill_units.iter().map(|(id, &(kind, cell, range))| json!({"id": id, "kind": kind, "cell": cell, "range": range})).collect();
     let party: Vec<u32> = game.party.as_ref().map(|party| party.members.iter().map(|member| member.info.account).collect()).unwrap_or_default();
+    // Each member as the party window knows them: HP and cell come only while they're on the player's map.
+    let party_members: Vec<Value> = game
+        .party
+        .iter()
+        .flat_map(|party| &party.members)
+        .map(|member| {
+            let info = &member.info;
+            json!({"account": info.account, "character": info.character, "name": info.name, "map": info.map, "online": info.online,
+                   "leader": info.leader, "job": info.job, "level": info.level, "cell": member.cell, "hp": member.hp, "dead": member.dead})
+        })
+        .collect();
     json!({
         "map": game.map,
         "account_id": game.account_id,
         "cell": player.cell,
         "dead": player.dead,
+        "can_revive": game.can_resurrect(),
         "sitting": player.sitting,
         "busy": player.busy(clock),
         "motion": format!("{:?}", game.player_motion(clock)).to_lowercase(),
@@ -193,6 +205,7 @@ pub fn state(game: &Game, items: &HashMap<u32, ItemInfo>) -> Value {
         "icons": icons,
         "inventory": inventory,
         "party": party,
+        "party_members": party_members,
         "news": news,
     })
 }
@@ -238,6 +251,8 @@ pub enum Action {
     Say {
         text: String,
     },
+    /// Dead: stand up where the player fell (Token of Siegfried and the like), as the dead menu's choice does.
+    Revive,
 }
 
 /// `hunt_do`: the actions in order; whether each went (a walk can find no way).
@@ -287,6 +302,7 @@ pub fn perform(game: &mut Game, actions: Vec<Action>) -> Value {
                 say(game, text);
                 true
             }
+            Action::Revive => game.player.dead && game.can_resurrect() && game.session.standing_resurrection().is_ok(),
         })
         .collect();
     json!({"ok": true, "done": done})
@@ -301,6 +317,7 @@ mod tests {
         let action: Action = serde_json::from_str(r#"{"do": "aim_skill", "id": 5, "level": 10, "unit": 7}"#).unwrap();
         assert_eq!(action, Action::AimSkill { id: 5, level: 10, unit: Some(7), cell: None });
         assert!(is_hunt("/hunt 8 poring") && is_hunt("/hunt") && !is_hunt("/hunted"));
+        assert_eq!(serde_json::from_str::<Action>(r#"{"do": "revive"}"#).unwrap(), Action::Revive);
     }
 
     #[test]
