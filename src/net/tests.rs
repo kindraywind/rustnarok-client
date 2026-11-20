@@ -3303,3 +3303,16 @@ fn decodes_the_grade_of_every_added_item() {
         assert_eq!((item.refine, item.grade), (7, 3), "{id:#06x}");
     }
 }
+
+#[test]
+fn emotions_with_a_pack() {
+    // ZC_EMOTION_EXPANSION: id.L pack.W emotion.W; pack 0 is the base emotions.
+    let packet = [0xea, 0x0b, 0xb8, 0xc0, 0x8e, 0x06, 0x00, 0x00, 0x15, 0x00];
+    assert!(matches!(decode_map_packet(&packet), Some(MapEvent::Emotion { id: 0x068e_c0b8, kind: 21 })));
+    let mut other_pack = packet;
+    other_pack[6] = 1;
+    assert!(!matches!(decode_map_packet(&other_pack), Some(MapEvent::Emotion { .. })));
+    // The request: the old one alone before the packs, both after (pack first).
+    assert_eq!(encode_emote(29, PACKETVER_20220406), [0xbf, 0x00, 29]);
+    assert_eq!(encode_emote(29, PACKETVER_20250402), [0xe9, 0x0b, 0, 0, 29, 0, 0xbf, 0x00, 29]);
+}

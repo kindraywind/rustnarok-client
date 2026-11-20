@@ -1034,7 +1034,6 @@
 0x0BE7 unsent: newer than rathena
 0x0BE8 unsent: newer than rathena
 0x0BE9 client
-0x0BEA unsent: newer than rathena
 0x0BEB unsent: newer than rathena
 0x0BEC unsent: newer than rathena
 0x0BED unsent: newer than rathena

@@ -672,9 +672,7 @@ impl MapSession {
     }
 
     pub fn emote(&mut self, kind: u8) -> io::Result<()> {
-        let mut packet = CZ_REQ_EMOTION.to_le_bytes().to_vec();
-        packet.push(kind);
-        self.stream.write_all(&packet)
+        self.stream.write_all(&encode_emote(kind, packetver()))
     }
 
     /// Puts a status point into a stat (STATUS_STR and on).

@@ -24,6 +24,9 @@ pub const PACKETVER_20220406: u32 = 20220406;
 pub const PACKETVER_20250402: u32 = 20250402;
 /// CZ_REQ_TAKEOFF_EQUIP_ALL gains a location and a new id (`0x0BF5`) at this PACKETVER.
 pub const PACKETVER_TAKEOFF_LOCATION: u32 = 20230906;
+/// Emotions gain packs: the client asks with CZ_REQ_EMOTION_EXPANSION (`0x0BE9`) and is shown ZC_EMOTION_EXPANSION
+/// (`0x0BEA`), the PACKETVER rathena first reads `0x0BE9` at.
+pub const PACKETVER_EMOTION_EXPANSION: u32 = 20230705;
 
 /// The server's PACKETVER. `RUSTNAROK_CLIENT_PACKETVER` overrides the default 20220406. One value for the whole
 /// client; choosing it per server is a separate change.
@@ -1605,6 +1608,10 @@ pub fn encode_standing_resurrection() -> [u8; 2] {
 }
 const CZ_REQ_EMOTION: u16 = 0x00BF;
 const ZC_EMOTION: u16 = 0x00C0;
+/// The emotion request with a pack: pack.W emotion.W; the base emotions are pack 0.
+const CZ_REQ_EMOTION_EXPANSION: u16 = 0x0BE9;
+/// Someone's emotion with its pack: id.L pack.W emotion.W (`emotion` numbered like ZC_EMOTION's type).
+const ZC_EMOTION_EXPANSION: u16 = 0x0BEA;
 const CZ_STATUS_CHANGE: u16 = 0x00BB;
 /// Puts trait points into a 4th job's trait (rathena's clif_parse_advanced_status_change).
 const CZ_ADVANCED_STATUS_CHANGE: u16 = 0x0B24;
@@ -2592,6 +2599,20 @@ fn encode_drop_item(index: u16, amount: u16) -> [u8; 6] {
 fn encode_identify(index: Option<u16>) -> [u8; 4] {
     let [[h0, h1], [i0, i1]] = [CZ_REQ_ITEMIDENTIFY, index.unwrap_or(u16::MAX)].map(u16::to_le_bytes);
     [h0, h1, i0, i1]
+}
+
+/// An emotion request. From PACKETVER_EMOTION_EXPANSION, CZ_REQ_EMOTION_EXPANSION with pack 0 and then CZ_REQ_EMOTION
+/// too: rathena reads `0x0BE9` and drops it, and a server that shows emotions with packs may drop `0x00BF`.
+pub(crate) fn encode_emote(kind: u8, packetver: u32) -> Vec<u8> {
+    let mut packet = Vec::new();
+    if packetver >= PACKETVER_EMOTION_EXPANSION {
+        for word in [CZ_REQ_EMOTION_EXPANSION, 0, u16::from(kind)] {
+            packet.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+    packet.extend_from_slice(&CZ_REQ_EMOTION.to_le_bytes());
+    packet.push(kind);
+    packet
 }
 
 /// CZ_SELECT_WARPPOINT: the skill that asked and a map (16 bytes, NUL-padded).
