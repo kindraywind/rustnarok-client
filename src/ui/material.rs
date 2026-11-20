@@ -49,7 +49,7 @@ impl Materials {
         Self { frame, kind, entries: Vec::new() }
     }
 
-    fn height() -> f32 {
+    pub fn height() -> f32 {
         TITLE_HEIGHT + HINT + ROWS as f32 * ROW + FOOTER
     }
 

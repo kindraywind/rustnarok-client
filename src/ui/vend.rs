@@ -637,7 +637,7 @@ impl MyShop {
         Self { frame, name, goods, notify: false, sales: Vec::new(), size, grip: window::Grip::default() }
     }
 
-    fn height(&self) -> f32 {
+    pub fn height(&self) -> f32 {
         self.size.height()
     }
 
@@ -784,7 +784,7 @@ impl MyShop {
 
 /// The Item Sell History (2559): 450 × 152 where the shop was, a row for each sale (the item, how many, the zeny),
 /// and Close.
-const HISTORY_SIZE: [f32; 2] = [450.0, 152.0];
+pub const HISTORY_SIZE: [f32; 2] = [450.0, 152.0];
 const HISTORY_TITLE: usize = 2559;
 const HISTORY_ROW: f32 = 32.0;
 const HISTORY_ROWS: usize = 3;

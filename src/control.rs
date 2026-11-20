@@ -2069,6 +2069,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "chat_last_kind": game.chat.lines.last().map(|(_, _, kind)| kind.name()),
         "chat_locked": game.chat.locked,
         "chat_corner": game.chat.corner_moved(),
+        "cashshop_at": game.cashshop.as_ref().map(|shop| shop.frame.position),
         "chat_input": game.chat.input,
         // The shown tab's log: how many rows it keeps, its first and last, how far it is scrolled back; the whisper
         // name box and its list.
@@ -2498,6 +2499,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("catalog", Fair),
         ("chat", Fair),
         ("chat_corner", Fair),
+        ("cashshop_at", Fair),
         ("chat_focus", Fair),
         ("chat_height", Fair),
         ("chat_input", Fair),

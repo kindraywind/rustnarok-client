@@ -74,7 +74,7 @@ pub enum Hit {
 // ponytail: the window's size and where each piece goes are estimates: the list on the left, the picked one's picture
 // and details on the right, the apply buttons under them; while queued, the wait and the cancel button.
 const WIDTH: f32 = 470.0;
-const HEIGHT: f32 = 330.0;
+pub const HEIGHT: f32 = 330.0;
 const LIST_LEFT: f32 = 8.0;
 const LIST_WIDTH: f32 = 170.0;
 const LIST_TOP: f32 = TITLE_HEIGHT + 28.0;

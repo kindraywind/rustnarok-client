@@ -15,7 +15,7 @@ use crate::{Layer, UI, contains, offset};
 
 // The window is `img_shop_bg.bmp` (723 x 540), title bar included; every place below is from its top-left corner.
 const WIDTH: f32 = 723.0;
-const HEIGHT: f32 = 540.0;
+pub const HEIGHT: f32 = 540.0;
 // ponytail: opens in the middle of a 1024 x 768 screen; the game's own first place wasn't looked up.
 const POSITION: [f32; 2] = [150.0, 114.0];
 const BASE_BUTTON: [f32; 2] = [3.0, 3.0];
