@@ -196,6 +196,28 @@ impl App {
                     }
                 }
             }
+            // A package's Confirm asks first. OK takes the set out of the box and closes the pick; Cancel goes back to it.
+            Scene::Game(game) if on(Esc(W::PackageAsked)) => {
+                let dialog = dialog_position(&assets.message);
+                for (place, yes) in [(LEFT_BUTTON, true), (RIGHT_BUTTON, false)] {
+                    if hit(offset(dialog, place), if yes { &assets.ok } else { &assets.cancel }) {
+                        if yes {
+                            // The game sends the picked row's place in the list (rathena reads it as the group).
+                            if let Some(pick) = &game.package_pick
+                                && let Some(row) = pick.picked
+                            {
+                                let _ = game.session.use_package(pick.index, game.account_id, pick.item, row as u32);
+                            }
+                            game.close_esc(W::PackagePick);
+                        } else {
+                            game.close_esc(W::PackageAsked);
+                            if let Some(pick) = &mut game.package_pick {
+                                pick.asked = false;
+                            }
+                        }
+                    }
+                }
+            }
             // Save point asks first. OK goes; Cancel stays.
             Scene::Game(game) if on(Esc(W::SaveAsked)) => {
                 let dialog = dialog_position(&assets.message);
@@ -743,6 +765,18 @@ impl App {
                     }
                 }
                 Some(memorial::Hit::Destroy) => game.memorial_asked = true,
+                _ => {}
+            },
+            // The package pick: Close (either), or Confirm with a set picked, which asks first.
+            // ponytail: the game's checks when the answer is yes (trade open, busy, hidden, …) aren't made.
+            Scene::Game(game) if on(Esc(W::PackagePick)) => match game.package_pick.as_ref().and_then(|pick| pick.hit(cursor)) {
+                Some(package::Hit::Close) => game.close_esc(W::PackagePick),
+                Some(package::Hit::Confirm) => {
+                    if let Some(pick) = game.package_pick.as_mut().filter(|pick| pick.picked.is_some()) {
+                        pick.asked = true;
+                        escape::touch(&mut game.esc_order, W::PackageAsked);
+                    }
+                }
                 _ => {}
             },
             // The queue window: a battleground picked, applying, cancelling.
@@ -2057,6 +2091,10 @@ impl App {
             if let Some(log) = &mut game.storage_log {
                 log.drag_to(self.cursor);
             }
+            if let Some(pick) = &mut game.package_pick {
+                pick.frame.drag_to(self.cursor, package::SIZE[1]);
+                pick.drag_thumb(self.cursor[1]);
+            }
             if let Some(choice) = &mut game.cart_choice {
                 let height = choice.size()[1];
                 choice.frame.drag_to(self.cursor, height);
@@ -2129,6 +2167,14 @@ impl App {
         if let (Scene::Game(game), ElementState::Pressed) = (&mut self.scene, state)
             && let Some(shown) = game.reform.as_ref().and_then(|window| window.shown_at(self.cursor, &game.inventory.items, &self.items))
         {
+            game.show_item(shown);
+            return;
+        }
+        // A right press on an item's icon in the package pick describes it.
+        if let (Scene::Game(game), ElementState::Pressed) = (&mut self.scene, state)
+            && let Some(item) = game.package_pick.as_ref().and_then(|pick| pick.item_at(self.cursor))
+        {
+            let shown = iteminfo::Shown { grade: item.grade, ..iteminfo::Shown::of_link(item.item, item.refine, [0; 4], false, &self.items) };
             game.show_item(shown);
             return;
         }
@@ -2593,6 +2639,9 @@ impl App {
                     game.dressroom.as_mut().unwrap().scroll_by(rows, &game.dress_lists)
                 }
                 _ if on_synthesis => game.synthesis.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
+                _ if game.package_pick.as_ref().is_some_and(|pick| pick.hit(self.cursor).is_some()) => {
+                    game.package_pick.as_mut().unwrap().wheel(self.cursor, rows)
+                }
                 _ if on_upgrade => game.upgrade.as_mut().unwrap().scroll_by(rows, &game.inventory.items),
                 _ if on_npc_menu => game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()).unwrap().wheel(rows),
                 _ if game.dialog.as_ref().is_some_and(Dialog::say_window) && game.say.contains(self.cursor) => {
@@ -2936,7 +2985,8 @@ impl App {
                     | game.pick.as_mut().is_some_and(|(list, _)| list.drop_drag())
                     | game.merge.as_mut().is_some_and(merge::Merge::drop_drag)
                     | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag)
-                    | game.cart_choice.as_mut().is_some_and(|choice| choice.frame.drop_drag());
+                    | game.cart_choice.as_mut().is_some_and(|choice| choice.frame.drop_drag())
+                    | game.package_pick.as_mut().is_some_and(|pick| pick.frame.drop_drag() | pick.thumb.stop());
                 // A slider let go keeps its volume for next time.
                 let slid = game.settings_window.as_mut().is_some_and(game_settings::GameSettings::drop_drag);
                 if slid {
@@ -3247,6 +3297,18 @@ impl App {
         {
             if game.memorial.hit(cursor) == Some(memorial::Hit::Title(TitleHit::Title)) {
                 game.memorial.frame.start_drag(cursor);
+            }
+            return;
+        }
+        // The package pick moves by any spot that's no control; a press picks a set or works a list's bar.
+        if let Scene::Game(game) = &mut self.scene
+            && top == Some(Esc(W::PackagePick))
+            && let Some(pick) = &mut game.package_pick
+        {
+            if matches!(pick.hit(cursor), Some(package::Hit::Title | package::Hit::Window)) {
+                pick.frame.start_drag(cursor);
+            } else {
+                pick.press(cursor);
             }
             return;
         }

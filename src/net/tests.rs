@@ -2457,6 +2457,7 @@ fn identifies_with_a_magnifier() {
     assert_eq!(encode_identify(None), [0x78, 0x01, 0xFF, 0xFF]);
     assert_eq!(encode_card_list(5), [0x7A, 0x01, 5, 0]);
     assert_eq!(encode_insert_card(5, 9), [0x7C, 0x01, 5, 0, 9, 0]);
+    assert_eq!(encode_use_package(8, 0x0133_070E, 57913, 2), [0xAF, 0x0B, 8, 0, 0x0E, 0x07, 0x33, 0x01, 0x39, 0xE2, 0, 0, 2, 0, 0, 0]);
     let list = [0x7B, 0x01, 8, 0, 9, 0, 12, 0];
     let Some(MapEvent::CardList(indexes)) = decode_map_packet(&list) else { panic!() };
     assert_eq!(indexes, [9, 12]);

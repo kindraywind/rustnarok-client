@@ -744,6 +744,84 @@ fn attendance_over(base: Attendance, source: Vec<u8>) -> io::Result<Attendance> 
     Ok(attendance)
 }
 
+/// One item a package's set gives.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PackageItem {
+    pub item: u32,
+    pub count: u32,
+    /// Rental hours, 0 for a lasting item.
+    pub hours: u32,
+    pub refine: u8,
+    pub random_option: bool,
+    pub grade: u8,
+}
+
+/// A set a package box lets the player pick: its number (what CZ_USE_PACKAGEITEM sends), name and items.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PackageSet {
+    pub number: u32,
+    pub name: String,
+    pub items: Vec<PackageItem>,
+}
+
+/// Each package box's sets, in set-number order.
+pub type Packages = HashMap<u32, Vec<PackageSet>>;
+
+const SELECT_PACKAGE: &str = "data\\luafiles514\\lua files\\selectpackage\\selectpackageitem_cln.lub";
+
+/// The package boxes (the data may have none).
+pub fn packages(grf: &Grf) -> io::Result<Packages> {
+    package_table(grf.read(SELECT_PACKAGE)?)
+}
+
+/// Runs the file's `LoadTable()` as the game does: `AddTab(box, set, name, _)` names a set and
+/// `AddItem(box, set, slot, item, count, hours, refine, randomOption, grade, type)` puts an item in it.
+pub fn package_table(source: Vec<u8>) -> io::Result<Packages> {
+    let lua = new_lua()?;
+    let boxes = std::rc::Rc::new(std::cell::RefCell::new(HashMap::<u32, BTreeMap<u32, PackageSet>>::new()));
+    let set = |boxes: &mut HashMap<u32, BTreeMap<u32, PackageSet>>, id: f64, number: f64| -> PackageSet {
+        boxes.entry(id as u32).or_default().remove(&(number as u32)).unwrap_or(PackageSet { number: number as u32, name: String::new(), items: Vec::new() })
+    };
+    let (named, filled) = (boxes.clone(), boxes.clone());
+    let add_tab = lua
+        .create_function(move |_, (id, number, name, _): (f64, f64, mlua::LuaString, mlua::Value)| {
+            let mut boxes = named.borrow_mut();
+            let mut entry = set(&mut boxes, id, number);
+            entry.name = decode(&name);
+            boxes.entry(id as u32).or_default().insert(number as u32, entry);
+            Ok(true)
+        })
+        .map_err(lua_error)?;
+    #[allow(clippy::type_complexity)]
+    let add_item = lua
+        .create_function(move |_, (id, number, _slot, item, count, hours, refine, random_option, grade): (f64, f64, f64, f64, f64, f64, f64, bool, f64)| {
+            let mut boxes = filled.borrow_mut();
+            let mut entry = set(&mut boxes, id, number);
+            entry.items.push(PackageItem {
+                item: item as u32,
+                count: count as u32,
+                hours: hours as u32,
+                refine: refine as u8,
+                random_option,
+                grade: grade as u8,
+            });
+            boxes.entry(id as u32).or_default().insert(number as u32, entry);
+            Ok(true)
+        })
+        .map_err(lua_error)?;
+    lua.globals().set("AddTab", add_tab).map_err(lua_error)?;
+    lua.globals().set("AddItem", add_item).map_err(lua_error)?;
+    exec_bytes(&lua, SELECT_PACKAGE, source)?;
+    let load: mlua::Function = lua.globals().get("LoadTable").map_err(lua_error)?;
+    let (done, _): (bool, mlua::Value) = load.call(()).map_err(lua_error)?;
+    if !done {
+        return Err(io::Error::other(format!("{SELECT_PACKAGE}: LoadTable failed")));
+    }
+    drop(lua);
+    let boxes = std::rc::Rc::try_unwrap(boxes).map_err(|_| io::Error::other("package table still borrowed"))?.into_inner();
+    Ok(boxes.into_iter().map(|(id, sets)| (id, sets.into_values().collect())).collect())
+}
+
 /// An achievement as the client's table (achievements.lub) describes it.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct AchievementInfo {
@@ -2345,6 +2423,26 @@ mod tests {
         assert_eq!((items[&501].name.as_str(), items[&50118].name.as_str(), items[&50118].resource.as_str()), ("Red Potion", "Bubble Gum", "gum"));
         // A file it can't find fails the run (the plain table is used then).
         assert!(super::run_loader(&read, "system\\nothing.lua").is_err());
+    }
+
+    #[test]
+    fn reads_the_package_boxes() {
+        // kRO's shape: the sets added out of order, a set's items after its name.
+        let source = "function LoadTable()
+            if not AddTab(105830, 2, \"Gatling\", 1) then return false end
+            if not AddItem(105830, 2, 0, 400393, 1, 0, 12, false, 4, 4) then return false end
+            if not AddTab(105830, 0, \"Grenade\", 1) then return false end
+            if not AddItem(105830, 0, 0, 400391, 1, 0, 12, false, 4, 4) then return false end
+            if not AddItem(105830, 0, 1, 12210, 3, 24, 0, true, 0, 2) then return false end
+            return true, \"good\"
+        end";
+        let boxes = super::package_table(source.as_bytes().to_vec()).unwrap();
+        let sets = &boxes[&105830];
+        assert_eq!(sets.iter().map(|set| (set.number, set.name.as_str(), set.items.len())).collect::<Vec<_>>(), [(0, "Grenade", 2), (2, "Gatling", 1)]);
+        let item = super::PackageItem { item: 12210, count: 3, hours: 24, refine: 0, random_option: true, grade: 0 };
+        assert_eq!(sets[0].items[1], item);
+        assert_eq!((sets[0].items[0].refine, sets[0].items[0].grade), (12, 4));
+        assert!(super::package_table(b"function LoadTable() return false end".to_vec()).is_err());
     }
 
     #[test]

@@ -798,6 +798,7 @@ impl Game {
             self.escape.as_ref().is_some_and(|menu| menu.hit(cursor, self.can_resurrect()).is_some()).then_some(Top::GameMenu),
             esc(SaveAsked, asked(self.save_asked)),
             esc(MemorialAsked, asked(self.memorial_asked)),
+            esc(PackageAsked, asked(self.package_pick.as_ref().is_some_and(|pick| pick.asked))),
             esc(SkillApplyAsked, asked(self.apply_asked)),
             esc(CardPicture, self.card_view.as_ref().is_some_and(|view| view.hit(cursor).is_some())),
             esc(CardInfo, self.card_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
@@ -812,6 +813,7 @@ impl Game {
             self.storage_log.as_ref().is_some_and(|log| log.covers(cursor)).then_some(Top::GuildStorageLog),
             self.cart_choice.as_ref().is_some_and(|choice| choice.hit(cursor).is_some()).then_some(Top::CartChoice),
             esc(Memorial, self.memorial.frame.open && self.memorial.hit(cursor).is_some()),
+            esc(PackagePick, self.package_pick.as_ref().is_some_and(|pick| pick.hit(cursor).is_some())),
             esc(FriendAsked, asked(self.friend_asked.is_some())),
             // One box, the first of these that's asked.
             esc(DismissAsked, asked(self.dismiss_asked)),
@@ -2965,6 +2967,7 @@ impl Game {
     /// F11's basic close: the player's own windows and the hotbar. The storage stays (its lists close), and so does a
     /// talk with an NPC.
     pub(crate) fn close_windows(&mut self) {
+        self.package_pick = None;
         // The mailbox is closed the way its close button closes it: the server is told.
         if self.mail.list.frame.open {
             let _ = self.session.close_mailbox();
@@ -3624,6 +3627,8 @@ impl Game {
         push(BattleQueue, self.queue_window.frame.open);
         push(Memorial, self.memorial.frame.open);
         push(MemorialAsked, self.memorial_asked);
+        push(PackagePick, self.package_pick.is_some());
+        push(PackageAsked, self.package_pick.as_ref().is_some_and(|pick| pick.asked));
         push(AdoptAsked, self.adopt_asked.is_some());
         push(QueueAsked, self.queue_asked.is_some());
         // Last, so it is the newest of what shows in one frame: dying opens it over the windows already up.
@@ -3726,6 +3731,7 @@ impl Game {
             || self.queue_asked.is_some()
             || self.booking_asked.is_some()
             || self.memorial_asked
+            || self.package_pick.as_ref().is_some_and(|pick| pick.asked)
     }
 
     /// The Apply question's answer: yes sends each pending level, what it needs first; no keeps them pending.
@@ -3750,6 +3756,11 @@ impl Game {
         }
         if self.memorial_asked {
             self.memorial_asked = false;
+            return;
+        }
+        if let Some(pick) = self.package_pick.as_mut().filter(|pick| pick.asked) {
+            pick.asked = false;
+            escape::remove(&mut self.esc_order, escape::WindowId::PackageAsked);
             return;
         }
         if self.apply_asked {
@@ -3977,6 +3988,15 @@ impl Game {
                 escape::remove(&mut self.esc_order, escape::WindowId::MemorialAsked);
             }
             MemorialAsked => self.memorial_asked = false,
+            PackagePick => {
+                self.package_pick = None;
+                escape::remove(&mut self.esc_order, escape::WindowId::PackageAsked);
+            }
+            PackageAsked => {
+                if let Some(pick) = &mut self.package_pick {
+                    pick.asked = false;
+                }
+            }
             AdoptAsked => {
                 if let Some((parent, partner, _, _)) = self.adopt_asked.take() {
                     let _ = self.session.answer_adoption(parent, partner, false);
@@ -4058,6 +4078,13 @@ impl Game {
             {
                 let _ = self.session.refine_select(index);
             }
+            return;
+        }
+        // A package box the data lists opens its set pick (an open one closes first) instead of being used.
+        if let Some(sets) = self.packages.get(&item.id) {
+            let pick = package::PackagePick::new(index, item.id, sets.clone(), screen());
+            self.package_pick = Some(pick);
+            escape::touch(&mut self.esc_order, escape::WindowId::PackagePick);
             return;
         }
         // ponytail: a voucher asks to grow the inventory; how the real client lets the player ask isn't known.

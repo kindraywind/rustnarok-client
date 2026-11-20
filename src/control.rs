@@ -1235,7 +1235,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         || game.booking_asked.is_some()
         || game.adopt_asked.is_some()
         || game.queue_asked.is_some()
-        || game.memorial_asked;
+        || game.memorial_asked
+        || game.package_pick.as_ref().is_some_and(|pick| pick.asked);
     let question_buttons = app.assets.as_ref().filter(|_| question).into_iter().flat_map(|assets| {
         let dialog = crate::dialog_position(&assets.message);
         [("ok", crate::LEFT_BUTTON, &assets.ok), ("cancel", crate::RIGHT_BUTTON, &assets.cancel)].map(|(name, place, button)| {
@@ -1438,6 +1439,12 @@ fn game_state(app: &App, game: &Game) -> Value {
                 .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(game.memorial.button_boxes().into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
+        .chain(
+            game.package_pick
+                .iter()
+                .flat_map(crate::package::PackagePick::button_boxes)
+                .map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
+        )
         .chain(game.storage_log.iter().flat_map(crate::storage_log::Log::button_boxes).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
             game.cart_choice
@@ -2302,6 +2309,13 @@ fn game_state(app: &App, game: &Game) -> Value {
         };
         json!({"kinds": choice.kinds, "answer": answer, "position": choice.frame.position})
     });
+    // The package pick: null when shut, else the box, its sets' names, the picked one and its items, and the question.
+    state["package_pick"] = game.package_pick.as_ref().map_or(Value::Null, |pick| {
+        let sets: Vec<&str> = pick.sets.iter().map(|set| set.name.as_str()).collect();
+        let items: Vec<Value> =
+            pick.items().iter().map(|item| json!({"item": item.item, "count": item.count, "hours": item.hours, "refine": item.refine})).collect();
+        json!({"item": pick.item, "sets": sets, "picked": pick.picked, "items": items, "asked": pick.asked, "position": pick.frame.position})
+    });
     // The category windows that are on (a bit each, Use first) and those open now.
     state["storage_mask"] = game.storage.mask.into();
     // The main window's list in its order, and the Search window's, by item id; what's typed in the box.
@@ -2615,6 +2629,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("storage_loading", Fair),
         ("captcha", Fair),
         ("cart_choice", Fair),
+        ("package_pick", Fair),
         ("storage_log", Fair),
         ("storage_mask", Fair),
         ("storage_rows", Fair),

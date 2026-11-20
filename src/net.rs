@@ -1041,6 +1041,7 @@ const ZC_EXTEND_BODYITEM_SIZE: u16 = 0x0B18;
 const ZC_ITEM_THROW_ACK: u16 = 0x00AF;
 const ZC_DELETE_ITEM_FROM_BODY: u16 = 0x07FA;
 const CZ_USE_ITEM: u16 = 0x0439;
+const CZ_USE_PACKAGEITEM: u16 = 0x0BAF;
 const ZC_USE_ITEM_ACK: u16 = 0x01C8;
 const ZC_SPRITE_CHANGE: u16 = 0x01D7;
 const ZC_NPCSPRITE_CHANGE: u16 = 0x01B0;
@@ -2597,6 +2598,12 @@ fn encode_select_warp_point(skill: u16, map: &str) -> [u8; 20] {
 /// CZ_REQ_ITEMCOMPOSITION_LIST: a card's inventory index, asking what it can go into.
 fn encode_card_list(card: u16) -> [u8; 4] {
     encode_index(CZ_REQ_ITEMCOMPOSITION_LIST, card)
+}
+
+/// The set picked from a package box (rathena's clif_parse_itempackage_select): the box's inventory index, the
+/// account, the box's item ID and the set's number.
+fn encode_use_package(index: u16, account: u32, item: u32, set: u32) -> Vec<u8> {
+    [&CZ_USE_PACKAGEITEM.to_le_bytes()[..], &index.to_le_bytes(), &account.to_le_bytes(), &item.to_le_bytes(), &set.to_le_bytes()].concat()
 }
 
 /// A header and an inventory index.
