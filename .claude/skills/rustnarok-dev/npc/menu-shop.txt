@@ -1,0 +1,10 @@
+// A shop opened from an NPC's menu: the talk stays up behind the shop (`end`, no `close`). Loaded and unloaded by
+// scenarios/npc-shop-amount.json. It stands on the floor south of the player, clear of the shop's windows.
+-	shop	MenuShopGoods	-1,602:-1,611:-1
+iz_int01,20,23,4	script	Menu Shopkeeper	4_M_01,{
+	mes "[Menu Shopkeeper]";
+	mes "What will it be?";
+	if (select("Buy:Nothing") == 1)
+		callshop "MenuShopGoods", 1;
+	end;
+}
