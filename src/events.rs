@@ -390,6 +390,7 @@ impl App {
                     locks: Vec::new(),
                     speech: HashMap::new(),
                     status_icons: Vec::new(),
+                    quiet_statuses: Vec::new(),
                     status_tip: None,
                     cooldowns: skills::Cooldowns::default(),
                     talkie_text: None,
@@ -4108,11 +4109,14 @@ impl App {
                 }
                 if id == game.account_id {
                     game.status_icons.retain(|(icon, ..)| *icon != kind);
+                    game.quiet_statuses.retain(|(icon, ..)| *icon != kind);
+                    let now = Instant::now();
+                    let ends = (left_ms > 0).then(|| now + Duration::from_millis(u64::from(left_ms)));
                     // Clairvoyance has no icon in the built-in table; it is still kept so hidden units can be silhouettes.
                     if on && (self.status_icon_files.contains_key(&kind) || kind == actor::CLAIRVOYANCE) {
-                        let now = Instant::now();
-                        let ends = (left_ms > 0).then(|| now + Duration::from_millis(u64::from(left_ms)));
                         game.status_icons.push((kind, now, ends));
+                    } else if on {
+                        game.quiet_statuses.push((kind, now, ends));
                     }
                 }
             }
