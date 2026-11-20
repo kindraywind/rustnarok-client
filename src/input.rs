@@ -1942,13 +1942,12 @@ impl App {
             if game.right_press.is_some_and(|(from, _)| moved_off(from, cursor)) {
                 game.right_moved = true;
             }
-            let (inventory_height, equipment_height, info_height) = (game.inventory.height(), game.equipment.height(), game.basic_info.height());
-            game.basic_info.frame.drag_to(self.cursor, info_height);
+            // Every window held by its frame follows the pointer (`Game::frames`).
+            for framed in game.frames() {
+                framed.frame.drag_to(cursor, framed.height);
+            }
+            // The windows that keep their own place or more than a frame, the corner grips and the scroll thumbs.
             game.chat.drag_to(self.cursor);
-            let hotkeys_height = game.hotkeys.height();
-            game.hotkeys.frame.drag_to(self.cursor, hotkeys_height);
-            game.hotkeys.quick_window.drag_to(self.cursor, hotkeys::QUICK_SIZE[1]);
-            game.inventory.frame.drag_to(self.cursor, inventory_height);
             game.inventory.resize_to(self.cursor);
             game.cart.resize_to(self.cursor);
             game.storage.resize_to(self.cursor);
@@ -1956,8 +1955,6 @@ impl App {
             game.party_window.resize_to(self.cursor);
             for category in &mut game.storage.categories {
                 category.resize_to(self.cursor);
-                let height = category.height();
-                category.frame.drag_to(self.cursor, height);
             }
             game.skill_window.resize_to(self.cursor);
             if let Some(shop) = &mut game.my_shop
@@ -1975,58 +1972,18 @@ impl App {
             {
                 game.vend_size = setup.size;
             }
-            game.equipment.frame.drag_to(self.cursor, equipment_height);
-            let skills_height = game.skill_window.height();
-            game.skill_window.frame.drag_to(self.cursor, skills_height);
-            let storage_height = game.storage.height();
-            game.storage.frame.drag_to(self.cursor, storage_height);
-            if let Some(trade) = &mut game.trade {
-                let height = trade.height();
-                trade.frame.drag_to(self.cursor, height);
-            }
             if let Some(shop) = &mut game.shop {
                 shop.drag_to(self.cursor);
             }
-            if game.deal_choice.is_some() {
-                game.deal_frame.drag_to(self.cursor, shop::DEAL_SIZE[1]);
-            }
-            let resurrect = game.can_resurrect();
-            if let Some(menu) = &mut game.escape {
-                let height = menu.height(resurrect);
-                menu.frame.drag_to(self.cursor, height);
-            }
-            let party_height = game.party_window.height();
-            game.party_window.frame.drag_to(self.cursor, party_height);
             game.member_windows.drag_to(self.cursor);
-            let status_height = game.status_height;
-            game.status_window.frame.drag_to(self.cursor, status_height);
-            let guild_height = game.guild_window.height();
-            game.guild_window.frame.drag_to(self.cursor, guild_height);
-            let clan_height = game.clan_window.height();
-            game.clan_window.frame.drag_to(self.cursor, clan_height);
-            let cart_height = game.cart.height();
-            game.cart.frame.drag_to(self.cursor, cart_height);
-            game.pet_window.frame.drag_to(self.cursor, pet::PetWindow::height());
-            game.mercenary_window.frame.drag_to(self.cursor, mercenary::Window::height());
             game.mercenary_skill_list.drag_to(self.cursor, game.mercenary_skills.len());
-            game.homunculus_window.frame.drag_to(self.cursor, homunculus::Window::height());
             game.homunculus_skill_list.drag_to(self.cursor, game.homunculus_skills.len());
             game.talks.drag_to(self.cursor);
             if let Some((list, _)) = &mut game.pick {
                 list.drag_to(self.cursor);
             }
-            if let Some(forge) = &mut game.forge {
-                forge.frame.drag_to(self.cursor, forge::HEIGHT);
-            }
             if let Some(merge) = &mut game.merge {
                 merge.drag_to(self.cursor);
-            }
-            if let Some(setup) = &mut game.friend_setup {
-                setup.frame.drag_to(self.cursor, whisper::FriendSetup::height());
-            }
-            if let Some(list) = &mut game.block_list {
-                let height = list.height();
-                list.frame.drag_to(self.cursor, height);
             }
             if let Some(window) = &mut game.navi_window {
                 window.drag_to(self.cursor);
@@ -2040,73 +1997,28 @@ impl App {
             if let Some(window) = &mut game.card_window {
                 window.drag_to(self.cursor);
             }
-            if let Some(room) = &mut game.room {
-                let height = room.height();
-                room.frame.drag_to(self.cursor, height);
-            }
             game.mail.drag_to(self.cursor);
-            game.quest_window.frame.drag_to(self.cursor, 466.0);
-            game.quest_window.detail.drag_to(self.cursor, quest::DETAIL_HEIGHT);
-            game.minimap_window.frame.drag_to(self.cursor, minimap_window::HEIGHT);
-            game.say.frame.drag_to(self.cursor, game.say.size()[1]);
             game.say.drag_thumb(self.cursor[1]);
-            if let Some(cutin) = &mut game.cutin {
-                let height = cutin.height();
-                cutin.frame.drag_to(self.cursor, height);
-            }
             if let Some(menu) = game.dialog.as_mut().and_then(|dialog| dialog.menu.as_mut()) {
                 let height = menu.size()[1];
                 menu.frame_mut(&mut game.npc_menu).drag_to(self.cursor, height);
                 let top = menu.frame(&game.npc_menu).position[1];
                 menu.drag_thumb(self.cursor[1] - top);
             }
-            if let Some(input) = game.dialog.as_mut().and_then(|dialog| dialog.input.as_mut()) {
-                let height = input.height();
-                input.frame.drag_to(self.cursor, height);
-            }
-            game.achievement_window.frame.drag_to(self.cursor, achievement::HEIGHT);
-            for (_, frame, height) in game.plain_frames() {
-                frame.drag_to(self.cursor, height);
-            }
-            if let Some(window) = &mut game.refine {
-                window.frame.drag_to(self.cursor, refine::SIZE[1]);
-            }
-            if let Some(window) = &mut game.grade {
-                window.frame.drag_to(self.cursor, grade::HEIGHT);
-            }
             for window in [&mut game.synthesis, &mut game.upgrade].into_iter().flatten() {
-                window.frame.drag_to(self.cursor, laphine::SIZE[1]);
                 window.drag_thumb(self.cursor[1], &game.inventory.items);
             }
-            if let Some(room) = &mut game.dressroom {
-                room.frame.drag_to(self.cursor, dressroom::SIZE[1]);
-            }
             if let Some(window) = &mut game.reform {
-                window.frame.drag_to(self.cursor, reform::SIZE[1]);
                 window.drag_thumb(self.cursor[1]);
             }
             if let Some(window) = &mut game.enchant {
-                window.frame.drag_to(self.cursor, enchant::HEIGHT);
                 window.drag_thumb(self.cursor, &game.inventory.items);
             }
-            if let Some(window) = &mut game.monster_window {
-                window.frame.drag_to(self.cursor, monster_info::MonsterWindow::height());
-            }
-            let memorial_height = game.memorial.height();
-            game.memorial.frame.drag_to(self.cursor, memorial_height);
             if let Some(log) = &mut game.storage_log {
                 log.drag_to(self.cursor);
             }
             if let Some(pick) = &mut game.package_pick {
-                pick.frame.drag_to(self.cursor, package::SIZE[1]);
                 pick.drag_thumb(self.cursor[1]);
-            }
-            if let Some(choice) = &mut game.cart_choice {
-                let height = choice.size()[1];
-                choice.frame.drag_to(self.cursor, height);
-            }
-            if let Some(window) = &mut game.stylist {
-                window.frame.drag_to(self.cursor, stylist::HEIGHT);
             }
             if let Some(window) = &mut game.settings_window
                 && window.drag_to(self.cursor, &mut self.sound)
@@ -2966,63 +2878,41 @@ impl App {
                     }
                     _ => {}
                 }
-                let trade_moved = game.chat.drop_drag()
-                    | game.trade.as_mut().is_some_and(|trade| trade.frame.drop_drag())
-                    | game.shop.as_mut().is_some_and(|shop| shop.frames.iter_mut().fold(false, |moved, frame| frame.drop_drag() | moved))
-                    | game.room.as_mut().is_some_and(|room| room.frame.drop_drag())
-                    | game.card_view.as_mut().is_some_and(|view| view.drop_drag())
-                    | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
-                    | game.card_window.as_mut().is_some_and(|window| window.drop_drag())
-                    | game.mail.drop_drag()
-                    | game.quest_window.frame.drop_drag()
-                    | game.quest_window.detail.drop_drag()
-                    | game.achievement_window.frame.drop_drag()
-                    | game.synthesis.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
-                    | game.upgrade.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
-                    | game.reform.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
-                    | game.dressroom.as_mut().is_some_and(|room| room.frame.drop_drag())
-                    | game.refine.as_mut().is_some_and(|window| window.frame.drop_drag())
-                    | game.grade.as_mut().is_some_and(|window| window.frame.drop_drag())
-                    | game.enchant.as_mut().is_some_and(|window| window.frame.drop_drag() | window.drop_thumb())
-                    | game.monster_window.as_mut().is_some_and(|window| window.frame.drop_drag())
-                    | game.stylist.as_mut().is_some_and(|window| window.frame.drop_drag())
-                    | game.memorial.frame.drop_drag()
-                    | game.plain_frames().into_iter().fold(false, |moved, (_, frame, _)| frame.drop_drag() | moved)
-                    | game.forge.as_mut().is_some_and(|forge| forge.frame.drop_drag())
-                    | game.pick.as_mut().is_some_and(|(list, _)| list.drop_drag())
-                    | game.merge.as_mut().is_some_and(merge::Merge::drop_drag)
-                    | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag)
-                    | game.cart_choice.as_mut().is_some_and(|choice| choice.frame.drop_drag())
-                    | game.package_pick.as_mut().is_some_and(|pick| pick.frame.drop_drag() | pick.thumb.stop());
+                // Every window held by its frame is let go (`Game::frames`).
+                let frames_moved = game.frames().into_iter().fold(false, |moved, framed| framed.frame.drop_drag() | moved);
                 // A slider let go keeps its volume for next time.
                 let slid = game.settings_window.as_mut().is_some_and(game_settings::GameSettings::drop_drag);
                 if slid {
                     self.sound.save();
                 }
-                let option_windows = game.shortcuts_window.as_mut().is_some_and(shortcut_window::ShortcutWindow::drop_drag);
                 let outside = game.party_window.hit(self.cursor, game.party.as_ref(), &game.friends).is_none();
                 let member_held = game.member_windows.release(outside, &party::Grid::new(screen()));
                 // Let go outside the used cells: it went back, and the box says why.
                 if std::mem::take(&mut game.member_windows.last_row) {
                     game.question_box = Some(BoxQuestion::LastRow);
                 }
-                let windows = trade_moved
+                // The windows that keep their own place or more than a frame, the corner grips and the scroll thumbs.
+                let windows = frames_moved
                     | slid
-                    | option_windows
                     | member_held
-                    | game.party_window.frame.drop_drag()
-                    | game.status_window.frame.drop_drag()
-                    | game.guild_window.frame.drop_drag()
-                    | game.clan_window.frame.drop_drag()
-                    | game.cart.frame.drop_drag()
-                    | game.pet_window.frame.drop_drag()
-                    | game.mercenary_window.frame.drop_drag()
+                    | game.chat.drop_drag()
+                    | game.shop.as_mut().is_some_and(|shop| shop.frames.iter_mut().fold(false, |moved, frame| frame.drop_drag() | moved))
+                    | game.card_view.as_mut().is_some_and(|view| view.drop_drag())
+                    | game.item_window.as_mut().is_some_and(|window| window.drop_drag())
+                    | game.card_window.as_mut().is_some_and(|window| window.drop_drag())
+                    | game.mail.drop_drag()
+                    | game.synthesis.as_mut().is_some_and(|window| window.drop_thumb())
+                    | game.upgrade.as_mut().is_some_and(|window| window.drop_thumb())
+                    | game.reform.as_mut().is_some_and(|window| window.drop_thumb())
+                    | game.enchant.as_mut().is_some_and(|window| window.drop_thumb())
+                    | game.pick.as_mut().is_some_and(|(list, _)| list.drop_drag())
+                    | game.merge.as_mut().is_some_and(merge::Merge::drop_drag)
+                    | game.storage_log.as_mut().is_some_and(storage_log::Log::drop_drag)
+                    | game.package_pick.as_mut().is_some_and(|pick| pick.thumb.stop())
+                    | game.shortcuts_window.as_mut().is_some_and(shortcut_window::ShortcutWindow::drop_drag)
                     | game.mercenary_skill_list.drop_drag()
-                    | game.homunculus_window.frame.drop_drag()
                     | game.homunculus_skill_list.drop_drag()
-                    | game.storage.frame.drop_drag()
-                    | game.storage.categories.iter_mut().fold(false, |any, category| category.frame.drop_drag() | category.stop_resize() | any)
-                    | game.inventory.frame.drop_drag()
+                    | game.storage.categories.iter_mut().fold(false, |any, category| category.stop_resize() | any)
                     | game.inventory.stop_resize()
                     | game.cart.stop_resize()
                     | game.storage.stop_resize()
@@ -3033,28 +2923,15 @@ impl App {
                     | game.room.as_mut().is_some_and(chatroom::Room::stop_resize)
                     | game.vend_setup.as_mut().is_some_and(vend::Setup::stop_resize)
                     | game.shop.as_mut().is_some_and(shop::Shop::stop_resize)
-                    | game.equipment.frame.drop_drag()
-                    | game.basic_info.frame.drop_drag()
-                    | game.hotkeys.frame.drop_drag()
-                    | game.hotkeys.quick_window.drop_drag()
-                    | game.skill_window.frame.drop_drag()
                     | game.talks.drop_drag()
-                    | game.friend_setup.as_mut().is_some_and(|setup| setup.frame.drop_drag())
-                    | game.block_list.as_mut().is_some_and(|list| list.frame.drop_drag())
                     | game.navi_window.as_mut().is_some_and(navi_window::Window::drop_drag)
-                    | game.minimap_window.frame.drop_drag()
-                    | game.say.frame.drop_drag()
                     | game.say.thumb.stop()
-                    | game.dialog.as_mut().and_then(|dialog| dialog.input.as_mut()).is_some_and(|input| input.frame.drop_drag())
-                    | game.cutin.as_mut().is_some_and(|cutin| cutin.frame.drop_drag())
                     | game.npc_menu.drop_drag()
                     | game
                         .dialog
                         .as_mut()
                         .and_then(|dialog| dialog.menu.as_mut())
-                        .is_some_and(|menu| menu.frame_mut(&mut game.npc_menu).drop_drag() | menu.thumb.stop())
-                    | (game.deal_choice.is_some() && game.deal_frame.drop_drag())
-                    | game.escape.as_mut().is_some_and(|menu| menu.frame.drop_drag());
+                        .is_some_and(|menu| menu.frame_mut(&mut game.npc_menu).drop_drag() | menu.thumb.stop());
                 windows || item.is_some_and(|(_, _, moved)| moved) || std::mem::take(&mut game.drag_cancelled)
             }
             _ => false,
@@ -3263,11 +3140,11 @@ impl App {
             (Scene::Game(game), Some(assets)) => game.top_at(cursor, assets.message.size),
             _ => None,
         };
-        // The windows that only move (`plain_frames`): a press on the title bar of the one on top grabs it.
+        // A window grabbed by its title bar and nothing else (`Grab::Title` in `Game::frames`): the one on top.
         if let Scene::Game(game) = &mut self.scene {
-            for (key, frame, height) in game.plain_frames() {
-                if top == Some(key) && frame.local(cursor, height).is_some_and(|local| frame.title_hit(local) == Some(TitleHit::Title)) {
-                    frame.start_drag(cursor);
+            for framed in game.frames() {
+                if framed.grabbed(top, cursor) {
+                    framed.frame.start_drag(cursor);
                 }
             }
         }

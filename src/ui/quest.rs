@@ -16,7 +16,7 @@ use crate::{Layer, UI, contains, offset};
 
 /// 381 × 466 from the tabs' left edge: the tabs (30 wide), the title bar and background from x 29.
 const WIDTH: f32 = 381.0;
-const HEIGHT: f32 = 466.0;
+pub const HEIGHT: f32 = 466.0;
 const BAR: [f32; 2] = [29.0, 0.0];
 const BAR_WIDTH: f32 = 352.0;
 /// The title 18 into the bar; the bar's base button (it does nothing) 3 in; no close or minimise button.

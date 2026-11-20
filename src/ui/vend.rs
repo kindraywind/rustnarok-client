@@ -284,7 +284,7 @@ impl Setup {
         self.focus.is_some()
     }
 
-    fn height(&self) -> f32 {
+    pub fn height(&self) -> f32 {
         SETUP_SIZE[1]
     }
 

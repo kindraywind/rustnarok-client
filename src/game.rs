@@ -21,6 +21,31 @@ pub(crate) fn blocked_cells(units: &HashMap<u32, Actor>, skill_units: &HashMap<u
 /// rathena's UNT_ICEWALL: the one ground skill unit whose cell the server makes unwalkable.
 const ICE_WALL_UNIT: u32 = 0x8d;
 
+/// How a press takes hold of a window to move it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Grab {
+    /// By its title bar, when it's the window on top under the press: `App::press` does it for every such window.
+    Title(Top),
+    /// By its own press code: the whole window, a grip, a title bar that isn't the usual strip.
+    Own,
+}
+
+/// One window's frame in `Game::frames`.
+pub(crate) struct Framed<'a> {
+    pub frame: &'a mut window::Frame,
+    /// Its height when not minimized: a dragged window stays on the screen by it.
+    pub height: f32,
+    pub grab: Grab,
+}
+
+impl Framed<'_> {
+    /// Whether a press at `cursor` on top window `top` takes hold of this window.
+    pub fn grabbed(&self, top: Option<Top>, cursor: [f32; 2]) -> bool {
+        let Grab::Title(key) = self.grab else { return false };
+        top == Some(key) && self.frame.local(cursor, self.height).is_some_and(|local| self.frame.title_hit(local) == Some(window::TitleHit::Title))
+    }
+}
+
 /// What a press or click reaches: the window drawn on top under the pointer (`Game::top_at`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Top {
@@ -989,13 +1014,15 @@ impl Game {
         ]
     }
 
-    /// The screen turned from `old` to `new` (the Extras' UI scale): the windows with a saved place and a moved chat
+    /// The screen turned from `old` to `new` (the Extras' UI scale): the windows and a moved chat
     /// window keep their gaps to the edges they were nearer, and Game Settings stays under the pointer, which went
     /// from `pointer[0]` to `pointer[1]`: the switch or the arrow just clicked can be clicked again.
-    // ponytail: the other open windows (mail, quests, a torn-off chat tab, …) stay put, so one can be left past the
-    // new edge; they'd each need their size here.
     pub(crate) fn refit_windows(&mut self, old: [f32; 2], new: [f32; 2], pointer: [[f32; 2]; 2]) {
-        for (_, frame) in self.panel_frames() {
+        for framed in self.frames() {
+            framed.frame.refit(old, new);
+        }
+        // The frames their modules move themselves (`FRAMES_ELSEWHERE`) that have a saved place.
+        for frame in [&mut self.mercenary_skill_list.frame, &mut self.homunculus_skill_list.frame, &mut self.npc_menu] {
             frame.refit(old, new);
         }
         self.chat.refit(old, new);
@@ -3522,46 +3549,157 @@ impl Game {
         escape::can_stand_up(self.inventory.items.iter().map(|item| item.id), self.status_icons.iter().map(|(id, ..)| *id))
     }
 
-    /// The windows moved by their title bar and nothing else, each with its `top_at` key and its height: the one list
-    /// the press, the drag and the drop all go by.
-    pub(crate) fn plain_frames(&mut self) -> Vec<(Top, &mut window::Frame, f32)> {
+    /// Every window's frame, with its height and how a press takes hold of it: the one list that moves a held window
+    /// with the pointer, lets it go on the release, and keeps it on a screen that changed size. A new window's frame
+    /// goes here and nowhere else (`frames_are_all_listed` counts them).
+    // ponytail: the windows that keep their place without a `Frame` (the chat window, an item's description, the
+    // navigation window, …) and the ones behind a module's own `drag_to` (`FRAMES_ELSEWHERE`) still move by
+    // their own code; they come here when they take a `Frame`.
+    pub(crate) fn frames(&mut self) -> Vec<Framed<'_>> {
         use escape::WindowId::*;
-        let mut frames: Vec<(Top, &mut window::Frame, f32)> = vec![(Top::Esc(BattleQueue), &mut self.queue_window.frame, battle_queue::HEIGHT)];
+        // A window with a `Top` is grabbed here, by its title bar; the others by their own press code (`Grab::Own`).
+        fn title(frame: &mut window::Frame, height: f32, top: Top) -> Framed<'_> {
+            Framed { frame, height, grab: Grab::Title(top) }
+        }
+        fn own(frame: &mut window::Frame, height: f32) -> Framed<'_> {
+            Framed { frame, height, grab: Grab::Own }
+        }
+        let resurrect = self.can_resurrect();
+        let (info, hotkeys, inventory, equipment) = (self.basic_info.height(), self.hotkeys.height(), self.inventory.height(), self.equipment.height());
+        let (skills, storage, party, guild) = (self.skill_window.height(), self.storage.height(), self.party_window.height(), self.guild_window.height());
+        let (clan, cart, memorial, say) = (self.clan_window.height(), self.cart.height(), self.memorial.height(), self.say.size()[1]);
+        let search = self.storage.search_window.height();
+        let mut frames = vec![
+            own(&mut self.basic_info.frame, info),
+            own(&mut self.hotkeys.frame, hotkeys),
+            own(&mut self.hotkeys.quick_window, hotkeys::QUICK_SIZE[1]),
+            own(&mut self.inventory.frame, inventory),
+            own(&mut self.equipment.frame, equipment),
+            own(&mut self.skill_window.frame, skills),
+            own(&mut self.storage.frame, storage),
+            own(&mut self.storage.search_window.frame, search),
+            own(&mut self.party_window.frame, party),
+            own(&mut self.status_window.frame, self.status_height),
+            own(&mut self.guild_window.frame, guild),
+            own(&mut self.clan_window.frame, clan),
+            own(&mut self.cart.frame, cart),
+            own(&mut self.pet_window.frame, pet::PetWindow::height()),
+            own(&mut self.mercenary_window.frame, mercenary::Window::height()),
+            own(&mut self.homunculus_window.frame, homunculus::Window::height()),
+            own(&mut self.quest_window.frame, quest::HEIGHT),
+            own(&mut self.quest_window.detail, quest::DETAIL_HEIGHT),
+            own(&mut self.minimap_window.frame, minimap_window::HEIGHT),
+            own(&mut self.say.frame, say),
+            own(&mut self.achievement_window.frame, achievement::HEIGHT),
+            own(&mut self.memorial.frame, memorial),
+            own(&mut self.deal_frame, shop::DEAL_SIZE[1]),
+            title(&mut self.queue_window.frame, battle_queue::HEIGHT, Top::Esc(BattleQueue)),
+        ];
+        for category in &mut self.storage.categories {
+            let height = category.height();
+            frames.push(own(&mut category.frame, height));
+        }
+        if let Some(trade) = &mut self.trade {
+            let height = trade.height();
+            frames.push(own(&mut trade.frame, height));
+        }
+        if let Some(menu) = &mut self.escape {
+            let height = menu.height(resurrect);
+            frames.push(own(&mut menu.frame, height));
+        }
+        if let Some(forge) = &mut self.forge {
+            frames.push(own(&mut forge.frame, forge::HEIGHT));
+        }
+        if let Some(setup) = &mut self.friend_setup {
+            frames.push(own(&mut setup.frame, whisper::FriendSetup::height()));
+        }
+        if let Some(list) = &mut self.block_list {
+            let height = list.height();
+            frames.push(own(&mut list.frame, height));
+        }
+        if let Some(room) = &mut self.room {
+            let height = room.height();
+            frames.push(own(&mut room.frame, height));
+        }
+        if let Some(cutin) = &mut self.cutin {
+            let height = cutin.height();
+            frames.push(own(&mut cutin.frame, height));
+        }
+        if let Some(input) = self.dialog.as_mut().and_then(|dialog| dialog.input.as_mut()) {
+            let height = input.height();
+            frames.push(own(&mut input.frame, height));
+        }
+        if let Some(window) = &mut self.refine {
+            frames.push(own(&mut window.frame, refine::SIZE[1]));
+        }
+        if let Some(window) = &mut self.grade {
+            frames.push(own(&mut window.frame, grade::HEIGHT));
+        }
+        for window in [&mut self.synthesis, &mut self.upgrade].into_iter().flatten() {
+            frames.push(own(&mut window.frame, laphine::SIZE[1]));
+        }
+        if let Some(room) = &mut self.dressroom {
+            frames.push(own(&mut room.frame, dressroom::SIZE[1]));
+        }
+        if let Some(window) = &mut self.reform {
+            frames.push(own(&mut window.frame, reform::SIZE[1]));
+        }
+        if let Some(window) = &mut self.enchant {
+            frames.push(own(&mut window.frame, enchant::HEIGHT));
+        }
+        if let Some(window) = &mut self.monster_window {
+            frames.push(own(&mut window.frame, monster_info::MonsterWindow::height()));
+        }
+        if let Some(pick) = &mut self.package_pick {
+            frames.push(own(&mut pick.frame, package::SIZE[1]));
+        }
+        if let Some(choice) = &mut self.cart_choice {
+            let height = choice.size()[1];
+            frames.push(own(&mut choice.frame, height));
+        }
+        if let Some(window) = &mut self.stylist {
+            frames.push(own(&mut window.frame, stylist::HEIGHT));
+        }
         if let Some(shop) = &mut self.cashshop {
-            frames.push((Top::Esc(CashShop), &mut shop.frame, cashshop::HEIGHT));
+            frames.push(title(&mut shop.frame, cashshop::HEIGHT, Top::Esc(CashShop)));
         }
         if let Some(bank) = &mut self.bank {
-            frames.push((Top::Esc(Bank), &mut bank.frame, bank::HEIGHT));
+            frames.push(title(&mut bank.frame, bank::HEIGHT, Top::Esc(Bank)));
         }
         if let Some(window) = &mut self.booking {
-            frames.push((Top::PartyBooking, &mut window.frame, booking_window::HEIGHT));
+            frames.push(title(&mut window.frame, booking_window::HEIGHT, Top::PartyBooking));
         }
         if let Some(catalog) = &mut self.catalog {
-            frames.push((Top::Esc(Catalog), &mut catalog.frame, catalog::HEIGHT));
+            frames.push(title(&mut catalog.frame, catalog::HEIGHT, Top::Esc(Catalog)));
         }
         if let Some(window) = &mut self.materials {
-            frames.push((Top::Esc(Materials), &mut window.frame, material::Materials::height()));
+            frames.push(title(&mut window.frame, material::Materials::height(), Top::Esc(Materials)));
         }
         if let Some(board) = &mut self.ranking {
-            frames.push((Top::Esc(Ranking), &mut board.frame, ranking::HEIGHT));
+            frames.push(title(&mut board.frame, ranking::HEIGHT, Top::Esc(Ranking)));
         }
         if let Some(window) = &mut self.reputation_window {
             let height = window.height;
-            frames.push((Top::Esc(Reputation), &mut window.frame, height));
+            frames.push(title(&mut window.frame, height, Top::Esc(Reputation)));
         }
         if let Some(store) = &mut self.my_buying_store {
             let height = store.height();
-            frames.push((Top::Esc(MyBuyingStore), &mut store.frame, height));
+            frames.push(title(&mut store.frame, height, Top::Esc(MyBuyingStore)));
         }
         if let Some(setup) = &mut self.buying_setup {
-            frames.push((Top::Esc(BuyingStoreSetup), &mut setup.frame, buying::Setup::height()));
+            frames.push(title(&mut setup.frame, buying::Setup::height(), Top::Esc(BuyingStoreSetup)));
         }
         if let Some(shop) = &mut self.my_shop {
             let height = shop.height();
-            frames.push((Top::Esc(MyShop), &mut shop.frame, height));
+            frames.push(title(&mut shop.frame, height, Top::Esc(MyShop)));
+        }
+        if let Some(setup) = &mut self.vend_setup {
+            let (height, mirror) = (setup.height(), setup.size.height());
+            frames.push(title(&mut setup.frame, height, Top::Esc(VendSetup)));
+            frames.push(title(&mut setup.mirror, mirror, Top::Esc(VendSetup)));
         }
         if let Some(history) = &mut self.sell_history {
-            frames.push((Top::Esc(SellHistory), &mut history.frame, vend::HISTORY_SIZE[1]));
+            frames.push(title(&mut history.frame, vend::HISTORY_SIZE[1], Top::Esc(SellHistory)));
         }
         frames
     }
@@ -4874,6 +5012,110 @@ fn world_lock(trade_or_storage: bool, deal: bool, casting: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// The `Frame` fields of each module, as (in `Game::frames`, moved by the module's own code). The second kind:
+    /// a frame docked to another window, behind a `drag_to` of its module that does more than move it, or fixed.
+    const FRAMES: &[(&str, usize, usize)] = &[
+        ("achievement", 1, 0),
+        ("bank", 1, 0),
+        ("basic_info", 1, 0),
+        ("battle_queue", 1, 0),
+        ("booking_window", 1, 0),
+        ("buying", 2, 0),
+        ("cart_choice", 1, 0),
+        ("cashshop", 1, 0),
+        ("catalog", 1, 0),
+        // A torn-off tab's window moves with the chat's own code.
+        ("chat", 0, 1),
+        ("chatroom", 1, 0),
+        ("clan", 1, 0),
+        ("cutin", 1, 0),
+        ("dressroom", 1, 0),
+        ("enchant", 1, 0),
+        ("equipment", 1, 0),
+        ("escape", 1, 0),
+        ("forge", 1, 0),
+        // Its sliders are dragged with it.
+        ("game_settings", 0, 1),
+        ("grade", 1, 0),
+        ("guild", 1, 0),
+        // The companion, its tip and its create window keep their places by each other.
+        ("guild_companion", 0, 3),
+        // The skill list's height is its rows'.
+        ("homunculus", 1, 1),
+        ("hotkeys", 2, 0),
+        ("inventory", 1, 0),
+        ("laphine", 1, 0),
+        // The three mail windows move as the mailbox says.
+        ("mail", 0, 3),
+        ("material", 1, 0),
+        ("memorial", 1, 0),
+        ("mercenary", 1, 0),
+        // Dragged, resized and scrolled by `Merge::drag_to`.
+        ("merge", 0, 1),
+        ("minimap_window", 1, 0),
+        ("monster_info", 1, 0),
+        // Its side windows go with it.
+        ("navi_window", 0, 2),
+        ("npc_input", 1, 0),
+        ("npc_say", 1, 0),
+        ("package", 1, 0),
+        // The window docked right of the party window.
+        ("party", 1, 1),
+        ("pet", 1, 0),
+        // Its scroll thumb is dragged with it.
+        ("pick_list", 0, 1),
+        ("quest", 2, 0),
+        ("ranking", 1, 0),
+        ("refine", 1, 0),
+        ("reform", 1, 0),
+        ("reputation", 1, 0),
+        // The game doesn't move it.
+        ("roulette", 0, 1),
+        // The two shop windows resize and scroll in `Shop::drag_to`; the amount box sits on them.
+        ("shop", 0, 2),
+        ("shortcut_window", 0, 1),
+        ("skills", 1, 0),
+        ("status", 1, 0),
+        ("storage", 2, 0),
+        ("stylist", 1, 0),
+        ("trade", 1, 0),
+        ("vend", 4, 0),
+        // The 1:1 chat windows move by `Talks::drag_to`.
+        ("whisper", 2, 1),
+    ];
+
+    /// A window whose frame is in no list can be grabbed but never moves: every `Frame` field of a window module is
+    /// counted here, so a new one is put in `Game::frames` (or its module's own code moves it, and `FRAMES` says so).
+    #[test]
+    fn frames_are_all_listed() {
+        let is_frame = |line: &str| {
+            let Some((_, kind)) = line.trim().trim_end_matches(',').split_once(": ") else { return false };
+            let kind = kind.trim_start_matches("window::");
+            !line.contains('(') && !line.contains('{') && ["Frame", "Option<Frame>"].contains(&kind)
+                || kind.starts_with("[Frame;")
+                || kind.starts_with("[Option<Frame>;")
+        };
+        let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let fields = text.lines().filter(|line| is_frame(line)).count();
+            if fields > 0 {
+                found.push((path.file_stem().unwrap().to_string_lossy().into_owned(), fields));
+            }
+        }
+        found.sort();
+        let listed: Vec<(String, usize)> = FRAMES.iter().map(|&(module, here, own)| (module.to_owned(), here + own)).collect();
+        assert_eq!(found, listed, "a window's `Frame` field isn't in `Game::frames` (game.rs): add it there, then count it in FRAMES");
+        // The list itself: one entry for each frame counted as in it (a storage category's stands for all eight).
+        let source = include_str!("game.rs");
+        let body = &source[source.find("pub(crate) fn frames(").unwrap()..source.find("pub(crate) fn esc_open(").unwrap()];
+        let entries = body.matches("own(&mut ").count() + body.matches("title(&mut ").count();
+        // The storage's Search window is a second `Category`, and Change Material and Upgrade share one window type.
+        assert_eq!(entries, FRAMES.iter().map(|&(_, here, _)| here).sum::<usize>() + 1 + 2);
+    }
+
     use super::*;
 
     #[test]
