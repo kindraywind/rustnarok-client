@@ -10,10 +10,10 @@
     {"click_on": {"button": "tab:item"}}, {"wait": 300},
     {"click_on": {"inventory_item": 14506}, "count": 2}, {"wait_for": {"packet": "0x00b7", "ms": 5000}},
     {"wait": 500},
-    {"expect": {"windows_open": ["NpcDialog"], "state": {"dialog.talking": true}}},
+    {"expect": {"windows_open": ["NpcMenu"], "state": {"dialog.talking": true}}},
     {"shot": "item-menu-open"},
     {"click_on": {"button": "npc_menu_ok"}}, {"wait": 500},
-    {"expect": {"windows_closed": ["NpcDialog"], "state": {"dialog": null}}},
+    {"expect": {"windows_closed": ["NpcMenu"], "state": {"dialog": null}}},
     {"key": "Alt+E"}, {"wait": 300},
     {"click_on": {"cell": [153, 150]}}, {"wait": 2000},
     {"expect": {"state": {"player.cell": [153, 150]}}}

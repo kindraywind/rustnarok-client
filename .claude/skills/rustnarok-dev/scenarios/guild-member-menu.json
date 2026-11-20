@@ -72,7 +72,7 @@
     },
     {
       "expect": {
-        "chat": "Offer Accepted"
+        "chat": "accepted the guild invitation"
       }
     },
     {
@@ -89,8 +89,8 @@
     },
     {
       "click": [
-        276,
-        148
+        99,
+        62
       ]
     },
     {
@@ -217,21 +217,6 @@
     },
     {
       "wait_for": {
-        "packet": "0x014c",
-        "ms": 5000
-      }
-    },
-    {
-      "wait": 300
-    },
-    {
-      "click": [
-        276,
-        148
-      ]
-    },
-    {
-      "wait_for": {
         "packet": "0x0b7d",
         "ms": 5000
       }
@@ -257,8 +242,8 @@
     {
       "as": "second",
       "click": [
-        276,
-        148
+        99,
+        62
       ]
     },
     {
@@ -359,21 +344,6 @@
     },
     {
       "key": "Alt+G"
-    },
-    {
-      "wait_for": {
-        "packet": "0x014c",
-        "ms": 5000
-      }
-    },
-    {
-      "wait": 300
-    },
-    {
-      "click": [
-        276,
-        148
-      ]
     },
     {
       "wait_for": {

@@ -1,5 +1,5 @@
 {
-  "about": "Kept windows, part one (issue #313): with the windows kept (RUSTNAROK_CLIENT_KEEP_WINDOWS, as a player's are), the basic info window is minimised and moved to (200, 100) and the chat window set to its 180-tall step. kept-windows-back checks they come back that way.",
+  "about": "Kept windows (issue #313): with the windows kept (RUSTNAROK_CLIENT_KEEP_WINDOWS, as a player's are), the basic info window is minimised and moved to (200, 100) and the chat window set to its 180-tall step. The client starts again and they come back that way; then both go back to their defaults (full at (0, 0), 96 tall).",
   "account": "",
   "slot": 0,
   "env": {
@@ -91,6 +91,116 @@
     {
       "shot": "kept-set",
       "threshold": 5
+    },
+    {
+      "wait": 500
+    },
+    {
+      "relaunch": true
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "expect": {
+        "state": {
+          "basic_info.position": [
+            200.0,
+            100.0
+          ],
+          "basic_info.minimized": true,
+          "chat_height": 180
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "shot": "kept-back",
+      "threshold": 5
+    },
+    {
+      "mouse_down": {
+        "point": [
+          300,
+          108
+        ]
+      }
+    },
+    {
+      "move": [
+        200,
+        58
+      ]
+    },
+    {
+      "move": [
+        100,
+        8
+      ]
+    },
+    {
+      "mouse_up": {
+        "point": [
+          100,
+          8
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click": [
+        211,
+        8
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F10"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "basic_info.position": [
+            0.0,
+            0.0
+          ],
+          "basic_info.minimized": false,
+          "chat_height": 96
+        }
+      }
+    },
+    {
+      "wait": 500
     }
   ]
 }
