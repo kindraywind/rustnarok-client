@@ -1284,12 +1284,10 @@ pub enum MapEvent {
         account: u32,
         cell: Option<[u16; 2]>,
     },
-    /// A member (by account) picked up an item.
+    /// A member (by account) picked up an item (its ID, identified, cards, type, refine and grade).
     PartyPickup {
         account: u32,
-        item: u32,
-        identified: bool,
-        refine: u8,
+        item: InventoryItem,
     },
     /// Whether the player refuses party invitations.
     PartyRefusing(bool),

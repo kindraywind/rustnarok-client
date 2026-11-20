@@ -1416,9 +1416,12 @@ fn decodes_party_extras() {
     pickup[2..6].copy_from_slice(&2_000_001u32.to_le_bytes());
     pickup[6..10].copy_from_slice(&1201u32.to_le_bytes());
     pickup[10] = 1;
+    pickup[12..16].copy_from_slice(&4001u32.to_le_bytes());
     pickup[30] = 5;
     pickup[31] = 4;
-    assert!(matches!(decode_map_packet(&pickup), Some(MapEvent::PartyPickup { account: 2_000_001, item: 1201, identified: true, refine: 4 })));
+    pickup[32] = 2;
+    let Some(MapEvent::PartyPickup { account: 2_000_001, item }) = decode_map_packet(&pickup) else { panic!() };
+    assert_eq!((item.id, item.identified, item.cards[0], item.kind, item.refine, item.grade), (1201, true, 4001, 5, 4, 2));
     assert_eq!(packet_length(ZC_ITEM_PICKUP_PARTY), Some(33));
     assert!(matches!(decode_map_packet(&[0xC9, 0x02, 1]), Some(MapEvent::PartyRefusing(true))));
     assert!(matches!(decode_map_packet(&[0xC9, 0x02, 0]), Some(MapEvent::PartyRefusing(false))));
@@ -3265,4 +3268,38 @@ fn every_known_packet_is_decoded_or_listed() {
     wrong.sort();
     wrong.dedup();
     assert!(wrong.is_empty(), "decoded yet in net/undecoded.txt, or neither decoded nor there with a reason: {wrong:?}");
+}
+
+#[test]
+fn decodes_the_grade_of_every_added_item() {
+    // Each packet with its refine and grade where rathena's struct puts them (refine 7, grade 3 = B).
+    let filled = |id: u16, refine: usize, grade: usize| {
+        let mut packet = vec![0u8; packet_length(id).unwrap() as usize];
+        packet[..2].copy_from_slice(&id.to_le_bytes());
+        packet[2] = 1;
+        packet[refine] = 7;
+        packet[grade] = 3;
+        packet
+    };
+    for (id, refine, grade) in [(ZC_ADD_ITEM_TO_STORE, 56, 57), (ZC_ADD_ITEM_TO_CART, 56, 57), (ZC_ADD_EXCHANGE_ITEM, 60, 61), (ZC_ACK_ADD_ITEM_RODEX, 62, 63)]
+    {
+        let item = match decode_map_packet(&filled(id, refine, grade)) {
+            Some(MapEvent::StorageAdded(item) | MapEvent::CartAdded(item) | MapEvent::TradeItem(item) | MapEvent::MailItemAdded { item, .. }) => item,
+            other => panic!("{id:#06x}: {other:?}"),
+        };
+        assert_eq!((item.refine, item.grade), (7, 3), "{id:#06x}");
+    }
+    // A vend list: one 58-byte entry after 8 bytes (own shop), one 64-byte entry after 12 (another's).
+    for (id, head, size, refine) in [(ZC_PC_PURCHASE_MYITEMLIST, 8, 58, 56), (ZC_PC_PURCHASE_ITEMLIST_FROMMC, 12, 64, 62)] {
+        let mut packet = vec![0u8; head + size];
+        packet[..2].copy_from_slice(&id.to_le_bytes());
+        packet[2..4].copy_from_slice(&((head + size) as u16).to_le_bytes());
+        packet[head + refine] = 7;
+        packet[head + refine + 1] = 3;
+        let item = match decode_map_packet(&packet) {
+            Some(MapEvent::MyShop(items) | MapEvent::VendorGoods { goods: items, .. }) => items[0].item.clone(),
+            other => panic!("{id:#06x}: {other:?}"),
+        };
+        assert_eq!((item.refine, item.grade), (7, 3), "{id:#06x}");
+    }
 }

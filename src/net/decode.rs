@@ -253,6 +253,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             cards: cards_at(packet, 15),
             options: options_at(packet, 31),
             refine: packet[56],
+            grade: packet[57],
             ..Default::default()
         }),
         ZC_DELETE_ITEM_FROM_STORE => MapEvent::StorageRemoved { index: u16_at(2), amount: u32_at(4) },
@@ -298,6 +299,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                         cards: cards_at(entry, 15),
                         options: options_at(entry, 31),
                         refine: entry[56],
+                        grade: entry[57],
                         ..Default::default()
                     },
                 })
@@ -326,6 +328,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                         options: options_at(entry, 31),
                         location: self::u32_at(entry, 56),
                         refine: entry[62],
+                        grade: entry[63],
                         ..Default::default()
                     },
                 })
@@ -892,6 +895,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
                 options: options_at(packet, 30),
                 location: u32_at(58),
                 refine: packet[62],
+                grade: packet[63],
                 ..Default::default()
             },
             weight: u16_at(55),
@@ -912,6 +916,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             cards: cards_at(packet, 15),
             options: options_at(packet, 31),
             refine: packet[56],
+            grade: packet[57],
             ..Default::default()
         }),
         ZC_UPDATE_GDID => MapEvent::Guild { id: u32_at(2), name: c_string(&packet[19..43]), master: packet[14] != 0, emblem: u32_at(6), mode: u32_at(10) },
@@ -1129,7 +1134,19 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             let cell = [u16_at(6), u16_at(8)];
             MapEvent::PartyPosition { account: u32_at(2), cell: (cell != [u16::MAX; 2]).then_some(cell) }
         }
-        ZC_ITEM_PICKUP_PARTY => MapEvent::PartyPickup { account: u32_at(2), item: u32_at(6), identified: packet[10] != 0, refine: packet[31] },
+        // Account, item, identified, damaged, cards, where it's worn, type, refine, grade.
+        ZC_ITEM_PICKUP_PARTY => MapEvent::PartyPickup {
+            account: u32_at(2),
+            item: InventoryItem {
+                id: u32_at(6),
+                identified: packet[10] != 0,
+                cards: cards_at(packet, 12),
+                kind: packet[30],
+                refine: packet[31],
+                grade: packet[32],
+                ..Default::default()
+            },
+        },
         ZC_PARTY_CONFIG => MapEvent::PartyRefusing(packet[2] != 0),
         ZC_NOTIFY_HP_TO_GROUPM => MapEvent::PartyHp { account: u32_at(2), hp: u32_at(6) as i32, max: u32_at(10) as i32 },
         ZC_REQ_GROUPINFO_CHANGE_V2 => MapEvent::PartyOptions { exp: u32_at(2), pickup: packet[6] != 0, share: packet[7] != 0 },
@@ -1150,6 +1167,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
             options: options_at(packet, 29),
             location: u32_at(54),
             refine: packet[60],
+            grade: packet[61],
             ..Default::default()
         }),
         ZC_ACK_ADD_EXCHANGE_ITEM => MapEvent::TradeAdded { index: u16_at(2), result: packet[4] },

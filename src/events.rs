@@ -2935,9 +2935,9 @@ impl App {
                 }
             }
             // ponytail: the line and its color (the party chat's) for a member's pickup are estimates.
-            MapEvent::PartyPickup { account, item, identified, refine } => {
+            MapEvent::PartyPickup { account, item } => {
                 let member = game.party.as_mut().and_then(|party| party.member(account)).map(|member| member.info.name.clone());
-                let name = inventory::item_name(&self.items, item, identified, refine);
+                let name = inventory::full_name(&self.items, &self.card_names, &self.messages, &game.char_names, &item, true);
                 let text = rustnarok_client::messages::fill(self.messages.get(PARTY_PICKUP).map_or("", String::as_str), &[&member.unwrap_or_default(), &name]);
                 game.chat_line_kind(text, PARTY_CHAT, chat::Kind::PartyItemLog);
             }
