@@ -154,8 +154,12 @@ pub fn state(game: &Game, items: &HashMap<u32, ItemInfo>) -> Value {
         })
         .collect();
     let cooldowns: HashMap<String, u64> = game.cooldowns.blocked(clock).map(|(id, left)| (id.to_string(), left.as_millis() as u64)).collect();
-    let icons: Vec<Value> =
-        game.status_icons.iter().map(|&(id, _, ends)| json!([id, ends.map(|end| end.saturating_duration_since(now).as_millis() as u64)])).collect();
+    let icons: Vec<Value> = game
+        .status_icons
+        .iter()
+        .chain(&game.quiet_statuses)
+        .map(|&(id, _, ends)| json!([id, ends.map(|end| end.saturating_duration_since(now).as_millis() as u64)]))
+        .collect();
     let inventory: Vec<Value> = game
         .inventory
         .items
@@ -183,6 +187,10 @@ pub fn state(game: &Game, items: &HashMap<u32, ItemInfo>) -> Value {
         "account_id": game.account_id,
         "cell": player.cell,
         "dead": player.dead,
+        // rathena's opt1 and opt2: ailments with no status icon, shown only on the body (opt2 0x01 poison, 0x04 silence,
+        // 0x10 blindness, which a Green Potion cures; opt1 1 stone, 2 freeze, 3 stun, 4 sleep).
+        "body": player.body_state,
+        "health": player.health_state,
         "can_revive": game.can_resurrect(),
         "sitting": player.sitting,
         "busy": player.busy(clock),

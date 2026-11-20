@@ -1301,6 +1301,9 @@ struct Game {
     speech: HashMap<Option<u32>, (String, [u8; 3], Instant)>,
     /// Status effects on the player with an icon: the client's EFST id, when it began and ends (None: no end).
     status_icons: Vec<(u16, Instant, Option<Instant>)>,
+    /// The player's statuses with no icon in the data (Rolling Cutter's spin counter, EFST 339), kept like `status_icons`
+    /// for the hunt only (`autohunt::state`): a skill that needs one is cast only while it is on.
+    quiet_statuses: Vec<(u16, Instant, Option<Instant>)>,
     /// The lines of the status icon tooltip showing, if one is.
     status_tip: Option<Vec<String>>,
     effects: effects::Effects,
