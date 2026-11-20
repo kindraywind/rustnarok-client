@@ -329,13 +329,17 @@ What the setting changes:
 
 | PACKETVER | |
 |---|---|
-| below 20230705, default 20220406 | rathena's 20220406 packet lengths |
 | 20230705 and up | emotions are also asked with `0x0BE9` (with a pack) and shown from `0x0BEA` |
 | 20230906 and up | Take off all also takes off the costume pieces in one request (`0x0BF5`) |
-| 20250402 and up | rathena's 20250402 packet lengths; the expanded barter shop's newer item layout |
+| 20250402 and up | the expanded barter shop's newer item layout |
 
-Packets that changed id or shape between 2022 and 2026 and need no request from the client (the NPC say window, NPC
-music, the box-item announcement, special popups) are read in both forms, whatever the setting. Packets newer than
+Everything else is the same at every version. rathena never gives a packet id two lengths, only adds and drops ids,
+so the client knows the lengths of both its tables (rathena's 20220406 and 20250402) whatever the setting, and reads
+both forms of what changed id or shape in between and needs no request from it: the NPC say window and its size and
+place (20220504), NPC music (20220504), the box-item announcement (20220518), special popups (20221005), NPC text's
+item and emotion pictures `^i[id]`/`^e[n]` (20230302), the hide-costumes setting (20230419), and a 4th job's outfit
+sent as its job id (20231220). Not done: the Kafra storage's favorites tab (20250122) and the GM macro checker
+(20240502). Packets newer than
 rathena (ids `0x0B7E`–`0x0C81`) are read past at the lengths iRO's 2026-09-29 client uses, which agree with kRO main
 2026-01 except `0x0C12` and `0x0C26` (left out); the client stays connected but doesn't act on most of them yet.
 Played: rathena at 20220406, and servers at 20250604, 20260107 and 20260820. Not checked: kRO's newest

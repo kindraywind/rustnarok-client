@@ -21,6 +21,8 @@ pub const WRAP_WIDTH: f32 = 215.0;
 pub const LINE_GAP: f32 = 6.0;
 /// An item's picture in the text (`^i[id]`): a box this wide and tall on the line, the item's icon at its top left.
 pub const PICTURE: f32 = 25.0;
+/// An emotion's picture in the text (`^e[n]`): a box this wide and tall on the line, the emotion playing in it.
+pub const EMOTION_PICTURE: f32 = 50.0;
 /// A pointed picture's item name shows this far from the picture's corner.
 pub const PICTURE_NAME_AT: [f32; 2] = [0.0, -17.0];
 /// The scroll bar at the panel's right edge, as tall as the panel, while the text is taller than the panel.
@@ -55,19 +57,67 @@ pub fn picture_code(text: &str) -> Option<(usize, Option<u32>)> {
     Some((text.len() - rest.len(), id))
 }
 
-/// NPC text with its `^i[id]` codes (rathena's `mesitemicon`) made into picture runs for the layout.
-pub fn item_pictures(text: &str) -> String {
+/// An emotion's picture code at the start of `text`: `^e[n]`, or the pack form `^e[n,m]`, each with any `[d]` groups
+/// after it. How many bytes it takes and the emotion of `^e[n]`; the pack form is taken and draws nothing. None when
+/// it doesn't match: then it's text.
+// ponytail: what the pack form's numbers and the [d] groups choose isn't known; the pack form shows nothing.
+pub fn emotion_code(text: &str) -> Option<(usize, Option<u16>)> {
+    fn number(text: &str) -> Option<(Option<u16>, &str)> {
+        let digits = text.bytes().take_while(u8::is_ascii_digit).count();
+        (1..=3).contains(&digits).then(|| (text[..digits].parse().ok(), &text[digits..]))
+    }
+    let (first, rest) = number(text.strip_prefix("^e[")?)?;
+    let (emotion, mut rest) = match rest.strip_prefix(']') {
+        Some(rest) => (first, rest),
+        None => {
+            let (_, rest) = number(rest.trim_start().strip_prefix(',')?.trim_start())?;
+            (None, rest.trim_start().strip_prefix(']')?)
+        }
+    };
+    while let [b'[', digit, b']', ..] = rest.as_bytes()
+        && digit.is_ascii_digit()
+    {
+        rest = &rest[3..];
+    }
+    Some((text.len() - rest.len(), emotion))
+}
+
+/// NPC text with its `^i[id]` (rathena's `mesitemicon`) and `^e[n]` (`mesemotion`) codes made into picture runs for
+/// the layout.
+pub fn picture_runs(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    while let Some((at, (taken, id))) = rest.find("^i").and_then(|at| Some((at, picture_code(&rest[at..])?))) {
+    let code = |text: &str| {
+        picture_code(text)
+            .map(|(taken, id)| (taken, id.map(links::Target::Picture)))
+            .or_else(|| emotion_code(text).map(|(taken, id)| (taken, id.map(links::Target::Emotion))))
+    };
+    while let Some((at, (taken, target))) = rest.match_indices('^').find_map(|(at, _)| Some((at, code(&rest[at..])?))) {
         out.push_str(&rest[..at]);
-        if let Some(id) = id {
-            out.push_str(&links::marked("", &links::Target::Picture(id)));
+        if let Some(target) = target {
+            out.push_str(&links::marked("", &target));
         }
         rest = &rest[at + taken..];
     }
     out.push_str(rest);
     out
+}
+
+/// How wide and tall a picture run is; None for text.
+pub fn picture_size(target: Option<&links::Target>) -> Option<f32> {
+    match target? {
+        links::Target::Picture(_) => Some(PICTURE),
+        links::Target::Emotion(_) => Some(EMOTION_PICTURE),
+        _ => None,
+    }
+}
+
+/// The emotions whose pictures the text shows.
+pub fn emotions(lines: &[String]) -> impl Iterator<Item = u16> + '_ {
+    lines.iter().flat_map(|line| links::pieces(line)).filter_map(|(_, target)| match target {
+        Some(links::Target::Emotion(id)) => Some(id),
+        _ => None,
+    })
 }
 
 /// The items whose pictures the text shows.
@@ -80,8 +130,7 @@ pub fn pictures(lines: &[String]) -> impl Iterator<Item = u32> + '_ {
 
 /// How tall a line is: its text, or a picture on it when that is taller. Text and pictures sit on the line's bottom.
 pub fn line_height(text: f32, pieces: &[([u8; 3], String, Option<links::Target>)]) -> f32 {
-    let picture = pieces.iter().any(|(_, _, target)| matches!(target, Some(links::Target::Picture(_))));
-    if picture { text.max(PICTURE) } else { text }
+    pieces.iter().filter_map(|(_, _, target)| picture_size(target.as_ref())).fold(text, f32::max)
 }
 
 /// The game's font tags in NPC text as the `^RRGGBB` codes the layout already reads: `<FONT COLOR=RRGGBB>` sets the
@@ -627,15 +676,36 @@ mod tests {
     }
 
     #[test]
+    fn reads_emotion_picture_codes() {
+        // ^e[n] (rathena's mesemotion), with any single-digit groups after it taken too.
+        assert_eq!(emotion_code("^e[1] hi"), Some((5, Some(1))));
+        assert_eq!(emotion_code("^e[123][4][5]x"), Some((13, Some(123))));
+        // The pack form is taken and draws nothing; spaces round the comma are allowed.
+        assert_eq!(emotion_code("^e[1 , 2][3]"), Some((12, None)));
+        // Not the code, so text: four digits, no digits, no closing bracket, another letter.
+        for text in ["^e[1234]", "^e[]", "^e[1", "^e", "^E[1]", "^i[1]"] {
+            assert_eq!(emotion_code(text), None, "{text}");
+        }
+        // A group of two digits isn't taken.
+        assert_eq!(emotion_code("^e[2][34]"), Some((5, Some(2))));
+        let pieces = links::pieces(&picture_runs("a^e[3]b^e[1,2]c^e[x]"));
+        let emotion = (String::new(), Some(links::Target::Emotion(3)));
+        assert_eq!(pieces, [("a".into(), None), emotion, ("bc^e[x]".into(), None)]);
+        assert_eq!(emotions(&[picture_runs("^e[3] ^i[501] ^e[18]")]).collect::<Vec<_>>(), [3, 18]);
+        let line = [([0u8; 3], String::new(), Some(links::Target::Emotion(3))), ([0u8; 3], "x".into(), None)];
+        assert_eq!(line_height(15.0, &line), EMOTION_PICTURE);
+    }
+
+    #[test]
     fn makes_item_picture_codes_into_picture_runs() {
         let apple = links::Target::Item(links::ItemLink { id: 512, ..links::ItemLink::default() });
         let line = format!("^i[512] - {}^i[7]^i", links::marked("Apple", &apple));
-        let pieces = links::pieces(&item_pictures(&line));
+        let pieces = links::pieces(&picture_runs(&line));
         let picture = |id| (String::new(), Some(links::Target::Picture(id)));
         assert_eq!(pieces, [picture(512), (" - ".into(), None), ("Apple".into(), Some(apple)), picture(7)]);
-        assert_eq!(pictures(&[item_pictures("a ^i[501] b"), "c".into(), item_pictures("^i[99999999]^i[502]")]).collect::<Vec<_>>(), [501, 502]);
+        assert_eq!(pictures(&[picture_runs("a ^i[501] b"), "c".into(), picture_runs("^i[99999999]^i[502]")]).collect::<Vec<_>>(), [501, 502]);
         // Text without the code, colour codes included, is left as it is.
-        assert_eq!(item_pictures("^FF0000red^000000 ^e[1] i[501]"), "^FF0000red^000000 ^e[1] i[501]");
+        assert_eq!(picture_runs("^FF0000red^000000 ^x[1] i[501]"), "^FF0000red^000000 ^x[1] i[501]");
     }
 
     #[test]

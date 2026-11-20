@@ -1,0 +1,7 @@
+// NPC text with emotion pictures: the ^e[<emotion>] code (rathena's mesemotion writes it). Loaded and unloaded by scenarios/npc-emotion-pictures.json.
+morocc,157,122,4	script	Emotion Clerk	4_M_01,{
+	mes "[Emotion Clerk]";
+	mes "Hello ^e[18] and thanks ^e[15]!";
+	mes "A pack ^e[1,2] draws nothing, ^e[1234] stays text.";
+	close;
+}
