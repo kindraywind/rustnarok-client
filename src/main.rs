@@ -5642,8 +5642,9 @@ fn append_crash(path: &std::path::Path, text: &str, cap: u64) {
 }
 
 /// The connection's langtype (RUSTNAROK_CLIENT_LANGTYPE overrides it) picks the code page of chat, names and the data's
-/// own words.
+/// own words; its PACKETVER (RUSTNAROK_CLIENT_PACKETVER overrides it) the packets.
 fn set_langtype(connection: Option<&rustnarok_client::clientinfo::Connection>) {
+    net::set_packetver(connection.map_or(0, |connection| connection.packetver));
     let langtype = std::env::var("RUSTNAROK_CLIENT_LANGTYPE").ok().and_then(|langtype| langtype.parse().ok());
     let langtype = langtype.unwrap_or_else(|| connection.map_or(0, |connection| connection.langtype));
     net::set_codepage(rustnarok_client::clientinfo::codepage(langtype));
