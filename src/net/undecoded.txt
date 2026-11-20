@@ -119,7 +119,6 @@
 0x0119 unsent
 0x011A old: an older server's form
 0x011B client
-0x011C old: an older server's form
 0x011D client
 0x011F old: a skill unit; rathena sends 0x09CA at our PACKETVER (0x011F is only a switch arm)
 0x0122 old: an older server's form

@@ -2041,6 +2041,28 @@ fn decodes_warp_list() {
 }
 
 #[test]
+fn decodes_the_old_warp_list() {
+    // A server before PACKETVER 20170502: no length field, four 16-byte maps, the unused ones empty. Teleport level 1
+    // sends only "Random"; without this the menu never showed and the server dropped every later Teleport.
+    let mut list = ZC_WARPLIST_OLD.to_le_bytes().to_vec();
+    list.extend_from_slice(&26u16.to_le_bytes());
+    for map in ["Random.gat", "", "", ""] {
+        let mut field = map.as_bytes().to_vec();
+        field.resize(16, 0);
+        list.extend_from_slice(&field);
+    }
+    assert_eq!(Some(list.len() as i16), packet_length(ZC_WARPLIST_OLD).map(|n| n as i16));
+    let Some(MapEvent::WarpList { skill: 26, maps }) = decode_map_packet(&list) else { panic!() };
+    assert_eq!(maps, ["Random.gat"]);
+    // Only the older servers' form: neither version table uses the ID, so newer servers (0x0ABE) are untouched, and the
+    // answer (CZ_SELECT_WARPPOINT) is the same 20 bytes at both.
+    for version in [PACKETVER_20220406, PACKETVER_20250402] {
+        assert_eq!(lengths_for(version).get(&ZC_WARPLIST_OLD), None);
+        assert_eq!(lengths_for(version).get(&CZ_SELECT_WARPPOINT), Some(&20));
+    }
+}
+
+#[test]
 fn decodes_guild_position_changes() {
     // One position as clif_guild_positionchanged sends it.
     let mut changed = ZC_ACK_CHANGE_GUILD_POSITIONINFO.to_le_bytes().to_vec();

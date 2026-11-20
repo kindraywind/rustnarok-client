@@ -769,6 +769,7 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_PLAY_NPC_BGM2 => MapEvent::NpcMusic(c_string(&packet[5..])),
         ZC_SPECIALPOPUP => MapEvent::SpecialPopup(i32_at(2)),
         ZC_WARPLIST => MapEvent::WarpList { skill: u16_at(4), maps: packet[6..].chunks_exact(16).map(c_string).filter(|map| !map.is_empty()).collect() },
+        ZC_WARPLIST_OLD => MapEvent::WarpList { skill: u16_at(2), maps: packet[4..].chunks_exact(16).map(c_string).filter(|map| !map.is_empty()).collect() },
         ZC_NOTIFY_MAPINFO => MapEvent::MapForbids(u16_at(2)),
         // Each quest: ID, state (1 active), start and end times, hunts. Each hunt is 44 bytes as clif_quest_send_list
         // writes it (its 46 is only the buffer's estimate): ID, type, monster, level range, count, needed, name.
