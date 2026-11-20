@@ -1069,6 +1069,8 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         }
         ZC_RESTART_ACK => MapEvent::RestartAck(packet[2]),
         ZC_EMOTION => MapEvent::Emotion { id: u32_at(2), kind: packet[6] },
+        // ponytail: only pack 0 (the base emotions, ZC_EMOTION's numbers); other packs' sprites aren't mapped yet.
+        ZC_EMOTION_EXPANSION if u16_at(6) == 0 => MapEvent::Emotion { id: u32_at(2), kind: u16_at(8) as u8 },
         ZC_ACK_REQ_DISCONNECT => MapEvent::QuitAck(u16_at(2)),
         ZC_RESURRECTION => MapEvent::Revived { id: u32_at(2) },
         ZC_ROOM_NEWENTRY | ZC_CHANGE_CHATROOM => {
