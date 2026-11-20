@@ -2170,6 +2170,14 @@ impl App {
             game.show_item(shown);
             return;
         }
+        // A right press on an item's icon in the package pick describes it.
+        if let (Scene::Game(game), ElementState::Pressed) = (&mut self.scene, state)
+            && let Some(item) = game.package_pick.as_ref().and_then(|pick| pick.item_at(self.cursor))
+        {
+            let shown = iteminfo::Shown { grade: item.grade, ..iteminfo::Shown::of_link(item.item, item.refine, [0; 4], false, &self.items) };
+            game.show_item(shown);
+            return;
+        }
         // A right press on a Laphine row or slot describes its item.
         if let (Scene::Game(game), ElementState::Pressed) = (&mut self.scene, state) {
             let index = [&game.upgrade, &game.synthesis].into_iter().flatten().find_map(|window| window.item_at(self.cursor, &game.inventory.items));

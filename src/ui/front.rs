@@ -23,8 +23,8 @@ pub fn place(top: Top) -> Place {
     match top {
         Top::Slot | Top::GuildReason | Top::TradeAsked | Top::BookingAsked | Top::SpecialPopup => Place::Over,
         Top::Esc(
-            WorldMap | Menu | Notice | PartyAsked | SaveAsked | MemorialAsked | SkillApplyAsked | Amount | PartyInvite | AdoptAsked | QueueAsked | FriendAsked
-            | DismissAsked | HomunculusAsked | LeaderAsked | BindAsked | ExpansionAsked | PetAsked | GuildInvite | GuildAsked | CashShopBuy,
+            WorldMap | Menu | Notice | PartyAsked | SaveAsked | MemorialAsked | PackageAsked | SkillApplyAsked | Amount | PartyInvite | AdoptAsked | QueueAsked
+            | FriendAsked | DismissAsked | HomunculusAsked | LeaderAsked | BindAsked | ExpansionAsked | PetAsked | GuildInvite | GuildAsked | CashShopBuy,
         ) => Place::Over,
         Top::SmallMinimap | Top::QuestIcon | Top::LevelUp | Top::RouletteIcon => Place::Under,
         Top::Esc(MailWrite | MailRead) => Place::Window(Top::Esc(Mailbox)),

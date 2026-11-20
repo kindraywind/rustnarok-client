@@ -35,6 +35,7 @@ const CONFIRM_AT: [f32; 2] = [279.0, 259.0];
 const CLOSE_AT: [f32; 2] = [331.0, 259.0];
 /// An item row's icon (its grade mark 12 down, the count at (14, 15)), and its name: a 148 × 24 box, cut to it.
 const ICON_AT: [f32; 2] = [6.0, 5.0];
+const ICON_BOX: [f32; 2] = [38.0, 25.0];
 const GRADE_AT: [f32; 2] = [0.0, 12.0];
 const COUNT_AT: [f32; 2] = [14.0, 15.0];
 const NAME_AT: [f32; 2] = [45.0, 5.0];
@@ -200,6 +201,13 @@ impl PackagePick {
         }
     }
 
+    /// The item whose icon is under `cursor` (its 38 × 25 box), for its description.
+    pub fn item_at(&self, cursor: [f32; 2]) -> Option<&PackageItem> {
+        let local = self.frame.local(cursor, SIZE[1])?;
+        let row = (0..SHOWN).find(|&row| contains(offset(Self::item_row(row), ICON_AT), ICON_BOX, local))?;
+        self.items().get(self.item_first + row)
+    }
+
     /// The picked set, for the question.
     pub fn picked_set(&self) -> Option<&PackageSet> {
         self.picked.and_then(|set| self.sets.get(set))
@@ -263,7 +271,7 @@ impl PackagePick {
         }
         self.set_bar().draw(layer, chrome);
         // The picked set's items: the row by its kind, the icon with its grade and count, the name (with the refine).
-        // ponytail: no tooltip or description over the icon yet.
+        // ponytail: no tooltip over the icon yet; a right press describes its item.
         for (row, item) in self.items().iter().enumerate().skip(self.item_first).take(SHOWN) {
             let at = self.frame.at(Self::item_row(row - self.item_first));
             if let Some(picture) = &assets.item_rows[row_kind(item)] {
@@ -325,6 +333,8 @@ mod tests {
         pick.press(at([60.0, 17.0 + 34.0 + 5.0]));
         assert_eq!((pick.picked, pick.items().len(), pick.picked_set().map(|set| set.number)), (Some(1), 2, Some(1)));
         assert_eq!(pick.hit(at([200.0, 17.0 + 34.0 + 5.0])), Some(Hit::Item(1)));
+        assert_eq!(pick.item_at(at([173.0 + 10.0, 17.0 + 34.0 + 10.0])).map(|item| item.item), Some(501));
+        assert!(pick.item_at(at([173.0 + 100.0, 17.0 + 34.0 + 10.0])).is_none(), "the name isn't the icon");
         assert_eq!(pick.hit(at([200.0, 17.0 + 2.0 * 34.0 + 5.0])), Some(Hit::Window), "past the set's items");
         pick.wheel(at([60.0, 100.0]), 5);
         assert_eq!(pick.set_first, 2, "as far as it scrolls");
