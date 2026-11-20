@@ -44,7 +44,8 @@ pub struct GraphicsSettings {
     /// This client's extras, none of them in the game and all off at first (the Extras tab): a monster's HP on its
     /// bar, its level after its name, the camera going out much further, an item's random options in its inventory
     /// name box, the seconds left on a cooling skill's hotkey, the exp bar's hover to a hundredth of a percent, a
-    /// kill's base and job exp over where the monster died, and the interface growing with the window (`crate::canvas`).
+    /// kill's base and job exp over where the monster died, the interface growing with the window (`crate::canvas`), and
+    /// the frames a second and the map server's round trip in the bottom-right corner (`crate::meter`).
     pub monster_hp: bool,
     pub monster_level: bool,
     pub far_zoom: bool,
@@ -53,6 +54,7 @@ pub struct GraphicsSettings {
     pub exp_hundredths: bool,
     pub kill_exp: bool,
     pub ui_scale: bool,
+    pub fps_ping: bool,
     /// Which of the eight sets of navigation arrows lies on the ground (the Navigation window's picker), the first at
     /// first.
     pub navi_icons: u8,
@@ -85,6 +87,7 @@ impl Default for GraphicsSettings {
             exp_hundredths: false,
             kill_exp: false,
             ui_scale: false,
+            fps_ping: false,
             navi_icons: 1,
             ui_size: 768,
             font: DEFAULT_FONT.into(),
@@ -117,7 +120,7 @@ impl GraphicsSettings {
 
     pub fn load_from(path: &Path) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
-        // The switches, the UI size and the navigation's arrow set, then the font's name and the skin's, each on a line
+        // The switches, the UI size, the navigation's arrow set and the switches added after those, then the font's name and the skin's, each on a line
         // of its own. (A file from when a switch followed the size reads as the first set.)
         let mut lines = text.split('\n');
         let (switches, font, skin) = (lines.next().unwrap_or(""), lines.next().unwrap_or(""), lines.next().unwrap_or(""));
@@ -144,6 +147,7 @@ impl GraphicsSettings {
             ui_scale: next(false),
             ui_size: words.next().and_then(|rows| rows.parse().ok()).filter(|rows| UI_SIZES.contains(rows)).unwrap_or(768),
             navi_icons: words.next().and_then(|set| set.parse().ok()).filter(|set| (1..=8).contains(set)).unwrap_or(1),
+            fps_ping: words.next().is_some_and(|value| value != "0"),
             font: Some(font.trim()).filter(|font| !font.is_empty()).unwrap_or(DEFAULT_FONT).to_owned(),
             skin: skin.trim_end_matches('\r').to_owned(),
         }
@@ -176,6 +180,7 @@ impl GraphicsSettings {
             + &self.ui_size.to_string()
             + " "
             + &self.navi_icons.to_string()
+            + if self.fps_ping { " 1" } else { " 0" }
             + "\n"
             + &self.font
             + "\n"
@@ -238,6 +243,7 @@ mod tests {
             exp_hundredths: true,
             kill_exp: true,
             ui_scale: true,
+            fps_ping: true,
             navi_icons: 5,
             ui_size: 960,
             font: "MS Gothic (Japan)".into(),
@@ -259,6 +265,11 @@ mod tests {
         // One from when a switch followed the size: the first arrow set.
         std::fs::write(&path, "1 1 0 1 0 0 1 1 0 0 0 0 0 1 1 0 0 1 960 1\nTahoma").unwrap();
         assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { ui_scale: true, ui_size: 960, ..GraphicsSettings::default() });
+        // FPS and ping come after the arrow set: off in a file from before them, on with a 1 there.
+        std::fs::write(&path, "1 1 0 1 0 0 1 1 0 0 0 0 0 1 1 0 0 0 768 5\nTahoma").unwrap();
+        assert!(!GraphicsSettings::load_from(&path).fps_ping);
+        std::fs::write(&path, "1 1 0 1 0 0 1 1 0 0 0 0 0 1 1 0 0 0 768 5 1\nTahoma").unwrap();
+        assert_eq!(GraphicsSettings::load_from(&path), GraphicsSettings { navi_icons: 5, fps_ping: true, ..GraphicsSettings::default() });
         let _ = std::fs::remove_file(path);
     }
 

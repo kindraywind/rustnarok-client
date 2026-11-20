@@ -106,6 +106,7 @@ impl App {
         if matches!(self.scene, Scene::Game(_)) {
             // The game moves on, then its frame is drawn, at the same instant.
             let now = control::now();
+            self.meter.frame(now);
             self.tick(now);
             self.redraw_game(event_loop, now);
             self.frame_current = true;
@@ -1519,6 +1520,11 @@ impl App {
         if let Some([a, b]) = game.battle.score {
             let score = format!("{a} : {b}");
             base.outlined(&score, [(screen()[0] - 12.0 - font.width(&score)).floor(), 166.0]);
+        }
+        // The frames a second and the ping in the bottom-right corner, an extra (Extras > FPS and ping).
+        if self.graphics.fps_ping {
+            let text = self.meter.text();
+            base.outlined(&text, [(screen()[0] - 8.0 - font.width(&text)).floor(), screen()[1] - 20.0]);
         }
         // On a siege map (not a battleground) other players in a guild, and the guardians, carry its emblem over their
         // heads; it follows the unit but doesn't grow with the zoom.

@@ -4673,6 +4673,8 @@ struct App {
     print_screen: Option<std::path::PathBuf>,
     /// The file a screenshot was just saved to, for its chat line.
     shot_saved: Option<String>,
+    /// The FPS and ping corner's numbers (Extras > FPS and ping).
+    meter: meter::Meter,
     cursor_look: cursor::Cursor,
     /// The client's loading pictures, and the loading screen while it's up.
     loading_images: Vec<String>,
@@ -5893,6 +5895,7 @@ fn main() {
         keybinds,
         print_screen: None,
         shot_saved: None,
+        meter: meter::Meter::default(),
         cursor_look,
         loading_images,
         loading: None,

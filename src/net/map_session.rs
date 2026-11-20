@@ -98,6 +98,11 @@ impl MapSession {
         self.stream.write_all(&encode_direction(direction, head))
     }
 
+    /// How long after our last CZ_REQUEST_TIME its answer, heard at `heard`, came; none for an answer to an older one.
+    pub fn round_trip(&self, heard: Instant) -> Option<Duration> {
+        heard.checked_duration_since(self.beats.request_time)
+    }
+
     /// CZ_REQUEST_TIME: the client's tick; the server answers with its own.
     fn tick(&mut self, client_tick: u32) -> io::Result<()> {
         let mut packet = CZ_REQUEST_TIME.to_le_bytes().to_vec();

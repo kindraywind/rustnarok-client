@@ -46,6 +46,7 @@ pub(crate) mod memorial;
 pub(crate) mod menu;
 pub(crate) mod mercenary;
 pub(crate) mod merge;
+pub(crate) mod meter;
 pub(crate) mod minimap;
 pub(crate) mod minimap_window;
 pub(crate) mod monster_info;
