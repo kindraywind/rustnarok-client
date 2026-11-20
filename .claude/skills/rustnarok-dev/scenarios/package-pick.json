@@ -1,0 +1,23 @@
+{
+  "about": "Package pick: a double click on a box the data's package table lists (rathena's example box 101060, three sets) opens the set pick instead of using it, centred, nothing picked; a press on a set lists its items; Confirm asks with the set's name; OK sends CZ_USE_PACKAGEITEM with the row and the server swaps the box for the set's items.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@warp prontera 150 150"}, {"settle": 1500},
+    {"say": "@itemreset"}, {"wait": 800},
+    {"say": "@item 101060 1"}, {"wait_for": {"event": "PickedUp", "ms": 5000}},
+    {"key": "Alt+E"}, {"wait": 500},
+    {"click_on": {"inventory_item": 101060}, "count": 2}, {"wait": 500}, {"move": [1000, 740]},
+    {"expect": {"windows_open": ["PackagePick"], "state": {"package_pick.item": 101060, "package_pick.picked": null, "package_pick.position": [318, 242]}}},
+    {"shot": "package-pick-open", "crop": [318, 242, 387, 283]},
+    {"click_on": {"button": "package_set:1"}}, {"wait": 300}, {"move": [1000, 740]},
+    {"expect": {"state": {"package_pick.picked": 1}}},
+    {"shot": "package-pick-set", "crop": [318, 242, 387, 283]},
+    {"click_on": {"button": "package_confirm"}}, {"wait": 300},
+    {"expect": {"windows_open": ["PackagePick", "PackageAsked"], "state": {"package_pick.asked": true}}},
+    {"shot": "package-pick-asked"},
+    {"click_on": {"button": "ok"}}, {"wait_for": {"sent": "0x0baf", "ms": 3000}}, {"wait": 800},
+    {"expect": {"windows_closed": ["PackagePick", "PackageAsked"], "inventory_has": [{"id": 501}]}},
+    {"say": "@itemreset"}, {"wait": 500}
+  ]
+}
