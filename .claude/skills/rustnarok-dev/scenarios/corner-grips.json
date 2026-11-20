@@ -3,26 +3,215 @@
   "account": "",
   "slot": 0,
   "steps": [
-    {"say": "@warp prontera 156 180"}, {"settle": 1500},
-    {"say": "@storage"}, {"wait_for": {"packet": "0x0b08", "ms": 8000}}, {"wait": 500},
-    {"expect": {"windows_open": ["Storage"], "state": {"storage_rows": 12}}},
-    {"mouse_down": {"button": "storage_resize"}}, {"move": [632, 730]}, {"wait": 200},
-    {"mouse_up": {"point": [632, 730]}}, {"wait": 300},
-    {"expect": {"state": {"storage_rows": 14}}},
-    {"move": [900, 720]},
-    {"shot": "storage-14-rows", "crop": [350, 190, 300, 545], "threshold": 5},
-    {"click_on": {"button": "storage_close"}}, {"wait": 300},
-    {"say": "@warp prontera 134 220"}, {"settle": 2000},
-    {"click": [187, 317]}, {"wait": 1500},
-    {"click": [536, 537]}, {"wait": 1000},
-    {"expect": {"windows_open": ["Shop"], "state": {"shop_size": {"width": 280.0, "rows": [8, 3]}}}},
-    {"mouse_down": {"button": "shop_resize_0"}}, {"move": [233, 231]}, {"wait": 200},
-    {"mouse_up": {"point": [233, 231]}}, {"wait": 300},
-    {"mouse_down": {"button": "shop_resize_1"}}, {"move": [700, 560]}, {"wait": 200},
-    {"mouse_up": {"point": [700, 560]}}, {"wait": 300},
-    {"expect": {"state": {"shop_size": {"width": 248.0, "rows": [2, 7]}}}},
-    {"move": [900, 720]},
-    {"shot": "shop-resized", "crop": [0, 100, 600, 500], "threshold": 5},
-    {"click_on": {"button": "shop_cancel"}}, {"wait": 300}
+    {
+      "say": "@warp prontera 156 180"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@storage"
+    },
+    {
+      "wait_for": {
+        "packet": "0x0b08",
+        "ms": 8000
+      }
+    },
+    {
+      "wait": 500
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Storage"
+        ],
+        "state": {
+          "storage_rows": 12
+        }
+      }
+    },
+    {
+      "mouse_down": {
+        "button": "storage_resize"
+      }
+    },
+    {
+      "move": [
+        632,
+        730
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "mouse_up": {
+        "point": [
+          632,
+          730
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "storage_rows": 14
+        }
+      }
+    },
+    {
+      "move": [
+        900,
+        720
+      ]
+    },
+    {
+      "shot": "storage-14-rows",
+      "crop": [
+        350,
+        190,
+        300,
+        545
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "storage_close"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@warp prontera 134 220"
+    },
+    {
+      "settle": 2000
+    },
+    {
+      "click": [
+        187,
+        317
+      ]
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "click_on": {
+        "button": "deal_buy"
+      }
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "Shop"
+        ],
+        "state": {
+          "shop_size": {
+            "width": 280.0,
+            "rows": [
+              8,
+              3
+            ]
+          }
+        }
+      }
+    },
+    {
+      "mouse_down": {
+        "button": "shop_resize_0"
+      }
+    },
+    {
+      "move": [
+        233,
+        231
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "mouse_up": {
+        "point": [
+          233,
+          231
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "mouse_down": {
+        "button": "shop_resize_1"
+      }
+    },
+    {
+      "move": [
+        700,
+        560
+      ]
+    },
+    {
+      "wait": 200
+    },
+    {
+      "mouse_up": {
+        "point": [
+          700,
+          560
+        ]
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "shop_size": {
+            "width": 248.0,
+            "rows": [
+              2,
+              7
+            ]
+          }
+        }
+      }
+    },
+    {
+      "move": [
+        900,
+        720
+      ]
+    },
+    {
+      "shot": "shop-resized",
+      "crop": [
+        0,
+        100,
+        600,
+        500
+      ],
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "shop_cancel"
+      }
+    },
+    {
+      "wait": 300
+    }
   ]
 }

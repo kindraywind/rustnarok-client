@@ -14,7 +14,7 @@ A scenario is JSON: {"account": "", "slot": "0", "start": "char_select"|"server_
   {"drag": [[x, y], [x2, y2]], "held": true} ... {"cmd": {"cmd": "release"}}  (the button stays down: look mid-drag)
   {"click_on": {"inventory_item": 501}, "count": 2}  {"drag_on": [{"skill": 28}, {"hotkey": 3}]}
     (targets by name from the control socket's `targets`: inventory_item (item id), pick_item (a pick list's row, item
-    id), menu_item (part of a right-click menu choice's label), button (a window button's name, e.g. "feed"),
+    id), menu_item (part of a right-click menu choice's label, in any letter case: the words are the data's), button (a window button's name, e.g. "feed"),
     hotkey (slot), skill (id), char_slot (a card at character select, by slot), unit (name, from `units`),
     ground_item (item id, from `ground_items`), item_link (an item link in the chat log or NPC window, item id), item_picture (an item's picture in NPC text, item id),
     navi_link (a navigation link there, by its map), place_link (a shared place there, by its map), url_link (a web link there, by its address), quest_link (a
@@ -62,6 +62,8 @@ characters' names, so a scenario runs on anyone's server;
 "{scenarios}" the scenarios folder's (`@loadnpc {scenarios}/battleground-team.txt`),
 "{stamp}" a token of this run, and "{fresh}" (in "env" values: {"RUSTNAROK_CLIENT_SETTINGS": "{fresh}"}) a new empty temporary
 folder each time, removed when the scenario ends. Any other `{word}` fails the scenario before it launches.
+{"relaunch": true} quits the client and starts it again as the same player with the same settings folder (what the client
+keeps between runs).
 Each scenario starts a fresh client; the clock is paused for every shot so frames repeat.
 Everything lands under docs/personal/visual/<date>/<HHMMSS>/ (gitignored): game images never go in the repository.
 """
@@ -145,6 +147,10 @@ def player_name(state):
     return chars[0].get("name", "") if chars else ""
 
 
+# The binary and scenario of the clients running now, for a "relaunch" step.
+LAUNCHED = []
+
+
 def launch(binary, scenario):
     # Scenarios start from the same server state: RUSTNAROK_CLIENT_SCENARIO_RESET is a shell command (each developer's
     # own, for their server) run before every launch, e.g. clearing the test characters' saved hotkey bars.
@@ -161,6 +167,7 @@ def launch(binary, scenario):
     if os.path.basename(previous).startswith("rustnarok-settings-"):
         shutil.rmtree(previous, ignore_errors=True)
     os.environ["RUSTNAROK_CLIENT_SETTINGS"] = tempfile.mkdtemp(prefix="rustnarok-settings-")
+    LAUNCHED[:] = [binary, scenario]
     drive.use("first")
     names = {"first": player_name(launch_one(binary, scenario))}
     # A second player, for anything between two: its steps say "as": "second".
@@ -255,7 +262,7 @@ def locate(target):
     # In the game the game's targets; at character select the screen's (char_slot, menu_item).
     for found in game.get("targets", state.get("targets", [])):
         # A right-click menu's choice by (part of) its label.
-        if kind == "menu_item" and found.get("kind") == kind and value in found.get("label", ""):
+        if kind == "menu_item" and found.get("kind") == kind and value.lower() in found.get("label", "").lower():
             x, y, w, h = found["box"]
             return [round(x + w / 2) + dx, round(y + h / 2) + dy]
         key = {"inventory_item": "id", "item_link": "id", "item_picture": "id", "navi_link": "map", "place_link": "map", "url_link": "address", "quest_link": "id", "pick_item": "id", "button": "name", "hotkey": "slot", "skill": "id", "char_slot": "slot"}.get(kind)
@@ -407,6 +414,13 @@ def step(action, shots_dir, name):
 
 
 def step_on_client(action, shots_dir, name):
+    if "relaunch" in action:
+        # The client quits and starts again as the same player, with the scenario's settings folder: what it kept shows.
+        binary, scenario = LAUNCHED
+        drive.quit_quietly()
+        time.sleep(3)
+        launch_one(binary, scenario["second"] if drive.SOCK.endswith("qa2.sock") else scenario)
+        return None
     if "say" in action:
         return drive.send({"cmd": "say", "text": action["say"]})
     if "wait" in action:

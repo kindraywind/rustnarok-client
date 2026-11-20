@@ -1,5 +1,5 @@
 {
-  "about": "Guild messages (issue #515): a member logging back in prints \"Guild Member <name> has connected.\" in cyan; after /loginout it prints nothing; the second leaving with \"bye\" gives the others \"<name> has withdrawn from the guild.\" and \"Secession Reason: bye\" (this data's words for 364 and 365) in yellow and themselves \"You left the guild.\" in red; expelled with \"out\", the others read the expulsion lines in yellow and the second reads 490 in red.",
+  "about": "Guild messages (issue #515): a member logging back in prints \"Guild Member <name> has connected.\" in cyan; after /loginout it prints nothing; the second leaving with \"bye\" gives the others \"<name> has withdrawn from the guild.\" and \"Withdrawal Reason: bye\" (this data's words for 364 and 365) in yellow and themselves \"You left the guild.\" in red; expelled with \"out\", the others read the expulsion lines in yellow and the second reads 490 in red.",
   "account": "",
   "slot": 0,
   "second": {
@@ -72,7 +72,7 @@
     },
     {
       "expect": {
-        "chat": "Offer Accepted"
+        "chat": "accepted the guild invitation"
       }
     },
     {
@@ -89,8 +89,8 @@
     },
     {
       "click": [
-        276,
-        148
+        99,
+        62
       ]
     },
     {
@@ -253,8 +253,8 @@
     {
       "as": "second",
       "click": [
-        276,
-        148
+        99,
+        62
       ]
     },
     {
@@ -314,7 +314,7 @@
     },
     {
       "expect": {
-        "chat": "Secession Reason: bye"
+        "chat": "Withdrawal Reason: bye"
       }
     },
     {
@@ -373,21 +373,6 @@
     },
     {
       "key": "Alt+G"
-    },
-    {
-      "wait_for": {
-        "packet": "0x014c",
-        "ms": 5000
-      }
-    },
-    {
-      "wait": 300
-    },
-    {
-      "click": [
-        276,
-        148
-      ]
     },
     {
       "wait_for": {
