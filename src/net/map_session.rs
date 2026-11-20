@@ -604,6 +604,10 @@ impl MapSession {
         self.stream.write_all(&encode_id(CZ_REQ_CHANGE_TITLE, title))
     }
 
+    pub fn dynamic_npc(&mut self, name: &str) -> io::Result<()> {
+        self.stream.write_all(&encode_dynamic_npc(name))
+    }
+
     pub fn roulette(&mut self, request: RouletteRequest) -> io::Result<()> {
         self.stream.write_all(&encode_roulette(request))
     }

@@ -1133,6 +1133,9 @@ impl App {
                     None => {}
                 }
             }
+            // The Gold PC Cafe box asks for the server's Gold PC Cafe NPC.
+            // ponytail: the game skips this on a map of type 20 (rathena's MAPTYPE_PVP_TOURNAMENT), which rathena never sends.
+            Scene::Game(game) if on(Top::GoldPc) => _ = game.session.dynamic_npc(goldpc::NPC),
             // Its icon asks for it.
             Scene::Game(game) if on(Top::RouletteIcon) => {
                 if game.roulette.is_none() {

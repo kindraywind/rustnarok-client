@@ -2528,6 +2528,9 @@ impl App {
         );
         // ponytail: the roulette's icon stands left of the minimap; where the real client puts it isn't known.
         roulette::draw_icon(shop_layer.window_of(Top::RouletteIcon), &mut tooltip, &assets.chrome, &assets.roulette, font, messages, pointer.0);
+        if let Some(window) = &game.gold_pc {
+            window.draw(shop_layer.window_of(Top::GoldPc), &mut tooltip, &assets.chrome, &assets.gold_pc, font, messages, pointer.0, control::now());
+        }
         if let Some(window) = &game.monster_window {
             window.draw(shop_layer.esc(W::MonsterInfo), &assets.chrome, font, messages, pointer.0);
         }

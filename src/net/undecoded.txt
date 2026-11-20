@@ -846,8 +846,7 @@
 0x0A10 old: an older server's form
 0x0A13 client
 0x0A14 unsent
-0x0A15 unsent
-0x0A16 client
+0x0A16 client: the Gold PC Cafe box's click asks for its NPC; stock rathena makes dynamic NPCs only from scripts and drops the link on it
 0x0A17 todo: a dynamic NPC's result (clif_dynamicnpc_result)
 0x0A19 client
 0x0A1B client

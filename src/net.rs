@@ -222,6 +222,13 @@ pub fn encode_room_owner(name: &str) -> Vec<u8> {
 }
 
 /// The owner kicks `name` out (CZ_REQ_EXPEL_MEMBER).
+/// Asks for a dynamic NPC by name (CZ_DYNAMICNPC_CREATE_REQUEST); the Gold PC Cafe window asks for "GOLDPCCAFE".
+pub fn encode_dynamic_npc(name: &str) -> Vec<u8> {
+    let mut packet = CZ_DYNAMICNPC_CREATE_REQUEST.to_le_bytes().to_vec();
+    packet.extend(name_24(name));
+    packet
+}
+
 pub fn encode_room_kick(name: &str) -> Vec<u8> {
     let mut packet = CZ_REQ_EXPEL_MEMBER.to_le_bytes().to_vec();
     packet.extend(name_24(name));
@@ -1288,6 +1295,8 @@ const ZC_EQUIPSWITCH_REMOVED: u16 = 0x0A9A;
 const ZC_EQUIPSWITCH_LIST: u16 = 0x0A9B;
 const CZ_REQ_EQUIPSWITCH: u16 = 0x0A9C;
 const ZC_EQUIPSWITCH_REPLY: u16 = 0x0A9D;
+const ZC_GOLDPCCAFE_POINT: u16 = 0x0A15;
+const CZ_DYNAMICNPC_CREATE_REQUEST: u16 = 0x0A16;
 const CZ_REQ_OPEN_ROULETTE: u16 = 0x0A19;
 const ZC_ACK_OPEN_ROULETTE: u16 = 0x0A1A;
 const CZ_REQ_ROULETTE_INFO: u16 = 0x0A1B;
