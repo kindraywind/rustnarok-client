@@ -1,7 +1,8 @@
 {
-  "about": "Package pick: a double click on a box the data's package table lists (rathena's example box 101060, three sets) opens the set pick instead of using it, centred, nothing picked; a press on a set lists its items; Confirm asks with the set's name; OK sends CZ_USE_PACKAGEITEM with the row and the server swaps the box for the set's items.",
+  "about": "Package pick: a double click on a box the data's package table lists (rathena's example box 101060, three sets, from the scenario's own table: the harness's data predates SelectPackageItem_Cln) opens the set pick instead of using it, centred, nothing picked; a press on a set lists its items; Confirm asks with the set's name; OK sends CZ_USE_PACKAGEITEM with the row and the server swaps the box for the set's items.",
   "account": "",
   "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_PACKAGES": "{repo}/.claude/skills/rustnarok-dev/scenarios/package-pick.lua"},
   "steps": [
     {"say": "@warp prontera 150 150"}, {"settle": 1500},
     {"say": "@itemreset"}, {"wait": 800},
@@ -17,7 +18,7 @@
     {"expect": {"windows_open": ["PackagePick", "PackageAsked"], "state": {"package_pick.asked": true}}},
     {"shot": "package-pick-asked"},
     {"click_on": {"button": "ok"}}, {"wait_for": {"sent": "0x0baf", "ms": 3000}}, {"wait": 800},
-    {"expect": {"windows_closed": ["PackagePick", "PackageAsked"], "inventory_has": [{"id": 501}]}},
+    {"expect": {"windows_closed": ["PackagePick", "PackageAsked"], "inventory_has": [{"id": 640045}, {"id": 800033}]}},
     {"say": "@itemreset"}, {"wait": 500}
   ]
 }

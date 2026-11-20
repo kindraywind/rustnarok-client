@@ -16,6 +16,7 @@
 //! `RUSTNAROK_CLIENT_WEAR=1` (put on every piece of equipment carried, once the inventory is in), `RUSTNAROK_CLIENT_EQUIPMENT=1` (open
 //! the equipment window), `RUSTNAROK_CLIENT_SHOT_LOADING=1` (screenshot the loading screen instead of the game),
 //! `RUSTNAROK_CLIENT_ATTENDANCE=<file>` (the attendance check's event from that Lua file, not the data's CheckAttendance.lub),
+//! `RUSTNAROK_CLIENT_PACKAGES=<file>` (the package boxes from that Lua file, not the data's SelectPackageItem_Cln.lub),
 //! `RUSTNAROK_CLIENT_WINDOW=<width>x<height>` (the window's size at start in points, which is also the canvas, e.g. 1365x768 for 16:9),
 //! `RUSTNAROK_CLIENT_SKILLS=1` (open the skill window), `RUSTNAROK_CLIENT_SKILL=<id>:<level>` (use a skill 3 seconds in, on oneself
 //! if it needs a target), `RUSTNAROK_CLIENT_HOTKEYS=<slot>[,<slot>...]` (press those hotkeys, one a second from 3 seconds in),
@@ -5752,7 +5753,12 @@ fn main() {
         Err(_) => lua::attendance(&grf),
     }
     .unwrap_or_default();
-    let packages = std::rc::Rc::new(lua::packages(&grf).unwrap_or_else(|error| {
+    // RUSTNAROK_CLIENT_PACKAGES=<file> reads the package boxes from that file (a scenario's own).
+    let packages = match std::env::var("RUSTNAROK_CLIENT_PACKAGES") {
+        Ok(path) => std::fs::read(path).and_then(lua::package_table),
+        Err(_) => lua::packages(&grf),
+    };
+    let packages = std::rc::Rc::new(packages.unwrap_or_else(|error| {
         eprintln!("no package boxes: {error}");
         HashMap::new()
     }));
