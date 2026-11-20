@@ -19,6 +19,8 @@ pub struct Connection {
     pub version: u32,
     /// The service's language, which picks the code page of chat and names (`codepage`).
     pub langtype: u8,
+    /// The server's PACKETVER (`<packetver>`, ours: official clients don't read it); 0 when not given.
+    pub packetver: u32,
     /// Loading pictures, by file name in the UI texture folder.
     pub loading: Vec<String>,
 }
@@ -51,6 +53,7 @@ pub fn parse(bytes: &[u8]) -> Vec<Connection> {
                 port: field("port").and_then(|port| port.parse().ok()).unwrap_or(6900),
                 version: field("version").and_then(|version| version.parse().ok()).unwrap_or(0),
                 langtype: field("langtype").and_then(|langtype| langtype.parse().ok()).unwrap_or(0),
+                packetver: field("packetver").and_then(|version| version.parse().ok()).unwrap_or(0),
                 loading: loading.filter(|image| !image.is_empty()).collect(),
             })
         })
@@ -105,7 +108,7 @@ mod tests {
             b"</display>\n  <address> 127.0.0.1 </address>\n  <port>6900</port>\n  <version>55</version>\n\
             <loading>\n<image>loading00.jpg</image>\n<image>loading01.jpg</image>\n</loading>\n</connection>\n\
             <!--\n<connection><display>Old</display><address>10.0.0.1</address></connection>\n-->\n\
-            <connection><display>Test</display><address>example.test</address><langtype>5</langtype></connection>\n\
+            <connection><display>Test</display><address>example.test</address><langtype>5</langtype><packetver>20250402</packetver></connection>\n\
             <connection><display>Broken</display></connection>\n</clientinfo>\n",
         );
         let connections = parse(&file);
@@ -115,6 +118,7 @@ mod tests {
         assert_eq!(connections[0].loading, ["loading00.jpg", "loading01.jpg"]);
         assert_eq!((connections[1].server().as_str(), connections[1].version), ("example.test:6900", 0));
         assert_eq!((connections[0].langtype, connections[1].langtype), (0, 5));
+        assert_eq!((connections[0].packetver, connections[1].packetver), (0, 20250402));
         assert!(parse(b"<?xml version=\"1.0\" ?><no_free_server></no_free_server>").is_empty());
     }
 

@@ -79,7 +79,8 @@ ships in this repository.
 <td width="50%" valign="top">
 
 ### 📡 The real protocol
-Login, char and map servers at PACKETVER 20220406. Every packet length is generated from the server's own headers.
+Login, char and map servers at PACKETVER 20220406 up to 2026 clients ([Packet versions](#packet-versions)). Every
+packet length is generated from the server's own headers.
 
 </td>
 <td width="50%" valign="top">
@@ -290,8 +291,8 @@ machine, put its address in clientinfo.xml; the server must announce an address 
 </clientinfo>
 ```
 
-The server must run PACKETVER 20220406 (or 20250402, with `RUSTNAROK_CLIENT_PACKETVER=20250402` set for the client)
-without packet obfuscation. The rathena this client is developed against is a
+The server must run without packet obfuscation, and the client must know its PACKETVER ([Packet
+versions](#packet-versions)). The rathena this client is developed against is a
 fork with those settings and a setup guide for macOS: [kindraywind/rathena](https://github.com/kindraywind/rathena)
 (branch `rustnarok`, see its RUSTNAROK.md). Its changes from upstream:
 
@@ -302,6 +303,43 @@ fork with those settings and a setup guide for macOS: [kindraywind/rathena](http
 Test accounts live in that server's database; their passwords never go in this repository. Keep them in a file
 outside it with `username:`/`password:` lines (`username2:`/`password2:` and so on for more), which the dev tools
 read.
+
+### Packet versions
+
+A server is built for one client date, its PACKETVER, and the client has to speak the same one. Like the official
+client, it can't tell by itself, so each connection in clientinfo.xml says it:
+
+```xml
+<connection>
+  <display>My server</display>
+  <address>192.168.1.20</address>
+  <port>6900</port>
+  <packetver>20250402</packetver>
+</connection>
+```
+
+- Without `<packetver>` it's 20220406.
+- `RUSTNAROK_CLIENT_PACKETVER=<date>` overrides every connection's.
+- Official clients don't read `<packetver>`, so the same clientinfo.xml still works for them.
+- Give the server's real PACKETVER (rathena: `PACKETVER` in `src/custom/defines_pre.hpp`, else
+  `src/config/packets.hpp`). A newer date than the server's can make it drop the connection on a packet it doesn't
+  know.
+
+What the setting changes:
+
+| PACKETVER | |
+|---|---|
+| below 20230705, default 20220406 | rathena's 20220406 packet lengths |
+| 20230705 and up | emotions are also asked with `0x0BE9` (with a pack) and shown from `0x0BEA` |
+| 20230906 and up | Take off all also takes off the costume pieces in one request (`0x0BF5`) |
+| 20250402 and up | rathena's 20250402 packet lengths; the expanded barter shop's newer item layout |
+
+Packets that changed id or shape between 2022 and 2026 and need no request from the client (the NPC say window, NPC
+music, the box-item announcement, special popups) are read in both forms, whatever the setting. Packets newer than
+rathena (ids `0x0B7E`–`0x0C81`) are read past at the lengths iRO's 2026-09-29 client uses, which agree with kRO main
+2026-01 except `0x0C12` and `0x0C26` (left out); the client stays connected but doesn't act on most of them yet.
+Played: rathena at 20220406, and servers at 20250604, 20260107 and 20260820. Not checked: kRO's newest
+client (2026-11), Zero, twRO and other services' clients.
 
 ### Server add-ons
 

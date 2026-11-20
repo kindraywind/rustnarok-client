@@ -1,6 +1,7 @@
 //! Login, char and map server protocol, as rathena speaks it (see rathena src/common/packets.hpp).
-//! PACKETVER 20220406 by default; `RUSTNAROK_CLIENT_PACKETVER=20250402` selects the newer length table and the
-//! packets that differ (NPC dialog, NPC BGM, special popup, equip-all).
+//! PACKETVER 20220406 by default; a connection's `<packetver>` in clientinfo.xml (or `RUSTNAROK_CLIENT_PACKETVER`)
+//! picks another: from 20250402 the newer length table, and the packets that differ by version (NPC dialog, NPC BGM,
+//! special popup, equip-all, emotions).
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -28,12 +29,27 @@ pub const PACKETVER_TAKEOFF_LOCATION: u32 = 20230906;
 /// (`0x0BEA`), the PACKETVER rathena first reads `0x0BE9` at.
 pub const PACKETVER_EMOTION_EXPANSION: u32 = 20230705;
 
-/// The server's PACKETVER. `RUSTNAROK_CLIENT_PACKETVER` overrides the default 20220406. One value for the whole
-/// client; choosing it per server is a separate change.
-pub fn packetver() -> u32 {
-    static VERSION: LazyLock<u32> =
-        LazyLock::new(|| std::env::var("RUSTNAROK_CLIENT_PACKETVER").ok().and_then(|text| text.parse().ok()).unwrap_or(PACKETVER_20220406));
+/// The connection's PACKETVER, set by `set_packetver`; 0 until then.
+static PACKETVER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// `RUSTNAROK_CLIENT_PACKETVER`, which wins over the connection's.
+fn packetver_switch() -> Option<u32> {
+    static VERSION: LazyLock<Option<u32>> = LazyLock::new(|| std::env::var("RUSTNAROK_CLIENT_PACKETVER").ok().and_then(|text| text.parse().ok()));
     *VERSION
+}
+
+/// The server's PACKETVER: `RUSTNAROK_CLIENT_PACKETVER`, else the picked connection's (clientinfo.xml's
+/// `<packetver>`), else 20220406.
+pub fn packetver() -> u32 {
+    packetver_switch().unwrap_or_else(|| match PACKETVER.load(Ordering::Relaxed) {
+        0 => PACKETVER_20220406,
+        version => version,
+    })
+}
+
+/// The picked connection's PACKETVER; 0 for none given (the default).
+pub fn set_packetver(version: u32) {
+    PACKETVER.store(version, Ordering::Relaxed);
 }
 
 const CA_LOGIN: u16 = 0x0064;
