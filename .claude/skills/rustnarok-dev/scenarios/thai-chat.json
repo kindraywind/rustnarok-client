@@ -1,5 +1,5 @@
 {
-  "about": "Chat in the connection's code page: with langtype 5 (Thai) a line typed in Thai goes out in Windows-874 and comes back as Thai, on the chat window and over the head. In EUC-KR (langtype 0) Thai has no bytes, so it went out as HTML character references.",
+  "about": "Chat in the connection's code page: with langtype 5 (Thai) a line typed in Thai goes out in Windows-874 and comes back as Thai, on the chat window and over the head. In EUC-KR (langtype 0) Thai has no bytes, so it went out as HTML character references. A long line of Thai, which has no spaces between its words, fills its lines in the chat window and the balloon (it isn't sent down whole after the last space), with every vowel and tone mark on its letter and a tone mark above an upper vowel, not on it.",
   "account": "",
   "slot": 0,
   "env": {
@@ -41,6 +41,31 @@
       "expect": {
         "chat": "{first} : สวัสดีครับ"
       }
+    },
+    {
+      "type": "abc ที่นี่มีน้ำผึ้งป่าเป็นฟองฟู่ปู่ย่าฟื้นฝั่งนี้ที่นั่นทั้งนั้นผู้ใหญ่ซื้อผ้าป่านที่ญี่ปุ่นกี่ชิ้นก็ได้"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "move": [
+        600,
+        300
+      ]
+    },
+    {
+      "shot": "thai-long",
+      "crop": [
+        0,
+        180,
+        620,
+        588
+      ],
+      "threshold": 5
     }
   ]
 }

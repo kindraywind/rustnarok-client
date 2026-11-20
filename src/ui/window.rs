@@ -416,8 +416,11 @@ pub fn wrap(font: &Font, text: &str, width: f32, lines: usize) -> Vec<String> {
     for character in text.chars() {
         let line = wrapped.last_mut().unwrap();
         if !line.is_empty() && font.width(&format!("{line}{character}")) > width {
-            let carried = match line.rfind(' ') {
-                Some(space) if character != ' ' => line.split_off(space + 1),
+            // The word goes down whole; Thai (no spaces between its words) breaks at its last letter that fits, and
+            // right here when the next letter may start a line.
+            let here = character == ' ' || line.chars().last().is_some_and(|last| rustnarok_client::text::breaks_between(last, character));
+            let carried = match line.rfind(' ').map(|space| space + 1).max(rustnarok_client::text::last_break(line, line.len())) {
+                Some(at) if !here => line.split_off(at),
                 _ => String::new(),
             };
             line.truncate(line.trim_end().len());
@@ -906,6 +909,18 @@ mod tests {
         storage.start_drag([5.0, 5.0]);
         storage.start_drag([5.0, 5.0]);
         assert!(!storage.minimized);
+    }
+
+    #[test]
+    fn wraps_thai_between_letters() {
+        let font = Font::load();
+        let phrase = "ที่นี่ที่นี่ที่นี่ที่นี่ที่นี่ที่นี่";
+        let width = font.width("ที่นี่ที่นี่ที่นี่") + 1.0;
+        let wrapped = wrap(&font, &format!("abc {phrase}"), width, 9);
+        // The phrase goes on in the first line (it didn't jump down whole) and no line starts with a mark.
+        assert!(wrapped[0].len() > "abc ".len(), "{wrapped:?}");
+        assert!(wrapped.iter().all(|line| !line.starts_with(rustnarok_client::text::is_thai_mark) && font.width(line) <= width), "{wrapped:?}");
+        assert_eq!(wrapped.concat().replace(' ', ""), format!("abc{phrase}"));
     }
 
     #[test]

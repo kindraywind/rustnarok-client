@@ -8,6 +8,50 @@ pub const SIZE: f32 = 12.0;
 /// Set to false (thresholded coverage) once a hinted bitmap-friendly font like Gulim is in use.
 const ANTIALIAS: bool = true;
 
+/// A Thai vowel or tone mark drawn over or under the letter before it: it takes no room of its own.
+pub fn is_thai_mark(character: char) -> bool {
+    matches!(character, '\u{E31}' | '\u{E34}'..='\u{E3A}' | '\u{E47}'..='\u{E4E}')
+}
+
+fn is_thai(character: char) -> bool {
+    ('\u{E00}'..='\u{E7F}').contains(&character)
+}
+
+/// Whether a line may break between two characters with no space there: inside Thai, which is written without spaces
+/// between its words, but never before a mark or a vowel that follows its letter, nor after a vowel written before one.
+// ponytail: any letter boundary, not word boundaries (those need a dictionary); the game cuts Thai by bytes.
+pub fn breaks_between(before: char, after: char) -> bool {
+    (is_thai(before) || is_thai(after))
+        && before != ' '
+        && after != ' '
+        && !is_thai_mark(after)
+        && !matches!(after, '\u{E2F}' | '\u{E30}' | '\u{E32}' | '\u{E33}' | '\u{E45}' | '\u{E46}')
+        && !matches!(before, '\u{E40}'..='\u{E44}')
+}
+
+/// The last place at or before byte `end` (past the start) where `text` may break without a space (`breaks_between`).
+pub fn last_break(text: &str, end: usize) -> Option<usize> {
+    let mut found = None;
+    let mut before = None;
+    for (at, character) in text.char_indices() {
+        if at > end {
+            break;
+        }
+        if before.is_some_and(|before| breaks_between(before, character)) {
+            found = Some(at);
+        }
+        before = Some(character);
+    }
+    found
+}
+
+/// The bytes of `text`'s first letter with the marks on it: what a line never splits.
+pub fn cluster_len(text: &str) -> usize {
+    let mut characters = text.char_indices();
+    characters.next();
+    characters.find(|&(_, character)| !is_thai_mark(character)).map_or(text.len(), |(at, _)| at)
+}
+
 /// The font (`RUSTNAROK_CLIENT_FONT`, else the one picked in Game Settings, Tahoma by default), then the fallbacks. A
 /// fallback is read the first time a character needs it: fontdue builds every glyph's outline up front, and
 /// AppleGothic's Hangul alone is ~185 MB.
@@ -196,10 +240,28 @@ impl Font {
         let height = line.map_or(size, |line| line.new_line_size.ceil());
         let mut image = RgbaImage::new(width.ceil().max(1.0) as u32, height as u32);
         let mut pen = 0.0f32;
-        for character in text.chars() {
+        // Thai marks stack: a tone mark over an upper vowel (or over the ring of the vowel after it) goes up by that
+        // vowel's height, and the marks over a letter with a tall stroke on its right move left of the stroke.
+        // ponytail: placed by rule, not by the font's own mark tables (fontdue reads none); a shaping library if more
+        // scripts need it.
+        let (mut over, mut tall) = (0i32, false);
+        let mut rest = text.chars().peekable();
+        while let Some(character) = rest.next() {
             let (metrics, coverage) = self.face(character).rasterize(character, size);
-            let left = pen.round() as i32 + metrics.xmin;
-            let top = ascent - metrics.height as i32 - metrics.ymin;
+            let upper = matches!(character, '\u{E31}' | '\u{E34}'..='\u{E37}' | '\u{E47}' | '\u{E4D}');
+            let tone = matches!(character, '\u{E48}'..='\u{E4C}');
+            let mut raise = 0;
+            if tone {
+                raise = if over == 0 && rest.peek() == Some(&'\u{E33}') { metrics.height as i32 } else { over };
+            } else if upper {
+                over = metrics.height as i32;
+            } else if !is_thai_mark(character) {
+                (over, tall) = (0, matches!(character, 'ป' | 'ฝ' | 'ฟ' | 'ฬ'));
+            }
+            let aside = if tall && (tone || upper) { (size / 6.0).round() as i32 } else { 0 };
+            let left = pen.round() as i32 + metrics.xmin - aside;
+            // The top row is the highest a stacked mark goes.
+            let top = (ascent - metrics.height as i32 - metrics.ymin - raise).max(0);
             for (index, &value) in coverage.iter().enumerate() {
                 let alpha = if ANTIALIAS {
                     value
@@ -275,5 +337,61 @@ mod tests {
         let inked = image.pixels().filter(|pixel| pixel.0[3] > 0).count();
         assert!(inked > 40, "only {inked} pixels drawn");
         assert!(super::ANTIALIAS || image.pixels().all(|pixel| pixel.0[3] == 0 || pixel.0[3] == 255));
+    }
+}
+
+#[cfg(test)]
+mod thai_tests {
+    use super::*;
+
+    #[test]
+    fn thai_breaks_between_letters_but_keeps_marks_on_theirs() {
+        // Between two letters, and between Thai and Latin; not inside Latin.
+        assert!(breaks_between('ก', 'ข') && breaks_between('a', 'ก') && !breaks_between('a', 'b'));
+        // Not before a tone mark, an upper vowel or the vowels that follow their letter; not after a leading vowel.
+        assert!(!breaks_between('ก', '\u{E48}') && !breaks_between('ก', '\u{E34}') && !breaks_between('น', 'ำ') && !breaks_between('เ', 'ก'));
+        assert!(!breaks_between('ก', ' ') && !breaks_between(' ', 'ก'));
+        let text = "ที่นี่";
+        // "ที่" then "นี่": the one break is before น.
+        assert_eq!(last_break(text, text.len()), Some("ที่".len()));
+        assert_eq!(last_break("abc", 3), None);
+        assert_eq!(cluster_len(text), "ที่".len());
+        assert_eq!(cluster_len("abc"), 1);
+    }
+
+    /// A tone mark over an upper vowel is drawn above it, not on it: more rows are inked than with the vowel alone.
+    #[test]
+    fn a_tone_mark_stacks_over_an_upper_vowel() {
+        let font = Font::load();
+        if font.first.lookup_glyph_index('ก') == 0 {
+            return;
+        }
+        let rows = |text: &str| {
+            let image = font.render(text, [0, 0, 0]);
+            (0..image.height()).filter(|&y| (0..image.width()).any(|x| image.get_pixel(x, y).0[3] > 0)).count()
+        };
+        assert!(rows("กี่") > rows("กี"), "the tone mark sits on the vowel");
+        assert_eq!(font.width("กี่"), font.width("ก"), "marks take no room");
+    }
+}
+
+#[cfg(test)]
+mod thai_probe {
+    #[test]
+    fn probe() {
+        let Ok(out_path) = std::env::var("PROBE_OUT") else { return };
+        let font = super::Font::load();
+        let text = "ที่นี่ ป้า ผู้ ฟ้า น้ำ กิ่ง เป็น ปู่ ญี่ปุ่น ฐาน ปี่ ฟื้น ฝั่ง";
+        let image = font.render_sized(text, [0, 0, 0], 12.0);
+        let mut out = image::RgbaImage::from_pixel(image.width() * 4, image.height() * 4, image::Rgba([255, 255, 255, 255]));
+        for (x, y, p) in image.enumerate_pixels() {
+            let v = 255 - p.0[3];
+            for dx in 0..4 {
+                for dy in 0..4 {
+                    out.put_pixel(x * 4 + dx, y * 4 + dy, image::Rgba([v, v, v, 255]));
+                }
+            }
+        }
+        out.save(out_path).unwrap();
     }
 }

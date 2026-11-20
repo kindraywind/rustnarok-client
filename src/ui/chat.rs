@@ -543,7 +543,8 @@ pub fn pieces(text: &str) -> Vec<String> {
     pieces
 }
 
-/// A piece wrapped at `width` as `measure` measures it: at the last space that fits, else between characters.
+/// A piece wrapped at `width` as `measure` measures it: at the last space that fits (in Thai, the last letter with
+/// its marks), else between characters.
 pub fn wrap(text: &str, width: f32, measure: &dyn Fn(&str) -> f32) -> Vec<String> {
     let mut lines = Vec::new();
     let mut rest = text;
@@ -552,7 +553,9 @@ pub fn wrap(text: &str, width: f32, measure: &dyn Fn(&str) -> f32) -> Vec<String
         let first = rest.chars().next().map_or(rest.len(), char::len_utf8);
         let fit =
             rest.char_indices().map(|(at, character)| at + character.len_utf8()).take_while(|&end| measure(&rest[..end]) <= width).last().unwrap_or(first);
-        let at = rest[..fit].rfind(' ').filter(|&at| at > 0).unwrap_or(fit);
+        // The last space that fits or, in Thai (no spaces between its words), the last letter that does.
+        let thai = rustnarok_client::text::last_break(rest, fit).filter(|_| fit < rest.len());
+        let at = rest[..fit].rfind(' ').filter(|&at| at > 0).max(thai).unwrap_or(fit);
         lines.push(rest[..at].to_owned());
         rest = rest[at..].trim_start_matches(' ');
     }

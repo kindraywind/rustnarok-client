@@ -4394,8 +4394,10 @@ fn wrap_plain(font: &text::Font, text: &str, width: f32, used: f32, color: &mut 
             continue;
         }
         // Next word (with its leading space) up to the next space or color code, or the next character.
-        let first = rest.chars().next().map_or(1, char::len_utf8);
-        let end = if by_char { first } else { rest[first..].find([' ', '^']).map_or(rest.len(), |index| index + first) };
+        // A letter goes with the marks on it; a word ends at a space, a colour code or, in Thai, the next letter.
+        let first = text::cluster_len(rest);
+        let word_end = rest[first..].find([' ', '^']).map_or(rest.len(), |index| index + first);
+        let end = if by_char { first } else { next_break(rest, first, word_end) };
         let word = &rest[..end];
         let word_width = font.width(word);
         if line_width + word_width > width && line_width > 0.0 {
@@ -4413,6 +4415,19 @@ fn wrap_plain(font: &text::Font, text: &str, width: f32, used: f32, color: &mut 
         rest = &rest[end..];
     }
     lines
+}
+
+/// Where the word that starts `rest` ends: `word_end`, or sooner where Thai text may break (`text::breaks_between`),
+/// from `first` bytes in.
+fn next_break(rest: &str, first: usize, word_end: usize) -> usize {
+    let mut before = rest[..first].chars().last();
+    for (at, character) in rest[first..word_end].char_indices() {
+        if before.is_some_and(|before| text::breaks_between(before, character)) {
+            return first + at;
+        }
+        before = Some(character);
+    }
+    word_end
 }
 
 /// A login refusal's (AC_REFUSE_LOGIN) line by code; none for 3 and codes the game's table doesn't know.
