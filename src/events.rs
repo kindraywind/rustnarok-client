@@ -839,7 +839,12 @@ impl App {
             return;
         }
         // Read on this frame's clock.
-        if let MapEvent::ServerTime(tick, _) = event {
+        if let MapEvent::ServerTime(tick, heard) = event {
+            if let Scene::Game(game) = &self.scene
+                && let Some(round_trip) = game.session.round_trip(heard)
+            {
+                self.meter.ping(round_trip);
+            }
             let at = Instant::now();
             if std::mem::take(&mut self.map_loaded) {
                 self.server_clock.set(tick, at);

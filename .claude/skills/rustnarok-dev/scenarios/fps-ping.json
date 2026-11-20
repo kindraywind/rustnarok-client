@@ -1,0 +1,90 @@
+{
+  "about": "FPS and ping (Game Settings' Extras, off at first): the frames drawn a second and the map server's round trip, white in the bottom-right corner. The ping is the answer time of the CZ_REQUEST_TIME the client sends at each map load and every 12 s anyway, so it needs no packet of its own. Main has no such row and no corner text.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp morocc 160 120"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "shot": "fps-ping-off",
+      "crop": [
+        744,
+        708,
+        280,
+        60
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "button": "settings_tab:5"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_on": {
+        "button": "switch:8"
+      }
+    },
+    {
+      "wait": 200
+    },
+    {
+      "expect": {
+        "state": {
+          "settings.fps_ping": true
+        }
+      }
+    },
+    {
+      "shot": "fps-ping-extras",
+      "threshold": 5
+    },
+    {
+      "click_on": {
+        "button": "settings_close"
+      }
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "settings.meter.fps": 1,
+          "settings.meter.ping_ms": 0
+        }
+      }
+    },
+    {
+      "shot": "fps-ping-on",
+      "crop": [
+        744,
+        708,
+        280,
+        60
+      ],
+      "threshold": 5
+    }
+  ]
+}
