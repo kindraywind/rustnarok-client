@@ -677,6 +677,8 @@ impl App {
                         game.shop_asked = Some(now);
                         game.session.click_buying_store(id)
                     }
+                    // A chat room's sign takes a double click: one click does nothing.
+                    kind if kind != chatroom::SHOP && kind != chatroom::BUYING_STORE && !vend::sign_opens(false, id, last) => Ok(()),
                     0 => {
                         game.amount = Some(window::Amount::name(Asked::RoomPassword(id), ROOM_PASSWORD));
                         Ok(())
