@@ -48,7 +48,8 @@
       "as": "second",
       "click_on": {
         "button": "room_sign"
-      }
+      },
+      "count": 2
     },
     {
       "wait": 1500

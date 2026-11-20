@@ -1674,7 +1674,11 @@ impl App {
         }
         // Chat room signs over their owners' heads, like speech (not the room we're in).
         game.sign_rects.clear();
-        for (owner, sign) in &game.signs {
+        // ponytail: boards overlap in the order of their owners' ids, the same every frame; the game's is the order
+        // they were made in.
+        let mut signs: Vec<(&u32, &chatroom::Sign)> = game.signs.iter().collect();
+        signs.sort_unstable_by_key(|(owner, _)| **owner);
+        for (owner, sign) in signs {
             if game.room.as_ref().is_some_and(|room| room.sign.id == sign.id) {
                 continue;
             }
@@ -1689,7 +1693,8 @@ impl App {
             let Some(point) = sprite_point(feet, -chatroom::SIGN_ABOVE) else { continue };
             // ponytail: the one yellow shop board is the vendor whose shop window is open.
             let picked = game.shop.as_ref().and_then(|shop| shop.vendor.as_ref()).is_some_and(|(vendor, ..)| vendor == owner);
-            let rect = chatroom::draw_sign(&mut base, &assets.chatroom, font, sign, point.map(f32::round), picked);
+            // A board is one piece: it covers the words of the boards under it, as a window does.
+            let rect = chatroom::draw_sign(base.window(), &assets.chatroom, font, sign, point.map(f32::round), picked);
             game.sign_rects.push((rect, sign.id, sign.kind));
         }
         for (unit, (text, color, _)) in &game.speech {
@@ -1697,6 +1702,8 @@ impl App {
             let lines = overhead::lines(text);
             let size = overhead::size(lines.iter().map(|line| font.width(line)).fold(0.0, f32::max), lines.len());
             let corner = overhead::corner(anchor, size, screen());
+            // So is a speech balloon.
+            base.window();
             base.sprites.push((&assets.speech_fill, corner, size));
             for (edge, piece) in overhead::border(size) {
                 base.sprites.push((&assets.speech_border, offset(corner, edge), piece));

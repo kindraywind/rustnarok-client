@@ -56,6 +56,24 @@
       }
     },
     {
+      "wait": 700
+    },
+    {
+      "as": "second",
+      "expect": {
+        "windows_closed": [
+          "ChatRoom"
+        ]
+      }
+    },
+    {
+      "as": "second",
+      "click_on": {
+        "button": "room_sign"
+      },
+      "count": 2
+    },
+    {
       "wait": 2000
     },
     {
@@ -92,5 +110,5 @@
       "shot": "second-room"
     }
   ],
-  "about": "Two players in a chat room: the first opens one with the room maker (Alt+C) after warping (a warp leaves a room), the second joins by its sign and talks; both see the room."
+  "about": "Two players in a chat room: the first opens one with the room maker (Alt+C) after warping (a warp leaves a room), the second joins by a double click on its sign (one click does nothing) and talks; both see the room."
 }
