@@ -26,7 +26,7 @@ pub fn place(top: Top) -> Place {
             WorldMap | Menu | Notice | PartyAsked | SaveAsked | MemorialAsked | PackageAsked | SkillApplyAsked | Amount | PartyInvite | AdoptAsked | QueueAsked
             | FriendAsked | DismissAsked | HomunculusAsked | LeaderAsked | BindAsked | ExpansionAsked | PetAsked | GuildInvite | GuildAsked | CashShopBuy,
         ) => Place::Over,
-        Top::SmallMinimap | Top::QuestIcon | Top::LevelUp | Top::RouletteIcon => Place::Under,
+        Top::SmallMinimap | Top::QuestIcon | Top::LevelUp | Top::RouletteIcon | Top::GoldPc => Place::Under,
         Top::Esc(MailWrite | MailRead) => Place::Window(Top::Esc(Mailbox)),
         Top::Esc(PartyCreate | PartyInviteName) => Place::Window(Top::Esc(PartySetup)),
         Top::PartyHp(_) => Place::Window(Top::PartyHp(0)),

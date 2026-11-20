@@ -2416,6 +2416,8 @@ pub enum Command {
     Quake,
     /// /mineffect: lighter effects on or off.
     MinEffect,
+    /// /goldpc: the Gold PC Cafe points box shown or hidden.
+    GoldPc,
     /// /fog: the map's depth fog on or off.
     Fog,
     /// /mable: Spirit Marble's spirits shown or hidden.
@@ -2497,6 +2499,7 @@ pub fn command(text: &str) -> Option<Command> {
         "/loginout" | "/li" => Command::LoginOut,
         "/notalkmsg2" | "/nm2" => Command::NoGuildTalk,
         "/emblem" => Command::Emblem,
+        "/goldpc" => Command::GoldPc,
         "/notrade" | "/nt" => Command::NoTrade,
         "/noctrl" | "/nc" => Command::NoCtrl,
         "/skillfail" | "/sf" => Command::SkillFail,
@@ -3402,6 +3405,7 @@ mod tests {
         assert_eq!(command("/where"), Some(Command::Where));
         assert_eq!(command("/memo"), Some(Command::Memo));
         assert_eq!(command("/noshift"), Some(Command::NoShift));
+        assert_eq!(command("/goldpc"), Some(Command::GoldPc));
         assert_eq!(command("/shopping"), Some(Command::Shopping));
         assert_eq!(command("/sh"), Some(Command::Shopping));
         assert_eq!((command("/loginout"), command("/li")), (Some(Command::LoginOut), Some(Command::LoginOut)));

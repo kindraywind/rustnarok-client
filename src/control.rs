@@ -1570,6 +1570,7 @@ fn game_state(app: &App, game: &Game) -> Value {
             game.quest_window.button_boxes(&game.quests, &app.quest_texts).into_iter().map(|(name, area)| json!({"kind": "button", "name": name, "box": area})),
         )
         .chain(std::iter::once(json!({"kind": "button", "name": "roulette", "box": crate::roulette::icon_box()})))
+        .chain(game.gold_pc.as_ref().and_then(crate::goldpc::GoldPc::area).map(|area| json!({"kind": "button", "name": "gold_pc", "box": area})))
         .chain(game.roulette.iter().flat_map(|window| window.button_boxes(now())).map(|(name, area)| json!({"kind": "button", "name": name, "box": area})))
         .chain(
             game.grade
@@ -1909,6 +1910,8 @@ fn game_state(app: &App, game: &Game) -> Value {
         // Kills' [base, job] exp floating over where they died, oldest first (Extras > Kill exp draws them);
         // finished ones stay until the next death.
         "exp_shown": game.exp_shown.shown.iter().map(|&(_, _, base, job)| [base, job]).collect::<Vec<_>>(),
+        // The Gold PC Cafe box (null until the server's first count): shown, mode, points and the time it reads.
+        "gold_pc": game.gold_pc.as_ref().map(|window| json!({"shown": window.shown, "mode": window.mode, "points": window.points, "time": window.time_text(crate::control::now())})),
         // The Lucky Roulette: points, bonus, prizes known, the wheel spinning, the prize waiting (or null).
         "roulette": game.roulette.as_ref().map(|window| {
             let now = crate::control::now();
@@ -2528,6 +2531,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("front", Fair),
         ("close_tabs", Fair),
         ("ground_cursor", Assist),
+        ("gold_pc", Fair),
         ("ground_items", Fair),
         ("ground_skills", Assist),
         ("ground_unit_kinds", Test),

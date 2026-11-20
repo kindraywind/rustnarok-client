@@ -557,6 +557,8 @@ impl App {
                     login_notices: settings_path("loginout").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     no_guild_talk: settings_path("notalkmsg2").and_then(|path| std::fs::read_to_string(path).ok()).is_some_and(|text| text.trim() == "1"),
                     show_emblems: settings_path("emblem").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
+                    gold_pc: None,
+                    show_gold_pc: settings_path("goldpc").and_then(|path| std::fs::read_to_string(path).ok()).is_none_or(|text| text.trim() != "0"),
                     unknown_names: HashSet::new(),
                     hover_block: None,
                     skill_sent: None,
@@ -3232,6 +3234,10 @@ impl App {
             MapEvent::AchievementReward { .. } => {}
             MapEvent::TitleChanged { ok: true, title } => game.equipment.title = title,
             MapEvent::TitleChanged { .. } => {}
+            // The Gold PC Cafe points: the box is made by the first count and kept.
+            MapEvent::GoldPcPoints { active, mode, points, played } => {
+                game.gold_pc = Some(goldpc::GoldPc::update(game.gold_pc.take(), active, mode, points, played, game.show_gold_pc, control::now()));
+            }
             // The Lucky Roulette: opened (asked or by @roulette), its prizes, a spin, a claim.
             MapEvent::RouletteOpen { prize, bonus, points } => {
                 let window = game.roulette.get_or_insert_with(roulette::Roulette::new);

@@ -884,6 +884,14 @@ pub enum MapEvent {
         skill: u16,
         ms: u32,
     },
+    /// The Gold PC Cafe points (ZC_GOLDPCCAFE_POINT): whether they count, the mode (1 plain, 2 double), the points and
+    /// the seconds played toward the next one.
+    GoldPcPoints {
+        active: bool,
+        mode: i8,
+        points: i32,
+        played: i32,
+    },
     /// The roulette window opens: a prize waiting to be claimed (row, column), the bonus item, and the gold, silver
     /// and bronze points.
     RouletteOpen {

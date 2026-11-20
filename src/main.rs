@@ -1551,6 +1551,10 @@ struct Game {
     no_guild_talk: bool,
     /// /emblem: emblems next to hovered players' names (saved; on unless turned off).
     show_emblems: bool,
+    /// The Gold PC Cafe points box, made by the server's first count; /goldpc shows or hides it (saved; on unless
+    /// turned off).
+    gold_pc: Option<goldpc::GoldPc>,
+    show_gold_pc: bool,
     /// Units under the unknown-name status (672), whose names hide on PvP and siege maps.
     unknown_names: HashSet<u32>,
     /// The hovered player's name block as drawn: its lines and the emblem's box (for the test driver).
@@ -3121,6 +3125,7 @@ struct Assets {
     status: status::Assets,
     pet: pet::Assets,
     roulette: roulette::Assets,
+    gold_pc: goldpc::Assets,
     item_window: iteminfo::Assets,
     guild: guild::Assets,
     guild_companion: guild_companion::Assets,
@@ -3257,6 +3262,7 @@ impl Assets {
             status: status::Assets::load(gpu, grf),
             pet: pet::Assets::load(gpu, grf),
             roulette: roulette::Assets::load(gpu, grf),
+            gold_pc: goldpc::Assets::load(gpu, grf),
             item_window: iteminfo::Assets::load(gpu, grf),
             guild: guild::Assets::load(gpu, grf),
             guild_companion: guild_companion::Assets::load(gpu, grf),

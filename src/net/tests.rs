@@ -1733,6 +1733,23 @@ fn decodes_cooldowns() {
 }
 
 #[test]
+fn decodes_gold_pc_points() {
+    // The bytes a goldpc server sent: active, mode 1, 2 points, 2446 s played.
+    let Some(MapEvent::GoldPcPoints { active: true, mode: 1, points: 2, played: 2446 }) = decode_map_packet(&[0x15, 0x0A, 1, 1, 2, 0, 0, 0, 0x8E, 0x09, 0, 0])
+    else {
+        panic!()
+    };
+    let Some(MapEvent::GoldPcPoints { active: false, mode: 2, .. }) = decode_map_packet(&[0x15, 0x0A, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0]) else { panic!() };
+    assert_eq!(packet_length(ZC_GOLDPCCAFE_POINT), Some(12));
+
+    let request = encode_dynamic_npc("GOLDPCCAFE");
+    assert_eq!(request.len(), 26);
+    assert_eq!(&request[..12], b"\x16\x0AGOLDPCCAFE");
+    assert!(request[12..].iter().all(|&byte| byte == 0));
+    assert_eq!(packet_length(CZ_DYNAMICNPC_CREATE_REQUEST), Some(26));
+}
+
+#[test]
 fn decodes_the_roulette() {
     let points = [&3i32.to_le_bytes()[..], &2i32.to_le_bytes(), &1i32.to_le_bytes()].concat();
     let open = |row: i8, column: i8| {

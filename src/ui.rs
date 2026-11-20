@@ -27,6 +27,7 @@ pub(crate) mod escape;
 pub(crate) mod forge;
 pub(crate) mod front;
 pub(crate) mod game_settings;
+pub(crate) mod goldpc;
 pub(crate) mod grade;
 pub(crate) mod guild;
 pub(crate) mod guild_companion;

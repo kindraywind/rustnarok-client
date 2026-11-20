@@ -694,6 +694,8 @@ pub(crate) fn decode_map_packet(packet: &[u8]) -> Option<MapEvent> {
         ZC_REQ_ACH_REWARD_ACK => MapEvent::AchievementReward { ok: packet[2] == 1, id: u32_at(3) },
         ZC_ACK_CHANGE_TITLE => MapEvent::TitleChanged { ok: packet[2] == 0, title: u32_at(3) },
         ZC_SKILL_POSTDELAY => MapEvent::SkillCooldown { skill: u16_at(2), ms: u32_at(4) },
+        // Active, mode, points, seconds played toward the next point.
+        ZC_GOLDPCCAFE_POINT => MapEvent::GoldPcPoints { active: packet[2] != 0, mode: packet[3] as i8, points: u32_at(4) as i32, played: u32_at(8) as i32 },
         // Result, serial, the waiting prize's row and column (-1: none), bonus, gold, silver, bronze.
         ZC_ACK_OPEN_ROULETTE => MapEvent::RouletteOpen {
             prize: (packet[7] as i8 >= 0 && packet[8] as i8 >= 0).then_some((packet[7], packet[8])),

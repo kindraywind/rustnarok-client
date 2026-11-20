@@ -43,6 +43,7 @@ pub(crate) enum Top {
     BookingAsked,
     Refine,
     RouletteIcon,
+    GoldPc,
     ConfirmDeal,
     MakingMaterial,
     ItemMerge,
@@ -847,6 +848,7 @@ impl Game {
             esc(Roulette, self.roulette.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
             esc(MonsterInfo, self.monster_window.as_ref().is_some_and(|window| window.hit(cursor).is_some())),
             roulette::icon_hit(cursor).then_some(Top::RouletteIcon),
+            self.gold_pc.as_ref().is_some_and(|window| window.covers(cursor)).then_some(Top::GoldPc),
             esc(Achievements, self.achievement_window.covers(cursor)),
             esc(Quests, self.quest_window.covers(cursor)),
             esc(MyBuyingStore, self.my_buying_store.as_ref().is_some_and(|store| store.hit(cursor).is_some())),
@@ -2683,6 +2685,20 @@ impl Game {
                 self.chat.hidden = false;
                 self.chat.mode_icon = self.chat_mode.icon();
                 self.chat_line(message(id), [255, 255, 100]);
+                Ok(())
+            }
+            // The game's /goldpc prints nothing, and does nothing before the server's first count made the box.
+            chat::Command::GoldPc => {
+                if let Some(window) = &mut self.gold_pc {
+                    self.show_gold_pc = !self.show_gold_pc;
+                    window.shown = self.show_gold_pc;
+                    if let Some(path) = settings_path("goldpc") {
+                        let _ = path
+                            .parent()
+                            .map_or(Ok(()), std::fs::create_dir_all)
+                            .and_then(|()| std::fs::write(path, if self.show_gold_pc { "1" } else { "0" }));
+                    }
+                }
                 Ok(())
             }
             chat::Command::DressRoom => {
