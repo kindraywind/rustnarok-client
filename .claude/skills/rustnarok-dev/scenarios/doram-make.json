@@ -1,0 +1,27 @@
+{
+  "about": "A Doram from the make window to the map: the first account's empty slot 2, the Doram panel (its figure, six hairstyles), the name DoramTest, Make. The new character is a Summoner at character select and in the game (moved to guild_vs1, away from the starting field's monsters), with the Summoner's skill tree. The reset file deletes DoramTest before each run (the server keeps a deleted character for a day otherwise), e.g. DELETE FROM inventory WHERE char_id IN (SELECT char_id FROM `char` WHERE name='DoramTest'); DELETE FROM `char` WHERE name='DoramTest'. One lane at a time: the name is the same in every lane.",
+  "account": "",
+  "slot": 0,
+  "start": "char_select",
+  "steps": [
+    {"wait": 1500},
+    {"expect": {"state": {"scene": "char_select"}}},
+    {"click_on": {"char_slot": 2}, "count": 2}, {"wait": 800},
+    {"expect": {"state": {"scene": "char_make"}}},
+    {"click": [316, 385]}, {"wait": 500},
+    {"click": [610, 381]}, {"wait": 200},
+    {"type": "DoramTest"}, {"wait": 300},
+    {"move": [1010, 760]},
+    {"shot": "doram-make", "threshold": 5},
+    {"click_on": {"button": "make_ok"}}, {"wait": 1500},
+    {"expect": {"state": {"scene": "char_select", "characters.1.name": "DoramTest", "characters.1.job": 4218}}},
+    {"shot": "doram-select", "threshold": 5},
+    {"click_on": {"char_slot": 2}, "count": 2}, {"settle": 3000},
+    {"expect": {"state": {"scene": "game", "player.job": 4218, "player.name": "DoramTest"}}},
+    {"say": "@warp guild_vs1 50 50"}, {"settle": 1500},
+    {"move": [1000, 750]},
+    {"shot": "doram-body", "crop": [412, 230, 200, 190], "threshold": 5},
+    {"key": "Alt+S"}, {"wait": 400},
+    {"shot": "doram-skills", "threshold": 5}
+  ]
+}
