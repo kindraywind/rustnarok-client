@@ -2288,7 +2288,7 @@ fn game_state(app: &App, game: &Game) -> Value {
         "monster_hp": app.graphics.monster_hp, "monster_level": app.graphics.monster_level, "far_zoom": app.graphics.far_zoom,
         "item_options": app.graphics.item_options, "cooldown_numbers": app.graphics.cooldown_numbers, "exp_hundredths": app.graphics.exp_hundredths,
         "kill_exp": app.graphics.kill_exp, "ui_scale": app.graphics.ui_scale, "ui_size": app.graphics.ui_size,
-        "fps_ping": app.graphics.fps_ping, "meter": {"fps": app.meter.fps, "ping_ms": app.meter.ping.map(|ping| ping.as_millis() as u64)},
+        "fps_ping": app.graphics.fps_ping, "meter": {"fps": app.meter.fps, "ping_ms": app.meter.ping.map(|ping| ping.as_millis() as u64), "frame_ms": app.meter.frame_ms},
         "navi_icons": app.graphics.navi_icons,
         "extended_damage": app.graphics.extended_damage, "font": app.graphics.font,
         "font_index": rustnarok_client::text::index_of(rustnarok_client::text::choices(), &app.graphics.font),

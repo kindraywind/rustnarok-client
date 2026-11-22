@@ -77,6 +77,8 @@ pub struct Gpu {
     /// when that draw began. `request_frame` paces frames by them.
     occluded: bool,
     drawn_at: Instant,
+    /// How long the last draw waited for the display to hand it a frame to draw into (not the client's own work).
+    pub waited: Duration,
     /// How close two presented frames may come (`frame_floor`).
     frame_floor: Duration,
     /// Lines of text as textures, with the frame each was last drawn in; and the frame count.
@@ -224,6 +226,7 @@ impl Gpu {
             smooth_sampler,
             occluded: false,
             drawn_at: Instant::now(),
+            waited: Duration::ZERO,
             frame_floor,
             texts: RefCell::new(HashMap::new()),
             frame: Cell::new(0),
@@ -351,7 +354,9 @@ impl Gpu {
     pub fn draw(&mut self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[Shade]) {
         crate::control::on_draw(self, world, sprites, alphas);
         self.drawn_at = Instant::now();
-        let frame = match self.surface.get_current_texture() {
+        let acquired = self.surface.get_current_texture();
+        self.waited = self.drawn_at.elapsed();
+        let frame = match acquired {
             wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 // Covered: the uploads still go out, or they'd pile up (gigabytes in a minute) until it shows again.
@@ -477,6 +482,14 @@ impl Gpu {
                 [x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32]
             };
             let mut cut = None;
+            // Neighbours on one texture under one cut go in one draw (a grid of slots, a line of the same icon).
+            let mut run: Option<(&wgpu::BindGroup, std::ops::Range<u32>)> = None;
+            let flush = |pass: &mut wgpu::RenderPass, run: &mut Option<(&wgpu::BindGroup, std::ops::Range<u32>)>| {
+                if let Some((bind_group, range)) = run.take() {
+                    pass.set_bind_group(1, bind_group, &[]);
+                    pass.draw(range, 0..1);
+                }
+            };
             for (index, (texture, ..)) in sprites.iter().enumerate() {
                 let clip = alphas.get(index).and_then(|shade| shade.1);
                 let [x, y, w, h] = clip.map_or([0, 0, size[0], size[1]], target);
@@ -484,13 +497,20 @@ impl Gpu {
                     continue;
                 }
                 if clip != cut {
+                    flush(&mut pass, &mut run);
                     pass.set_scissor_rect(x, y, w, h);
                     cut = clip;
                 }
                 let first = index as u32 * 6;
-                pass.set_bind_group(1, &texture.bind_group, &[]);
-                pass.draw(first..first + 6, 0..1);
+                match &mut run {
+                    Some((bind_group, range)) if *bind_group == &texture.bind_group && range.end == first => range.end += 6,
+                    _ => {
+                        flush(&mut pass, &mut run);
+                        run = Some((&texture.bind_group, first..first + 6));
+                    }
+                }
             }
+            flush(&mut pass, &mut run);
         }
         encoder
     }

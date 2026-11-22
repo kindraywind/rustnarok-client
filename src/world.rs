@@ -1625,18 +1625,6 @@ impl WorldPass for WorldFrame<'_> {
 
         let view = self.view;
         let planes: Vec<[f32; 3]> = self.billboards.iter().map(|&(_, feet, .., layer)| plane(layer, view.depth_of(feet), view.pitch, view.distance)).collect();
-        let sprite_vertices: Vec<SpriteVertex> = self
-            .billboards
-            .iter()
-            .zip(&planes)
-            .flat_map(|(&(_, feet, offset, size, tint, angle, _), &plane)| {
-                let corner = |u: f32, v: f32| {
-                    let (offset, pixel) = sprite_corner(offset, size, angle, [u, v]);
-                    SpriteVertex { feet, offset, uv: [u, v], tint, pixel, plane }
-                };
-                [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
-            })
-            .collect();
         // Sprites back to front by the depth of their images' top edges.
         let top_depths: Vec<f32> = self
             .billboards
@@ -1651,6 +1639,23 @@ impl WorldPass for WorldFrame<'_> {
             .collect();
         let mut order: Vec<usize> = (self.shadows..self.billboards.len()).collect();
         order.sort_by(|&a, &b| top_depths[b].total_cmp(&top_depths[a]));
+        // In the order they're drawn, shadows first, so neighbours on one texture (every shadow, a pack of one monster in
+        // step) go in one draw.
+        let drawn: Vec<usize> = (0..self.shadows).chain(order.iter().copied()).collect();
+        let sprite_vertices: Vec<SpriteVertex> = drawn
+            .iter()
+            .flat_map(|&index| {
+                let (_, feet, offset, size, tint, angle, _) = self.billboards[index];
+                let plane = planes[index];
+                let corner = |u: f32, v: f32| {
+                    let (offset, pixel) = sprite_corner(offset, size, angle, [u, v]);
+                    SpriteVertex { feet, offset, uv: [u, v], tint, pixel, plane }
+                };
+                [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
+            })
+            .collect();
+        let shadow_runs = runs(drawn[..self.shadows].iter().map(|&index| self.billboards[index].0), 0);
+        let unit_runs = runs(drawn[self.shadows..].iter().map(|&index| self.billboards[index].0), self.shadows as u32 * 6);
         let effect_vertices: Vec<SpriteVertex> = self
             .effects
             .iter()
@@ -1818,16 +1823,17 @@ impl WorldPass for WorldFrame<'_> {
         }
         if let Some(buffer) = &sprite_buffer {
             pass.set_vertex_buffer(0, buffer.slice(..));
-            let draw = |pass: &mut wgpu::RenderPass, index: usize| {
-                let first = index as u32 * 6;
-                pass.set_bind_group(1, self.billboards[index].0.bind_group(), &[]);
-                pass.draw(first..first + 6, 0..1);
+            let draw = |pass: &mut wgpu::RenderPass, runs: &[(&Texture, std::ops::Range<u32>)]| {
+                for (texture, range) in runs {
+                    pass.set_bind_group(1, texture.bind_group(), &[]);
+                    pass.draw(range.clone(), 0..1);
+                }
             };
             pass.set_pipeline(&world.shadow_pipeline);
-            (0..self.shadows).for_each(|index| draw(&mut pass, index));
+            draw(&mut pass, &shadow_runs);
             for pipeline in [&world.sprite_pipeline, &world.soft_pipeline] {
                 pass.set_pipeline(pipeline);
-                order.iter().for_each(|&index| draw(&mut pass, index));
+                draw(&mut pass, &unit_runs);
             }
         }
         // The world objects' faces with the sprites, in their two passes.
@@ -1946,6 +1952,21 @@ impl WorldPass for WorldFrame<'_> {
             }
         }
     }
+}
+
+/// The vertex ranges to draw quads in, 6 vertices each from `first` in the given order, one per run of quads on the same
+/// texture.
+fn runs<'a>(textures: impl Iterator<Item = &'a Texture>, first: u32) -> Vec<(&'a Texture, std::ops::Range<u32>)> {
+    let mut runs: Vec<(&Texture, std::ops::Range<u32>)> = Vec::new();
+    let mut end = first;
+    for texture in textures {
+        match runs.last_mut() {
+            Some((last, range)) if last.bind_group() == texture.bind_group() => range.end += 6,
+            _ => runs.push((texture, end..end + 6)),
+        }
+        end += 6;
+    }
+    runs
 }
 
 /// Map textures use the same magenta color key as UI bitmaps.
