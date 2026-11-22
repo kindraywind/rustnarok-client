@@ -1645,11 +1645,11 @@ impl WorldPass for WorldFrame<'_> {
         let sprite_vertices: Vec<SpriteVertex> = drawn
             .iter()
             .flat_map(|&index| {
-                let (_, feet, offset, size, tint, angle, _) = self.billboards[index];
+                let (texture, feet, offset, size, tint, angle, _) = self.billboards[index];
                 let plane = planes[index];
                 let corner = |u: f32, v: f32| {
                     let (offset, pixel) = sprite_corner(offset, size, angle, [u, v]);
-                    SpriteVertex { feet, offset, uv: [u, v], tint, pixel, plane }
+                    SpriteVertex { feet, offset, uv: texture.uv([u, v]), tint, pixel, plane }
                 };
                 [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
             })
@@ -1659,9 +1659,9 @@ impl WorldPass for WorldFrame<'_> {
         let effect_vertices: Vec<SpriteVertex> = self
             .effects
             .iter()
-            .flat_map(|&(_, feet, corners, tint, _, on_top)| {
+            .flat_map(|&(texture, feet, corners, tint, _, on_top)| {
                 let pixel = if on_top { [0.0, -crate::effects::STR_RISE] } else { [0.0; 2] };
-                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel, plane: [0.0; 3] };
+                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv: texture.uv(uv), tint, pixel, plane: [0.0; 3] };
                 let [top_left, top_right, bottom_right, bottom_left] =
                     [corner(0, [0.0, 0.0]), corner(1, [1.0, 0.0]), corner(2, [1.0, 1.0]), corner(3, [0.0, 1.0])];
                 [top_left, top_right, bottom_left, bottom_left, top_right, bottom_right]
@@ -1678,8 +1678,8 @@ impl WorldPass for WorldFrame<'_> {
         let screen_vertices: Vec<SpriteVertex> = self
             .screen
             .iter()
-            .flat_map(|(_, feet, corners)| {
-                corners.iter().map(move |&(pixel, uv, tint)| SpriteVertex { feet: *feet, offset: [0.0; 2], uv, tint, pixel, plane: [0.0; 3] })
+            .flat_map(|(texture, feet, corners)| {
+                corners.iter().map(move |&(pixel, uv, tint)| SpriteVertex { feet: *feet, offset: [0.0; 2], uv: texture.uv(uv), tint, pixel, plane: [0.0; 3] })
             })
             .collect();
         let screen_buffer = (!screen_vertices.is_empty()).then(|| {
@@ -1692,8 +1692,8 @@ impl WorldPass for WorldFrame<'_> {
         let cover_vertices: Vec<SpriteVertex> = self
             .cover
             .iter()
-            .flat_map(|&(_, feet, corners, uvs, tint)| {
-                let corner = |index: usize| SpriteVertex { feet, offset: corners[index], uv: uvs[index], tint, pixel: [0.0; 2], plane: [0.0; 3] };
+            .flat_map(|&(texture, feet, corners, uvs, tint)| {
+                let corner = |index: usize| SpriteVertex { feet, offset: corners[index], uv: texture.uv(uvs[index]), tint, pixel: [0.0; 2], plane: [0.0; 3] };
                 [corner(0), corner(1), corner(3), corner(3), corner(1), corner(2)]
             })
             .collect();
@@ -1707,9 +1707,10 @@ impl WorldPass for WorldFrame<'_> {
         let glow_vertices: Vec<SpriteVertex> = self
             .glows
             .iter()
-            .flat_map(|&(_, feet, corners, tint, _, grow)| {
+            .flat_map(|&(texture, feet, corners, tint, _, grow)| {
                 let pushes = grow_pushes(corners, grow);
-                let corner = |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv, tint, pixel: pushes[index], plane: [0.0; 3] };
+                let corner =
+                    |index: usize, uv: [f32; 2]| SpriteVertex { feet, offset: corners[index], uv: texture.uv(uv), tint, pixel: pushes[index], plane: [0.0; 3] };
                 let [top_left, top_right, bottom_right, bottom_left] =
                     [corner(0, [0.0, 0.0]), corner(1, [1.0, 0.0]), corner(2, [1.0, 1.0]), corner(3, [0.0, 1.0])];
                 [top_left, top_right, bottom_left, bottom_left, top_right, bottom_right]
@@ -1729,7 +1730,13 @@ impl WorldPass for WorldFrame<'_> {
         for index in 1..6 {
             mesh_starts[index] = mesh_starts[index - 1] + mesh_lists[index - 1].iter().map(|(_, vertices, _)| vertices.len() as u32).sum::<u32>();
         }
-        let mesh_vertices: Vec<MeshVertex> = mesh_lists.iter().flat_map(|list| list.iter()).flat_map(|(_, vertices, _)| vertices.iter().copied()).collect();
+        // ponytail: the shape shaders wrap and clamp texture coordinates where they're sampled, in the page's own for a
+        // sprite frame on an atlas page; the world objects' sprite cards only span 0 to 1, so that changes nothing.
+        let mesh_vertices: Vec<MeshVertex> = mesh_lists
+            .iter()
+            .flat_map(|list| list.iter())
+            .flat_map(|(texture, vertices, _)| vertices.iter().map(|&vertex| MeshVertex { uv: texture.uv(vertex.uv), ..vertex }))
+            .collect();
         let mesh_buffer = (!mesh_vertices.is_empty()).then(|| {
             gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("effect shapes"),
@@ -1743,10 +1750,10 @@ impl WorldPass for WorldFrame<'_> {
             .numbers
             .iter()
             .zip(&number_planes)
-            .flat_map(|(&(_, feet, offset, size, tint, angle, _), &plane)| {
+            .flat_map(|(&(texture, feet, offset, size, tint, angle, _), &plane)| {
                 let corner = |u: f32, v: f32| {
                     let (offset, pixel) = sprite_corner(offset, size, angle, [u, v]);
-                    SpriteVertex { feet, offset, uv: [u, v], tint, pixel, plane }
+                    SpriteVertex { feet, offset, uv: texture.uv([u, v]), tint, pixel, plane }
                 };
                 [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
             })

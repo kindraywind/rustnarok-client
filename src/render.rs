@@ -2,6 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -47,12 +48,58 @@ struct Vertex {
 pub struct Texture {
     bind_group: wgpu::BindGroup,
     pub size: [f32; 2],
+    /// Where the image sits in the GPU texture it's bound with, in texture coordinates: left, top, width, height (the
+    /// whole of it, 0 0 1 1, for an image with a texture of its own).
+    rect: [f32; 4],
+    /// Its place on an atlas page, given back when the last copy goes.
+    _slot: Option<Rc<Slot>>,
 }
 
 impl Texture {
     pub fn bind_group(&self) -> &wgpu::BindGroup {
         &self.bind_group
     }
+
+    /// The texture coordinates of the point `[u, v]` (0 to 1 across the image) in the GPU texture it's bound with.
+    pub fn uv(&self, [u, v]: [f32; 2]) -> [f32; 2] {
+        [self.rect[0] + u * self.rect[2], self.rect[1] + v * self.rect[3]]
+    }
+}
+
+/// The side of an atlas page in pixels: 4 MB. 300 monsters of 15 kinds take about 0.64 M of its pixels, 180 players in
+/// one look 0.26 M, so a crowd draws in a run or two.
+// ponytail: a scene past one page spreads its units over two, which splits the runs between them; draws cost little
+// next to the rest of a frame (measured on Metal), so pages stay this small rather than 16 MB each.
+const PAGE: u32 = 1024;
+
+/// Sprite frames packed into one large texture: neighbours on screen share its bind group and go in one draw, and a
+/// crowd's hundreds of frames cost one GPU allocation instead of one each.
+// ponytail: the shelf allocator merges freed shelves but never moves what's left, so a long stay can leave a page
+// patchy; a new page takes what doesn't fit, and an emptied one is given back.
+struct Page {
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    allocator: RefCell<etagere::AtlasAllocator>,
+}
+
+/// An image's place on a page, freed when dropped.
+struct Slot {
+    page: Rc<Page>,
+    id: etagere::AllocId,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.page.allocator.borrow_mut().deallocate(self.id);
+    }
+}
+
+/// `image` with a 1 px border repeating its edge pixels: the nearest sampler then reads past an edge (a scaled or turned
+/// sprite's last pixels) as it would clamped to an image of its own, never the neighbour on the page.
+// ponytail: 1 px is enough for the nearest sampler only; a smooth (linear) or mipmapped atlas would need a wider border.
+fn padded(image: &RgbaImage) -> RgbaImage {
+    let [width, height] = [image.width(), image.height()];
+    RgbaImage::from_fn(width + 2, height + 2, |x, y| *image.get_pixel(x.saturating_sub(1).min(width - 1), y.saturating_sub(1).min(height - 1)))
 }
 
 /// A texture drawn at a position with a size, in logical pixels.
@@ -84,6 +131,8 @@ pub struct Gpu {
     /// Lines of text as textures, with the frame each was last drawn in; and the frame count.
     texts: RefCell<TextCache>,
     frame: Cell<u64>,
+    /// The atlas pages sprite frames go on.
+    pages: RefCell<Vec<Rc<Page>>>,
 }
 
 /// Lines of text (with their color and pixel size) as textures, with the frame each was last drawn in.
@@ -230,6 +279,7 @@ impl Gpu {
             frame_floor,
             texts: RefCell::new(HashMap::new()),
             frame: Cell::new(0),
+            pages: RefCell::default(),
         }
     }
 
@@ -306,7 +356,70 @@ impl Gpu {
             ],
         });
 
-        Texture { bind_group, size: [image.width() as f32, image.height() as f32] }
+        Texture { bind_group, size: [image.width() as f32, image.height() as f32], rect: [0.0, 0.0, 1.0, 1.0], _slot: None }
+    }
+
+    /// A sprite frame, drawn with the nearest sampler: on an atlas page, or in a texture of its own when it's too big for
+    /// one (over a quarter of a page's side).
+    pub fn sprite_texture(&self, image: &RgbaImage) -> Texture {
+        let size = [image.width() + 2, image.height() + 2];
+        if image.width() == 0 || image.height() == 0 || size.iter().any(|&side| side > PAGE / 4) {
+            return self.texture(image, false);
+        }
+        let mut pages = self.pages.borrow_mut();
+        // A page emptied since (its units gone) gives its memory back; one is kept for what comes next.
+        let mut kept = false;
+        pages.retain(|page| !page.allocator.borrow().is_empty() || !std::mem::replace(&mut kept, true));
+        let wanted = etagere::size2(size[0] as i32, size[1] as i32);
+        let found = pages.iter().find_map(|page| Some((page.clone(), page.allocator.borrow_mut().allocate(wanted)?)));
+        let (page, allocation) = match found {
+            Some(found) => found,
+            None => {
+                let page = Rc::new(self.page());
+                let allocation = page.allocator.borrow_mut().allocate(wanted).expect("a sprite frame fits an empty page");
+                pages.push(page.clone());
+                (page, allocation)
+            }
+        };
+        let [x, y] = [allocation.rectangle.min.x as u32, allocation.rectangle.min.y as u32];
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &page.texture, mip_level: 0, origin: wgpu::Origin3d { x, y, z: 0 }, aspect: wgpu::TextureAspect::All },
+            &padded(image),
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(size[0] * 4), rows_per_image: None },
+            wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+        );
+        let side = PAGE as f32;
+        let [width, height] = [image.width() as f32, image.height() as f32];
+        Texture {
+            bind_group: page.bind_group.clone(),
+            size: [width, height],
+            rect: [(x + 1) as f32 / side, (y + 1) as f32 / side, width / side, height / side],
+            _slot: Some(Rc::new(Slot { page, id: allocation.id })),
+        }
+    }
+
+    /// An empty atlas page.
+    fn page(&self) -> Page {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("sprite atlas"),
+            size: wgpu::Extent3d { width: PAGE, height: PAGE, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sprite atlas"),
+            layout: &self.texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.pixel_sampler) },
+            ],
+        });
+        Page { texture, bind_group, allocator: RefCell::new(etagere::AtlasAllocator::new(etagere::size2(PAGE as i32, PAGE as i32))) }
     }
 
     /// A 1x1 texture, stretched to draw solid rectangles.
@@ -438,9 +551,9 @@ impl Gpu {
         let vertices: Vec<Vertex> = sprites
             .iter()
             .enumerate()
-            .flat_map(|(index, &(_, [x, y], [w, h]))| {
+            .flat_map(|(index, &(texture, [x, y], [w, h]))| {
                 let alpha = alphas.get(index).map_or(1.0, |shade| shade.0);
-                let corner = |dx: f32, dy: f32| Vertex { pixel: [snap(x + dx * w), snap(y + dy * h)], uv: [dx, dy], alpha };
+                let corner = |dx: f32, dy: f32| Vertex { pixel: [snap(x + dx * w), snap(y + dy * h)], uv: texture.uv([dx, dy]), alpha };
                 [corner(0., 0.), corner(1., 0.), corner(0., 1.), corner(0., 1.), corner(1., 0.), corner(1., 1.)]
             })
             .collect();
@@ -612,5 +725,15 @@ mod tests {
         // Covered: `COVERED_FRAME_TIME`; driven over the control socket, a frame time, as before.
         assert_eq!(super::frame_gap(true, false, floor), super::COVERED_FRAME_TIME);
         assert_eq!(super::frame_gap(true, true, floor), crate::FRAME_TIME);
+    }
+
+    #[test]
+    fn atlas_images_are_padded_with_their_own_edges() {
+        // 2x2: red green over blue white. The border repeats the nearest edge pixel, corners included, so a sample past
+        // the image reads it as a clamped texture of its own would.
+        let [r, g, b, w] = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255; 4]];
+        let image = image::RgbaImage::from_fn(2, 2, |x, y| image::Rgba([[r, g], [b, w]][y as usize][x as usize]));
+        let rows: Vec<Vec<[u8; 4]>> = super::padded(&image).rows().map(|row| row.map(|pixel| pixel.0).collect()).collect();
+        assert_eq!(rows, [[r, r, g, g], [r, r, g, g], [b, b, w, w], [b, b, w, w]]);
     }
 }
