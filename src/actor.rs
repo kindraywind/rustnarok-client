@@ -1,6 +1,8 @@
 //! Characters: layered player sprites (body + head with dye palettes) and movement along a path of cells.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::{Rc, Weak};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -523,10 +525,41 @@ pub fn mercenary_glow(job: u16) -> Option<&'static str> {
 }
 
 struct Layer {
-    spr: Spr,
-    act: Act,
+    spr: Rc<Spr>,
+    act: Rc<Act>,
     palette: Option<Palette>,
     part: Part,
+}
+
+thread_local! {
+    /// The SPR and ACT files some unit on the map still wears, by path. A crowd (a town with hundreds of players and
+    /// pets) shares one parsed copy of each body, head and headgear, instead of reading, inflating and parsing them again
+    /// on the frame for every unit that walks in or changes its look.
+    /// ponytail: held weakly, so it never outgrows what's on screen; a file nobody wears any more is read again.
+    static SPRS: RefCell<HashMap<String, Weak<Spr>>> = RefCell::default();
+    static ACTS: RefCell<HashMap<String, Weak<Act>>> = RefCell::default();
+}
+
+/// The SPR at `path`, parsed once while any unit wears it.
+fn spr_file(grf: &Grf, path: &str) -> Option<Rc<Spr>> {
+    shared(&SPRS, path, || Spr::parse(&grf.read(path).ok()?).ok())
+}
+
+/// The ACT at `path`, parsed once while any unit wears it.
+fn act_file(grf: &Grf, path: &str) -> Option<Rc<Act>> {
+    shared(&ACTS, path, || Act::parse(&grf.read(path).ok()?).ok())
+}
+
+fn shared<T>(files: &'static std::thread::LocalKey<RefCell<HashMap<String, Weak<T>>>>, path: &str, parse: impl FnOnce() -> Option<T>) -> Option<Rc<T>> {
+    if let Some(file) = files.with_borrow(|files| files.get(path).and_then(Weak::upgrade)) {
+        return Some(file);
+    }
+    let file = Rc::new(parse()?);
+    files.with_borrow_mut(|files| {
+        files.retain(|_, file| file.strong_count() > 0);
+        files.insert(path.to_owned(), Rc::downgrade(&file));
+    });
+    Some(file)
 }
 
 /// What a sprite layer is on a character.
@@ -870,7 +903,7 @@ pub struct SpriteSet {
     tint: Option<[u8; 3]>,
     textures: HashMap<ImageKey, Texture>,
     /// A mounted rider's body without the mount, when a headgear sits by it.
-    unmounted: Option<Act>,
+    unmounted: Option<Rc<Act>>,
     /// The action the unit is in and the frame delay it took when it started it (`action_delay`).
     delay: std::cell::Cell<Option<(usize, f32)>>,
 }
@@ -911,12 +944,7 @@ impl SpriteSet {
         // Doram palettes sit in their own folder.
         let palettes = if is_doram(look.job) { "data\\palette\\도람족\\머리" } else { "data\\palette\\머리" };
         let load = |path: String, palette: Option<Palette>, part: Part| -> Option<Layer> {
-            Some(Layer {
-                spr: Spr::parse(&grf.read(&format!("{path}.spr")).ok()?).ok()?,
-                act: Act::parse(&grf.read(&format!("{path}.act")).ok()?).ok()?,
-                palette,
-                part,
-            })
+            Some(Layer { spr: spr_file(grf, &format!("{path}.spr"))?, act: act_file(grf, &format!("{path}.act"))?, palette, part })
         };
         // Color 0 is the sprite's own palette.
         let dye = |path: String, color: u16| -> Option<Palette> { (color > 0).then(|| grf.read(&path).ok().and_then(|bytes| sprite::parse_palette(&bytes)))? };
@@ -985,8 +1013,8 @@ impl SpriteSet {
             let per_job = format!("data\\sprite\\로브\\{name}\\{sex}\\{class}_{sex}");
             let shared = format!("data\\sprite\\로브\\{name}\\{name}{}.spr", if is_doram(look.job) { "_doram" } else { "" });
             Some(Layer {
-                spr: Spr::parse(&grf.read(&shared).or_else(|_| grf.read(&format!("{per_job}.spr"))).ok()?).ok()?,
-                act: Act::parse(&grf.read(&format!("{per_job}.act")).ok()?).ok()?,
+                spr: spr_file(grf, &shared).or_else(|| spr_file(grf, &format!("{per_job}.spr")))?,
+                act: act_file(grf, &format!("{per_job}.act"))?,
                 palette: None,
                 part: Part::Robe,
             })
@@ -1033,7 +1061,7 @@ impl SpriteSet {
         let unmounted = (mounted && headgear.iter().any(|worn| worn.ignores_riding))
             .then(|| {
                 let class = job_sprites(look.job)?.body;
-                Act::parse(&grf.read(&format!("data\\sprite\\{race}\\몸통\\{sex}\\{class}_{sex}.act")).ok()?).ok()
+                act_file(grf, &format!("data\\sprite\\{race}\\몸통\\{sex}\\{class}_{sex}.act"))
             })
             .flatten();
         let dressing = Dressing {
@@ -1071,12 +1099,7 @@ impl SpriteSet {
             _ => return None,
         };
         let load = |path: String, part: Part| -> Option<Layer> {
-            Some(Layer {
-                spr: Spr::parse(&grf.read(&format!("{path}.spr")).ok()?).ok()?,
-                act: Act::parse(&grf.read(&format!("{path}.act")).ok()?).ok()?,
-                palette: None,
-                part,
-            })
+            Some(Layer { spr: spr_file(grf, &format!("{path}.spr"))?, act: act_file(grf, &format!("{path}.act"))?, palette: None, part })
         };
         let body = load(format!("data\\sprite\\인간족\\몸통\\{name}"), Part::Body)?;
         let weapon = load(format!("data\\sprite\\인간족\\용병\\{weapon}"), Part::Weapon);
@@ -1114,12 +1137,7 @@ impl SpriteSet {
     /// Like `at`, moving by another ACT (a pet's accessory changes how it moves).
     pub fn with_act(grf: &Grf, path: &str, act: &str) -> Option<Self> {
         Some(Self {
-            layers: vec![Layer {
-                spr: Spr::parse(&grf.read(&format!("{path}.spr")).ok()?).ok()?,
-                act: Act::parse(&grf.read(act).ok()?).ok()?,
-                palette: None,
-                part: Part::Body,
-            }],
+            layers: vec![Layer { spr: spr_file(grf, &format!("{path}.spr"))?, act: act_file(grf, act)?, palette: None, part: Part::Body }],
             player: false,
             dressing: None,
             scale: 1.0,
@@ -4810,7 +4828,7 @@ mod tests {
         }
         act.delays = delays;
         SpriteSet {
-            layers: vec![Layer { spr: blank_spr(), act, palette: None, part: Part::Body }],
+            layers: vec![Layer { spr: Rc::new(blank_spr()), act: Rc::new(act), palette: None, part: Part::Body }],
             player: false,
             dressing: None,
             scale: 1.0,
@@ -4819,6 +4837,32 @@ mod tests {
             unmounted: None,
             delay: Default::default(),
         }
+    }
+
+    #[test]
+    fn units_share_a_sprite_file_while_one_wears_it() {
+        thread_local! { static FILES: RefCell<HashMap<String, Weak<u32>>> = RefCell::default(); }
+        let parses = std::cell::Cell::new(0);
+        let load = |path: &str| {
+            super::shared(&FILES, path, || {
+                parses.set(parses.get() + 1);
+                Some(7)
+            })
+        };
+        // A second unit in the same headgear gets the first one's copy: parsed once.
+        let first = load("a").unwrap();
+        let second = load("a").unwrap();
+        assert!(Rc::ptr_eq(&first, &second));
+        assert_eq!(parses.get(), 1);
+        // Once no unit wears it, it's gone, and the next one reads it again; the dead entry doesn't pile up.
+        drop((first, second));
+        let _other = load("b");
+        assert_eq!(FILES.with_borrow(HashMap::len), 1);
+        let _again = load("a");
+        assert_eq!(parses.get(), 3);
+        // A file that isn't there is no file, and nothing is kept for it.
+        assert!(super::shared(&FILES, "missing", || None::<u32>).is_none());
+        assert_eq!(FILES.with_borrow(HashMap::len), 2);
     }
 
     #[test]
@@ -4874,7 +4918,7 @@ mod tests {
 
     /// A player: a two-layer body (anchor at y −80), a head in layer 1, a headgear and a weapon with one frame an action.
     fn test_player(ignores_riding: bool, unmounted: Option<Act>) -> SpriteSet {
-        let layer = |act, part| Layer { spr: blank_spr(), act, palette: None, part };
+        let layer = |act, part| Layer { spr: Rc::new(blank_spr()), act: Rc::new(act), palette: None, part };
         let worn = Worn { part: Part::HeadTop, places: [Some(200); 8], offsets: [[0, 0]; 8], layer: 0, ignores_riding };
         let dressing = Dressing {
             head_first: Vec::new(),
@@ -4898,7 +4942,7 @@ mod tests {
             scale: 1.0,
             tint: None,
             textures: HashMap::new(),
-            unmounted,
+            unmounted: unmounted.map(Rc::new),
             delay: Default::default(),
         }
     }
