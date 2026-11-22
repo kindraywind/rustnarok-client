@@ -1,0 +1,90 @@
+{
+ "about": "A crowd of 48 people and monsters on fixed cells (sprite-crowd.txt), each look facing all eight ways, at the usual camera and zoomed all the way in: sprite frames come from shared atlas pages, and a mirrored, magnified or turned image must show none of its neighbours on the page.",
+ "account": "",
+ "slot": 0,
+ "steps": [
+  {
+   "say": "@warp gef_fild07 61 229"
+  },
+  {
+   "settle": 1500
+  },
+  {
+   "say": "@killmonster2"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@unloadnpcfile {scenarios}/sprite-crowd.txt"
+  },
+  {
+   "wait": 500
+  },
+  {
+   "say": "@loadnpc {scenarios}/sprite-crowd.txt"
+  },
+  {
+   "wait": 2500
+  },
+  {
+   "expect": {
+    "units_at_least": {
+     "npc": 48
+    }
+   }
+  },
+  {
+   "shot": "crowd"
+  },
+  {
+   "wheel": [
+    512,
+    384,
+    1
+   ]
+  },
+  {
+   "wait": 200
+  },
+  {
+   "wheel": [
+    512,
+    384,
+    1
+   ]
+  },
+  {
+   "wait": 200
+  },
+  {
+   "wheel": [
+    512,
+    384,
+    1
+   ]
+  },
+  {
+   "wait": 200
+  },
+  {
+   "wait": 500
+  },
+  {
+   "expect": {
+    "state": {
+     "camera.distance": 230
+    }
+   }
+  },
+  {
+   "shot": "crowd-zoomed"
+  },
+  {
+   "say": "@unloadnpcfile {scenarios}/sprite-crowd.txt"
+  },
+  {
+   "wait": 500
+  }
+ ]
+}

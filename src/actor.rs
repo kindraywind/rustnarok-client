@@ -1238,7 +1238,7 @@ impl SpriteSet {
             if key.4 != 0 {
                 image = turn_image(&image, i32::from(key.4 % 360), key.4 >= 360);
             }
-            Some(gpu.texture(&image, false))
+            Some(gpu.sprite_texture(&image))
         });
         if let Some(texture) = texture {
             self.textures.insert(key, texture);
