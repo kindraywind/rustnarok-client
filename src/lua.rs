@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
+use std::sync::Arc;
 
 use mlua::Lua;
 
@@ -567,7 +568,10 @@ fn decode_in(bytes: &[u8], codepage: &'static encoding_rs::Encoding) -> String {
         let (original, _, unmappable) = encoding_rs::WINDOWS_1252.encode(utf8);
         return if unmappable { utf8.to_owned() } else { codepage.decode_without_bom_handling(&original).0.into_owned() };
     }
-    codepage.decode_without_bom_handling(bytes).0.into_owned()
+    let mut text = codepage.decode_without_bom_handling(bytes).0.into_owned();
+    // Decoding sizes the string for the worst case; tables keep tens of thousands of these.
+    text.shrink_to_fit();
+    text
 }
 
 /// A Lua table of numbers to names.
@@ -1139,9 +1143,10 @@ pub struct ItemInfo {
     pub slots: u8,
     /// The view the item shows as when worn (weapon type, shield view, ...).
     pub class_num: u32,
-    /// What the item info window says about it (lines with ^RRGGBB colors), known and unknown.
-    pub description: Vec<String>,
-    pub unidentified_description: Vec<String>,
+    /// What the item info window says about it (lines with ^RRGGBB colors, joined by newlines), known and unknown.
+    /// Items with the same text share it: thousands of unknown items say the same.
+    pub description: Arc<str>,
+    pub unidentified_description: Arc<str>,
     /// A costume (iteminfo's `costume`): the storage lists it on its Costumes tab only.
     pub costume: bool,
     /// The item's own effect number (iteminfo's `EffectID`), None when absent or negative: a dropped item stands under its
@@ -1158,8 +1163,10 @@ impl ItemInfo {
         if identified { &self.resource } else { &self.unidentified_resource }
     }
 
-    pub fn description(&self, identified: bool) -> &[String] {
-        if identified { &self.description } else { &self.unidentified_description }
+    /// The description's lines.
+    pub fn description(&self, identified: bool) -> impl Iterator<Item = &str> {
+        let text = if identified { &self.description } else { &self.unidentified_description };
+        (!text.is_empty()).then(|| text.split('\n')).into_iter().flatten()
     }
 }
 
@@ -1212,8 +1219,18 @@ fn items_in(lua: &Lua) -> io::Result<HashMap<u32, ItemInfo>> {
     let table: mlua::Table = lua.globals().get("tbl").map_err(lua_error)?;
     let text = |entry: &mlua::Table, key: &str| entry.get::<mlua::LuaString>(key).map(|text| decode(&text)).unwrap_or_default();
     let file = |entry: &mlua::Table, key: &str| entry.get::<mlua::LuaString>(key).map(|text| decode_name(&text)).unwrap_or_default();
-    let lines = |entry: &mlua::Table, key: &str| -> Vec<String> {
-        entry.get::<mlua::Table>(key).map(|lines| lines.sequence_values::<mlua::LuaString>().flatten().map(|line| decode(&line)).collect()).unwrap_or_default()
+    let mut texts = HashSet::<Arc<str>>::new();
+    let mut lines = |entry: &mlua::Table, key: &str| -> Arc<str> {
+        let lines: Vec<String> = entry
+            .get::<mlua::Table>(key)
+            .map(|lines| lines.sequence_values::<mlua::LuaString>().flatten().map(|line| decode(&line)).collect())
+            .unwrap_or_default();
+        let text = lines.join("\n");
+        texts.get(text.as_str()).cloned().unwrap_or_else(|| {
+            let text = Arc::<str>::from(text);
+            texts.insert(text.clone());
+            text
+        })
     };
     let mut items = HashMap::new();
     for pair in table.pairs::<i64, mlua::Table>() {
@@ -3024,6 +3041,23 @@ mod tests {
         lua.load("tbl = { [4001] = { EffectID = 1186 }, [4002] = {}, [4003] = { EffectID = -1 } }").exec().unwrap();
         let items = super::items_in(&lua).unwrap();
         assert_eq!([4001, 4002, 4003].map(|id| items[&id].effect_id), [Some(1186), None, None]);
+    }
+
+    #[test]
+    fn items_with_the_same_description_share_it() {
+        let lua = super::new_lua().unwrap();
+        lua.load(
+            "tbl = { [1] = { identifiedDescriptionName = { 'A ^ff0000red^000000 line', '', 'Weight: 1' }, unidentifiedDescriptionName = { 'Unknown.' } },
+                     [2] = { unidentifiedDescriptionName = { 'Unknown.' } } }",
+        )
+        .exec()
+        .unwrap();
+        let items = super::items_in(&lua).unwrap();
+        // Its lines as given, the empty one too; none at all when it has none.
+        assert_eq!(items[&1].description(true).collect::<Vec<_>>(), ["A ^ff0000red^000000 line", "", "Weight: 1"]);
+        assert_eq!(items[&2].description(true).count(), 0);
+        assert_eq!(items[&2].description(false).collect::<Vec<_>>(), ["Unknown."]);
+        assert!(std::sync::Arc::ptr_eq(&items[&1].unidentified_description, &items[&2].unidentified_description));
     }
 
     /// Needs the official data.grf, at `RUSTNAROK_CLIENT_GRF` or `./data.grf`.

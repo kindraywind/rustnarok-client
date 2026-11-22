@@ -25,19 +25,60 @@ const ENCRYPTED_MARK: &str = "__encryption.info";
 const SKINNED: &str = "data\\texture\\유저인터페이스\\";
 
 struct Entry {
+    /// Where its path is in `Files::names`, and how many bytes long.
+    name: u32,
+    name_len: u16,
     /// Which of the archives it's in.
-    archive: usize,
+    archive: u16,
+    flags: u8,
     compressed_size: u32,
     aligned_size: u32,
     size: u32,
-    flags: u8,
     offset: u64,
+}
+
+/// Every archived file: the paths back to back in one string, and the entries sorted by path. A client's archives hold
+/// hundreds of thousands of files; a map of a string each took twice the memory, in as many allocations.
+#[derive(Default)]
+struct Files {
+    names: String,
+    entries: Vec<Entry>,
+}
+
+impl Files {
+    fn name(&self, entry: &Entry) -> &str {
+        &self.names[entry.name as usize..][..usize::from(entry.name_len)]
+    }
+
+    fn get(&self, path: &str) -> Option<&Entry> {
+        self.entries.binary_search_by(|entry| self.name(entry).cmp(path)).ok().map(|index| &self.entries[index])
+    }
+
+    fn contains(&self, path: &str) -> bool {
+        self.get(path).is_some()
+    }
+
+    /// Sorts the entries added since by path, keeps the earliest archive's where two have one, and packs the paths left.
+    fn settle(&mut self) {
+        let Self { names, entries } = self;
+        let name = |entry: &Entry| &names[entry.name as usize..][..usize::from(entry.name_len)];
+        entries.sort_unstable_by(|a, b| name(a).cmp(name(b)).then(a.archive.cmp(&b.archive)));
+        entries.dedup_by(|later, earlier| name(later) == name(earlier));
+        let mut packed = String::with_capacity(entries.iter().map(|entry| usize::from(entry.name_len)).sum());
+        for entry in entries.iter_mut() {
+            let start = packed.len();
+            packed.push_str(&names[entry.name as usize..][..usize::from(entry.name_len)]);
+            entry.name = start as u32;
+        }
+        entries.shrink_to_fit();
+        *names = packed;
+    }
 }
 
 pub struct Grf {
     /// The archive files, the first winning where two have a file, and whether each one's data is encrypted.
     archives: Vec<(Mutex<File>, bool)>,
-    entries: HashMap<String, Entry>,
+    files: Files,
     /// Loose files read before the archive (the client's data folder), by client path.
     overlay: HashMap<String, PathBuf>,
     decrypt: Option<Decrypt>,
@@ -65,8 +106,9 @@ impl Grf {
 
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let mut grf =
-            Self { archives: Vec::new(), entries: HashMap::new(), overlay: HashMap::new(), decrypt: None, skin: Default::default(), aliases: HashMap::new() };
+            Self { archives: Vec::new(), files: Files::default(), overlay: HashMap::new(), decrypt: None, skin: Default::default(), aliases: HashMap::new() };
         grf.add_archive(path.as_ref())?;
+        grf.files.settle();
         grf.load_aliases();
         Ok(grf)
     }
@@ -86,7 +128,7 @@ impl Grf {
         listed.sort();
         let folder = ini.parent().unwrap_or(Path::new("."));
         let mut grf =
-            Self { archives: Vec::new(), entries: HashMap::new(), overlay: HashMap::new(), decrypt, skin: Default::default(), aliases: HashMap::new() };
+            Self { archives: Vec::new(), files: Files::default(), overlay: HashMap::new(), decrypt, skin: Default::default(), aliases: HashMap::new() };
         for (_, name) in listed {
             if let Err(error) = grf.add_archive(&folder.join(&name)) {
                 eprintln!("{name}: {error}");
@@ -95,11 +137,12 @@ impl Grf {
         if grf.archives.is_empty() {
             return Err(invalid("no archive DATA.INI lists opens"));
         }
+        grf.files.settle();
         grf.load_aliases();
         Ok(grf)
     }
 
-    /// Adds an archive after the ones already open: they keep the files both have.
+    /// Adds an archive after the ones already open: they keep the files both have, once `Files::settle` runs.
     fn add_archive(&mut self, path: &Path) -> io::Result<()> {
         let mut file = File::open(path)?;
         let mut header = [0u8; HEADER_SIZE as usize];
@@ -123,33 +166,44 @@ impl Grf {
         let mut table = Vec::with_capacity(le32(&sizes[4..]) as usize);
         ZlibDecoder::new(&compressed_table[..]).read_to_end(&mut table)?;
 
-        let mut entries = HashMap::new();
+        let archive = u16::try_from(self.archives.len()).map_err(|_| invalid("too many archives"))?;
+        let (names_before, entries_before) = (self.files.names.len(), self.files.entries.len());
+        let mut encrypted = false;
         let mut rest = &table[..];
-        while let Some(name_end) = rest.iter().position(|&byte| byte == 0) {
-            let fields = rest.get(name_end + 1..name_end + 1 + entry_size).ok_or_else(|| invalid("truncated file table"))?;
-            let entry = Entry {
-                compressed_size: le32(fields),
-                aligned_size: le32(&fields[4..]),
-                size: le32(&fields[8..]),
-                flags: fields[12],
-                archive: self.archives.len(),
-                offset: if version == 0x300 { u64::from_le_bytes(fields[13..21].try_into().unwrap()) } else { u64::from(le32(&fields[13..])) },
-            };
-            if entry.flags & FLAG_FILE != 0 {
-                let (name, _) = encoding_rs::EUC_KR.decode_without_bom_handling(&rest[..name_end]);
-                entries.insert(normalize(&name), entry);
+        let parsed = (|| {
+            while let Some(name_end) = rest.iter().position(|&byte| byte == 0) {
+                let fields = rest.get(name_end + 1..name_end + 1 + entry_size).ok_or_else(|| invalid("truncated file table"))?;
+                if fields[12] & FLAG_FILE != 0 {
+                    let (name, _) = encoding_rs::EUC_KR.decode_without_bom_handling(&rest[..name_end]);
+                    let start = self.files.names.len();
+                    // `normalize`, straight into the paths.
+                    self.files.names.extend(name.chars().map(|c| if c == '/' { '\\' } else { c.to_ascii_lowercase() }));
+                    let name_len = u16::try_from(self.files.names.len() - start).map_err(|_| invalid("a file path too long"))?;
+                    encrypted |= &self.files.names[start..] == ENCRYPTED_MARK;
+                    self.files.entries.push(Entry {
+                        name: u32::try_from(start).map_err(|_| invalid("too many file paths"))?,
+                        name_len,
+                        archive,
+                        flags: fields[12],
+                        compressed_size: le32(fields),
+                        aligned_size: le32(&fields[4..]),
+                        size: le32(&fields[8..]),
+                        offset: if version == 0x300 { u64::from_le_bytes(fields[13..21].try_into().unwrap()) } else { u64::from(le32(&fields[13..])) },
+                    });
+                }
+                rest = &rest[name_end + 1 + entry_size..];
             }
-            rest = &rest[name_end + 1 + entry_size..];
-        }
-
-        let encrypted = entries.contains_key(ENCRYPTED_MARK);
-        if encrypted && self.decrypt.is_none() {
-            return Err(invalid("its file data is encrypted, and nothing to decrypt it was given"));
+            if encrypted && self.decrypt.is_none() {
+                return Err(invalid("its file data is encrypted, and nothing to decrypt it was given"));
+            }
+            Ok(())
+        })();
+        if let Err(error) = parsed {
+            self.files.names.truncate(names_before);
+            self.files.entries.truncate(entries_before);
+            return Err(error);
         }
         self.archives.push((Mutex::new(file), encrypted));
-        for (name, entry) in entries {
-            self.entries.entry(name).or_insert(entry);
-        }
         Ok(())
     }
 
@@ -204,7 +258,7 @@ impl Grf {
     /// A path as stored: itself when it's there, else what resnametable.txt names for it.
     fn real_path(&self, path: &str) -> String {
         let path = normalize(path);
-        if self.skin.1.contains_key(&path) || self.overlay.contains_key(&path) || self.entries.contains_key(&path) {
+        if self.skin.1.contains_key(&path) || self.overlay.contains_key(&path) || self.files.contains(&path) {
             return path;
         }
         for base in ["data\\texture\\", "data\\"] {
@@ -217,7 +271,8 @@ impl Grf {
 
     /// Every file's path, lowercase with backslashes.
     pub fn paths(&self) -> impl Iterator<Item = &str> {
-        self.entries.keys().chain(self.overlay.keys().filter(|path| !self.entries.contains_key(*path))).map(String::as_str)
+        let files = &self.files;
+        files.entries.iter().map(|entry| files.name(entry)).chain(self.overlay.keys().map(String::as_str).filter(|path| !files.contains(path)))
     }
 
     /// Reads a loose file of the data folder, never the archive's copy: for what must come from the player's own
@@ -230,7 +285,7 @@ impl Grf {
     /// Whether a file is there (in the archive or the data folder), by its client path.
     pub fn contains(&self, path: &str) -> bool {
         let path = self.real_path(path);
-        self.skin.1.contains_key(&path) || self.overlay.contains_key(&path) || self.entries.contains_key(&path)
+        self.skin.1.contains_key(&path) || self.overlay.contains_key(&path) || self.files.contains(&path)
     }
 
     /// Reads a file by its client path, e.g. `data\texture\...`; case and slash direction don't matter.
@@ -239,9 +294,9 @@ impl Grf {
         if let Some(file) = self.skin.1.get(&real).or_else(|| self.overlay.get(&real)) {
             return std::fs::read(file);
         }
-        let entry = self.entries.get(&real).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, path.to_owned()))?;
+        let entry = self.files.get(&real).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, path.to_owned()))?;
 
-        let (file, encrypted) = &self.archives[entry.archive];
+        let (file, encrypted) = &self.archives[usize::from(entry.archive)];
         let mut data = vec![0; entry.aligned_size as usize];
         {
             let mut file = file.lock().unwrap();
