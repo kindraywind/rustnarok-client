@@ -69,6 +69,7 @@ impl App {
     }
 
     pub(crate) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        let started = std::time::Instant::now();
         // The map packets since the last frame first, before anything moves.
         self.apply_frame_events();
         // A font picked in Game Settings (or put back by Reset) draws from this frame on.
@@ -110,6 +111,8 @@ impl App {
             self.tick(now);
             self.redraw_game(event_loop, now);
             self.frame_current = true;
+            let waited = self.gpu.as_ref().map_or(Duration::ZERO, |gpu| gpu.waited);
+            self.meter.worked(started.elapsed().saturating_sub(waited));
             return;
         }
         let blink_phase = self.blink_phase();

@@ -527,7 +527,7 @@ pub fn mercenary_glow(job: u16) -> Option<&'static str> {
 struct Layer {
     spr: Rc<Spr>,
     act: Rc<Act>,
-    palette: Option<Palette>,
+    palette: Option<Rc<Palette>>,
     part: Part,
 }
 
@@ -538,7 +538,15 @@ thread_local! {
     /// ponytail: held weakly, so it never outgrows what's on screen; a file nobody wears any more is read again.
     static SPRS: RefCell<HashMap<String, Weak<Spr>>> = RefCell::default();
     static ACTS: RefCell<HashMap<String, Weak<Act>>> = RefCell::default();
+    static PALETTES: RefCell<HashMap<String, Weak<Palette>>> = RefCell::default();
+    /// The images on the GPU, by the files they come from (`TextureKey`): fifty players in one costume upload its frames
+    /// once, not fifty times.
+    static TEXTURES: RefCell<HashMap<TextureKey, Weak<Texture>>> = RefCell::default();
 }
+
+/// An image on the GPU: the SPR and palette it was drawn from (by address: a texture alive keeps a sprite set alive,
+/// which holds both), its kind and index, tint and turn (`ImageKey`'s last three).
+type TextureKey = (usize, usize, u32, usize, [u8; 4], u16);
 
 /// The SPR at `path`, parsed once while any unit wears it.
 fn spr_file(grf: &Grf, path: &str) -> Option<Rc<Spr>> {
@@ -550,14 +558,23 @@ fn act_file(grf: &Grf, path: &str) -> Option<Rc<Act>> {
     shared(&ACTS, path, || Act::parse(&grf.read(path).ok()?).ok())
 }
 
-fn shared<T>(files: &'static std::thread::LocalKey<RefCell<HashMap<String, Weak<T>>>>, path: &str, parse: impl FnOnce() -> Option<T>) -> Option<Rc<T>> {
-    if let Some(file) = files.with_borrow(|files| files.get(path).and_then(Weak::upgrade)) {
+/// The dye palette at `path`, read once while any unit wears it.
+fn palette_file(grf: &Grf, path: &str) -> Option<Rc<Palette>> {
+    shared(&PALETTES, path, || sprite::parse_palette(&grf.read(path).ok()?))
+}
+
+fn shared<K, Q, T>(files: &'static std::thread::LocalKey<RefCell<HashMap<K, Weak<T>>>>, key: &Q, parse: impl FnOnce() -> Option<T>) -> Option<Rc<T>>
+where
+    K: std::borrow::Borrow<Q> + std::hash::Hash + Eq,
+    Q: ToOwned<Owned = K> + std::hash::Hash + Eq + ?Sized,
+{
+    if let Some(file) = files.with_borrow(|files| files.get(key).and_then(Weak::upgrade)) {
         return Some(file);
     }
     let file = Rc::new(parse()?);
     files.with_borrow_mut(|files| {
         files.retain(|_, file| file.strong_count() > 0);
-        files.insert(path.to_owned(), Rc::downgrade(&file));
+        files.insert(key.to_owned(), Rc::downgrade(&file));
     });
     Some(file)
 }
@@ -901,7 +918,7 @@ pub struct SpriteSet {
     scale: f32,
     /// Status colour multiplied into every layer. None keeps each layer's own colour.
     tint: Option<[u8; 3]>,
-    textures: HashMap<ImageKey, Texture>,
+    textures: HashMap<ImageKey, Rc<Texture>>,
     /// A mounted rider's body without the mount, when a headgear sits by it.
     unmounted: Option<Rc<Act>>,
     /// The action the unit is in and the frame delay it took when it started it (`action_delay`).
@@ -943,11 +960,11 @@ impl SpriteSet {
         let race = if is_doram(look.job) { "도람족" } else { "인간족" };
         // Doram palettes sit in their own folder.
         let palettes = if is_doram(look.job) { "data\\palette\\도람족\\머리" } else { "data\\palette\\머리" };
-        let load = |path: String, palette: Option<Palette>, part: Part| -> Option<Layer> {
+        let load = |path: String, palette: Option<Rc<Palette>>, part: Part| -> Option<Layer> {
             Some(Layer { spr: spr_file(grf, &format!("{path}.spr"))?, act: act_file(grf, &format!("{path}.act"))?, palette, part })
         };
         // Color 0 is the sprite's own palette.
-        let dye = |path: String, color: u16| -> Option<Palette> { (color > 0).then(|| grf.read(&path).ok().and_then(|bytes| sprite::parse_palette(&bytes)))? };
+        let dye = |path: String, color: u16| -> Option<Rc<Palette>> { (color > 0).then(|| palette_file(grf, &path))? };
         // ponytail: there is no head sprite 0; rathena allows hair 0, so show the first style.
         let hair = look.hair.max(1);
         let files = body_files(job, look.sex != 0, look.clothes_color, look.body)?;
@@ -1208,18 +1225,24 @@ impl SpriteSet {
             return;
         }
         let layer = &self.layers[key.0];
-        let Some(mut image) = layer.spr.image(key.1, key.2, layer.palette.as_ref()) else { return };
-        if key.3 != [255; 4] {
-            for pixel in image.pixels_mut() {
-                for (channel, tint) in pixel.0.iter_mut().zip(key.3) {
-                    *channel = (u16::from(*channel) * u16::from(tint) / 255) as u8;
+        let file = (Rc::as_ptr(&layer.spr) as usize, layer.palette.as_ref().map_or(0, |palette| Rc::as_ptr(palette) as usize), key.1, key.2, key.3, key.4);
+        let texture = shared(&TEXTURES, &file, || {
+            let mut image = layer.spr.image(key.1, key.2, layer.palette.as_deref())?;
+            if key.3 != [255; 4] {
+                for pixel in image.pixels_mut() {
+                    for (channel, tint) in pixel.0.iter_mut().zip(key.3) {
+                        *channel = (u16::from(*channel) * u16::from(tint) / 255) as u8;
+                    }
                 }
             }
+            if key.4 != 0 {
+                image = turn_image(&image, i32::from(key.4 % 360), key.4 >= 360);
+            }
+            Some(gpu.texture(&image, false))
+        });
+        if let Some(texture) = texture {
+            self.textures.insert(key, texture);
         }
-        if key.4 != 0 {
-            image = turn_image(&image, i32::from(key.4 % 360), key.4 >= 360);
-        }
-        self.textures.insert(key, gpu.texture(&image, false));
     }
 
     fn place(&self, index: usize, head_direction: u16, timing: Timing) -> Vec<Placed> {
@@ -1399,7 +1422,7 @@ impl SpriteSet {
 
     /// A texture decoded earlier, if it still is (a copy left behind a unit whose look has changed since).
     pub fn texture_of(&self, key: ImageKey) -> Option<&Texture> {
-        self.textures.get(&key)
+        self.textures.get(&key).map(|texture| &**texture)
     }
 }
 
