@@ -466,6 +466,11 @@ impl Gpu {
     /// Draws the world and then `sprites` in order, each at its `alphas` opacity and cut (opaque and whole past the list's end).
     pub fn draw(&mut self, world: Option<&dyn WorldPass>, sprites: &[Sprite], alphas: &[Shade]) {
         crate::control::on_draw(self, world, sprites, alphas);
+        // The frame counts whether or not it shows: a covered window still lays out its text every frame, and the lines
+        // it no longer draws must go then too (they piled up by the thousand behind other windows).
+        let now = self.frame.get() + 1;
+        self.frame.set(now);
+        self.texts.borrow_mut().retain(|_, (_, drawn)| now - *drawn < TEXT_FRAMES);
         self.drawn_at = Instant::now();
         let acquired = self.surface.get_current_texture();
         self.waited = self.drawn_at.elapsed();
@@ -484,9 +489,16 @@ impl Gpu {
         let encoder = self.encode(&frame.texture.create_view(&Default::default()), size, world, sprites, alphas);
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
-        let now = self.frame.get() + 1;
-        self.frame.set(now);
-        self.texts.borrow_mut().retain(|_, (_, drawn)| now - *drawn < TEXT_FRAMES);
+    }
+
+    /// Whether the window was covered at the last draw.
+    pub fn occluded(&self) -> bool {
+        self.occluded
+    }
+
+    /// How many lines of text are rasterized now (the control socket's `memory.texts`).
+    pub fn text_count(&self) -> usize {
+        self.texts.borrow().len()
     }
 
     /// Renders one frame at 1x into a PNG, for checking output against the real client.

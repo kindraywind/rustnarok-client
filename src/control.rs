@@ -2279,6 +2279,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     // The effect sounds played in the last five seconds (`no_sound` in a scenario checks these).
     state["sounds_recent"] = recent_sounds().into();
     state["battle_mode"] = game.chat_mode.enabled().into();
+    // What the client holds that grows with play, for watching a long session.
+    state["memory"] = json!({"texts": app.gpu.as_ref().map(crate::render::Gpu::text_count), "occluded": app.gpu.as_ref().map(|gpu| gpu.occluded())});
     // The settings Game Settings changes, its open tab, and the canvas the Extras' UI scale sizes.
     let skins = crate::game_settings::skins();
     state["settings"] = json!({
@@ -2565,6 +2567,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("map_property", Test),
         ("map_type", Test),
         ("marks", Test),
+        ("memory", Fair),
         ("mercenary", Fair),
         ("merge", Fair),
         ("pick_list", Fair),
