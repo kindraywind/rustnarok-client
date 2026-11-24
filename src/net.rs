@@ -1728,6 +1728,17 @@ pub const STATUS_MAX_WEIGHT: u16 = 25;
 /// A 4th job's AP and its maximum.
 pub const STATUS_AP: u16 = 232;
 pub const STATUS_MAX_AP: u16 = 233;
+
+/// A ZC_RECOVERY adds `amount` to HP, SP or AP: rathena's pc_heal sends only it (no ZC_PAR_CHANGE) for a heal with
+/// numbers shown, so the value is ours to raise. Each one's maximum is the next ID.
+pub fn recover(status: &mut HashMap<u16, i64>, kind: u16, amount: i32) {
+    if ![STATUS_HP, STATUS_SP, STATUS_AP].contains(&kind) {
+        return;
+    }
+    let max = status.get(&(kind + 1)).copied().unwrap_or(i64::MAX);
+    let value = status.entry(kind).or_default();
+    *value = (*value + i64::from(amount)).min(max);
+}
 /// Status points left; Str to Luk (13-18) and the points each needs to go up (32-37).
 pub const STATUS_POINTS: u16 = 9;
 pub const STATUS_STR: u16 = 13;
