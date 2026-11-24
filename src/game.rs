@@ -4858,10 +4858,11 @@ impl Game {
     /// The numbers (and the flinch) of a hit, landing `hit_ms` after now (the attacker's "atk" frame), or after its
     /// attack motion when its sprite doesn't say.
     pub(crate) fn show_hit(&mut self, act: &net::Act, hit_ms: Option<f32>, gap: Duration, from: HitFrom) {
-        if preamble(act) {
+        let me = self.account_id;
+        let known = act.target == me || self.units.contains_key(&act.target) || self.skill_units.contains_key(&act.target);
+        if preamble(act) || lands_nowhere(from, known) {
             return;
         }
-        let me = self.account_id;
         let target = (act.target != me).then_some(act.target);
         let hit = match target {
             None => Some(&self.player),
@@ -4963,6 +4964,14 @@ const NO_NUMBER: i32 = -30_000;
 
 pub(crate) fn preamble(act: &net::Act) -> bool {
     act.damage == NO_NUMBER
+}
+
+/// Whether a swing's hit shows nothing: its target is no unit we know (not us, a unit or a skill unit). The game's swing
+/// handler drops the hits then (no number, no MISS), though the attacker still swings; some servers send swings at
+/// made-up targets, which came out as a red MISS over the attacker every 200 ms.
+// ponytail: swings only; a skill's hit on an unknown target keeps its numbers until its own handler is read.
+fn lands_nowhere(from: HitFrom, known: bool) -> bool {
+    from == HitFrom::Attack && !known
 }
 
 /// Whether a hit shows MISS: no damage, a critical too; a lucky dodge shows its own.
@@ -5206,6 +5215,10 @@ mod tests {
         // A critical of 0 is a MISS like any hit of 0; a lucky dodge isn't, and a critical that hits isn't.
         assert!(misses(10, 0) && misses(13, 0) && misses(0, 0) && misses(8, -1));
         assert!(!misses(11, 0) && !misses(10, 1627) && !misses(0, 977));
+        // A swing at a target we don't know shows nothing (a made-up target's crit of 0 was a MISS); a known one does,
+        // and a skill's hit isn't held back.
+        assert!(lands_nowhere(HitFrom::Attack, false) && !lands_nowhere(HitFrom::Attack, true));
+        assert!(!lands_nowhere(HitFrom::Skill, false) && !lands_nowhere(HitFrom::Splash, false) && !lands_nowhere(HitFrom::Unit, false));
     }
 
     #[test]
