@@ -4127,6 +4127,7 @@ impl App {
             }
             // Potions and the like: green HP or blue SP over the player.
             MapEvent::Recovered { kind, amount } => {
+                net::recover(&mut game.status, kind, amount);
                 game.damages.push(Damage {
                     target: None,
                     amount,

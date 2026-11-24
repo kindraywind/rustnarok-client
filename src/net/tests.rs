@@ -3352,3 +3352,17 @@ fn emotions_with_a_pack() {
     assert_eq!(encode_emote(29, PACKETVER_20220406), [0xbf, 0x00, 29]);
     assert_eq!(encode_emote(29, PACKETVER_20250402), [0xe9, 0x0b, 0, 0, 29, 0, 0xbf, 0x00, 29]);
 }
+
+#[test]
+fn recovery_adds_to_hp_sp_and_ap() {
+    // rathena's pc_heal sends only ZC_RECOVERY for a heal with numbers: HP 47882 + 31509 + 14151 reaches its maximum.
+    let mut status = HashMap::from([(STATUS_HP, 47_882), (STATUS_MAX_HP, 93_542), (STATUS_SP, 10), (STATUS_AP, 0)]);
+    recover(&mut status, STATUS_HP, 31_509);
+    assert_eq!(status[&STATUS_HP], 79_391);
+    recover(&mut status, STATUS_HP, 20_000);
+    recover(&mut status, STATUS_SP, 5);
+    recover(&mut status, STATUS_AP, 3);
+    recover(&mut status, STATUS_BASE_LEVEL, 1);
+    assert_eq!([status[&STATUS_HP], status[&STATUS_SP], status[&STATUS_AP]], [93_542, 15, 3]);
+    assert!(!status.contains_key(&STATUS_BASE_LEVEL));
+}
