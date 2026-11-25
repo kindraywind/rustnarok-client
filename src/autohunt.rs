@@ -43,6 +43,18 @@ fn is_hunt(text: &str) -> bool {
     text == "/hunt" || text.starts_with("/hunt ")
 }
 
+/// The news for a `hunt_state` call. Only the hunt program's own call (`take`) gets it and counts as the program listening:
+/// each line is handed over once, and a script that read the state every 0.3 s took 3 of 4 typed `/hunt` lines (and casts
+/// to dodge) before the hunt program saw them, while its calls kept "no hunt program is running" from showing.
+fn take_news(take: bool) -> Vec<Value> {
+    if !take {
+        return Vec::new();
+    }
+    let mut news = NEWS.lock().unwrap();
+    news.polled = Some(Instant::now());
+    std::mem::take(&mut news.items)
+}
+
 /// A typed `/hunt` line, when the client is shared: passed on to the hunt program. Whether it was one.
 pub fn command(game: &mut Game, text: &str) -> bool {
     if !crate::mcp::shared() || !is_hunt(text) {
@@ -120,13 +132,9 @@ fn say(game: &mut Game, text: impl Into<String>) {
     game.chat_line_kind(format!("hunt: {}", text.into()), HUNT_LINE, Kind::Mcp);
 }
 
-/// `hunt_state`: what the hunt decides on, and the news since the last call.
-pub fn state(game: &Game, items: &HashMap<u32, ItemInfo>) -> Value {
-    let news = {
-        let mut news = NEWS.lock().unwrap();
-        news.polled = Some(Instant::now());
-        std::mem::take(&mut news.items)
-    };
+/// `hunt_state`: what the hunt decides on, and for the hunt program's own call (`take`) the news since its last one.
+pub fn state(game: &Game, items: &HashMap<u32, ItemInfo>, take: bool) -> Value {
+    let news = take_news(take);
     let clock = control::now();
     let now = Instant::now();
     let status = |id: u16, login: i64| game.status.get(&id).copied().unwrap_or(login);
@@ -319,6 +327,19 @@ pub fn perform(game: &mut Game, actions: Vec<Action>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_hunt_program_takes_the_news() {
+        // The hunt program's first call: news is kept from then on. (NEWS is the process's one list and another test's hit
+        // may land in it, so only this line is looked for.)
+        let line = json!({"kind": "command", "text": "/hunt 8"});
+        take_news(true);
+        tell(line.clone());
+        // A script's read of the state takes nothing and leaves the line for the hunt program, which gets it once.
+        assert!(take_news(false).is_empty());
+        assert!(take_news(true).contains(&line));
+        assert!(!take_news(true).contains(&line));
+    }
 
     #[test]
     fn reads_hunt_actions() {

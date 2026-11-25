@@ -73,7 +73,7 @@ fn describe(command: &Command) -> Option<String> {
         | Command::Inbox { .. }
         | Command::Reply { .. }
         // The hunt program says what it does itself.
-        | Command::HuntState
+        | Command::HuntState { .. }
         | Command::HuntGat
         | Command::HuntDo { .. } => return None,
     })
