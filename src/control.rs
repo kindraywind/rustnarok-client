@@ -64,8 +64,9 @@
 //!   events they made in between (`==` lines, with what they say: a disconnection's reason, say).
 //! - `inbox` `{ms?}` and `reply` `{text}`: the chat's MCP tab, in a client shared with the player (see mcp.rs): what the player
 //!   typed there since the last `inbox` (waiting up to `ms` for some), and an answer shown there.
-//! - `hunt_state`, `hunt_gat` and `hunt_do` `{actions}`: for an auto hunt program of its own (see autohunt.rs): a compact
-//!   view of the player, units, items, skills and news; the map's walkable cells; actions done as the player would.
+//! - `hunt_state` `{news?}`, `hunt_gat` and `hunt_do` `{actions}`: for an auto hunt program of its own (see autohunt.rs): a
+//!   compact view of the player, units, items and skills; the map's walkable cells; actions done as the player would. The
+//!   news since its last call (a typed `/hunt`, hits, casts) goes only to a call with `news: true`, the hunt program's own.
 //! - `quit`.
 
 use std::collections::{HashMap, VecDeque};
@@ -217,8 +218,12 @@ pub enum Command {
     State {
         only: Option<Vec<String>>,
     },
-    /// The auto hunt program's view, its map's walkable cells, and what it does (autohunt.rs).
-    HuntState,
+    /// The auto hunt program's view, its map's walkable cells, and what it does (autohunt.rs). `news`: the caller is the
+    /// hunt program and takes the news; any other reader of the state leaves it there.
+    HuntState {
+        #[serde(default)]
+        news: bool,
+    },
     HuntGat,
     HuntDo {
         actions: Vec<autohunt::Action>,
@@ -424,7 +429,7 @@ fn serve(stream: Stream, proxy: &EventLoopProxy<NetEvent>, token: Option<&str>) 
 fn test_only(command: &Command) -> bool {
     match command {
         // The hunt's view has hidden units and the whole map's cells: beyond a player.
-        Command::Trace { .. } | Command::Clock { .. } | Command::HuntState | Command::HuntGat | Command::HuntDo { .. } => true,
+        Command::Trace { .. } | Command::Clock { .. } | Command::HuntState { .. } | Command::HuntGat | Command::HuntDo { .. } => true,
         Command::Wait { packet, sent, pause, first, .. } => packet.is_some() || sent.is_some() || *pause || first.as_deref().is_some_and(test_only),
         Command::Say { text } => text.starts_with('@'),
         _ => false,
@@ -737,9 +742,9 @@ fn execute(app: &mut App, event_loop: &ActiveEventLoop, command: Command) -> Res
             Ok(Value::Null)
         }
         Command::Reply { text } => mcp::reply(&mut app.scene, text),
-        Command::HuntState => {
+        Command::HuntState { news } => {
             let Scene::Game(game) = &app.scene else { return Err("not in the game".into()) };
-            Ok(autohunt::state(game, &app.items))
+            Ok(autohunt::state(game, &app.items, news))
         }
         Command::HuntGat => {
             let Scene::Game(game) = &app.scene else { return Err("not in the game".into()) };
@@ -3053,7 +3058,9 @@ mod tests {
         assert!(test(r#"{"cmd":"trace"}"#) && test(r#"{"cmd":"clock","action":"pause"}"#) && test(r#"{"cmd":"say","text":"@warp prontera"}"#));
         assert!(test(r#"{"cmd":"wait","packet":"0x08c8"}"#) && test(r#"{"cmd":"wait","ms":100,"pause":true}"#));
         assert!(test(r#"{"cmd":"wait","ms":100,"do":{"cmd":"say","text":"@heal"}}"#));
-        assert!(test(r#"{"cmd":"hunt_state"}"#) && test(r#"{"cmd":"hunt_do","actions":[{"do":"stop_attack"}]}"#));
+        assert!(
+            test(r#"{"cmd":"hunt_state"}"#) && test(r#"{"cmd":"hunt_state","news":true}"#) && test(r#"{"cmd":"hunt_do","actions":[{"do":"stop_attack"}]}"#)
+        );
         // A / command is the game's own, as typed in the chat box (#1121).
         assert!(!test(r#"{"cmd":"say","text":"/sit"}"#) && !test(r#"{"cmd":"say","text":"/!"}"#));
         assert!(!test(r#"{"cmd":"say","text":"hello @all"}"#) && !test(r#"{"cmd":"wait","event":"Chat","ms":100}"#) && !test(r#"{"cmd":"state"}"#));
