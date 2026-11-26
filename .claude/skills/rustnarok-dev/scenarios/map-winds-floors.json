@@ -1,0 +1,22 @@
+{
+  "about": "The map's winds and magic floors, each drawn from its row of the map's effect tables while the player is within 130 units. ba_pw02 has 12 magic floors: six turning pictures on the water round each machine (and thin rings of cloud high over them). herosria has 52 winds, most of them standing rings of light; air_if has 18, wisps of steam round its pipes. The turning, the fades and the shapes are checked by unit tests; the winds start by chance, so the shots differ from run to run.",
+  "account": "",
+  "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_CAMERA": "0,45,160"},
+  "steps": [
+    {"say": "@alive"},
+    {"say": "@warp ba_pw02 227 42"}, {"settle": 1500},
+    {"wait": 3000},
+    {"expect": {"map": "ba_pw02.gat", "state": {"player.cell": [227, 42], "map_floors": 12, "map_winds": 0}, "state_at_least": {"map_floors_turning": 2}}},
+    {"shot": "map-floors-power-plant", "crop": [0, 60, 1024, 330], "threshold": 100},
+    {"say": "@warp herosria 90 250"}, {"settle": 1500},
+    {"wait": 3000},
+    {"expect": {"map": "herosria.gat", "state": {"player.cell": [90, 250], "map_winds": 52, "map_floors": 0}, "state_at_least": {"map_winds_turning": 1}}},
+    {"shot": "map-winds-herosria", "threshold": 100},
+    {"say": "@warp air_if 144 71"}, {"settle": 1500},
+    {"wait": 3000},
+    {"expect": {"map": "air_if.gat", "state": {"player.cell": [144, 71], "map_winds": 18}, "state_at_least": {"map_winds_turning": 1}}},
+    {"shot": "map-winds-airship-steam", "crop": [0, 250, 500, 250], "threshold": 100},
+    {"say": "@heal"}
+  ]
+}

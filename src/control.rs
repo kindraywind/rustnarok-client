@@ -2214,7 +2214,9 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["map_particles"] = game.world.emitters.out().into();
     state["map_winds"] = game.world.emitters.winds.len().into();
     state["map_floors"] = game.world.emitters.floors.len().into();
-    state["map_turning"] = json!(game.world.emitters.turning());
+    let [winds_turning, floors_turning] = game.world.emitters.turning();
+    state["map_winds_turning"] = winds_turning.into();
+    state["map_floors_turning"] = floors_turning.into();
     state["map_effect_timers"] = game.world.map_effects.timers.len().into();
     state["map_effects_fired"] = game.world.map_effects.fired.into();
     state["map_effect_fired_ms_ago"] = game.world.map_effects.last_fired.map(|at| crate::whole_ms(self::now()).saturating_sub(at)).into();
@@ -2576,7 +2578,8 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("map_particles", Test),
         ("map_winds", Test),
         ("map_floors", Test),
-        ("map_turning", Test),
+        ("map_winds_turning", Test),
+        ("map_floors_turning", Test),
         ("map_effects_fired", Test),
         ("effects_alive", Test),
         ("map_property", Test),
