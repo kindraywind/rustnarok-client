@@ -1,11 +1,14 @@
 //! The map's particle emitters (RSW type-4 objects 974, and 1073 with moving pictures): each throws the particles its
 //! row of the map's emitter table describes, in 16 ms ticks, while the player is near. The particles move in the map's
-//! own axes (y down); only the drawn corners are in the world's (y up).
+//! own axes (y down); only the drawn corners are in the world's (y up). The map's winds (`wind`) and magic floors
+//! (`magic_floor`) take their rows, tick and draw along with them.
 
 use rustnarok_client::lua::{EmitterInfo, MapEmitters};
 use rustnarok_client::map::EffectSource;
 use wgpu::BlendFactor;
 
+use crate::magic_floor::{self, Floor};
+use crate::wind::{self, Wind};
 use crate::world::{MeshVertex, Vector};
 use crate::world_fx::Eye;
 
@@ -216,48 +219,78 @@ pub struct Shape<'a> {
     pub vertices: Vec<MeshVertex>,
 }
 
-/// A map's emitters.
+/// A map's emitters, winds and magic floors.
 #[derive(Default)]
 pub struct Emitters {
     pub list: Vec<Emitter>,
-    /// The different looks of the list.
+    pub winds: Vec<Wind>,
+    pub floors: Vec<Floor>,
+    /// The different looks of them all.
     pub looks: Vec<Look>,
     /// The last 16 ms tick run.
     last: Option<u64>,
 }
 
 impl Emitters {
-    /// The map's emitter objects, each with the table row of its number among those of its kind, counted from 0 in
-    /// the map's order; placed in the world (x and z moved by `half` from the map's centre, y up).
+    /// The map's emitter, wind and magic floor objects, each with the table row of its number among those of its
+    /// kind, counted from 0 in the map's order; placed in the world (x and z moved by `half` from the map's centre, y
+    /// up). A wind stands where its row says (the same place, in the data).
     // ponytail: an object without a row draws nothing; no map in the data has one.
     pub fn new(sources: &[EffectSource], half: [f32; 2], tables: &MapEmitters, rand: &mut dyn FnMut() -> u32) -> Self {
         let mut emitters = Self::default();
-        let mut numbers = [0u32; 2];
+        let mut numbers = [0u32; 4];
         for source in sources {
-            let (animated, rows) = match u32::try_from(source.id) {
-                Ok(PLAIN) => (false, &tables.plain),
-                Ok(ANIMATED) => (true, &tables.animated),
+            let kind = match u32::try_from(source.id) {
+                Ok(PLAIN) => 0,
+                Ok(ANIMATED) => 1,
+                Ok(wind::ID) => 2,
+                Ok(magic_floor::ID) => 3,
                 _ => continue,
             };
-            let number = numbers[usize::from(animated)];
-            numbers[usize::from(animated)] += 1;
-            let Some(info) = rows.get(&number) else { continue };
+            let number = numbers[kind];
+            numbers[kind] += 1;
             let at = [source.position[0] + half[0], -source.position[1], source.position[2] + half[1]];
-            let mut emitter = Emitter::new(info.clone(), at, animated, rand);
-            let look = Look { factors: factors(info.blend), depth_test: info.depth_test };
-            emitter.look = emitters.looks.iter().position(|known| *known == look).unwrap_or_else(|| {
+            // The wind and the floor's pictures and rings are hidden by what stands in front; the floor's blends come
+            // to the default.
+            let (blend, depth_test) = match kind {
+                0 | 1 => {
+                    let Some(info) = [&tables.plain, &tables.animated][kind].get(&number) else { continue };
+                    emitters.list.push(Emitter::new(info.clone(), at, kind == 1, rand));
+                    (info.blend, info.depth_test)
+                }
+                2 => {
+                    let Some(info) = tables.winds.get(&number) else { continue };
+                    emitters.winds.push(Wind::new(info.clone(), half, rand));
+                    (info.blend, true)
+                }
+                _ => {
+                    let Some(info) = tables.floors.get(&number) else { continue };
+                    emitters.floors.push(Floor::new(*info, at, rand));
+                    ([0, 0], true)
+                }
+            };
+            let look = Look { factors: factors(blend), depth_test };
+            let look = emitters.looks.iter().position(|known| *known == look).unwrap_or_else(|| {
                 emitters.looks.push(look);
                 emitters.looks.len() - 1
             });
-            emitters.list.push(emitter);
+            match kind {
+                0 | 1 => emitters.list.last_mut().expect("just pushed").look = look,
+                2 => emitters.winds.last_mut().expect("just pushed").look = look,
+                _ => emitters.floors.last_mut().expect("just pushed").look = look,
+            }
         }
         emitters
     }
 
-    /// Every picture the emitters may show, under `data\texture\`.
+    /// Every picture the emitters, winds and magic floors may show, under `data\texture\`.
     pub fn pictures(&self) -> impl Iterator<Item = &str> {
         let sets: &[&str] = if self.list.iter().any(|emitter| emitter.animated) { SETS.as_flattened() } else { &[] };
-        self.list.iter().filter(|emitter| !emitter.animated).map(|emitter| emitter.info.texture.as_str()).chain(sets.iter().copied())
+        let floors: &[&str] = if self.floors.is_empty() { &[] } else { &magic_floor::DISCS };
+        let ring = (!self.floors.is_empty()).then_some(magic_floor::RING);
+        let plain = self.list.iter().filter(|emitter| !emitter.animated).map(|emitter| emitter.info.texture.as_str());
+        let winds = self.winds.iter().map(|wind| wind.info.texture.as_str());
+        plain.chain(sets.iter().copied()).chain(winds).chain(floors.iter().copied()).chain(ring)
     }
 
     /// The 16 ms ticks passed since the last call (`now_ms` in whole ms), the player standing at `player`.
@@ -265,12 +298,27 @@ impl Emitters {
         let tick_now = now_ms / TICK_MS;
         let ticks = self.last.map_or(1, |last| tick_now.saturating_sub(last).min(MOST_TICKS));
         self.last = Some(tick_now);
+        let distance = |at: Vector| [0, 1, 2].map(|axis| (at[axis] - player[axis]).powi(2)).iter().sum::<f32>().sqrt();
         for emitter in &mut self.list {
-            let distance = [0, 1, 2].map(|axis| (emitter.at[axis] - player[axis]).powi(2)).iter().sum::<f32>().sqrt();
+            let distance = distance(emitter.at);
             for _ in 0..ticks {
                 emitter.tick(distance, rand);
             }
         }
+        // A wind or a floor out of range stops as it is, and isn't drawn.
+        for wind in &mut self.winds {
+            wind.near = distance(wind.at()) < RANGE;
+            (0..if wind.near { ticks } else { 0 }).for_each(|_| wind.tick());
+        }
+        for floor in &mut self.floors {
+            floor.near = distance(floor.at) < RANGE;
+            (0..if floor.near { ticks } else { 0 }).for_each(|_| floor.tick());
+        }
+    }
+
+    /// The winds and the magic floors turning now: those the player is near.
+    pub fn turning(&self) -> [usize; 2] {
+        [self.winds.iter().filter(|wind| wind.near).count(), self.floors.iter().filter(|floor| floor.near).count()]
     }
 
     /// The particles out now.
@@ -300,6 +348,15 @@ impl Emitters {
                 shape.vertices.extend([0, 1, 2, 2, 1, 3].map(|corner| MeshVertex { position: corners[corner], uv: SQUARE[corner].1, tint }));
             }
         }
+        // The winds' strands, then each floor's six pictures and its rings.
+        for wind in self.winds.iter().filter(|wind| wind.near) {
+            shapes.push(Shape { picture: &wind.info.texture, look: wind.look, vertices: wind.vertices() });
+        }
+        for floor in self.floors.iter().filter(|floor| floor.near) {
+            shapes.extend(magic_floor::DISCS.into_iter().zip(floor.discs(eye)).map(|(picture, vertices)| Shape { picture, look: floor.look, vertices }));
+            shapes.push(Shape { picture: magic_floor::RING, look: floor.look, vertices: floor.rings(eye) });
+        }
+        shapes.retain(|shape| !shape.vertices.is_empty());
         shapes
     }
 }
@@ -529,6 +586,7 @@ mod tests {
         let tables = MapEmitters {
             plain: HashMap::from([(0, row("a.bmp", [5, 2])), (1, row("b.bmp", [2, 2])), (2, row("c.bmp", [7, 7]))]),
             animated: HashMap::from([(0, row("unused.bmp", [5, 2]))]),
+            ..Default::default()
         };
         // Rows go by each kind's own count, in the map's order; other effects don't count; the fourth emitter has no row.
         let sources = [source(974, 1.0), source(47, 2.0), source(1073, 3.0), source(974, 4.0), source(974, 5.0), source(974, 6.0), source(1073, 7.0)];
@@ -547,7 +605,7 @@ mod tests {
 
     #[test]
     fn ticks_by_the_clock_and_draws_what_is_out() {
-        let tables = MapEmitters { plain: HashMap::from([(0, info()), (1, info())]), animated: HashMap::from([(0, info())]) };
+        let tables = MapEmitters { plain: HashMap::from([(0, info()), (1, info())]), animated: HashMap::from([(0, info())]), ..Default::default() };
         let mut emitters = Emitters::new(&[source(974, 0.0), source(974, 500.0), source(1073, 0.0)], [0.0; 2], &tables, &mut || 0);
         let player = [0.0, 5.0, 20.0];
         // One tick on the first call, then one per 16 ms passed; the far emitter throws nothing.
@@ -572,5 +630,52 @@ mod tests {
             ("effect\\shockwave_a.bmp", "effect\\shockwave_b.bmp", "effect\\shockwave_e.bmp", "effect\\shockwave_a.bmp")
         );
         assert_eq!((at(17, 1), at(25, 1)), ("effect\\plazma_c.bmp", "effect\\plazma_a.bmp"));
+    }
+
+    #[test]
+    fn gives_winds_and_floors_their_rows_too() {
+        use rustnarok_client::lua::{FloorInfo, WindInfo};
+        let wind = WindInfo {
+            position: [50.0, -5.0, 20.0],
+            strands: 2,
+            alpha: 200,
+            color: [255; 3],
+            radius: 10.0,
+            thickness: 1.0,
+            height: 4.0,
+            speed: 1.0,
+            span: 200,
+            tilt: [0.0; 2],
+            blend: [6, 2],
+            texture: "effect\\w.tga".into(),
+        };
+        let tables = MapEmitters {
+            plain: HashMap::from([(0, info())]),
+            winds: HashMap::from([(1, wind)]),
+            floors: HashMap::from([(0, FloorInfo { size: 10.0, angle: 0, alpha: 255 })]),
+            ..Default::default()
+        };
+        // Each kind counts its own objects: the second wind has the row; the first, and the second floor, have none.
+        let sources = [source(2343, 1.0), source(974, 2.0), source(1025, 300.0), source(2343, 4.0), source(1025, 5.0)];
+        let mut emitters = Emitters::new(&sources, [100.0, 200.0], &tables, &mut || 7);
+        assert_eq!((emitters.list.len(), emitters.winds.len(), emitters.floors.len()), (1, 1, 1));
+        // The wind stands where its row says, the floor where its object does; the floor's look is the emitter's.
+        assert_eq!((emitters.winds[0].at(), emitters.floors[0].at), ([150.0, 5.0, 220.0], [400.0, 5.0, 220.0]));
+        assert_eq!((emitters.list[0].look, emitters.winds[0].look, emitters.floors[0].look, emitters.looks.len()), (0, 1, 0, 2));
+        let pictures: Vec<&str> = emitters.pictures().collect();
+        assert_eq!((pictures.len(), pictures[1], pictures[2], pictures[8]), (9, "effect\\w.tga", "effect\\hero_011.tga", "effect\\cloud11.tga"));
+        // Near the wind only: it turns and draws its strands; the floor, 250 away, stays as it was and draws nothing.
+        let eye = Eye::at(45.0, 0.0);
+        emitters.tick(1000, [150.0, 5.0, 220.0], &mut || 0);
+        assert_eq!((emitters.turning(), emitters.winds[0].strands[0].alpha, emitters.floors[0].age), ([1, 0], 8, 0));
+        let got: Vec<(&str, usize, usize)> = emitters.shapes(&eye).iter().map(|shape| (shape.picture, shape.look, shape.vertices.len())).collect();
+        assert_eq!(got, [("effect\\a.bmp", 0, 6), ("effect\\w.tga", 1, 240)]);
+        // Near the floor: its six pictures and its rings after the emitter's particle (still out, though far), and the
+        // wind stops where it was.
+        emitters.tick(1016, [400.0, 5.0, 220.0], &mut || 0);
+        assert_eq!((emitters.turning(), emitters.winds[0].strands[0].alpha, emitters.floors[0].age), ([0, 1], 8, 1));
+        let got: Vec<(&str, usize)> = emitters.shapes(&eye).iter().map(|shape| (shape.picture, shape.vertices.len())).collect();
+        assert_eq!(got[..3], [("effect\\a.bmp", 6), ("effect\\hero_011.tga", 6), ("effect\\hero_001.tga", 6)]);
+        assert_eq!((got.len(), got[7]), (8, ("effect\\cloud11.tga", 8 * 20 * 6)));
     }
 }
