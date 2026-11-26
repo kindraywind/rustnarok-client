@@ -74,8 +74,8 @@ pub fn colored(lines: &[String]) -> Vec<Line> {
 }
 
 /// The data's lines as the two boxes show them, and how many of them are the header's. A line wider than its box goes
-/// on in the next line, cut between characters (translations keep a whole sentence in one line); a data line goes to
-/// the header while that holds fewer than two.
+/// on in the next line, cut between characters (translations keep a whole sentence in one line), and a line break
+/// inside one ends it as the next entry does; a data line goes to the header while that holds fewer than two.
 fn wrapped(font: &Font, lines: &[String]) -> (Vec<Line>, usize) {
     if lines.is_empty() {
         return (colored(lines), 0);
@@ -83,7 +83,7 @@ fn wrapped(font: &Font, lines: &[String]) -> (Vec<Line>, usize) {
     let mut color = [0, 0, 0];
     let mut shown: Vec<Line> = Vec::new();
     let mut header = 0;
-    for line in lines {
+    for line in lines.iter().flat_map(|line| line.split('\n')) {
         let in_header = header == shown.len() && header < HEADER_LINES;
         let width = if in_header { HEADER_WIDTH } else { BODY_WIDTH } - WRAP_INSET;
         shown.extend(crate::wrap_plain(font, line, width, 0.0, &mut color, true));
@@ -305,6 +305,17 @@ mod tests {
         assert!(window.text().iter().all(|line| !line.starts_with(rustnarok_client::text::is_thai_mark)));
         assert!(window.lines[2..window.lines.len() - 2].iter().all(|line| line.iter().all(|(color, _)| *color == [0x77; 3])));
         assert_eq!(window.lines.last().unwrap()[0].0, [0, 0, 0]);
+        // A line break inside a data line is a line's end.
+        let broken = SkillDescription::new(
+            5,
+            &["Bash".to_owned(), "MAX Lv : 10".to_owned(), "^CC3399Needs: Sword 5,\nProvoke 5^000000".to_owned()],
+            font,
+            true,
+            true,
+            |_| [0.0, 0.0],
+        );
+        assert_eq!(broken.text(), ["Bash", "MAX Lv : 10", "Needs: Sword 5,", "Provoke 5"]);
+        assert_eq!(broken.lines[3][0].0, [0xCC, 0x33, 0x99]);
         // A name too long for the header box fills it: the next line is the body's.
         let long_name = SkillDescription::new(5, &["Name ".repeat(20), "MAX Lv : 10".to_owned()], font, true, true, |_| [0.0, 0.0]);
         assert!(long_name.header >= 2 && long_name.header + 1 == long_name.lines.len(), "{:?}", long_name.text());
