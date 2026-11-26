@@ -539,11 +539,50 @@ pub struct EmitterInfo {
     pub scale: [f32; 2],
 }
 
-/// A map's emitter tables by row number: for its plain emitter objects and for its animated ones.
+/// One row of a map's wind table: strands of a picture turning round a point, each an arc at its own height.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindInfo {
+    /// Where it turns, as the map's object of the same number stands (the map's axes, y down).
+    pub position: [f32; 3],
+    pub strands: u32,
+    /// The strands' alpha goes up to this and back down to nothing.
+    pub alpha: u8,
+    pub color: [u8; 3],
+    pub radius: f32,
+    /// How far the arc's outer edge is out of and under its inner one.
+    pub thickness: f32,
+    /// From the lowest strand up to the highest.
+    pub height: f32,
+    /// Degrees a 16 ms tick.
+    pub speed: f32,
+    /// Degrees a strand spans.
+    pub span: u32,
+    /// Degrees the whole is turned about x, then about z.
+    pub tilt: [f32; 2],
+    /// The blend factors by number, as an emitter's.
+    pub blend: [u8; 2],
+    /// Under `data\texture\`.
+    pub texture: String,
+}
+
+/// One row of a map's magic floor table: what its six turning pictures start from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FloorInfo {
+    /// The pictures' half side.
+    pub size: f32,
+    /// Degrees.
+    pub angle: i32,
+    pub alpha: u8,
+}
+
+/// A map's effect tables by row number: for its plain emitter objects, its animated ones, its winds and its magic
+/// floors.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MapEmitters {
     pub plain: HashMap<u32, EmitterInfo>,
     pub animated: HashMap<u32, EmitterInfo>,
+    pub winds: HashMap<u32, WindInfo>,
+    pub floors: HashMap<u32, FloorInfo>,
 }
 
 /// The emitter tables of `map` (a name, or `name.rsw`); empty for a map without the file.
@@ -557,10 +596,11 @@ pub fn map_emitters(grf: &Grf, map: &str) -> MapEmitters {
     })
 }
 
-/// The tables `_<map>_emitterInfo` and `_<map>_animatedEmitterInfo` (the map's name without its first `@`) of a file
-/// of version `_<map>_effect_version`. 0 and 1 have only the first, without the last four fields, and with `zenable`
-/// only when `_<map>_emitterInfo_version` is 1. 2 has both, the animated rows without `eternity` and `scale`. A later
-/// version isn't read.
+/// The tables `_<map>_emitterInfo`, `_<map>_animatedEmitterInfo`, `_<map>_windEffectInfo` and `_<map>_magicfloorInfo`
+/// (the map's name without its first `@`) of a file of version `_<map>_effect_version`. 0 and 1 have only the first,
+/// without the last four fields, and with `zenable` only when `_<map>_emitterInfo_version` is 1; their magic floors
+/// are the rows of `_<map>_Effect` whose `Type` is 1025, each under its `ID`. 2 has all four, the animated rows
+/// without `eternity` and `scale`. A later version isn't read.
 fn emitter_tables(source: Vec<u8>, map: &str) -> io::Result<MapEmitters> {
     let lua = new_lua()?;
     exec_bytes(&lua, map, source)?;
@@ -572,15 +612,72 @@ fn emitter_tables(source: Vec<u8>, map: &str) -> io::Result<MapEmitters> {
         // ponytail: a row without one of its fields is left out; nothing in the data has one.
         table.pairs::<u32, mlua::Table>().flatten().filter_map(|(number, row)| Some((number, emitter_row(&row, depth, extras)?))).collect()
     };
+    let table = |name: &str| match global(name) {
+        Some(mlua::Value::Table(table)) => table.pairs::<u32, mlua::Table>().flatten().collect(),
+        _ => Vec::new(),
+    };
     Ok(match number("effect_version").unwrap_or(0.0) as i32 {
-        0 | 1 => MapEmitters { plain: rows("emitterInfo", number("emitterInfo_version") == Some(1.0), false), animated: HashMap::new() },
+        0 | 1 => MapEmitters {
+            plain: rows("emitterInfo", number("emitterInfo_version") == Some(1.0), false),
+            floors: table("Effect")
+                .iter()
+                .filter(|(_, row)| first_number(row, "Type") == Some(MAGIC_FLOOR))
+                .filter_map(|(_, row)| Some((first_number(row, "ID")?.max(0.0) as u32, floor_row(row)?)))
+                .collect(),
+            ..Default::default()
+        },
         2 => {
             let mut animated = rows("animatedEmitterInfo", true, true);
             animated.values_mut().for_each(|row| (row.eternal, row.scale) = (false, [1.0; 2]));
-            MapEmitters { plain: rows("emitterInfo", true, true), animated }
+            MapEmitters {
+                plain: rows("emitterInfo", true, true),
+                animated,
+                winds: table("windEffectInfo").iter().filter_map(|(number, row)| Some((*number, wind_row(row)?))).collect(),
+                floors: table("magicfloorInfo").iter().filter_map(|(number, row)| Some((*number, floor_row(row)?))).collect(),
+            }
         }
         _ => MapEmitters::default(),
     })
+}
+
+/// The magic floor's effect number, the `Type` of its rows in an old file.
+const MAGIC_FLOOR: f32 = 1025.0;
+
+/// The first number of a row's one-number list.
+fn first_number(row: &mlua::Table, field: &str) -> Option<f32> {
+    row.get::<mlua::Table>(field).ok()?.get::<mlua::Value>(1).ok().and_then(lua_f32)
+}
+
+/// A wind row's fields: plain numbers but for `pos`, `color` (the alpha's top, then red, green, blue) and
+/// `rotateVector`. Whole numbers keep their low bits, as the bytes and words they are kept in.
+// ponytail: a row without one of its fields is left out; nothing in the data has one.
+fn wind_row(row: &mlua::Table) -> Option<WindInfo> {
+    let number = |field: &str| row.get::<mlua::Value>(field).ok().and_then(lua_f32);
+    let list = |field: &str, count: usize| -> Option<Vec<f32>> {
+        let list: Vec<f32> = row.get::<mlua::Table>(field).ok()?.sequence_values::<mlua::Value>().flatten().filter_map(lua_f32).collect();
+        (list.len() >= count).then_some(list)
+    };
+    let (position, color, tilt) = (list("pos", 3)?, list("color", 4)?, list("rotateVector", 2)?);
+    Some(WindInfo {
+        position: [position[0], position[1], position[2]],
+        strands: u32::from(number("particleNum")? as i32 as u16),
+        alpha: color[0] as i32 as u8,
+        color: [1, 2, 3].map(|channel| color[channel] as i32 as u8),
+        radius: number("radius")?,
+        thickness: number("thickness")?,
+        height: number("height")?,
+        speed: number("speed")?,
+        span: u32::from(number("fullAngle")? as i32 as u16),
+        tilt: [tilt[0], tilt[1]],
+        blend: [number("srcMode")? as u8, number("destMode")? as u8],
+        texture: decode_name(&row.get::<mlua::LuaString>("texture").ok()?),
+    })
+}
+
+/// A magic floor row's fields that draw: each a one-number list.
+// ponytail: `Speed`, `RiseAngle`, `FullDisplayAngle` and `Height0`…`Height20` are not read: nothing is drawn from them.
+fn floor_row(row: &mlua::Table) -> Option<FloorInfo> {
+    Some(FloorInfo { size: first_number(row, "Size")?, angle: first_number(row, "Angle")? as i32, alpha: first_number(row, "Alpha")? as i32 as u8 })
 }
 
 /// A row's fields: `zenable` when `depth` (else on), and with `extras` the four a row may add (else their defaults).
@@ -2667,6 +2764,32 @@ mod tests {
             super::MapEmitters::default()
         );
         assert_eq!(super::emitter_tables(emitter_file("_a_emitterInfo = { [0] = row{} }"), "b").unwrap(), super::MapEmitters::default());
+    }
+
+    #[test]
+    fn reads_a_maps_wind_and_magic_floor_tables() {
+        let wind = r#"{ pos = { 301.8, -9.3, 166.4 }, particleNum = 7, color = { 200, 40, 50, 60 }, radius = 12, thickness = 0.5, height = 2,
+            speed = -0.5, fullAngle = 200, rotateVector = { 10, -20 }, srcMode = 5, destMode = 7, texture = "effect\\cloud11.tga" }"#;
+        let floor = "Speed = { 0 }, Size = { 34 }, Angle = { 22.9 }, RiseAngle = { 0 }, Alpha = { 255 }, FullDisplayAngle = { 0 }, Height0 = { 0 }";
+        let file = format!(
+            "_1test_effect_version = 2
+            _1test_windEffectInfo = {{ [0] = {wind}, [3] = {{ pos = {{ 1, 2, 3 }} }} }}
+            _1test_magicfloorInfo = {{ [0] = {{ pos = {{ 1, 2, 3 }}, {floor} }}, [1] = {{ Size = {{ 10 }} }} }}
+            _1test_Effect = {{ [0] = {{ Type = {{ 1025 }}, ID = {{ 5 }}, {floor} }} }}"
+        );
+        let tables = super::emitter_tables(file.clone().into_bytes(), "1@test").unwrap();
+        // The colour's first number is the alpha's top; a row without one of its fields is left out.
+        let row = &tables.winds[&0];
+        assert_eq!((row.position, row.strands, row.alpha, row.color), ([301.8, -9.3, 166.4], 7, 200, [40, 50, 60]));
+        assert_eq!((row.radius, row.thickness, row.height, row.speed, row.span), (12.0, 0.5, 2.0, -0.5, 200));
+        assert_eq!((row.tilt, row.blend, row.texture.as_str()), ([10.0, -20.0], [5, 7], "effect\\cloud11.tga"));
+        assert_eq!(tables.winds.len(), 1);
+        // A magic floor's size, whole angle and alpha; the old `Effect` table isn't read from a version 2 file.
+        assert_eq!(tables.floors, std::collections::HashMap::from([(0, super::FloorInfo { size: 34.0, angle: 22, alpha: 255 })]));
+        // An old file: no winds, and the magic floors are the `Effect` rows of type 1025, each under its ID.
+        let old = file.replace("_1test_effect_version = 2", "").replace("[0] = { Type", "[0] = { Type = { 47 }, ID = { 0 } }, [1] = { Type");
+        let tables = super::emitter_tables(old.into_bytes(), "1@test").unwrap();
+        assert_eq!((tables.winds.len(), &tables.floors), (0, &std::collections::HashMap::from([(5, super::FloorInfo { size: 34.0, angle: 22, alpha: 255 })])));
     }
 
     #[test]
