@@ -587,7 +587,7 @@ impl App {
                     let lines = self.skill_descriptions.get(&id).cloned().unwrap_or_default();
                     let active = game.skill_active(id);
                     game.skill_description =
-                        Some(skill_descript::SkillDescription::new(id, &lines, true, active, |height| skill_descript::at_window(cursor, height)));
+                        Some(skill_descript::SkillDescription::new(id, &lines, &self.font, true, active, |height| skill_descript::at_window(cursor, height)));
                     game.sync_esc();
                 }
                 Some(Choice::GuildMember(choice, index)) => {
@@ -2235,8 +2235,9 @@ impl App {
                 } else {
                     let lines = self.skill_descriptions.get(&id).cloned().unwrap_or_default();
                     let active = game.skill_active(id);
-                    game.skill_description =
-                        Some(skill_descript::SkillDescription::new(id, &lines, closable, active, |height| skill_descript::at_window(cursor, height)));
+                    game.skill_description = Some(skill_descript::SkillDescription::new(id, &lines, &self.font, closable, active, |height| {
+                        skill_descript::at_window(cursor, height)
+                    }));
                 }
                 game.sync_esc();
                 return;
@@ -2341,7 +2342,7 @@ impl App {
                     let lines = self.skill_descriptions.get(&id).cloned().unwrap_or_default();
                     let pointer_x = self.cursor[0];
                     let active = game.skill_active(id);
-                    game.skill_description = Some(skill_descript::SkillDescription::new(id, &lines, true, active, |height| {
+                    game.skill_description = Some(skill_descript::SkillDescription::new(id, &lines, &self.font, true, active, |height| {
                         skill_descript::at_hotbar(pointer_x, bar_y, row, height)
                     }));
                 }
