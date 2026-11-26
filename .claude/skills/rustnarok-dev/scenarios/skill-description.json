@@ -1,5 +1,5 @@
 {
-  "about": "Skill descriptions (issues #223, #323): a Swordman gets its skills (@allskill) and puts Bash and Endure on the hotbar. A right click on Bash in the skill window opens its description (the data's SKILL_DESCRIPT, in its colours) without a close button; a right click on it on the hotbar closes it, another opens it under the bar with one. Endure is used (a 10 s cooldown) and its description's delay button opens the skill delays beside it, listing Endure's; Esc closes the delays first, the close button the rest. The character goes back to a Novice with no skills at the end; Bash, still on the hotbar but not the Novice's, then describes nothing (issue #1383).",
+  "about": "Skill descriptions (issues #223, #323): a Swordman gets its skills (@allskill) and puts Bash and Endure on the hotbar. A right click on Bash in the skill window opens its description (the data's SKILL_DESCRIPT, in its colours) without a close button; a right click on it on the hotbar closes it, another opens it under the bar with one. Endure is used (a 10 s cooldown) and its description's delay button opens the skill delays beside it, listing Endure's; Esc closes the delays first, the close button the rest. A Summoner's Spirit of Earth has lines wider than the window: they go on in the next line, nothing cut. The character goes back to a Novice with no skills at the end; Bash, still on the hotbar but not the Novice's, then describes nothing (issue #1383).",
   "account": "",
   "slot": 0,
   "steps": [
@@ -248,6 +248,79 @@
           "SkillDescription"
         ]
       }
+    },
+    {
+      "say": "@job 4218"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 800
+    },
+    {
+      "click_on": {
+        "button": "skill_tab:4218"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "wheel": [
+        520,
+        300,
+        6
+      ]
+    },
+    {
+      "wheel": [
+        520,
+        300,
+        6
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "click_on": {
+        "skill": 5054
+      },
+      "button": "right"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "expect": {
+        "windows_open": [
+          "SkillDescription"
+        ],
+        "state": {
+          "skill_description.skill": 5054,
+          "skill_description.lines.16": "l for 3 sec.",
+          "skill_description.lines.7": "d for 3 sec."
+        }
+      }
+    },
+    {
+      "move": [
+        1000,
+        750
+      ]
+    },
+    {
+      "shot": "skill-description-long"
+    },
+    {
+      "key": "Escape"
+    },
+    {
+      "wait": 300
     },
     {
       "key": "Alt+S"

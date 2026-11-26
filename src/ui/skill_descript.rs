@@ -14,11 +14,13 @@ use crate::{Layer, contains, screen};
 
 pub const WIDTH: f32 = 304.0;
 const LINE: f32 = 18.0;
-/// The header holds the first two lines, 273 wide; the body the rest, 298 wide.
+/// The header box is 273 wide and takes the data's lines until it holds two; the body, 298 wide, the rest.
 const HEADER: [f32; 2] = [3.0, 3.0];
 const HEADER_WIDTH: f32 = 273.0;
 const HEADER_LINES: usize = 2;
 const BODY_WIDTH: f32 = 298.0;
+/// A line wraps where its next character would pass its box's width less the scroll bar's 13 + 2 and 4 more.
+const WRAP_INSET: f32 = 19.0;
 /// The standard close button at (w − 14, 3).
 const ESC: [f32; 2] = [WIDTH - 14.0, 3.0];
 const ESC_SIZE: [f32; 2] = [11.0, 11.0];
@@ -71,6 +73,27 @@ pub fn colored(lines: &[String]) -> Vec<Line> {
         .collect()
 }
 
+/// The data's lines as the two boxes show them, and how many of them are the header's. A line wider than its box goes
+/// on in the next line, cut between characters (translations keep a whole sentence in one line), and a line break
+/// inside one ends it as the next entry does; a data line goes to the header while that holds fewer than two.
+fn wrapped(font: &Font, lines: &[String]) -> (Vec<Line>, usize) {
+    if lines.is_empty() {
+        return (colored(lines), 0);
+    }
+    let mut color = [0, 0, 0];
+    let mut shown: Vec<Line> = Vec::new();
+    let mut header = 0;
+    for line in lines.iter().flat_map(|line| line.split('\n')) {
+        let in_header = header == shown.len() && header < HEADER_LINES;
+        let width = if in_header { HEADER_WIDTH } else { BODY_WIDTH } - WRAP_INSET;
+        shown.extend(crate::wrap_plain(font, line, width, 0.0, &mut color, true));
+        if in_header {
+            header = shown.len();
+        }
+    }
+    (shown, header)
+}
+
 /// The window's height for this many lines: the text 18 a line plus 4, at most the screen less 50 (the body
 /// scrolls), and the frames' 6.
 pub fn height(lines: usize) -> f32 {
@@ -109,6 +132,8 @@ pub struct SkillDescription {
     pub skill: u16,
     pub corner: [f32; 2],
     lines: Vec<Line>,
+    /// How many of the lines are the header's: they stay while the body scrolls.
+    header: usize,
     /// Body lines scrolled past.
     scroll: usize,
     /// It has the close button (not when opened from the skill window: Esc closes it there).
@@ -120,10 +145,10 @@ pub struct SkillDescription {
 }
 
 impl SkillDescription {
-    pub fn new(skill: u16, lines: &[String], closable: bool, active: bool, place: impl Fn(f32) -> [f32; 2]) -> Self {
-        let lines = colored(lines);
+    pub fn new(skill: u16, lines: &[String], font: &Font, closable: bool, active: bool, place: impl Fn(f32) -> [f32; 2]) -> Self {
+        let (lines, header) = wrapped(font, lines);
         let corner = place(height(lines.len()));
-        Self { skill, corner, lines, scroll: 0, closable, active, delays: false }
+        Self { skill, corner, lines, header, scroll: 0, closable, active, delays: false }
     }
 
     pub fn size(&self) -> [f32; 2] {
@@ -163,11 +188,11 @@ impl SkillDescription {
     /// The body lines that fit, after the header.
     fn shown_body(&self) -> usize {
         let room = ((self.size()[1] - 10.0) / LINE) as usize;
-        room.saturating_sub(HEADER_LINES.min(self.lines.len()))
+        room.saturating_sub(self.header)
     }
 
     pub fn scroll_by(&mut self, rows: i32) {
-        let body = self.lines.len().saturating_sub(HEADER_LINES);
+        let body = self.lines.len() - self.header;
         self.scroll = (self.scroll as i32 + rows).clamp(0, body.saturating_sub(self.shown_body()) as i32) as usize;
     }
 
@@ -229,17 +254,14 @@ impl SkillDescription {
                 layer.texts.push((time.clone(), [dx + dw - 8.0 - font.width(&time), top], [0x31, 0x6A, 0xC5]));
             }
         }
-        let header = self.lines.iter().take(HEADER_LINES);
-        let body = self.lines.iter().skip(HEADER_LINES).skip(self.scroll).take(self.shown_body());
-        for (row, (line, width)) in header.map(|line| (line, HEADER_WIDTH)).chain(body.map(|line| (line, BODY_WIDTH))).enumerate() {
+        let header = self.lines.iter().take(self.header);
+        let body = self.lines.iter().skip(self.header).skip(self.scroll).take(self.shown_body());
+        for (row, line) in header.chain(body).enumerate() {
             let mut left = x + HEADER[0] + 3.0;
             let top = y + HEADER[1] + 2.0 + row as f32 * LINE;
             for (color, text) in line {
-                let room = x + HEADER[0] + width - left;
-                let shown = window::fit(font, text, room);
-                let advance = font.width(&shown);
-                layer.texts.push((shown, [left, top], *color));
-                left += advance;
+                layer.texts.push((text.clone(), [left, top], *color));
+                left += font.width(text);
             }
         }
     }
@@ -264,6 +286,53 @@ mod tests {
     }
 
     #[test]
+    fn wraps_long_lines_and_scrolls_to_the_last() {
+        let font = &Font::load();
+        let sentence = "^777777เมื่อโจมตีศัตรูที่อยู่ใกล้ จะสร้างความเสียหายเพิ่มขึ้น ".repeat(12);
+        let lines = [
+            "Bash".to_owned(),
+            "MAX Lv : 10".to_owned(),
+            sentence.clone(),
+            "^000000Level 1 : 130% Attack and a much longer tail than the box is wide".to_owned(),
+        ];
+        let mut window = SkillDescription::new(5, &lines, font, true, true, |_| [0.0, 0.0]);
+        let width = |line: &Line| line.iter().map(|(_, run)| font.width(run)).sum::<f32>();
+        assert_eq!(window.header, 2);
+        assert!(window.lines.len() > 6, "{:?}", window.text());
+        assert!(window.lines.iter().all(|line| width(line) <= BODY_WIDTH - WRAP_INSET), "{:?}", window.text());
+        // Nothing is lost, no line starts with a mark left behind by its letter, and the colour carries on.
+        assert_eq!(window.text().concat(), lines.concat().replace("^777777", "").replace("^000000", ""));
+        assert!(window.text().iter().all(|line| !line.starts_with(rustnarok_client::text::is_thai_mark)));
+        // Nor is a vowel cut from its letter: none written before one ends a line, none that follows one starts a line.
+        let joined = |pair: &[String]| rustnarok_client::text::thai_vowel_joins(pair[0].chars().last().unwrap(), pair[1].chars().next().unwrap());
+        assert!(!window.text().windows(2).any(joined), "{:?}", window.text());
+        assert!(window.lines[2..window.lines.len() - 2].iter().all(|line| line.iter().all(|(color, _)| *color == [0x77; 3])));
+        assert_eq!(window.lines.last().unwrap()[0].0, [0, 0, 0]);
+        // A line break inside a data line is a line's end.
+        let broken = SkillDescription::new(
+            5,
+            &["Bash".to_owned(), "MAX Lv : 10".to_owned(), "^CC3399Needs: Sword 5,\nProvoke 5^000000".to_owned()],
+            font,
+            true,
+            true,
+            |_| [0.0, 0.0],
+        );
+        assert_eq!(broken.text(), ["Bash", "MAX Lv : 10", "Needs: Sword 5,", "Provoke 5"]);
+        assert_eq!(broken.lines[3][0].0, [0xCC, 0x33, 0x99]);
+        // A name too long for the header box fills it: the next line is the body's.
+        let long_name = SkillDescription::new(5, &["Name ".repeat(20), "MAX Lv : 10".to_owned()], font, true, true, |_| [0.0, 0.0]);
+        assert!(long_name.header >= 2 && long_name.header + 1 == long_name.lines.len(), "{:?}", long_name.text());
+        // Taller than the screen: the wheel reaches the last line and stops there.
+        let tall = [lines[..2].to_vec(), vec![sentence; 12]].concat();
+        let mut tall = SkillDescription::new(5, &tall, font, true, true, |_| [0.0, 0.0]);
+        assert!(tall.lines.len() > tall.header + tall.shown_body());
+        tall.scroll_by(1000);
+        assert_eq!(tall.header + tall.scroll + tall.shown_body(), tall.lines.len());
+        window.scroll_by(5);
+        assert_eq!(window.scroll, 0, "it all fits: nothing to scroll");
+    }
+
+    #[test]
     fn sizes_and_places_it() {
         assert_eq!(height(10), LINE * 10.0 + 10.0);
         // The frames are added after the cap.
@@ -280,15 +349,16 @@ mod tests {
     #[test]
     fn has_the_close_and_delay_buttons_only_where_they_belong() {
         let lines = ["Bash".to_owned()];
-        let from_window = SkillDescription::new(5, &lines, false, true, |_| [100.0, 100.0]);
+        let font = &Font::load();
+        let from_window = SkillDescription::new(5, &lines, font, false, true, |_| [100.0, 100.0]);
         assert_eq!(from_window.close_box(), None, "Esc closes it in the skill window");
         assert!(!from_window.on_close([100.0 + ESC[0] + 2.0, 100.0 + ESC[1] + 2.0]));
-        let passive = SkillDescription::new(2, &lines, true, false, |_| [100.0, 100.0]);
+        let passive = SkillDescription::new(2, &lines, font, true, false, |_| [100.0, 100.0]);
         assert_eq!(passive.close_box(), Some([100.0 + WIDTH - 14.0, 103.0, 11.0, 11.0]));
         assert_eq!(passive.delay_box(), None, "a passive skill has no delay");
         assert_eq!(from_window.delay_box(), Some([100.0 + WIDTH - 44.0, 118.0, 40.0, 15.0]));
         // The delay window opens at the right edge, or the left when the right is off screen.
-        let mut open = SkillDescription::new(5, &lines, true, true, |_| [100.0, 100.0]);
+        let mut open = SkillDescription::new(5, &lines, font, true, true, |_| [100.0, 100.0]);
         open.delays = true;
         assert!(open.contains([100.0 + WIDTH + 10.0, 110.0]));
         open.corner = [screen()[0] - WIDTH, 100.0];

@@ -21,12 +21,12 @@ fn is_thai(character: char) -> bool {
 /// between its words, but never before a mark or a vowel that follows its letter, nor after a vowel written before one.
 // ponytail: any letter boundary, not word boundaries (those need a dictionary); the game cuts Thai by bytes.
 pub fn breaks_between(before: char, after: char) -> bool {
-    (is_thai(before) || is_thai(after))
-        && before != ' '
-        && after != ' '
-        && !is_thai_mark(after)
-        && !matches!(after, '\u{E2F}' | '\u{E30}' | '\u{E32}' | '\u{E33}' | '\u{E45}' | '\u{E46}')
-        && !matches!(before, '\u{E40}'..='\u{E44}')
+    (is_thai(before) || is_thai(after)) && before != ' ' && after != ' ' && !is_thai_mark(after) && !thai_vowel_joins(before, after)
+}
+
+/// Whether a Thai vowel ties the two characters: one written before its letter, or one that follows its letter.
+pub fn thai_vowel_joins(before: char, after: char) -> bool {
+    matches!(after, '\u{E2F}' | '\u{E30}' | '\u{E32}' | '\u{E33}' | '\u{E45}' | '\u{E46}') || matches!(before, '\u{E40}'..='\u{E44}')
 }
 
 /// The last place at or before byte `end` (past the start) where `text` may break without a space (`breaks_between`).
