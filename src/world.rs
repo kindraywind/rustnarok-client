@@ -522,6 +522,13 @@ fn mesh_vertex(position: vec3<f32>, uv: vec2<f32>, tint: vec4<f32>) -> MeshOutpu
     return vec4(apply_fog(color.rgb, in.fog), color.a);
 }
 
+// A map emitter's particles: nothing where the alpha comes to nothing, whatever the blend.
+@fragment fn mesh_test_fs(in: MeshOutput) -> @location(0) vec4<f32> {
+    let color = textureSample(image, image_sampler, in.uv) * in.tint;
+    if (color.a < 1.0 / 255.0) { discard; }
+    return color;
+}
+
 // The world objects' opaque faces: clamped, texels under alpha 207 dropped, unblended.
 @fragment fn mesh_cut_fs(in: MeshOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(image, image_sampler, clamp(in.uv, vec2(0.0), vec2(1.0)));
@@ -768,6 +775,10 @@ pub struct World {
     pub ambient: crate::ambient::Ambient,
     /// The map's own effects (torches, fireflies…) and their timers.
     pub map_effects: crate::map_effects::MapEffects,
+    /// The map's particle emitters, their pictures by name, and a pipeline for each of their looks.
+    pub emitters: crate::emitters::Emitters,
+    emitter_textures: HashMap<String, Option<Texture>>,
+    emitter_pipelines: Vec<wgpu::RenderPipeline>,
     textures: Vec<Texture>,
     lightmap: Texture,
     /// None for a ground with no surfaces (a map that is all models): wgpu can't bind an empty buffer.
@@ -1073,6 +1084,23 @@ impl World {
         let half = [gnd.width as f32 * gnd.zoom / 2.0, gnd.height as f32 * gnd.zoom / 2.0];
         let ambient = crate::ambient::Ambient::new(rsw.sounds.iter().map(|source| crate::ambient::Source::placed(source, half)).collect());
         let map_effects = crate::map_effects::MapEffects::new(&rsw.effects, half, || crate::effects::pick(0, u32::MAX - 1));
+        let emitters = crate::emitters::Emitters::new(&rsw.effects, half, &rustnarok_client::lua::map_emitters(grf, map), &mut crate::emitters::chance);
+        let mut emitter_textures = HashMap::new();
+        for picture in emitters.pictures() {
+            emitter_textures.entry(picture.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, &format!("data\\texture\\{picture}"), true).ok());
+        }
+        // Unfogged, no depth write; the row's own blend, and no depth test for those that draw over everything.
+        let emitter_pipelines = emitters
+            .looks
+            .iter()
+            .map(|look| {
+                let [src_factor, dst_factor] = look.factors;
+                let blend =
+                    wgpu::BlendState { color: wgpu::BlendComponent { src_factor, dst_factor, operation: wgpu::BlendOperation::Add }, alpha: additive.alpha };
+                let compare = if look.depth_test { wgpu::CompareFunction::LessEqual } else { wgpu::CompareFunction::Always };
+                pipeline_compared("mesh_add", "mesh_test_fs", mesh_buffer_layout(), Some(blend), false, compare)
+            })
+            .collect();
         let cell_light = cell_lights(&gnd, &gat);
         let (clear_color, clear_color_bare, fog_color, fog_range) = atmosphere(grf, map);
         let tile_heights = (gnd.cubes.iter().map(|cube| cube.heights.map(|height| -height)).collect(), gnd.width);
@@ -1083,6 +1111,9 @@ impl World {
             rsm_2_models,
             ambient,
             map_effects,
+            emitters,
+            emitter_textures,
+            emitter_pipelines,
             gat,
             cell_light,
             tile_heights,
@@ -1132,6 +1163,11 @@ impl World {
 
     /// World position of a (fractional) cell's center on the ground.
     /// The map's light: the direction toward it, then its ambient and diffuse colours.
+    /// A map emitter's picture, by its name under `data\\texture\\`.
+    pub fn emitter_texture(&self, picture: &str) -> Option<&Texture> {
+        self.emitter_textures.get(picture)?.as_ref()
+    }
+
     pub fn light(&self) -> (Vector, [f32; 3], [f32; 3]) {
         self.light
     }
@@ -1567,6 +1603,9 @@ pub struct WorldFrame<'a> {
     pub effects: &'a [EffectQuad<'a>],
     pub glows: &'a [Glow<'a>],
     pub meshes: &'a [EffectMesh<'a>],
+    /// The map emitters' particles, drawn before the meshes, and the place of each one's look in the world's.
+    pub emitters: &'a [EffectMesh<'a>],
+    pub emitter_looks: &'a [usize],
     pub screen: &'a [ScreenShape<'a>],
     /// The blind overlay, drawn last with no depth test.
     pub cover: &'a [CoverQuad<'a>],
@@ -1724,10 +1763,11 @@ impl WorldPass for WorldFrame<'_> {
             })
         });
         // One buffer for every effect shape: the world objects' opaque, floor, with-sprites and translucent lists, the meshes,
-        // then the shapes over everything; `mesh_starts` is where each begins.
-        let mesh_lists: [&[EffectMesh]; 6] = [&self.fx.opaque, &self.fx.floor, &self.fx.with_sprites, &self.fx.translucent, self.meshes, self.top_meshes];
-        let mut mesh_starts = [0u32; 6];
-        for index in 1..6 {
+        // the shapes over everything, then the map emitters' particles; `mesh_starts` is where each begins.
+        let mesh_lists: [&[EffectMesh]; 7] =
+            [&self.fx.opaque, &self.fx.floor, &self.fx.with_sprites, &self.fx.translucent, self.meshes, self.top_meshes, self.emitters];
+        let mut mesh_starts = [0u32; 7];
+        for index in 1..7 {
             mesh_starts[index] = mesh_starts[index - 1] + mesh_lists[index - 1].iter().map(|(_, vertices, _)| vertices.len() as u32).sum::<u32>();
         }
         // ponytail: the shape shaders wrap and clamp texture coordinates where they're sampled, in the page's own for a
@@ -1901,6 +1941,14 @@ impl WorldPass for WorldFrame<'_> {
             pass.set_vertex_buffer(0, buffer.slice(..));
             // The world objects' translucent faces, blended, then the effect shapes.
             draw_meshes(&mut pass, &self.fx.translucent, mesh_starts[3], |_| &world.mesh_pipelines[0]);
+            let mut first = mesh_starts[6];
+            for ((texture, vertices, _), pipeline) in self.emitters.iter().zip(self.emitter_looks.iter().filter_map(|&look| world.emitter_pipelines.get(look)))
+            {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(1, texture.bind_group(), &[]);
+                pass.draw(first..first + vertices.len() as u32, 0..1);
+                first += vertices.len() as u32;
+            }
             draw_meshes(&mut pass, self.meshes, mesh_starts[4], |additive| &world.mesh_pipelines[usize::from(additive)]);
         }
         if let Some(buffer) = &effect_buffer {

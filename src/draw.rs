@@ -389,6 +389,8 @@ impl App {
         let walk_now = game.walk_clock;
         let player_cell = game.player.position(now);
         let mut player_feet = game.world.cell_position(player_cell);
+        // The map's particle emitters throw while the player is near, in 16 ms ticks.
+        game.world.emitters.tick(crate::whole_ms(now), player_feet, &mut emitters::chance);
         player_feet[1] += game.effects.lift(None);
         if game.weather.take_map_launch() && self.graphics.effects_on {
             for &(effect, count) in assets.weather.map_launches(&game.map) {
@@ -3339,6 +3341,10 @@ impl App {
             }
         }
         let mut top_meshes = game.effects.top_meshes(now, feet_of_unit);
+        // The map emitters' particles (hidden by /effect), each shape with its picture and its look.
+        let emitter_shapes = if effects_on { game.world.emitters.shapes(&fx_seen.eye) } else { Vec::new() };
+        let (emitter_meshes, emitter_looks): (Vec<world::EffectMesh>, Vec<usize>) =
+            emitter_shapes.into_iter().filter_map(|shape| Some(((game.world.emitter_texture(shape.picture)?, shape.vertices, false), shape.look))).unzip();
         // The world objects' faces: the effect list joins the meshes, the lists over everything the top meshes.
         let mut fx_lists = game.effects.fx_lists(&fx_seen, |point| view.depth_of(point));
         let light = game.world.light();
@@ -3460,6 +3466,8 @@ impl App {
             effects: &effect_quads,
             glows: &glows,
             meshes: &effect_meshes,
+            emitters: &emitter_meshes,
+            emitter_looks: &emitter_looks,
             screen: &screen_shapes,
             cover: &cover,
             top_meshes: &top_meshes,

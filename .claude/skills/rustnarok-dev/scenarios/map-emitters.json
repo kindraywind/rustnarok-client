@@ -1,0 +1,23 @@
+{
+  "about": "The map's particle emitters, each throwing the particles of its row of the map's emitter table while the player is within 130 units. ra_temple has 160: bubbles over the pools, rings on the water round the fountains, glints by the gate; after a few seconds some hundreds of particles are out near the player. verus01 has 80 with moving pictures (sparks on the broken machines) and one plain. The rates, the fades, the motion and the blends are checked by unit tests; particles start by chance, so the shots differ from run to run.",
+  "account": "",
+  "slot": 0,
+  "env": {"RUSTNAROK_CLIENT_CAMERA": "0,45,160"},
+  "steps": [
+    {"say": "@alive"},
+    {"say": "@warp ra_temple 120 150"}, {"settle": 1500},
+    {"wait": 6000},
+    {"expect": {"map": "ra_temple.gat", "state": {"player.cell": [120, 150], "map_emitters": 160}, "state_at_least": {"map_particles": 100}}},
+    {"shot": "map-emitters-temple-gate", "crop": [0, 150, 1024, 530], "threshold": 100},
+    {"say": "@warp ra_temple 166 89"}, {"settle": 1500},
+    {"wait": 6000},
+    {"expect": {"state": {"player.cell": [166, 89]}, "state_at_least": {"map_particles": 100}}},
+    {"shot": "map-emitters-temple-pool", "crop": [0, 150, 1024, 530], "threshold": 100},
+    {"say": "@warp verus01 249 59"}, {"settle": 1500},
+    {"say": "@killmonster2"},
+    {"wait": 6000},
+    {"expect": {"map": "verus01.gat", "state": {"map_emitters": 81}, "state_at_least": {"map_particles": 5}}},
+    {"shot": "map-emitters-verus-sparks", "crop": [0, 0, 1024, 480], "threshold": 100},
+    {"say": "@heal"}
+  ]
+}

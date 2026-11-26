@@ -506,6 +506,115 @@ fn sky_effects_from_lua(lua: &Lua, key: &str) -> SkyEffects {
     SkyEffects { stars, types, fields }
 }
 
+/// One row of a map's particle emitter table (`effecttool\<map>.lub`): what the map's emitter object of the same number
+/// throws. Vectors are along the map's axes (y down), in map units and seconds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmitterInfo {
+    /// A particle starts with a velocity between these two, axis by axis.
+    pub dir1: [f32; 3],
+    pub dir2: [f32; 3],
+    pub gravity: [f32; 3],
+    /// How far from the emitter a particle may start, either way on each axis.
+    pub radius: [f32; 3],
+    pub color: [u8; 4],
+    /// Particles a second, least and most.
+    pub rate: [f32; 2],
+    /// A particle's half side, least and most.
+    pub size: [f32; 2],
+    /// Seconds a particle lasts, least and most.
+    pub life: [f32; 2],
+    /// Under `data\texture\`.
+    pub texture: String,
+    pub speed: f32,
+    /// The source and destination blend factors by number (2 one, 5 source alpha, 6 its inverse, …).
+    pub blend: [u8; 2],
+    pub max_count: u32,
+    pub depth_test: bool,
+    /// Not turned to the camera but by `rotate` (degrees about x, y, z).
+    pub fixed: bool,
+    pub rotate: [f32; 3],
+    /// Its particles stay while the player is near.
+    pub eternal: bool,
+    /// The half side's factors along the particle's x and y.
+    pub scale: [f32; 2],
+}
+
+/// A map's emitter tables by row number: for its plain emitter objects and for its animated ones.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MapEmitters {
+    pub plain: HashMap<u32, EmitterInfo>,
+    pub animated: HashMap<u32, EmitterInfo>,
+}
+
+/// The emitter tables of `map` (a name, or `name.rsw`); empty for a map without the file.
+pub fn map_emitters(grf: &Grf, map: &str) -> MapEmitters {
+    let name = map.trim_end_matches(".gat").trim_end_matches(".rsw");
+    let file = format!("data\\luafiles514\\lua files\\effecttool\\{name}.lub");
+    let Ok(bytes) = grf.read(&file) else { return MapEmitters::default() };
+    emitter_tables(bytes, name).unwrap_or_else(|error| {
+        eprintln!("{file}: {error}");
+        MapEmitters::default()
+    })
+}
+
+/// The tables `_<map>_emitterInfo` and `_<map>_animatedEmitterInfo` (the map's name without its first `@`) of a file
+/// of version `_<map>_effect_version`. 0 and 1 have only the first, without the last four fields, and with `zenable`
+/// only when `_<map>_emitterInfo_version` is 1. 2 has both, the animated rows without `eternity` and `scale`. A later
+/// version isn't read.
+fn emitter_tables(source: Vec<u8>, map: &str) -> io::Result<MapEmitters> {
+    let lua = new_lua()?;
+    exec_bytes(&lua, map, source)?;
+    let prefix = format!("_{}", map.replacen('@', "", 1));
+    let global = |name: &str| lua.globals().get::<mlua::Value>(format!("{prefix}_{name}")).ok();
+    let number = |name: &str| global(name).and_then(lua_f32);
+    let rows = |name: &str, depth: bool, extras: bool| -> HashMap<u32, EmitterInfo> {
+        let Some(mlua::Value::Table(table)) = global(name) else { return HashMap::new() };
+        // ponytail: a row without one of its fields is left out; nothing in the data has one.
+        table.pairs::<u32, mlua::Table>().flatten().filter_map(|(number, row)| Some((number, emitter_row(&row, depth, extras)?))).collect()
+    };
+    Ok(match number("effect_version").unwrap_or(0.0) as i32 {
+        0 | 1 => MapEmitters { plain: rows("emitterInfo", number("emitterInfo_version") == Some(1.0), false), animated: HashMap::new() },
+        2 => {
+            let mut animated = rows("animatedEmitterInfo", true, true);
+            animated.values_mut().for_each(|row| (row.eternal, row.scale) = (false, [1.0; 2]));
+            MapEmitters { plain: rows("emitterInfo", true, true), animated }
+        }
+        _ => MapEmitters::default(),
+    })
+}
+
+/// A row's fields: `zenable` when `depth` (else on), and with `extras` the four a row may add (else their defaults).
+fn emitter_row(row: &mlua::Table, depth: bool, extras: bool) -> Option<EmitterInfo> {
+    let numbers = |field: &str| -> Option<Vec<f32>> {
+        Some(row.get::<mlua::Table>(field).ok()?.sequence_values::<mlua::Value>().flatten().filter_map(lua_f32).collect())
+    };
+    let list = |field: &str, count: usize| -> Option<Vec<f32>> { numbers(field).filter(|list| list.len() >= count) };
+    let three = |field: &str| list(field, 3).map(|list| [list[0], list[1], list[2]]);
+    let two = |field: &str| list(field, 2).map(|list| [list[0], list[1]]);
+    let one = |field: &str| list(field, 1).map(|list| list[0]);
+    let extra = |field: &str, count: usize| if extras { list(field, count) } else { None };
+    let color = list("color", 4)?;
+    Some(EmitterInfo {
+        dir1: three("dir1")?,
+        dir2: three("dir2")?,
+        gravity: three("gravity")?,
+        radius: three("radius")?,
+        color: [0, 1, 2, 3].map(|channel| color[channel].clamp(0.0, 255.0) as u8),
+        rate: two("rate")?,
+        size: two("size")?,
+        life: two("life")?,
+        texture: decode_name(&row.get::<mlua::LuaString>("texture").ok()?),
+        speed: one("speed")?,
+        blend: [one("srcmode")? as u8, one("destmode")? as u8],
+        max_count: one("maxcount")?.max(0.0) as u32,
+        depth_test: !depth || one("zenable")? as i32 != 0,
+        fixed: extra("billboard_off", 1).is_some_and(|list| list[0] as i32 != 0),
+        rotate: extra("rotate_angle", 3).map_or([0.0; 3], |list| [list[0], list[1], list[2]]),
+        eternal: extra("eternity", 1).is_some_and(|list| list[0] as i32 == 1),
+        scale: extra("scale", 2).map_or([1.0; 2], |list| [list[0], list[1]]),
+    })
+}
+
 fn call_value(lua: &Lua, name: &str, key: &str) -> Option<mlua::Value> {
     lua.globals().get::<mlua::Function>(name).ok()?.call(key).ok()
 }
@@ -2508,6 +2617,56 @@ mod tests {
             for k, row in pairs(Reward) do InsertCheckAttendanceReward(row[1], row[2], row[3]) end
             return true, \"success\"
         end"
+    }
+
+    /// An emitter file of `version` lines and tables whose rows come from `row{...}` (fields over a full row's).
+    fn emitter_file(body: &str) -> Vec<u8> {
+        format!(
+            r#"local function row(over)
+                local full = {{ dir1 = {{ -1, -1, 1 }}, dir2 = {{ -1, 0, 1 }}, gravity = {{ 0, -5, 0 }}, pos = {{ 1, 2, 3 }}, radius = {{ 0, 2.5, 0 }},
+                    color = {{ 140, 180, 80, 300 }}, rate = {{ 1, 1 }}, size = {{ 15, 15 }}, life = {{ 1, 5 }}, texture = "effect\\a.bmp",
+                    speed = {{ 0.5 }}, srcmode = {{ 11 }}, destmode = {{ 4 }}, maxcount = {{ 3 }}, zenable = {{ 0 }} }}
+                for field, value in pairs(over) do full[field] = value end
+                return full
+            end
+            {body}"#
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn reads_a_maps_emitter_tables() {
+        // Version 2, the map's first @ dropped from the names: every field, the four extras when a row has them.
+        let extras = "billboard_off = { 1 }, rotate_angle = { 90, -30, 0 }, eternity = { 1 }, scale = { 1.2, 1 }";
+        let file = emitter_file(&format!(
+            "_1test_effect_version = 2
+            _1test_emitterInfo = {{ [0] = row{{ {extras} }}, [1] = row{{}}, [2] = row{{ texture = false }} }}
+            _1test_animatedEmitterInfo = {{ [0] = row{{ {extras} }} }}"
+        ));
+        let tables = super::emitter_tables(file, "1@test").unwrap();
+        let first = &tables.plain[&0];
+        assert_eq!((first.dir1, first.dir2, first.gravity, first.radius), ([-1.0, -1.0, 1.0], [-1.0, 0.0, 1.0], [0.0, -5.0, 0.0], [0.0, 2.5, 0.0]));
+        assert_eq!((first.color, first.rate, first.size, first.life), ([140, 180, 80, 255], [1.0, 1.0], [15.0, 15.0], [1.0, 5.0]));
+        assert_eq!((first.texture.as_str(), first.speed, first.blend, first.max_count, first.depth_test), ("effect\\a.bmp", 0.5, [11, 4], 3, false));
+        assert_eq!((first.fixed, first.rotate, first.eternal, first.scale), (true, [90.0, -30.0, 0.0], true, [1.2, 1.0]));
+        let plain = &tables.plain[&1];
+        assert_eq!((plain.fixed, plain.rotate, plain.eternal, plain.scale), (false, [0.0; 3], false, [1.0; 2]));
+        // A row without one of its fields is left out; an animated row has no eternity or scale.
+        assert_eq!(tables.plain.len(), 2);
+        let animated = &tables.animated[&0];
+        assert_eq!((animated.fixed, animated.eternal, animated.scale), (true, false, [1.0; 2]));
+        // No version: the plain table only, without the extras, and zenable only with the table's own version 1.
+        let old = "_old_emitterInfo = { [0] = row{ billboard_off = { 1 }, eternity = { 1 } } } _old_animatedEmitterInfo = { [0] = row{} }";
+        let tables = super::emitter_tables(emitter_file(old), "old").unwrap();
+        assert_eq!((tables.plain[&0].depth_test, tables.plain[&0].fixed, tables.plain[&0].eternal, tables.animated.len()), (true, false, false, 0));
+        let tables = super::emitter_tables(emitter_file(&format!("_old_emitterInfo_version = 1 {old}")), "old").unwrap();
+        assert!(!tables.plain[&0].depth_test);
+        // A later version isn't read; nor is another map's table.
+        assert_eq!(
+            super::emitter_tables(emitter_file("_new_effect_version = 3 _new_emitterInfo = { [0] = row{} }"), "new").unwrap(),
+            super::MapEmitters::default()
+        );
+        assert_eq!(super::emitter_tables(emitter_file("_a_emitterInfo = { [0] = row{} }"), "b").unwrap(), super::MapEmitters::default());
     }
 
     #[test]

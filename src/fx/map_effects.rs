@@ -1,13 +1,13 @@
-//! The map's own effects (RSW type-4 objects): emitters and smoke started once when the map loads, and the rest
-//! (torches, fireflies, bubbles, glows) each on a timer of 16 ms ticks that fires while the player is near.
+//! The map's own effects (RSW type-4 objects) but its particle emitters (`emitters`): smoke and a few others started
+//! once when the map loads, and the rest (torches, fireflies, bubbles, glows) each on a timer of 16 ms ticks that fires
+//! while the player is near.
 
 use rustnarok_client::map::EffectSource;
 
 use crate::world::Vector;
 
-/// Effects started once at the map's load, wherever the player is: the emitters (974, 1073), smoke (44) and a few
-/// others.
-const STARTED_ONCE: [u32; 7] = [974, 44, 2343, 1073, 1039, 1025, 1412];
+/// Effects started once at the map's load, wherever the player is: smoke (44) and a few others.
+const STARTED_ONCE: [u32; 5] = [44, 2343, 1039, 1025, 1412];
 /// EF_FIREFLY: its period and start drift by chance.
 const FIREFLY: u32 = 45;
 /// A timer fires only with the player under 130 world units (26 cells) away, on the ground plane.
@@ -65,6 +65,10 @@ impl MapEffects {
         let (mut started, mut timers) = (Vec::new(), Vec::new());
         for source in sources {
             let Ok(id) = u32::try_from(source.id) else { continue };
+            // The particle emitters are `Emitters`' own.
+            if matches!(id, crate::emitters::PLAIN | crate::emitters::ANIMATED) {
+                continue;
+            }
             let at = [source.position[0] + half[0], -source.position[1], source.position[2] + half[1]];
             if STARTED_ONCE.contains(&id) {
                 started.push((id, at));
@@ -134,10 +138,10 @@ mod tests {
         let mut glow = Timer { id: 700, at: [0.0; 3], period, counter };
         let fired: Vec<u32> = (0..100).filter(|_| tick(&mut glow, true)).collect();
         assert_eq!(fired.len(), 1);
-        // The start-once ids play on the first frame, wherever the player is, and never again.
-        let mut effects = MapEffects::new(&[source(974, 0.0), source(44, 0.0), source(47, 125.0)], [100.0, 100.0], || 0);
+        // The start-once ids play on the first frame, wherever the player is, and never again; an emitter is no effect.
+        let mut effects = MapEffects::new(&[source(2343, 0.0), source(974, 0.0), source(44, 0.0), source(47, 125.0)], [100.0, 100.0], || 0);
         let first = effects.due(1000, [9999.0, 9999.0]);
-        assert_eq!(first.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [974, 44]);
+        assert_eq!(first.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [2343, 44]);
         assert_eq!(first[0].1, [110.0, 5.0, 120.0]);
         assert!(effects.due(1016, [9999.0, 9999.0]).is_empty());
         // The torch near the player, a frame a tick: at once (its counter is past its period), then every 125 ticks.
