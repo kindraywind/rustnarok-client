@@ -303,6 +303,9 @@ mod tests {
         // Nothing is lost, no line starts with a mark left behind by its letter, and the colour carries on.
         assert_eq!(window.text().concat(), lines.concat().replace("^777777", "").replace("^000000", ""));
         assert!(window.text().iter().all(|line| !line.starts_with(rustnarok_client::text::is_thai_mark)));
+        // Nor is a vowel cut from its letter: none written before one ends a line, none that follows one starts a line.
+        let joined = |pair: &[String]| rustnarok_client::text::thai_vowel_joins(pair[0].chars().last().unwrap(), pair[1].chars().next().unwrap());
+        assert!(!window.text().windows(2).any(joined), "{:?}", window.text());
         assert!(window.lines[2..window.lines.len() - 2].iter().all(|line| line.iter().all(|(color, _)| *color == [0x77; 3])));
         assert_eq!(window.lines.last().unwrap()[0].0, [0, 0, 0]);
         // A line break inside a data line is a line's end.

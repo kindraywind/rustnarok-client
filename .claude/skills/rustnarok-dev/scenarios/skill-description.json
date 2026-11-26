@@ -301,7 +301,9 @@
           "SkillDescription"
         ],
         "state": {
-          "skill_description.skill": 5054
+          "skill_description.skill": 5054,
+          "skill_description.lines.16": "l for 3 sec.",
+          "skill_description.lines.7": "d for 3 sec."
         }
       }
     },

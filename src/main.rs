@@ -4397,7 +4397,7 @@ fn wrap_plain(font: &text::Font, text: &str, width: f32, used: f32, color: &mut 
         // A letter goes with the marks on it; a word ends at a space, a colour code or, in Thai, the next letter.
         let first = text::cluster_len(rest);
         let word_end = rest[first..].find([' ', '^']).map_or(rest.len(), |index| index + first);
-        let end = if by_char { first } else { next_break(rest, first, word_end) };
+        let end = if by_char { char_unit(rest, first) } else { next_break(rest, first, word_end) };
         let word = &rest[..end];
         let word_width = font.width(word);
         if line_width + word_width > width && line_width > 0.0 {
@@ -4415,6 +4415,19 @@ fn wrap_plain(font: &text::Font, text: &str, width: f32, used: f32, color: &mut 
         rest = &rest[end..];
     }
     lines
+}
+
+/// Where the character that starts `rest` ends, from `first` bytes in (the letter and its marks): in Thai, past a vowel
+/// written before its letter and one that follows it too, so a line cut between characters never splits them off.
+fn char_unit(rest: &str, first: usize) -> usize {
+    let mut end = first;
+    while let (Some(before), Some(after)) = (rest[..end].chars().last(), rest[end..].chars().next())
+        && after != '^'
+        && text::thai_vowel_joins(before, after)
+    {
+        end += text::cluster_len(&rest[end..]);
+    }
+    end
 }
 
 /// Where the word that starts `rest` ends: `word_end`, or sooner where Thai text may break (`text::breaks_between`),
