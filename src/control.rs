@@ -2210,6 +2210,8 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["rsm2_moving"] = game.world.rsm_2_moving().into();
     state["rsm1_moving"] = game.world.rsm_1_moving().into();
     // The map's effect objects on timers, and how many times they've fired.
+    state["map_emitters"] = game.world.emitters.list.len().into();
+    state["map_particles"] = game.world.emitters.out().into();
     state["map_effect_timers"] = game.world.map_effects.timers.len().into();
     state["map_effects_fired"] = game.world.map_effects.fired.into();
     state["map_effect_fired_ms_ago"] = game.world.map_effects.last_fired.map(|at| crate::whole_ms(self::now()).saturating_sub(at)).into();
@@ -2567,6 +2569,8 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("map", Fair),
         ("map_effect_fired_ms_ago", Test),
         ("map_effect_timers", Test),
+        ("map_emitters", Test),
+        ("map_particles", Test),
         ("map_effects_fired", Test),
         ("effects_alive", Test),
         ("map_property", Test),
