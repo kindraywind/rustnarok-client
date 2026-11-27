@@ -1971,6 +1971,20 @@ impl Game {
         }
     }
 
+    /// Hell Inferno's side pillars round `target`; nothing for a target not in sight.
+    pub(crate) fn hell_inferno_ring(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, target: u32) {
+        if let Some(at) = self.feet(target, control::now()) {
+            self.effects.hell_inferno_ring(gpu, grf, table, at);
+        }
+    }
+
+    /// A Tetra Vortex element's sub explosions `id` round `target`; nothing for a target not in sight.
+    pub(crate) fn tetra_subs(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, id: u32, target: u32) {
+        if let Some(at) = self.feet(target, control::now()) {
+            self.effects.tetra_subs(gpu, grf, table, id, at);
+        }
+    }
+
     /// A cast start by `source` of the STR world effect `effect` for `cast_ms`; nothing for a caster not in sight.
     pub(crate) fn cast_world(&mut self, gpu: &Gpu, grf: &Grf, table: &effects::Table, effect: u32, source: u32, cast_ms: u32) {
         if let Some(at) = self.feet(source, control::now()) {

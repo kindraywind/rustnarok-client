@@ -3572,7 +3572,12 @@ impl App {
                     if effects::is_cast_aura(effect) {
                         game.effects.play_aura(gpu, grf, (source != game.account_id).then_some(source), effect, cast_ms, Instant::now());
                     }
-                    // What the cast starts beside its aura (Elemental Action's crescents and flicker).
+                }
+                // What the cast starts beside its aura (Elemental Action's crescents and flicker), with an aura or without
+                // (Hell Inferno, Soul Expansion and Chain Lightning have none).
+                if cast_ms > 0
+                    && let Some(gpu) = gpu
+                {
                     for extra in table.cast_extras(skill) {
                         // An STR world effect lasts the cast (Tetra Vortex's ball and ring).
                         if table.world(table.min_id(extra, game.effects.min)).is_some() {
@@ -3803,6 +3808,10 @@ impl App {
                             game.play_effect_hits(gpu, grf, table, effect, unit, Instant::now(), act.hits);
                         }
                     }
+                    // Hell Inferno's four side pillars stand round the target.
+                    if skill == effects::HELL_INFERNO_SKILL {
+                        game.hell_inferno_ring(gpu, grf, table, act.target);
+                    }
                 }
                 // A skill's own sound and shake with its damage (Crush Strike's, Venom Pressure's), once for the packet's units.
                 if !splash {
@@ -3880,6 +3889,10 @@ impl App {
                 match (heal, table.used(skill), gpu) {
                     (true, _, Some(gpu)) => game.play_effect(gpu, grf, table, heal_effect(amount), target),
                     (false, Some(used), Some(gpu)) => {
+                        // A Tetra Vortex element scatters four sub explosions round its target.
+                        if let Some(sub) = effects::tetra_sub(skill) {
+                            game.tetra_subs(gpu, grf, table, sub, target);
+                        }
                         for &(who, effect) in used {
                             // What lands at the target (Pang Voice's ring, Wink of Charm's heart) is aimed from the caster.
                             if effects::AIMED.contains(&effect) {

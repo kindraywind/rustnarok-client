@@ -2849,6 +2849,32 @@ const HURRICANE_RAGE: u32 = 460;
 const ZEPHYR: u32 = 465;
 pub const HOMUN_CASTING: u32 = 564;
 pub const MOONLIGHT_SKILL: u16 = 8009;
+/// Hell Inferno (WL_HELLINFERNO).
+pub const HELL_INFERNO_SKILL: u16 = 2212;
+/// Hell Inferno's side pillar and its ground mark.
+const HELL_INFERNO_SIDES: [u32; 2] = [1553, 1554];
+/// Chain Lightning's cast ball: it plays to its own end, not cut with the cast.
+const CHAIN_LIGHTNING_CAST: u32 = 1635;
+
+/// Where Hell Inferno's four side pillars stand round a target at `at`: 15 units out on the diagonals.
+pub fn hell_inferno_sides(at: Vector) -> [Vector; 4] {
+    [45.0_f32, 135.0, 225.0, 315.0].map(|degrees| {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        [at[0] + 15.0 * cos, at[1], at[2] - 15.0 * sin]
+    })
+}
+
+/// The sub explosion a Tetra Vortex element's use scatters round its target: fire, water, wind, earth.
+pub fn tetra_sub(skill: u16) -> Option<u32> {
+    (2218..=2221).contains(&skill).then(|| 1278 + u32::from(skill - 2218))
+}
+
+/// Where a Tetra Vortex element's four sub explosions burst round a target at `at`: one a quadrant about a point 5 units
+/// off it, 10 to 34 units out on each axis (`roll` gives a number below 35; one below 10 counts as 10).
+pub fn tetra_sub_points(at: Vector, mut roll: impl FnMut() -> u32) -> [Vector; 4] {
+    let mut out = || roll().max(10) as f32;
+    [(1.0, 1.0), (1.0, -1.0), (-1.0, -1.0), (-1.0, 1.0)].map(|(x, z)| [at[0] + x * out(), at[1], at[2] - 5.0 + z * out()])
+}
 const BLUE_BODY: u32 = 542;
 const RED_LIGHT_BODY: u32 = 544;
 /// Comfort's cones, Soul Link's mote and letters and Stin's blade (`prims::soul`).
@@ -3550,8 +3576,26 @@ impl Effects {
         if table.off_in_min(effect, self.min) {
             return;
         }
-        if let Some(copy) = self.launch_world(gpu, grf, table, id, Some(unit), at, false, 0).and_then(|serial| self.worlds.get_mut(serial)) {
+        if let Some(copy) = self.launch_world(gpu, grf, table, id, Some(unit), at, false, 0).and_then(|serial| self.worlds.get_mut(serial))
+            && effect != CHAIN_LIGHTNING_CAST
+        {
             copy.cut_with_cast(cast_ms);
+        }
+    }
+
+    /// Hell Inferno's side pillars round a target standing at `at`, owned by no unit.
+    pub fn hell_inferno_ring(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, at: Vector) {
+        for point in hell_inferno_sides(at) {
+            for id in HELL_INFERNO_SIDES {
+                self.launch_world(gpu, grf, table, id, None, point, false, 0);
+            }
+        }
+    }
+
+    /// A Tetra Vortex element's sub explosions `id` round a target standing at `at`, owned by no unit.
+    pub fn tetra_subs(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, at: Vector) {
+        for point in tetra_sub_points(at, || pick(0, 34)) {
+            self.launch_world(gpu, grf, table, id, None, point, false, 0);
         }
     }
 
@@ -8010,6 +8054,43 @@ mod tests {
     }
 
     #[test]
+    fn warlock_skills_start_their_world_effects() {
+        let table = Table::load();
+        // Casts: Soul Expansion, Hell Inferno and Chain Lightning glow in no aura and still start theirs.
+        assert_eq!([2202, 2212, 2214].map(|skill| table.cast_aura(skill, 0)), [None; 3]);
+        let extras = [(2202, vec![1587, 1588]), (2204, vec![1446]), (2212, vec![1552]), (2213, vec![1415, 1421]), (2214, vec![1635, 1636])];
+        for (skill, ids) in extras {
+            assert_eq!(table.cast_extras(skill), ids, "{skill}");
+        }
+        // Damage: on the target, a pair for Crimson Rock, Hell Inferno and Comet, one for Chain Lightning and its bounces.
+        let on_target = |ids: &[u32]| ids.iter().map(|&id| (Who::Target, id)).collect::<Vec<_>>();
+        for (skill, ids) in [(2211, &[1274, 1275][..]), (2212, &[1550, 1551]), (2213, &[1413, 1414]), (2214, &[1638]), (2215, &[1638])] {
+            assert_eq!(table.struck(skill), Some(&on_target(ids)[..]), "{skill}");
+        }
+        // Tetra Vortex's elements, as each one is used: its ground ring and its burst; fire, water, wind, earth.
+        for n in 0..4 {
+            assert_eq!(table.used(2218 + n as u16), Some(&on_target(&[1270 + n, 1266 + n])[..]));
+            assert_eq!((tetra_sub(2218 + n as u16), table.min_id(1270 + n, true), table.min_id(1266 + n, true)), (Some(1278 + n), 1436 + n, 1432 + n));
+        }
+        assert_eq!(tetra_sub(2217), None);
+        // Every one is an STR world effect, under /mineffect too.
+        let ids = [1587, 1588, 1446, 1552, 1415, 1421, 1635, 1636, 1274, 1275, 1550, 1551, 1553, 1554, 1413, 1414, 1638, 1266, 1270, 1278, 1281];
+        assert!(ids.iter().all(|&id| table.world(id).is_some() && table.world(table.min_id(id, true)).is_some()));
+        assert_eq!([1274, 1275, 1413, 1414, 1415, 1421, 1446].map(|id| table.min_id(id, true)), [1441, 1442, 1534, 1535, 1536, 1539, 1543]);
+        // A copy a packet: none of those a hit or an element starts is single (two Hell Inferno packets, four fire balls).
+        assert!([1274, 1413, 1550, 1553, 1638, 1266, 1270, 1278].iter().all(|&id| !table.world(id).unwrap().single));
+        // Hell Inferno's side pillars: 15 units out on the four diagonals.
+        let sides = hell_inferno_sides([100.0, -3.0, 200.0]);
+        assert!(sides.iter().all(|side| side[1] == -3.0 && ((side[0] - 100.0).hypot(side[2] - 200.0) - 15.0).abs() < 1e-3));
+        assert_eq!(sides.map(|side| ((side[0] - 100.0).signum(), (side[2] - 200.0).signum())), [(1.0, -1.0), (-1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]);
+        // Tetra Vortex's sub explosions: one a quadrant, a roll below 10 counting as 10.
+        let mut rolls = [3, 34, 20, 0, 10, 11, 9, 33].into_iter();
+        let subs = tetra_sub_points([100.0, -3.0, 200.0], || rolls.next().unwrap());
+        assert_eq!(subs, [[110.0, -3.0, 229.0], [120.0, -3.0, 185.0], [90.0, -3.0, 184.0], [90.0, -3.0, 228.0]]);
+        assert_eq!(table.hit_sounds.get(&2211).map(|sounds| sounds[0].file.as_str()), Some("crimson_r"));
+    }
+
+    #[test]
     fn picks_a_casts_aura_by_skill() {
         let table = Table::load();
         // Heal's and Fire Bolt's follow the cast's element (here a stand-in 55 or 58); Assumptio's 58 is fixed.
@@ -8027,7 +8108,7 @@ mod tests {
         assert_eq!([5400, 6007, 6607].map(|skill| table.cast_aura(skill, 12)).len(), 3);
         // The table's rows, as the issue lists them: 766 skills and 5 None rows, and the four ninja casts' dark ribbons.
         assert_eq!(table.casts.len(), 780);
-        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 787);
+        assert!(include_str!("effects.txt").lines().filter(|line| line.starts_with("cast\t")).count() == 795);
     }
 
     #[test]

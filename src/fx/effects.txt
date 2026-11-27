@@ -3895,8 +3895,11 @@ cast	2056	-1
 cast	2057	12
 cast	2201	12
 cast	2202	-1
+cast	2202	1587
+cast	2202	1588
 cast	2203	12
 cast	2204	1449
+cast	2204	1446
 cast	2205	12
 cast	2206	58
 cast	2206	803
@@ -3905,8 +3908,13 @@ cast	2209	441
 cast	2210	12
 cast	2211	12
 cast	2212	-1
+cast	2212	1552
 cast	2213	1418
+cast	2213	1415
+cast	2213	1421
 cast	2214	-1
+cast	2214	1635
+cast	2214	1636
 cast	2216	12
 cast	2217	805
 cast	2217	1277
@@ -4374,6 +4382,14 @@ struck	2037	target	550
 struck	2037	caster	769
 struck	2055	caster	265
 struck	2056	caster	265
+struck	2211	target	1274
+struck	2211	target	1275
+struck	2212	target	1550
+struck	2212	target	1551
+struck	2213	target	1413
+struck	2213	target	1414
+struck	2214	target	1638
+struck	2215	target	1638
 struck	2218	caster	804
 struck	2225	target	49
 struck	2226	target	52
@@ -4781,6 +4797,14 @@ used	2205	target	729
 used	2205	target	466
 used	2207	target	797
 used	2209	caster	799
+used	2218	target	1270
+used	2218	target	1266
+used	2219	target	1271
+used	2219	target	1267
+used	2220	target	1272
+used	2220	target	1268
+used	2221	target	1273
+used	2221	target	1269
 used	2230	caster	751
 used	2262	caster	777
 used	2263	caster	543
@@ -5518,6 +5542,21 @@ minid	92	1163
 minid	1852	-
 minid	1277	1440
 minid	1261	1431
+minid	1274	1441
+minid	1275	1442
+minid	1413	1534
+minid	1414	1535
+minid	1415	1536
+minid	1421	1539
+minid	1446	1543
+minid	1270	1436
+minid	1271	1437
+minid	1272	1438
+minid	1273	1439
+minid	1266	1432
+minid	1267	1433
+minid	1268	1434
+minid	1269	1435
 # Poison Smoke's cell sends up a violet puff now and then: one draw a tick, 1 or 2 of 100.
 unitr	225	1546	1
 unitr	225	1547	2
@@ -5545,6 +5584,7 @@ skillwav	2269	effect\ef_decagility	0	listener
 skillwav	2050	effect\AB_renovatio	0	listener
 skillwav	2205	effect\t_에너지방출	0	listener
 hitwav	2012	_enemy_hit_wind2	0	listener
+hitwav	2211	crimson_r	0	listener
 hitwav	8428	effect\폭염룡	0	listener
 hitwav	2481	effect\폭염룡	0	listener
 hitquake	2012	0	650
