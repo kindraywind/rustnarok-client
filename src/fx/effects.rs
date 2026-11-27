@@ -3211,12 +3211,31 @@ impl Effects {
             self.black = Some(gpu.solid([0, 0, 0, 255]));
         }
         let launch = world_str::Launch { id, owner, point, unique, life, min: self.min, roll: pick(0, 2) };
+        self.launch_row(gpu, grf, row, &launch)
+    }
+
+    fn launch_row(&mut self, gpu: &Gpu, grf: &Grf, row: &world_str::Row, launch: &world_str::Launch) -> Option<u32> {
         let loaded = &mut self.loaded;
-        self.worlds.launch(row, &launch, |file| {
+        self.worlds.launch(row, launch, |file| {
             // The textures sit in the file's folder.
             let folder = file.rsplit_once('/').map_or(String::new(), |(directory, _)| format!("{directory}/"));
             loaded.entry(format!("{folder}|{file}")).or_insert_with(|| load(gpu, grf, file, &folder)).clone()
         })
+    }
+
+    /// Keeps the map's STR objects playing: each its row's file at its place, over and over, at the row's size and
+    /// alpha. They start when none of them runs (a new map, or after everything was stopped).
+    pub fn keep_map_strs(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, objects: &[(rustnarok_client::lua::StrInfo, Vector)]) {
+        if objects.is_empty() || self.worlds.running(None, crate::emitters::STR).is_some() {
+            return;
+        }
+        for (info, at) in objects {
+            let Some(row) = table.worlds.map_row(&info.file) else { return };
+            let launch = world_str::Launch { id: crate::emitters::STR, owner: None, point: *at, unique: false, life: 0, min: false, roll: 0 };
+            if let Some(copy) = self.launch_row(gpu, grf, &row, &launch).and_then(|serial| self.worlds.get_mut(serial)) {
+                (copy.controls.scale, copy.controls.alpha) = (info.scale, info.alpha);
+            }
+        }
     }
 
     /// The launchers' controls on a copy `launch_world` returned: start delay, screen turn, cut, repeats, scale, alpha,

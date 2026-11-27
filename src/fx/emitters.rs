@@ -1,12 +1,14 @@
 //! The map's particle emitters (RSW type-4 objects 974, and 1073 with moving pictures): each throws the particles its
 //! row of the map's emitter table describes, in 16 ms ticks, while the player is near. The particles move in the map's
-//! own axes (y down); only the drawn corners are in the world's (y up). The map's winds (`wind`) and magic floors
-//! (`magic_floor`) take their rows, tick and draw along with them.
+//! own axes (y down); only the drawn corners are in the world's (y up). The map's winds (`wind`), magic floors
+//! (`magic_floor`) and Evil's Paws (`evils_paw`) take their rows, tick and draw along with them; its STR objects
+//! (1412) only take their rows here, and play as STR world effects.
 
-use rustnarok_client::lua::{EmitterInfo, MapEmitters};
+use rustnarok_client::lua::{EmitterInfo, MapEmitters, StrInfo};
 use rustnarok_client::map::EffectSource;
 use wgpu::BlendFactor;
 
+use crate::evils_paw::{self, Paw};
 use crate::magic_floor::{self, Floor};
 use crate::wind::{self, Wind};
 use crate::world::{MeshVertex, Vector};
@@ -14,6 +16,8 @@ use crate::world_fx::Eye;
 
 pub const PLAIN: u32 = 974;
 pub const ANIMATED: u32 = 1073;
+/// The map's STR objects: each plays the file its row names.
+pub const STR: u32 = 1412;
 /// An emitter throws while the player is under this many world units away.
 const RANGE: f32 = 130.0;
 /// A tick as the rates, velocities and lives count it: a 60th of a second.
@@ -32,7 +36,7 @@ const SETS: [[&str; 5]; 2] = [
 ];
 const SET_TICKS: u32 = 8;
 /// A square's corners v0 … v3 and their texture corners; drawn as v0 v1 v2, v2 v1 v3.
-const SQUARE: [([f32; 2], [f32; 2]); 4] = [([-1.0, 1.0], [0.0, 0.0]), ([1.0, 1.0], [1.0, 0.0]), ([-1.0, -1.0], [0.0, 1.0]), ([1.0, -1.0], [1.0, 1.0])];
+pub const SQUARE: [([f32; 2], [f32; 2]); 4] = [([-1.0, 1.0], [0.0, 0.0]), ([1.0, 1.0], [1.0, 0.0]), ([-1.0, -1.0], [0.0, 1.0]), ([1.0, -1.0], [1.0, 1.0])];
 
 /// A draw of chance, 0 to 32 767.
 pub fn chance() -> u32 {
@@ -219,12 +223,15 @@ pub struct Shape<'a> {
     pub vertices: Vec<MeshVertex>,
 }
 
-/// A map's emitters, winds and magic floors.
+/// A map's emitters, winds, magic floors, Evil's Paws and STR objects.
 #[derive(Default)]
 pub struct Emitters {
     pub list: Vec<Emitter>,
     pub winds: Vec<Wind>,
     pub floors: Vec<Floor>,
+    pub paws: Vec<Paw>,
+    /// The STR objects' rows and where each plays, in the world (y up).
+    pub strs: Vec<(StrInfo, Vector)>,
     /// The different looks of them all.
     pub looks: Vec<Look>,
     /// The last 16 ms tick run.
@@ -232,26 +239,28 @@ pub struct Emitters {
 }
 
 impl Emitters {
-    /// The map's emitter, wind and magic floor objects, each with the table row of its number among those of its
-    /// kind, counted from 0 in the map's order; placed in the world (x and z moved by `half` from the map's centre, y
-    /// up). A wind stands where its row says (the same place, in the data).
+    /// The map's emitter, wind, magic floor, Evil's Paw and STR objects, each with the table row of its number among
+    /// those of its kind, counted from 0 in the map's order; placed in the world (x and z moved by `half` from the
+    /// map's centre, y up). A wind stands where its row says (the same place, in the data).
     // ponytail: an object without a row draws nothing; no map in the data has one.
     pub fn new(sources: &[EffectSource], half: [f32; 2], tables: &MapEmitters, rand: &mut dyn FnMut() -> u32) -> Self {
         let mut emitters = Self::default();
-        let mut numbers = [0u32; 4];
+        let mut numbers = [0u32; 6];
         for source in sources {
             let kind = match u32::try_from(source.id) {
                 Ok(PLAIN) => 0,
                 Ok(ANIMATED) => 1,
                 Ok(wind::ID) => 2,
                 Ok(magic_floor::ID) => 3,
+                Ok(evils_paw::ID) => 4,
+                Ok(STR) => 5,
                 _ => continue,
             };
             let number = numbers[kind];
             numbers[kind] += 1;
             let at = [source.position[0] + half[0], -source.position[1], source.position[2] + half[1]];
-            // The wind and the floor's pictures and rings are hidden by what stands in front; the floor's blends come
-            // to the default.
+            // The wind, the floor's pictures and rings and the paw are hidden by what stands in front; the floor's
+            // blends come to the default.
             let (blend, depth_test) = match kind {
                 0 | 1 => {
                     let Some(info) = [&tables.plain, &tables.animated][kind].get(&number) else { continue };
@@ -263,10 +272,19 @@ impl Emitters {
                     emitters.winds.push(Wind::new(info.clone(), half, rand));
                     (info.blend, true)
                 }
-                _ => {
+                3 => {
                     let Some(info) = tables.floors.get(&number) else { continue };
                     emitters.floors.push(Floor::new(*info, at, rand));
                     ([0, 0], true)
+                }
+                4 => {
+                    let Some(info) = tables.paws.get(&number) else { continue };
+                    emitters.paws.push(Paw::new(*info, at));
+                    (evils_paw::BLEND, true)
+                }
+                _ => {
+                    emitters.strs.extend(tables.strs.get(&number).map(|info| (info.clone(), at)));
+                    continue;
                 }
             };
             let look = Look { factors: factors(blend), depth_test };
@@ -277,20 +295,22 @@ impl Emitters {
             match kind {
                 0 | 1 => emitters.list.last_mut().expect("just pushed").look = look,
                 2 => emitters.winds.last_mut().expect("just pushed").look = look,
-                _ => emitters.floors.last_mut().expect("just pushed").look = look,
+                3 => emitters.floors.last_mut().expect("just pushed").look = look,
+                _ => emitters.paws.last_mut().expect("just pushed").look = look,
             }
         }
         emitters
     }
 
-    /// Every picture the emitters, winds and magic floors may show, under `data\texture\`.
+    /// Every picture the emitters, winds, magic floors and paws may show, under `data\texture\`.
     pub fn pictures(&self) -> impl Iterator<Item = &str> {
         let sets: &[&str] = if self.list.iter().any(|emitter| emitter.animated) { SETS.as_flattened() } else { &[] };
         let floors: &[&str] = if self.floors.is_empty() { &[] } else { &magic_floor::DISCS };
         let ring = (!self.floors.is_empty()).then_some(magic_floor::RING);
+        let paws: &[&str] = if self.paws.is_empty() { &[] } else { &evils_paw::PICTURES };
         let plain = self.list.iter().filter(|emitter| !emitter.animated).map(|emitter| emitter.info.texture.as_str());
         let winds = self.winds.iter().map(|wind| wind.info.texture.as_str());
-        plain.chain(sets.iter().copied()).chain(winds).chain(floors.iter().copied()).chain(ring)
+        plain.chain(sets.iter().copied()).chain(winds).chain(floors.iter().copied()).chain(ring).chain(paws.iter().copied())
     }
 
     /// The 16 ms ticks passed since the last call (`now_ms` in whole ms), the player standing at `player`.
@@ -305,7 +325,7 @@ impl Emitters {
                 emitter.tick(distance, rand);
             }
         }
-        // A wind or a floor out of range stops as it is, and isn't drawn.
+        // A wind, a floor or a paw out of range stops as it is, and isn't drawn.
         for wind in &mut self.winds {
             wind.near = distance(wind.at()) < RANGE;
             (0..if wind.near { ticks } else { 0 }).for_each(|_| wind.tick());
@@ -314,11 +334,19 @@ impl Emitters {
             floor.near = distance(floor.at) < RANGE;
             (0..if floor.near { ticks } else { 0 }).for_each(|_| floor.tick());
         }
+        for paw in &mut self.paws {
+            paw.near = distance(paw.at) < RANGE;
+            (0..if paw.near { ticks } else { 0 }).for_each(|_| paw.tick());
+        }
     }
 
-    /// The winds and the magic floors turning now: those the player is near.
-    pub fn turning(&self) -> [usize; 2] {
-        [self.winds.iter().filter(|wind| wind.near).count(), self.floors.iter().filter(|floor| floor.near).count()]
+    /// The winds, the magic floors and the paws moving now: those the player is near.
+    pub fn turning(&self) -> [usize; 3] {
+        [
+            self.winds.iter().filter(|wind| wind.near).count(),
+            self.floors.iter().filter(|floor| floor.near).count(),
+            self.paws.iter().filter(|paw| paw.near).count(),
+        ]
     }
 
     /// The particles out now.
@@ -355,6 +383,9 @@ impl Emitters {
         for floor in self.floors.iter().filter(|floor| floor.near) {
             shapes.extend(magic_floor::DISCS.into_iter().zip(floor.discs(eye)).map(|(picture, vertices)| Shape { picture, look: floor.look, vertices }));
             shapes.push(Shape { picture: magic_floor::RING, look: floor.look, vertices: floor.rings(eye) });
+        }
+        for paw in self.paws.iter().filter(|paw| paw.near) {
+            shapes.push(Shape { picture: evils_paw::PICTURES[paw.shown], look: paw.look, vertices: paw.vertices(eye) });
         }
         shapes.retain(|shape| !shape.vertices.is_empty());
         shapes
@@ -667,15 +698,44 @@ mod tests {
         // Near the wind only: it turns and draws its strands; the floor, 250 away, stays as it was and draws nothing.
         let eye = Eye::at(45.0, 0.0);
         emitters.tick(1000, [150.0, 5.0, 220.0], &mut || 0);
-        assert_eq!((emitters.turning(), emitters.winds[0].strands[0].alpha, emitters.floors[0].age), ([1, 0], 8, 0));
+        assert_eq!((emitters.turning(), emitters.winds[0].strands[0].alpha, emitters.floors[0].age), ([1, 0, 0], 8, 0));
         let got: Vec<(&str, usize, usize)> = emitters.shapes(&eye).iter().map(|shape| (shape.picture, shape.look, shape.vertices.len())).collect();
         assert_eq!(got, [("effect\\a.bmp", 0, 6), ("effect\\w.tga", 1, 240)]);
         // Near the floor: its six pictures and its rings after the emitter's particle (still out, though far), and the
         // wind stops where it was.
         emitters.tick(1016, [400.0, 5.0, 220.0], &mut || 0);
-        assert_eq!((emitters.turning(), emitters.winds[0].strands[0].alpha, emitters.floors[0].age), ([0, 1], 8, 1));
+        assert_eq!((emitters.turning(), emitters.winds[0].strands[0].alpha, emitters.floors[0].age), ([0, 1, 0], 8, 1));
         let got: Vec<(&str, usize)> = emitters.shapes(&eye).iter().map(|shape| (shape.picture, shape.vertices.len())).collect();
         assert_eq!(got[..3], [("effect\\a.bmp", 6), ("effect\\hero_011.tga", 6), ("effect\\hero_001.tga", 6)]);
         assert_eq!((got.len(), got[7]), (8, ("effect\\cloud11.tga", 8 * 20 * 6)));
+    }
+
+    #[test]
+    fn gives_paws_and_str_objects_their_rows_too() {
+        use rustnarok_client::lua::{PawInfo, StrInfo};
+        let splash = StrInfo { file: "water_splash\\water_splash.str".into(), scale: 1.3, alpha: 1.0 };
+        let tables = MapEmitters {
+            paws: HashMap::from([(1, PawInfo { offset: [0.0, -40.0, 0.0], size: 14.0, speed: 1 })]),
+            strs: HashMap::from([(0, splash.clone())]),
+            ..Default::default()
+        };
+        // Each kind counts its own objects: the second paw and the first STR object have rows.
+        let sources = [source(1039, 1.0), source(1412, 2.0), source(1039, 3.0), source(1412, 4.0)];
+        let mut emitters = Emitters::new(&sources, [100.0, 200.0], &tables, &mut || 7);
+        assert_eq!((emitters.paws.len(), emitters.paws[0].at, &emitters.strs), (1, [103.0, 5.0, 220.0], &vec![(splash, [102.0, 5.0, 220.0])]));
+        // The paw's own alpha blends it over what is behind, and what stands in front hides it.
+        let over = [BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha];
+        assert_eq!(emitters.looks, [Look { factors: over, depth_test: true }]);
+        assert_eq!(emitters.pictures().collect::<Vec<_>>(), evils_paw::PICTURES);
+        // Far from it: it neither steps nor draws. Near (by the object, not the picture 40 over it): a picture every two
+        // ticks.
+        let eye = Eye::at(45.0, 0.0);
+        emitters.tick(1000, [103.0, 5.0, 400.0], &mut || 0);
+        assert_eq!((emitters.turning(), emitters.shapes(&eye).len()), ([0, 0, 0], 0));
+        emitters.tick(1016, [103.0, -124.0, 220.0], &mut || 0);
+        assert_eq!((emitters.turning(), emitters.paws[0].shown), ([0, 0, 1], 0));
+        emitters.tick(1016 + 32, [103.0, -124.0, 220.0], &mut || 0);
+        let got: Vec<(&str, usize, usize)> = emitters.shapes(&eye).iter().map(|shape| (shape.picture, shape.look, shape.vertices.len())).collect();
+        assert_eq!(got, [("effect\\1-2.tga", 0, 6)]);
     }
 }

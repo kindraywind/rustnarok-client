@@ -1,0 +1,30 @@
+{
+  "about": "The map's Evil's Paws and STR objects, each drawn from its row of the map's effect tables while the player is within 130 units. 1@eom has 76 paws round its platform: dark arms of smoke reaching up over the rim and sinking again, each at its own pace (here over the pillars south of the player). ba_bath has 6 STR objects: five splashes where the water falls into the pool, and a glitter by the fountain. An STR object plays as long as the map is up: a warp on the map leaves the six as they are, and coming back from another map starts six again, not twelve. The pictures' order and timing and the rows are checked by unit tests; the shots differ from run to run.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {"say": "@alive"},
+    {"say": "@warp 1@eom 110 180"}, {"settle": 1500},
+    {"say": "@killmonster2"},
+    {"wait": 3000},
+    {"expect": {"map": "1@eom.gat", "state": {"player.cell": [110, 180], "map_paws": 76, "map_strs": 0, "world_strs": {}}, "state_at_least": {"map_paws_playing": 10}}},
+    {"shot": "map-paws-rim", "threshold": 100},
+    {"say": "@warp ba_bath 296 290"}, {"settle": 1500},
+    {"say": "@killmonster2"},
+    {"wait": 3000},
+    {"expect": {"map": "ba_bath.gat", "state": {"player.cell": [296, 290], "map_paws": 0, "map_strs": 6, "world_strs": {"1412": 6}}}},
+    {"shot": "map-strs-bath-splashes", "threshold": 100},
+    {"say": "@warp ba_bath 273 145"}, {"settle": 1500},
+    {"say": "@killmonster2"},
+    {"wait": 3000},
+    {"expect": {"map": "ba_bath.gat", "state": {"player.cell": [273, 145], "world_strs": {"1412": 6}}}},
+    {"shot": "map-strs-bath-glitter", "threshold": 100},
+    {"say": "@warp 1@eom 110 180"}, {"settle": 1500},
+    {"expect": {"map": "1@eom.gat", "state": {"world_strs": {}}}},
+    {"say": "@warp ba_bath 296 290"}, {"settle": 1500},
+    {"say": "@killmonster2"},
+    {"wait": 1000},
+    {"expect": {"map": "ba_bath.gat", "state": {"world_strs": {"1412": 6}}}},
+    {"say": "@heal"}
+  ]
+}
