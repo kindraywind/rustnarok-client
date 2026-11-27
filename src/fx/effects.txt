@@ -666,7 +666,6 @@ skill	2008	hitEffectId	587
 skill	2009	effectId	731
 skill	2011	effectId	749
 skill	2201	effectId	802
-skill	2203	effectId	726
 skill	2204	hitEffectId	28
 skill	2205	effectId	729
 skill	2209	effectId	799
@@ -1978,7 +1977,7 @@ wav	721	effect\ab_adoramus	0
 wav	722	effect\wl_jackfrost	0	listener
 wav	723	hundred	0
 wav	725	effect\priest_benedictio	0
-wav	726	effect\t_에너지방출	0
+wav	726	effect\t_에너지방출	160
 wav	727	effect\crimson_r	0
 wav	731	dragon_h	0
 wav	732	effect\wizard_earthspike	0
@@ -4979,6 +4978,7 @@ ground	491	caster	58
 ground	710	caster	135
 ground	717	caster	1032
 ground	733	ground	102
+ground	2203	ground	726
 ground	5006	ground	102
 ground	737	ground	1424
 ground	2321	ground	1424

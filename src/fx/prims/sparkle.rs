@@ -173,6 +173,14 @@ pub struct RiseLook {
     tint: [f32; 3],
     /// The picture: pok1 with its twinkle, or one of its own, mirrored.
     picture: Option<&'static str>,
+    /// Ticks from one set to the next, and the half-diagonal's base (2.0 above).
+    every: u32,
+    base: f32,
+    /// Frost Misty's snow instead of the square spread: R(`disc`) out at any angle, and R(`lift`) more above the 6.
+    disc: u32,
+    lift: u32,
+    /// The picture and its twinkle when it has none of its own.
+    twinkle: [&'static str; 2],
 }
 
 pub const BLUE: RiseLook = RiseLook {
@@ -185,7 +193,15 @@ pub const BLUE: RiseLook = RiseLook {
     rise: 0.10,
     tint: [150.0 / 255.0, 150.0 / 255.0, 250.0 / 255.0],
     picture: None,
+    every: 4,
+    base: 2.0,
+    disc: 0,
+    lift: 0,
+    twinkle: TEXTURES,
 };
+pub const SNOW_TEXTURES: [&str; 2] = ["data\\texture\\effect\\E9_snow03.tga", "data\\texture\\effect\\E9_snow02.tga"];
+/// Frost Misty's snow (726): thirteen sets, one every 8 ticks, anywhere within 40 of the cell and up to 30 higher.
+pub const SNOW: RiseLook = RiseLook { sets: 13, half: 6, spread: 0, centre: 0.0, every: 8, base: 1.5, disc: 41, lift: 31, twinkle: SNOW_TEXTURES, ..BLUE };
 /// The Star Gladiator's warmth (572): the same sets in a faint red-pink.
 pub const WARM: RiseLook = RiseLook { tint: [250.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0], ..BLUE };
 pub const SPANNER_PICTURE: &str = "data\\texture\\유저인터페이스\\item\\스패너.bmp";
@@ -199,6 +215,7 @@ pub const SPANNERS: RiseLook = RiseLook {
     rise: 0.20,
     tint: [220.0 / 255.0, 250.0 / 255.0, 220.0 / 255.0],
     picture: Some(SPANNER_PICTURE),
+    ..BLUE
 };
 
 pub struct Rises {
@@ -208,6 +225,8 @@ pub struct Rises {
     /// The sets made so far, and where the unit last stood.
     pub made: u32,
     last: Option<Vector>,
+    /// A place of its own instead of a unit's feet.
+    point: Option<Vector>,
     pub squares: Vec<Rise>,
 }
 
@@ -223,7 +242,12 @@ pub struct Rise {
 
 impl Rises {
     pub fn new(look: &'static RiseLook, unit: Option<u32>, start: Instant) -> Self {
-        Self { look, unit, start, made: 0, last: None, squares: Vec::new() }
+        Self { look, unit, start, made: 0, last: None, point: None, squares: Vec::new() }
+    }
+
+    /// Sets round the point `at`, following no unit.
+    pub fn at(look: &'static RiseLook, at: Vector, start: Instant) -> Self {
+        Self { point: Some(at), ..Self::new(look, None, start) }
     }
 
     fn tick(&self, now: Instant) -> Option<u32> {
@@ -233,22 +257,26 @@ impl Rises {
 
     /// Whether anything of it is still to show: the last set is gone 54 ticks after its own.
     pub fn alive(&self, now: Instant) -> bool {
-        self.tick(now).is_some_and(|tick| tick < 4 * (self.look.sets - 1) + 55)
+        self.tick(now).is_some_and(|tick| tick < self.look.every * (self.look.sets - 1) + 55)
     }
 
     /// Makes the sets whose ticks have come, where `position_of` has the unit's feet then; each square's choices come from `rand(n)`.
     pub fn advance(&mut self, now: Instant, position_of: &impl Fn(Option<u32>) -> Option<Vector>, mut rand: impl FnMut(u32) -> u32) {
-        self.last = position_of(self.unit).or(self.last);
+        self.last = self.point.or_else(|| position_of(self.unit)).or(self.last);
         let Some(tick) = self.tick(now) else { return };
         let look = self.look;
-        while self.made < look.sets && tick >= 4 * self.made {
+        while self.made < look.sets && tick >= look.every * self.made {
             if let Some(feet) = self.last {
                 for k in 0..look.per_set {
-                    let half_diagonal = 2.0 + 0.1 * rand(look.half) as f32;
-                    let x = feet[0] + rand(look.spread) as f32 - look.centre;
-                    let z = feet[2] + rand(look.spread) as f32 - look.centre;
+                    let half_diagonal = look.base + 0.1 * rand(look.half) as f32;
+                    let (x, z, lift) = if look.disc > 0 {
+                        let (out, angle) = (rand(look.disc) as f32, (rand(360) as f32).to_radians());
+                        (feet[0] + out * angle.cos(), feet[2] + out * angle.sin(), rand(look.lift) as f32)
+                    } else {
+                        (feet[0] + rand(look.spread) as f32 - look.centre, feet[2] + rand(look.spread) as f32 - look.centre, 0.0)
+                    };
                     let rise = look.rise + 0.01 * rand(20) as f32;
-                    self.squares.push(Rise { k, born: 4 * self.made, half_diagonal, at: [x, feet[1] + 6.0, z], rise });
+                    self.squares.push(Rise { k, born: look.every * self.made, half_diagonal, at: [x, feet[1] + 6.0 + lift, z], rise });
                 }
                 // The squares the game makes and never draws, then the one draw each drawn square throws away at its first tick.
                 for _ in 0..look.unused {
@@ -272,7 +300,7 @@ impl Rises {
                 continue;
             }
             let alpha = drawn_alpha(n, dim);
-            let path = self.look.picture.unwrap_or_else(|| texture_at(square.k, n));
+            let path = self.look.picture.unwrap_or_else(|| self.look.twinkle[usize::from(texture_at(square.k, n) == POK3)]);
             let Some(texture) = texture_of(path) else { continue };
             let place = [square.at[0], square.at[1] + n as f32 * square.rise, square.at[2]];
             let tint = [self.look.tint[0], self.look.tint[1], self.look.tint[2], alpha as f32 / 255.0];
@@ -464,6 +492,22 @@ mod tests {
         let effects_txt = include_str!("../effects.txt");
         assert!(effects_txt.lines().any(|line| line == "length\t793\t100"));
         assert!(!effects_txt.lines().any(|line| line.starts_with("wav\t793")));
+    }
+
+    #[test]
+    fn frost_mistys_snow_rises_round_its_cell_in_13_sets() {
+        let start = Instant::now();
+        let mut snow = Rises::at(&SNOW, [100.0, 5.0, 200.0], start);
+        // Every draw at its top: 0.5 more than the base, 40 out at 359 degrees, 30 higher, the fastest rise.
+        for tick in [0, 7, 8, 96, 200] {
+            snow.advance(start + TICK * tick, &|_| None, |n| n - 1);
+            assert_eq!(snow.squares.len() as u32, 4 * (tick / 8 + 1).min(13), "tick {tick}");
+        }
+        let square = snow.squares[4];
+        assert_eq!((square.born, square.half_diagonal, square.at[1], square.rise), (8, 2.0, 5.0 + 6.0 + 30.0, 0.10 + 0.19));
+        assert!(((square.at[0] - 100.0).hypot(square.at[2] - 200.0) - 40.0).abs() < 1e-3);
+        // Gone 54 ticks after its last set (tick 96).
+        assert!(snow.alive(start + TICK * 150) && !snow.alive(start + TICK * 151));
     }
 
     #[test]

@@ -28,6 +28,7 @@ pub mod knight;
 pub mod linker;
 pub mod map_looks;
 pub mod mechanic;
+pub mod mist;
 pub mod monk;
 pub mod napalm;
 pub mod notes;
@@ -177,6 +178,7 @@ pub struct Prims {
     pub napalms: Vec<napalm::Napalm>,
     pub sparkles: Vec<sparkle::Hallutime>,
     pub blues: Vec<sparkle::Rises>,
+    pub mists: Vec<mist::Mist>,
     pub blitzes: blitz::Blitzes,
     pub spheres: tanji::Spheres,
     pub huujin: huujin::Huujin,
@@ -654,6 +656,12 @@ impl Prims {
         self.blues.push(sparkle::Rises::new(&sparkle::BLUE, unit, now));
     }
 
+    /// Frost Misty's cloud and snow over the cell at `at`.
+    pub fn frost_misty(&mut self, at: Vector, now: Instant) {
+        self.mists.push(mist::Mist { at, start: now });
+        self.blues.push(sparkle::Rises::at(&sparkle::SNOW, at, now));
+    }
+
     /// The warmth's red-pink sparkles round `unit`.
     pub fn warm_sparkles(&mut self, unit: Option<u32>, now: Instant) {
         self.blues.push(sparkle::Rises::new(&sparkle::WARM, unit, now));
@@ -684,7 +692,7 @@ impl Prims {
         self.guard.forget(unit);
         self.brawl.forget(unit);
         self.circles.forget(Some(unit));
-        self.circles.forget_venom(Some(unit));
+        self.circles.forget_icon(None, Some(unit));
         self.mechanic.forget(unit);
         self.holes.forget(unit);
         self.waves.forget(unit);
@@ -704,6 +712,7 @@ impl Prims {
             .iter()
             .flat_map(|s| s.quads(now, dim, &texture_of, position_of))
             .chain(self.blues.iter().flat_map(|blues| blues.quads(now, dim, &texture_of)))
+            .chain(self.mists.iter().flat_map(|mist| texture_of(mist::PICTURE).map(|texture| mist.quads(now, texture)).unwrap_or_default()))
             .collect()
     }
 
@@ -767,6 +776,7 @@ impl Prims {
         self.napalms.retain(|napalm| napalm.alive(now));
         self.sparkles.retain(|sparkle| sparkle.alive(now));
         self.blues.retain(|blues| blues.alive(now));
+        self.mists.retain(|mist| mist.alive(now));
         self.shafts.advance(now);
         self.circles.advance(now);
         self.painter.advance(now);

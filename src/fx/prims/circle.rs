@@ -1,5 +1,5 @@
-//! Oratio's teal magic circle over the unit (755), Analyze's turned target mark (786) and Venom Impress' icon (788), a 16 ms tick
-//! at a time: squares facing the camera that breathe.
+//! Oratio's teal magic circle over the unit (755), Analyze's turned target mark (786) and the status icons (Venom Impress 788,
+//! Frost Misty's freezing 789, Crystalize's cold 940), a 16 ms tick at a time: squares facing the camera that breathe.
 //!
 //!
 //! A circle's own age n counts from 1 at its first tick.
@@ -13,6 +13,18 @@ use crate::world::{EffectQuad, Vector};
 pub const CIRCLE: &str = "data\\texture\\effect\\마법진1-3.bmp";
 pub const TARGET: &str = "data\\texture\\effect\\target3.bmp";
 pub const VENOM: &str = "data\\texture\\effect\\베놈_상태.bmp";
+pub const FREEZING: &str = "data\\texture\\effect\\빙결_상태.bmp";
+pub const COLD: &str = "data\\texture\\effect\\얼음결정체1.tga";
+
+/// The picture of a status icon's effect: Venom Impress, Frost Misty's freezing, Crystalize's cold.
+pub fn icon_picture(effect: u32) -> Option<&'static str> {
+    match effect {
+        788 => Some(VENOM),
+        789 => Some(FREEZING),
+        940 => Some(COLD),
+        _ => None,
+    }
+}
 /// Analyze's mark lasts 99 ticks; Venom Impress' icon floats this high when the unit's sprite says nothing.
 const MARK_TICKS: u32 = 99;
 // ponytail: the sprite's own head offset isn't read; every unit's icon floats 30 up.
@@ -31,17 +43,24 @@ struct Circle {
     first: f32,
 }
 
-/// A unit with Analyze's mark or Venom Impress' icon from `start`.
+/// A unit with Analyze's mark from `start`.
 struct Marked {
     unit: Option<u32>,
     start: Instant,
+}
+
+/// A unit with a status icon from `start`.
+struct Icon {
+    unit: Option<u32>,
+    start: Instant,
+    picture: &'static str,
 }
 
 #[derive(Default)]
 pub struct Circles {
     list: Vec<Circle>,
     marks: Vec<Marked>,
-    venoms: Vec<Marked>,
+    icons: Vec<Icon>,
 }
 
 /// The circle's turn at its age n: the start turn and a degree every second tick.
@@ -95,15 +114,15 @@ impl Circles {
         self.marks.push(Marked { unit, start: now });
     }
 
-    /// Venom Impress' icon over `unit`, replacing the last.
-    pub fn venom(&mut self, unit: Option<u32>, now: Instant) {
-        self.venoms.retain(|venom| venom.unit != unit);
-        self.venoms.push(Marked { unit, start: now });
+    /// A status icon over `unit`, replacing its last of that picture.
+    pub fn icon(&mut self, picture: &'static str, unit: Option<u32>, now: Instant) {
+        self.forget_icon(Some(picture), unit);
+        self.icons.push(Icon { unit, start: now, picture });
     }
 
-    /// Venom Impress went off `unit`.
-    pub fn forget_venom(&mut self, unit: Option<u32>) {
-        self.venoms.retain(|venom| venom.unit != unit);
+    /// The status of `picture` went off `unit`; None: the unit is gone, with every icon.
+    pub fn forget_icon(&mut self, picture: Option<&'static str>, unit: Option<u32>) {
+        self.icons.retain(|icon| icon.unit != unit || picture.is_some_and(|picture| picture != icon.picture));
     }
 
     pub fn advance(&mut self, now: Instant) {
@@ -130,18 +149,18 @@ impl Circles {
             .collect()
     }
 
-    /// Venom Impress' icons at `now`: upright and mirrored, over everything; `str_rise` is the compensation for that.
-    pub fn venom_quads<'a>(
+    /// The status icons at `now`: upright and mirrored, over everything; `str_rise` is the compensation for that.
+    pub fn icon_quads<'a>(
         &self,
         now: Instant,
         str_rise: f32,
         texture_of: impl Fn(&str) -> Option<&'a Texture>,
         position_of: &impl Fn(Option<u32>) -> Option<Vector>,
     ) -> Vec<EffectQuad<'a>> {
-        let Some(texture) = texture_of(VENOM) else { return Vec::new() };
-        self.venoms
+        self.icons
             .iter()
             .filter_map(|venom| {
+                let texture = texture_of(venom.picture)?;
                 let n = passes(venom.start, now);
                 let feet = position_of(venom.unit).filter(|_| n > 0)?;
                 let h = venom_half(n) * std::f32::consts::FRAC_1_SQRT_2 * PIXELS_PER_UNIT;
@@ -217,9 +236,12 @@ mod tests {
         let start = Instant::now();
         let mut circles = Circles::default();
         circles.mark(Some(1), start, |_| 0);
-        circles.venom(Some(2), start);
-        circles.venom(Some(2), start);
-        assert_eq!((circles.marks.len(), circles.venoms.len()), (1, 1));
+        circles.icon(VENOM, Some(2), start);
+        circles.icon(VENOM, Some(2), start);
+        // A second status's icon stands beside the first: Frost Misty's freezing.
+        circles.icon(FREEZING, Some(2), start);
+        assert_eq!((circles.marks.len(), circles.icons.len()), (1, 2));
+        assert_eq!([788, 789, 940, 790].map(icon_picture), [Some(VENOM), Some(FREEZING), Some(COLD), None]);
         // The mark: half-diagonal 24 ± 5 % breathing: 24.04 at n = 1 and 25.2 at 45; alpha 250; 99 ticks.
         let r = |n: u32| 24.0 + 24.0 * ((2 * n % 360) as f32).to_radians().sin() * 0.05;
         assert!((r(1) - 24.04).abs() < 0.01 && (r(45) - 25.2).abs() < 0.01);
@@ -227,8 +249,10 @@ mod tests {
         assert_eq!([1, 22, 23].map(venom_alpha), [10.0, 220.0, 220.0]);
         assert!((venom_half(45) - 4.2).abs() < 1e-4);
         // Mirrored upright corners (right-bottom first) and drawn over everything; one icon to a unit; it goes with the status.
-        circles.forget_venom(Some(2));
-        assert!(circles.venoms.is_empty());
+        circles.forget_icon(Some(VENOM), Some(2));
+        assert!(circles.icons.len() == 1 && circles.icons[0].picture == FREEZING);
+        circles.forget_icon(None, Some(2));
+        assert!(circles.icons.is_empty());
         circles.advance(start + crate::prims::TICK * 200);
         assert!(circles.marks.is_empty());
     }
