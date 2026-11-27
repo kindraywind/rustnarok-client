@@ -1,0 +1,125 @@
+{
+  "about": "Frost Misty: as the ground packet comes, a blue cloud of ten squares grows 30 over the cell and snow crystals rise round it; both are gone a few seconds later. Checked in the state's effects_alive (mists, rises). Ends a Novice without skills.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@job 4055"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@set BaseLevel 98"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "say": "@useskill 2203 5 {first}"
+    },
+    {
+      "wait_for": {
+        "event": "GroundSkill",
+        "pause": true,
+        "ms": 15000
+      }
+    },
+    {
+      "move": [
+        1000,
+        740
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 480
+      }
+    },
+    {
+      "expect": {
+        "state": {
+          "effects_alive.mists": 1,
+          "effects_alive.rises": 1
+        }
+      }
+    },
+    {
+      "shot": "frost-misty",
+      "crop": [
+        62,
+        20,
+        900,
+        700
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 4500
+    },
+    {
+      "expect": {
+        "state": {
+          "effects_alive.mists": 0,
+          "effects_alive.rises": 0
+        }
+      }
+    },
+    {
+      "say": "@skreset"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@set BaseLevel 1"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

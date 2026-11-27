@@ -2970,6 +2970,19 @@ const STEALTH_CELL: u32 = 784;
 const REPAIR: u32 = 785;
 const ANALYZE: u32 = 786;
 const VENOM_ICON: u32 = 788;
+/// Frost Misty's freezing and Crystalize's cold float the same icon with their own pictures.
+const FREEZING_ICON: u32 = 789;
+const COLD_ICON: u32 = 940;
+
+/// The picture of the icon a status floats over its unit: Venom Impress, freezing, cold.
+fn status_icon(status: u16) -> Option<&'static str> {
+    match status {
+        VENOM_STATUS => Some(circle::VENOM),
+        351 => Some(circle::FREEZING),
+        437 => Some(circle::COLD),
+        _ => None,
+    }
+}
 /// The status Venom Impress gives, which its icon stands for.
 const VENOM_STATUS: u16 = 328;
 /// Poison Smoke's cell, Phantom Menace's crescents, the Mechanic's cast spin, and Acceleration's and Shape Shift's pulse.
@@ -3213,6 +3226,7 @@ impl Effects {
             "sounds": self.sounds.len(), "quakes": self.quakes.len(), "unit_kinds": self.unit_kinds.len(),
             "unit_worlds": self.unit_worlds.len(), "afterimages": self.afterimages.len(), "loaded": self.loaded.len(),
             "textures": self.textures.len(), "sprites": self.sprites.len(), "models": self.models.len(),
+            "mists": self.prims.mists.len(), "rises": self.prims.blues.len(),
             "status_prims_by": tally(self.status_prims.iter().map(|prim| format!("{}/{}", prim.effect, anchor_kind(prim.anchor)))),
             "animations_by": tally(self.animations.iter().map(|animation| {
                 format!("{}/{}/{}{}", animation.sprite, anchor_kind(animation.anchor), if animation.repeat { "repeat" } else { "once" },
@@ -4655,9 +4669,18 @@ impl Effects {
                 self.prims.circles.mark(unit, now, |n| pick(0, n.saturating_sub(1)));
                 self.prims.guard.analyze(unit, now);
             }
-            (VENOM_ICON, Target::Status(unit, _)) => {
-                self.textures.entry(circle::VENOM.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, circle::VENOM, false).ok());
-                self.prims.circles.venom(unit, now);
+            (VENOM_ICON | FREEZING_ICON | COLD_ICON, Target::Status(unit, _)) => {
+                if let Some(picture) = circle::icon_picture(id) {
+                    self.textures.entry(picture.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, picture, false).ok());
+                    self.prims.circles.icon(picture, unit, now);
+                }
+            }
+            // Frost Misty's cloud and snow over its cell, wherever it is played.
+            (crate::prims::mist::EF_FROSTMISTY, _) => {
+                for path in [crate::prims::mist::PICTURE].into_iter().chain(crate::prims::sparkle::SNOW_TEXTURES) {
+                    self.textures.entry(path.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, path, true).ok());
+                }
+                self.prims.frost_misty(at, now);
             }
             (PHANTOM_RIBBONS, Target::Unit(unit)) => {
                 self.textures.entry(walls::RING_PURPLE.to_owned()).or_insert_with(|| gpu.try_load_texture(grf, walls::RING_PURPLE, true).ok());
@@ -6229,8 +6252,8 @@ impl Effects {
         if status == 330 {
             self.prims.circles.forget(unit);
         }
-        if status == VENOM_STATUS {
-            self.prims.circles.forget_venom(unit);
+        if let Some(picture) = status_icon(status) {
+            self.prims.circles.forget_icon(Some(picture), unit);
         }
         // Camouflage, Stealth Field, Elemental Veil or Shadow Form went off: the unit climbs back to opaque.
         if matches!(status, 360 | 379 | 1301 | 394) {
@@ -6911,8 +6934,9 @@ impl Effects {
         }
         // Body Painting's strokes, over everything.
         quads.extend(self.prims.painter.quads(now, STR_RISE, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
-        // Venom Impress' icon is force-drawn, over everything.
-        quads.extend(self.prims.circles.venom_quads(now, STR_RISE, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
+        // Venom Impress' icon is force-drawn, over everything; the freezing and cold icons are drawn the same way.
+        // ponytail: their place on the game's force list wasn't read.
+        quads.extend(self.prims.circles.icon_quads(now, STR_RISE, |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
         // The effects made in code are none of them force-drawn.
         if self.only_forced {
             return quads;
@@ -8088,6 +8112,18 @@ mod tests {
         let subs = tetra_sub_points([100.0, -3.0, 200.0], || rolls.next().unwrap());
         assert_eq!(subs, [[110.0, -3.0, 229.0], [120.0, -3.0, 185.0], [90.0, -3.0, 184.0], [90.0, -3.0, 228.0]]);
         assert_eq!(table.hit_sounds.get(&2211).map(|sounds| sounds[0].file.as_str()), Some("crimson_r"));
+    }
+
+    #[test]
+    fn frost_misty_plays_its_cloud_at_the_cell_and_freezing_floats_its_icon() {
+        let table = Table::load();
+        // The ground packet plays 726 at the cell; no damage packet plays it on a target, and its sound comes at tick 10.
+        assert_eq!(table.ground(2203), Some(&[(Who::Ground, 726)][..]));
+        assert!(table.skill(2203, "effectId").is_empty() && table.struck(2203).is_none());
+        assert_eq!(table.sounds[&726].iter().map(|sound| (sound.file.as_str(), sound.delay_ms)).collect::<Vec<_>>(), [("effect\\t_에너지방출", 160)]);
+        // The freezing status (351) and Crystalize's cold (437) float their own pictures like Venom Impress (328).
+        assert_eq!([328, 351, 437, 330].map(status_icon), [Some(circle::VENOM), Some(circle::FREEZING), Some(circle::COLD), None]);
+        assert_eq!([FREEZING_ICON, COLD_ICON].map(circle::icon_picture), [Some(circle::FREEZING), Some(circle::COLD)]);
     }
 
     #[test]
