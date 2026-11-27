@@ -3457,6 +3457,8 @@ impl Game {
             return None;
         }
         let (job, kind) = (actor.job, actor.kind);
+        // The poses go by the body drawn, before the all-jobs mount.
+        let body = if actor.look.is_some() { actor::sprite_job(actor.job, actor.option) } else { actor.job };
         let mut hit_ms = None;
         // A cast without cast time (but Asura Strike's) leaves the caster as it is. Meteor Storm's meteors (and the like)
         // show it on the third swing's last frame, with no motion.
@@ -3470,10 +3472,12 @@ impl Game {
             let now = Instant::now();
             // A cast plays its motion at its ACT's pace (`pace` is the cast's length then); the others at `pace` times it.
             let (motion, speed) = if cast { (skill_motions::cast_motion(skill), 1.0) } else { (Some(skill_motions::motion(skill)), pace) };
+            // The skill pose's hit comes on its frame 6, whichever action a body plays for it.
+            let posed = matches!(motion, Some(skill_motions::Motion::Skill));
             let action = match motion {
                 // The cast pose, held for the cast.
                 None => {
-                    actor.hold_for(SKILL_ACTION, now, pace);
+                    actor.hold_for(skill_motions::cast_pose(body), now, pace);
                     None
                 }
                 Some(skill_motions::Motion::Keep) => None,
@@ -3482,13 +3486,13 @@ impl Game {
                 Some(skill_motions::Motion::ThirdAttack) => Some(11),
                 Some(skill_motions::Motion::PickUp) => Some(actor::PICKUP),
                 Some(skill_motions::Motion::Action(action)) => Some(action),
-                Some(skill_motions::Motion::Skill) if skill_motions::ready_instead(actor.job) => Some(actor::READY),
-                Some(skill_motions::Motion::Skill) => Some(SKILL_ACTION),
+                Some(skill_motions::Motion::Skill) => Some(skill_motions::skill_pose(body)),
             };
             if let Some(action) = action {
                 actor.play_at_pace(action, now, speed, false);
                 let index = action * 8 + usize::from(actor.direction % 8);
                 hit_ms = actor.sprites.as_ref().and_then(|sprites| match action {
+                    _ if posed => sprites.frame_ms(index, 6, speed),
                     SKILL_ACTION => sprites.frame_ms(index, 6, speed),
                     _ => sprites.hit_ms(index, speed),
                 });
