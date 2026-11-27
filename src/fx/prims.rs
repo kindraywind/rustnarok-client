@@ -26,6 +26,7 @@ pub mod huujin;
 pub mod kicks;
 pub mod knight;
 pub mod linker;
+pub mod map_looks;
 pub mod mechanic;
 pub mod monk;
 pub mod napalm;
@@ -162,6 +163,8 @@ pub struct GhostDraw {
 /// Thunder's balls; the spikes.
 #[derive(Default)]
 pub struct Prims {
+    /// The looks of a map's own effect objects.
+    pub map_looks: map_looks::MapLooks,
     builders: Vec<Builder>,
     ghosts: Vec<Ghost>,
     cold_hits: Vec<ColdHit>,

@@ -2222,6 +2222,7 @@ fn game_state(app: &App, game: &Game) -> Value {
     state["map_paws_playing"] = paws_playing.into();
     state["map_effect_timers"] = game.world.map_effects.timers.len().into();
     state["map_effects_fired"] = game.world.map_effects.fired.into();
+    state["map_looks"] = game.effects.map_look_counts();
     state["map_effect_fired_ms_ago"] = game.world.map_effects.last_fired.map(|at| crate::whole_ms(self::now()).saturating_sub(at)).into();
     // The sky's puffs and clouds, and how many show now.
     state["sky_puffs"] = game.sky.puffs.len().into();
@@ -2586,6 +2587,7 @@ const FIELD_GRADES: &[(&str, Grade)] = {
         ("map_paws", Test),
         ("map_paws_playing", Test),
         ("map_strs", Test),
+        ("map_looks", Test),
         ("map_effects_fired", Test),
         ("effects_alive", Test),
         ("map_property", Test),

@@ -25,6 +25,8 @@ pub struct Timer {
     pub at: Vector,
     pub period: i32,
     pub counter: i32,
+    /// The object's first parameter: a glow's or a torch's size.
+    pub size: f32,
 }
 
 /// A timer's period and start counter: P = int(speed) and int(speed − rand() % 24); a firefly (45) P = int(speed −
@@ -52,7 +54,7 @@ pub fn tick(timer: &mut Timer, in_range: bool) -> bool {
 
 pub struct MapEffects {
     /// Played once, at the map's first frame.
-    started: Vec<(u32, Vector)>,
+    started: Vec<(u32, Vector, f32)>,
     pub timers: Vec<Timer>,
     /// The last 16 ms tick run, and how many timed plays there have been (for the test driver).
     last: Option<u64>,
@@ -72,18 +74,19 @@ impl MapEffects {
             }
             let at = [source.position[0] + half[0], -source.position[1], source.position[2] + half[1]];
             if STARTED_ONCE.contains(&id) {
-                started.push((id, at));
+                started.push((id, at, source.params[0]));
             } else {
                 let (period, counter) = timer(id, source.speed, &mut rand);
-                timers.push(Timer { id, at, period, counter });
+                timers.push(Timer { id, at, period, counter, size: source.params[0] });
             }
         }
         Self { started, timers, last: None, fired: 0, last_fired: None }
     }
 
-    /// What plays this frame (`now_ms` in whole ms, the player at `player` on the ground plane): the start-once
+    /// What plays this frame, each with its place and its object's first parameter (`now_ms` in whole ms, the player
+    /// at `player` on the ground plane): the start-once
     /// effects on the first call, then each timer that fires on each 16 ms tick passed since the last call.
-    pub fn due(&mut self, now_ms: u64, player: [f32; 2]) -> Vec<(u32, Vector)> {
+    pub fn due(&mut self, now_ms: u64, player: [f32; 2]) -> Vec<(u32, Vector, f32)> {
         let mut plays = std::mem::take(&mut self.started);
         let tick_now = now_ms / TICK_MS;
         let ticks = self.last.map_or(1, |last| tick_now.saturating_sub(last).min(MOST_TICKS));
@@ -92,7 +95,7 @@ impl MapEffects {
             let in_range = f32::hypot(timer.at[0] - player[0], timer.at[2] - player[1]) < RANGE;
             for _ in 0..ticks {
                 if tick(timer, in_range) {
-                    plays.push((timer.id, timer.at));
+                    plays.push((timer.id, timer.at, timer.size));
                     self.fired += 1;
                     self.last_fired = Some(now_ms);
                 }
@@ -107,7 +110,7 @@ mod tests {
     use super::*;
 
     fn source(id: i32, speed: f32) -> EffectSource {
-        EffectSource { name: String::new(), position: [10.0, -5.0, 20.0], id, speed, params: [0.0; 4] }
+        EffectSource { name: String::new(), position: [10.0, -5.0, 20.0], id, speed, params: [0.6, 1.0, 0.0, 0.0] }
     }
 
     #[test]
@@ -118,11 +121,11 @@ mod tests {
         let mut draws = [520u32, 7].into_iter();
         assert_eq!(timer(45, 500.0, || draws.next().unwrap()), (495, 7));
         // A negative start fires on the first tick (unsigned), in range only; out of range the counter still grows.
-        let mut fresh = Timer { id: 47, at: [0.0; 3], period: 125, counter: -3 };
+        let mut fresh = Timer { id: 47, at: [0.0; 3], period: 125, counter: -3, size: 0.0 };
         assert!(!tick(&mut fresh.clone(), false));
         assert!(tick(&mut fresh, true));
         assert_eq!(fresh.counter, 1);
-        let mut away = Timer { id: 47, at: [0.0; 3], period: 3, counter: 0 };
+        let mut away = Timer { id: 47, at: [0.0; 3], period: 3, counter: 0, size: 0.0 };
         for _ in 0..5 {
             assert!(!tick(&mut away, false));
         }
@@ -136,7 +139,7 @@ mod tests {
         // Speed 9 999 999: within 23 ticks of the load, then not again for days.
         let (period, counter) = timer(700, 9_999_999.0, || 23);
         assert_eq!((period, counter), (9_999_999, 9_999_976));
-        let mut glow = Timer { id: 700, at: [0.0; 3], period, counter };
+        let mut glow = Timer { id: 700, at: [0.0; 3], period, counter, size: 0.0 };
         let fired: Vec<u32> = (0..100).filter(|_| tick(&mut glow, true)).collect();
         assert_eq!(fired.len(), 1);
         // The start-once ids play on the first frame, wherever the player is, and never again; the objects with a table
@@ -145,8 +148,9 @@ mod tests {
         let sources: Vec<EffectSource> = ids.iter().map(|id| source(*id, 0.0)).chain([source(44, 0.0), source(47, 125.0)]).collect();
         let mut effects = MapEffects::new(&sources, [100.0, 100.0], || 0);
         let first = effects.due(1000, [9999.0, 9999.0]);
-        assert_eq!(first.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [44]);
-        assert_eq!(first[0].1, [110.0, 5.0, 120.0]);
+        assert_eq!(first.iter().map(|play| play.0).collect::<Vec<_>>(), [44]);
+        // Each with its place and its object's first parameter.
+        assert_eq!((first[0].1, first[0].2), ([110.0, 5.0, 120.0], 0.6));
         assert!(effects.due(1016, [9999.0, 9999.0]).is_empty());
         // The torch near the player, a frame a tick: at once (its counter is past its period), then every 125 ticks.
         let near = [110.0, 120.0];
