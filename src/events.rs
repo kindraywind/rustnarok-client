@@ -4017,7 +4017,7 @@ impl App {
             MapEvent::ProgressCancel => {
                 game.casts.remove(&None);
                 game.effects.cut_twilight();
-                game.player.stop_holding(SKILL_ACTION);
+                game.player.stop_holding(skill_motions::cast_pose(actor::sprite_job(game.player.job, game.player.option)));
                 game.end_progress(true);
             }
             MapEvent::CastCancelled(source) => {

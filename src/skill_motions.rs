@@ -529,15 +529,21 @@ pub fn state_action(state: u8) -> Option<usize> {
     }
 }
 
-/// Jobs that take the ready stance instead of the skill pose: Crusader, Bard, Dancer, Gunslinger, Taekwon and Star
-/// Gladiator lines.
-// ponytail: rathena's job ids for those lines and their mounts, transcendent, baby and 3rd forms.
-pub fn ready_instead(job: u16) -> bool {
-    const JOBS: [u16; 31] = [
-        14, 19, 20, 21, 24, 4015, 4020, 4021, 4022, 4037, 4041, 4042, 4044, 4046, 4047, 4048, 4066, 4068, 4069, 4073, 4075, 4076, 4082, 4083, 4102, 4104, 4105,
-        4110, 4215, 4239, 4240,
-    ];
-    JOBS.contains(&job)
+/// The action of a player's skill pose, by sprite job (mounts and outfits applied, not the all-jobs mount): the ready
+/// stance for the Crusader, Bard, Dancer, Gunslinger, Taekwon and Star Gladiator bodies, the second swing for the
+/// Doram and the Druid line, the skill action for everyone else.
+pub fn skill_pose(sprite_job: u16) -> usize {
+    match sprite_job {
+        14 | 19 | 20 | 24 | 4037 | 4042 | 4043 | 4046..=4048 | 4225 | 4226 | 4228 | 4238 | 4239 | 4241 | 4243 | 4244 | 4302 | 4316 => 4,
+        4218..=4221 | 4308 | 4315 | 4351..=4355 => 10,
+        _ => 12,
+    }
+}
+
+/// The action held through a cast, by sprite job: the first swing for the Doram on foot, the skill action for
+/// everyone else.
+pub fn cast_pose(sprite_job: u16) -> usize {
+    if matches!(sprite_job, 4218 | 4220 | 4308) { 5 } else { 12 }
 }
 
 /// Whether a cast moves its caster (turn, cast pose, cast effects): not without cast time (Bash, Double Strafe), where
@@ -594,7 +600,10 @@ mod tests {
         assert_eq!(motion(SONIC_BLOW), Motion::Attack, "Sonic Blow swings");
         assert_eq!([motion(29), motion(272)], [Motion::Keep, Motion::Keep], "Increase AGI stands, a combo keeps going");
         assert_eq!((cast_motion(34), cast_motion(19)), (Some(Motion::Keep), None), "Blessing cast standing, Fire Bolt in the cast pose");
-        assert!(ready_instead(14) && ready_instead(4047) && !ready_instead(7));
+        // Ready stance: Crusader and Star Gladiator, not Paladin. Second swing: Doram (cart too) and the Druid line on foot.
+        assert_eq!([14, 4047, 4015, 7].map(skill_pose), [4, 4, 12, 12]);
+        assert_eq!([4218, 4221, 4315, 4351, 4355, 4356, 4360].map(skill_pose), [10, 10, 10, 10, 10, 12, 12]);
+        assert_eq!([4218, 4220, 4308, 4219, 4315, 4353, 7].map(cast_pose), [5, 5, 5, 12, 12, 12, 12]);
         assert_eq!((hit_gap_ms(56), hit_gap_ms(5)), (280, 200));
     }
 
