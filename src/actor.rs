@@ -192,9 +192,8 @@ const MOUNTS: u32 = RIDING | DRAGONS[0] | DRAGONS[1] | DRAGONS[2] | DRAGONS[3] |
 /// kept in `Look::option` so every body choice through `sprite_job` sees it. It never comes from the server.
 pub const ALL_RIDING_LOOK: u32 = 0x8000_0000;
 /// The body each job rides on with the all-jobs mount, applied after the outfits and class mounts above (so a Knight
-/// on a Peco or in the wedding dress stays as he is). Jobs 4351–4357 also have mounts, 4358–4360, which no name table
-/// holds yet.
-const ALL_RIDING_BODIES: [(u16, u16); 150] = [
+/// on a Peco or in the wedding dress stays as he is).
+const ALL_RIDING_BODIES: [(u16, u16); 157] = [
     (0, 4124),
     (1, 4116),
     (2, 4130),
@@ -345,6 +344,13 @@ const ALL_RIDING_BODIES: [(u16, u16); 150] = [
     (4307, 4314),
     (4308, 4315),
     (4316, 4309),
+    (4351, 4358),
+    (4352, 4358),
+    (4353, 4359),
+    (4354, 4359),
+    (4355, 4360),
+    (4356, 4358),
+    (4357, 4358),
 ];
 
 /// rathena `OPTION_FALCON` (`src/map/status.hpp`).
@@ -4173,6 +4179,14 @@ mod tests {
         assert!(include_str!("job_sprites.txt").lines().filter(|line| !line.starts_with('#')).all(|line| line.split('\t').count() == 5));
         assert_eq!(job_sprites(4013).unwrap().weapon_path("인간족", "남", "_카타르_카타르").unwrap(), "data\\sprite\\인간족\\어세신\\어세신_남_카타르_카타르");
         assert_eq!(job_sprites(4008).unwrap().imf_path("여"), "data\\imf\\기사_여.imf");
+        // The Druid line, 4351 to 4360: human bodies, the two babies on the grown body, no weapon on a mount or a beast.
+        let druid_line = ["DRUID", "DRUID", "KARNOS", "KARNOS", "ALITEA", "WEREWOLF", "WERERAPTOR", "DRUID_RIDING", "KARNOS_RIDING", "ALITEA_RIDING"];
+        assert!((4351..).zip(druid_line).all(|(job, body)| job_sprites(job).is_some_and(|names| (names.body, names.imf, names.palette) == (body, body, body))));
+        assert_eq!([weapon(4354), weapon(4355), weapon(4356), weapon(4360)], [Some(("KARNOS", "KARNOS")), Some(("ALITEA", "ALITEA")), None, None]);
+        assert_eq!(
+            body_files(4353, false, 2, 0).map(|files| (files.sprite, files.dye)),
+            Some((r"data\sprite\인간족\몸통\여\KARNOS_여".into(), r"data\palette\몸\KARNOS_여_2.pal".into()))
+        );
         assert_eq!(job_sprites(4218).map(|names| names.palette), Some("묘족"));
         assert!(job_sprites(4023).is_some() && job_sprites(4080).is_some() && job_sprites(31).is_none());
     }
@@ -4216,7 +4230,7 @@ mod tests {
         assert_eq!([sprite_job(0, ALL_RIDING_LOOK), sprite_job(7, ALL_RIDING_LOOK), sprite_job(4061, ALL_RIDING_LOOK)], [4124, 4199, 4133]);
         // A class mount or an outfit comes first, and neither body is in the table: the Peco knight and the wedding dress stay.
         assert_eq!([sprite_job(7, RIDING | ALL_RIDING_LOOK), sprite_job(7, WEDDING | ALL_RIDING_LOOK)], [13, 22]);
-        assert_eq!([sprite_job(4252, ALL_RIDING_LOOK), sprite_job(4316, ALL_RIDING_LOOK), sprite_job(4351, ALL_RIDING_LOOK)], [4265, 4309, 4351]);
+        assert_eq!([sprite_job(4252, ALL_RIDING_LOOK), sprite_job(4316, ALL_RIDING_LOOK), sprite_job(4355, ALL_RIDING_LOOK)], [4265, 4309, 4360]);
         // Every mount body has names to load, and the server's option word can't carry the bit.
         assert!(ALL_RIDING_BODIES.iter().all(|&(_, to)| job_sprites(to).is_some()));
         assert_eq!(BODY_OPTIONS & ALL_RIDING_LOOK, 0);
