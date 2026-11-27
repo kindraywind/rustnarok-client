@@ -5,6 +5,7 @@ pub(crate) mod aura;
 pub(crate) mod cast_square;
 pub(crate) mod effects;
 pub(crate) mod emitters;
+pub(crate) mod evils_paw;
 pub(crate) mod exp_shown;
 pub(crate) mod magic_floor;
 pub(crate) mod map_effects;

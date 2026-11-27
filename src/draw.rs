@@ -378,6 +378,7 @@ impl App {
         for (effect, at) in game.world.map_effects.due(crate::whole_ms(now), near) {
             game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, now);
         }
+        game.effects.keep_map_strs(gpu, grf, &self.effect_table, &game.world.emitters.strs);
         // The party's docked window stays right of the party window.
         if game.party_window.frame.open
             && let Some(dialog) = &mut game.party_dialog

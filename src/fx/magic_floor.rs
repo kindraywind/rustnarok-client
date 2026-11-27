@@ -4,6 +4,7 @@
 
 use rustnarok_client::lua::FloorInfo;
 
+use crate::emitters::SQUARE;
 use crate::wind::{POINTS, band};
 use crate::world::{MeshVertex, Vector};
 use crate::world_fx::{Eye, yawed};
@@ -31,8 +32,6 @@ const RING_ROUND: u32 = 300;
 const RING_ALPHA: i32 = 50;
 const RING_RISE: u32 = 12;
 const RING_HELD: u32 = 100;
-/// A square's corners and their texture corners, as an emitter particle's.
-const SQUARE: [([f32; 2], [f32; 2]); 4] = [([-1.0, 1.0], [0.0, 0.0]), ([1.0, 1.0], [1.0, 0.0]), ([-1.0, -1.0], [0.0, 1.0]), ([1.0, -1.0], [1.0, 1.0])];
 
 /// One ring of cloud.
 #[derive(Debug, Clone, PartialEq)]

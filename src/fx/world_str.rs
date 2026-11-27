@@ -138,6 +138,14 @@ impl Table {
         self.0.get(&id)
     }
 
+    /// The row a map's STR object plays `file` with (a name under data\texture\effect\ as the map's table gives it:
+    /// backslashes, with its .str): the map objects' row, but every object its own copy.
+    pub fn map_row(&self, file: &str) -> Option<Row> {
+        let name = file.replace('\\', "/");
+        let name = if name.to_lowercase().ends_with(".str") { &name[..name.len() - 4] } else { name.as_str() };
+        Some(Row { file: Source::Named(name.to_owned()), single: false, ..self.get(NO_RISE)?.clone() })
+    }
+
     /// Gives every launch of `id` a start delay of `ms`.
     pub fn set_delay(&mut self, id: u32, ms: i32) {
         if let Some(row) = self.0.get_mut(&id) {
@@ -631,6 +639,21 @@ mod tests {
         assert!(table.get(1817).is_some());
         assert_eq!(table.get(1163).unwrap().events, vec![Event::Sound(0, "effect\\wizard_meteor.wav".into()), Event::Quake(40)]);
         assert_eq!(table.get(141).unwrap().file, Source::Named("Pneuma%d".into()));
+    }
+
+    #[test]
+    fn a_maps_str_objects_each_play_their_file() {
+        let row = table().map_row("water_splash\\water_splash.STR").unwrap();
+        assert_eq!((&row.file, row.single, row.looped, row.owner), (&Source::Named("water_splash/water_splash".into()), false, true, false));
+        assert_eq!(Worlds::file_of(&row, false, 0).as_deref(), Some("water_splash/water_splash"));
+        // Six objects of the one id, none with an owner: six copies, each on the point itself and never over.
+        let mut worlds = Worlds::default();
+        for object in 0..6 {
+            let launch = Launch { id: NO_RISE, owner: None, point: [object as f32, 0.0, 0.0], unique: false, life: 0, min: false, roll: 0 };
+            assert!(worlds.launch(&row, &launch, |_| None).is_some());
+        }
+        assert_eq!(worlds.iter().count(), 6);
+        assert!(worlds.iter().all(|copy| !copy.lifted && copy.timeline.looped));
     }
 
     #[test]

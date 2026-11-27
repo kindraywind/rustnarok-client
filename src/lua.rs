@@ -575,14 +575,38 @@ pub struct FloorInfo {
     pub alpha: u8,
 }
 
-/// A map's effect tables by row number: for its plain emitter objects, its animated ones, its winds and its magic
-/// floors.
+/// One row of a map's Evil's Paw table: a moving picture that faces the camera.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PawInfo {
+    /// From the map's object to the picture's middle (the map's axes, y down).
+    pub offset: [f32; 3],
+    /// The picture's half side.
+    pub size: f32,
+    /// A picture stays this many 16 ms ticks and one more.
+    pub speed: i32,
+}
+
+/// One row of a map's STR table: an effect file played over and over at the map's object.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StrInfo {
+    /// Under `data\texture\effect\`, as the row names it (with its `.str`).
+    pub file: String,
+    /// How many times its own size it is drawn.
+    pub scale: f32,
+    /// How much of its own alpha it keeps, 0 to 1.
+    pub alpha: f32,
+}
+
+/// A map's effect tables by row number: for its plain emitter objects, its animated ones, its winds, its magic floors,
+/// its Evil's Paws and its STR objects.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MapEmitters {
     pub plain: HashMap<u32, EmitterInfo>,
     pub animated: HashMap<u32, EmitterInfo>,
     pub winds: HashMap<u32, WindInfo>,
     pub floors: HashMap<u32, FloorInfo>,
+    pub paws: HashMap<u32, PawInfo>,
+    pub strs: HashMap<u32, StrInfo>,
 }
 
 /// The emitter tables of `map` (a name, or `name.rsw`); empty for a map without the file.
@@ -596,11 +620,11 @@ pub fn map_emitters(grf: &Grf, map: &str) -> MapEmitters {
     })
 }
 
-/// The tables `_<map>_emitterInfo`, `_<map>_animatedEmitterInfo`, `_<map>_windEffectInfo` and `_<map>_magicfloorInfo`
-/// (the map's name without its first `@`) of a file of version `_<map>_effect_version`. 0 and 1 have only the first,
-/// without the last four fields, and with `zenable` only when `_<map>_emitterInfo_version` is 1; their magic floors
-/// are the rows of `_<map>_Effect` whose `Type` is 1025, each under its `ID`. 2 has all four, the animated rows
-/// without `eternity` and `scale`. A later version isn't read.
+/// The tables `_<map>_emitterInfo`, `_<map>_animatedEmitterInfo`, `_<map>_windEffectInfo`, `_<map>_magicfloorInfo`,
+/// `_<map>_evilsPawInfo` and `_<map>_ez2strInfo` (the map's name without its first `@`) of a file of version
+/// `_<map>_effect_version`. 0 and 1 have only the first, without the last four fields, and with `zenable` only when
+/// `_<map>_emitterInfo_version` is 1; their magic floors are the rows of `_<map>_Effect` whose `Type` is 1025, each
+/// under its `ID`. 2 has all six, the animated rows without `eternity` and `scale`. A later version isn't read.
 fn emitter_tables(source: Vec<u8>, map: &str) -> io::Result<MapEmitters> {
     let lua = new_lua()?;
     exec_bytes(&lua, map, source)?;
@@ -634,6 +658,8 @@ fn emitter_tables(source: Vec<u8>, map: &str) -> io::Result<MapEmitters> {
                 animated,
                 winds: table("windEffectInfo").iter().filter_map(|(number, row)| Some((*number, wind_row(row)?))).collect(),
                 floors: table("magicfloorInfo").iter().filter_map(|(number, row)| Some((*number, floor_row(row)?))).collect(),
+                paws: table("evilsPawInfo").iter().filter_map(|(number, row)| Some((*number, paw_row(row)?))).collect(),
+                strs: table("ez2strInfo").iter().filter_map(|(number, row)| Some((*number, str_row(row)?))).collect(),
             }
         }
         _ => MapEmitters::default(),
@@ -678,6 +704,30 @@ fn wind_row(row: &mlua::Table) -> Option<WindInfo> {
 // ponytail: `Speed`, `RiseAngle`, `FullDisplayAngle` and `Height0`…`Height20` are not read: nothing is drawn from them.
 fn floor_row(row: &mlua::Table) -> Option<FloorInfo> {
     Some(FloorInfo { size: first_number(row, "Size")?, angle: first_number(row, "Angle")? as i32, alpha: first_number(row, "Alpha")? as i32 as u8 })
+}
+
+/// An Evil's Paw row's fields: `offsetPos` three numbers, `Size` and `Speed` one-number lists kept whole.
+// ponytail: a row without one of its fields is left out; nothing in the data has one.
+fn paw_row(row: &mlua::Table) -> Option<PawInfo> {
+    let offset: Vec<f32> = row.get::<mlua::Table>("offsetPos").ok()?.sequence_values::<mlua::Value>().flatten().filter_map(lua_f32).collect();
+    let &[x, y, z, ..] = offset.as_slice() else { return None };
+    Some(PawInfo { offset: [x, y, z], size: first_number(row, "Size")?.trunc(), speed: first_number(row, "Speed")? as i32 })
+}
+
+/// An STR row's fields: `str`, and `scaleratio` and `alpharatio` when it has them (numbers, or texts of numbers as the
+/// data has them); the alpha kept within 0 and 1.
+// ponytail: `rednerflag` is not read. 37 (five rows of the data's six) is how every such effect is drawn; 45 (one row)
+// would draw it under the units instead of over them, which the STR copies have no pass for.
+fn str_row(row: &mlua::Table) -> Option<StrInfo> {
+    let number = |field: &str| match row.get::<mlua::Value>(field).ok()? {
+        mlua::Value::String(text) => decode(&text).trim().parse().ok(),
+        value => lua_f32(value),
+    };
+    Some(StrInfo {
+        file: decode_name(&row.get::<mlua::LuaString>("str").ok()?),
+        scale: number("scaleratio").unwrap_or(1.0),
+        alpha: number("alpharatio").unwrap_or(1.0).clamp(0.0, 1.0),
+    })
 }
 
 /// A row's fields: `zenable` when `depth` (else on), and with `extras` the four a row may add (else their defaults).
@@ -2790,6 +2840,25 @@ mod tests {
         let old = file.replace("_1test_effect_version = 2", "").replace("[0] = { Type", "[0] = { Type = { 47 }, ID = { 0 } }, [1] = { Type");
         let tables = super::emitter_tables(old.into_bytes(), "1@test").unwrap();
         assert_eq!((tables.winds.len(), &tables.floors), (0, &std::collections::HashMap::from([(5, super::FloorInfo { size: 34.0, angle: 22, alpha: 255 })])));
+    }
+
+    #[test]
+    fn reads_a_maps_paw_and_str_tables() {
+        let file = r#"_1test_effect_version = 2
+            _1test_evilsPawInfo = { [0] = { pos = { 130.3, -30, 424.8 }, offsetPos = { 0, -40, 2.5 }, Size = { 14.9 }, Speed = { 5 } },
+                [1] = { offsetPos = { 0, -40, 0 }, Size = { 13 } } }
+            _1test_ez2strInfo = { [0] = { pos = { 1, 2, 3 }, str = "new_glitter\\new_glitter.str", rednerflag = "37", scaleratio = "2.0", alpharatio = "0.5" },
+                [1] = { str = "water_splash\\water_splash.str", rednerflag = 45, alpharatio = 3 }, [2] = { rednerflag = "37" } }"#;
+        let tables = super::emitter_tables(file.as_bytes().to_vec(), "1@test").unwrap();
+        // The size and the speed are whole numbers; a row without one of its fields is left out.
+        assert_eq!(tables.paws, std::collections::HashMap::from([(0, super::PawInfo { offset: [0.0, -40.0, 2.5], size: 14.0, speed: 5 })]));
+        // The ratios come as texts of numbers; without them the effect is as its file has it; the alpha stays within 1.
+        let glitter = super::StrInfo { file: "new_glitter\\new_glitter.str".into(), scale: 2.0, alpha: 0.5 };
+        let splash = super::StrInfo { file: "water_splash\\water_splash.str".into(), scale: 1.0, alpha: 1.0 };
+        assert_eq!(tables.strs, std::collections::HashMap::from([(0, glitter), (1, splash)]));
+        // An old file has neither table.
+        let old = super::emitter_tables(file.replace("_1test_effect_version = 2", "").into_bytes(), "1@test").unwrap();
+        assert!(old.paws.is_empty() && old.strs.is_empty());
     }
 
     #[test]
