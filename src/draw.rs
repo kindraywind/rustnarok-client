@@ -375,8 +375,8 @@ impl App {
         game.poll_web_emblems(gpu);
         // The map's own effects: those started at its load, then each on its timer while the player is near.
         let near = actor::world_xz(game.player.position(now));
-        for (effect, at) in game.world.map_effects.due(crate::whole_ms(now), near) {
-            game.effects.play(gpu, grf, &self.effect_table, effect, effects::Target::Ground, at, now);
+        for (effect, at, size) in game.world.map_effects.due(crate::whole_ms(now), near) {
+            game.effects.play_map(gpu, grf, &self.effect_table, effect, at, size, now);
         }
         game.effects.keep_map_strs(gpu, grf, &self.effect_table, &game.world.emitters.strs);
         // The party's docked window stays right of the party window.
@@ -392,6 +392,8 @@ impl App {
         let mut player_feet = game.world.cell_position(player_cell);
         // The map's particle emitters throw while the player is near, in 16 ms ticks.
         game.world.emitters.tick(crate::whole_ms(now), player_feet, &mut emitters::chance);
+        // The looks of the map's other effect objects (glows, torches, flies, smoke) run in the same ticks.
+        game.effects.advance_map_looks(gpu, now, player_feet);
         player_feet[1] += game.effects.lift(None);
         if game.weather.take_map_launch() && self.graphics.effects_on {
             for &(effect, count) in assets.weather.map_launches(&game.map) {

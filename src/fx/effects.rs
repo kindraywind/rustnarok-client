@@ -13,8 +13,8 @@ use rustnarok_client::model::Rsm;
 use crate::actor::{Placed, SpriteSet, Timing};
 use crate::prims::{
     balls, blitz, body, bolts, boomerang, brawl, burst, cells, chi, circle, crowds, dancer, elemental, emblems, first, gaia, ground, guard, holes, huujin,
-    kicks, knight, linker, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sheet, sight, sniper, snow, songs, soul, souls, spears,
-    sphere, spray, star, stone, tanji, throw, transcend, vortex, walls, waterball, waves, wheels,
+    kicks, knight, linker, map_looks, mechanic, monk, notes, painter, petals, portal, sage, shafts, shards, sheet, sight, sniper, snow, songs, soul, souls,
+    spears, sphere, spray, star, stone, tanji, throw, transcend, vortex, walls, waterball, waves, wheels,
 };
 use crate::render::{Gpu, Texture};
 use crate::world::{self, CELL, EffectMesh, EffectQuad, MeshVertex, Vector};
@@ -2199,6 +2199,10 @@ pub struct Effects {
     /// fire ball's frame by frame, and the camera's turn in degrees (fire balls turn with it).
     prims: crate::prims::Prims,
     ghost: Vec<Placed>,
+    /// The map looks' firefly and smoke sprites' layers now, and where the player stood when they last ran.
+    map_firefly: Vec<Placed>,
+    map_smoke: Vec<Placed>,
+    map_player: Vector,
     /// The first jobs' star sprites' layers (one frame each), by path.
     stars: HashMap<&'static str, Vec<Placed>>,
     /// Holy Water's bottle sprite's frames (1 to 41), plain white, by frame.
@@ -3777,6 +3781,11 @@ impl Effects {
             return;
         }
         let id = table.min_id(id, self.min);
+        // A look the maps place (a glow, a torch, flies), whoever plays it: at its own size.
+        if map_looks::has(id) {
+            self.play_sounds(table, id, at, now);
+            return self.map_look(gpu, grf, id, at, 0.0);
+        }
         // An STR world effect that names its file (the hat rows and the launcher-given ones play from their launchers): its own
         // sounds and shakes come with it.
         if table.world(id).is_some_and(|row| matches!(row.file, world_str::Source::Named(_))) {
@@ -3851,6 +3860,58 @@ impl Effects {
             self.play_sounds(table, id, at, now);
         }
         self.show(gpu, grf, table, id, target, at, now);
+    }
+
+    /// Plays a map's own effect object `id` at its place; `size` is the object's first parameter (the size of a glow
+    /// or a torch; 0 or less: the look's own). The chimney smoke is drawn only from here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_map(&mut self, gpu: &Gpu, grf: &Grf, table: &Table, id: u32, at: Vector, size: f32, now: Instant) {
+        if map_looks::has(id) || id == map_looks::SMOKE {
+            self.play_sounds(table, id, at, now);
+            self.map_look(gpu, grf, id, at, size);
+        } else {
+            self.play(gpu, grf, table, id, Target::Ground, at, now);
+        }
+    }
+
+    /// Starts a map look with its pictures and sprites loaded.
+    fn map_look(&mut self, gpu: &Gpu, grf: &Grf, id: u32, at: Vector, size: f32) {
+        for path in map_looks::MapLooks::pictures(id) {
+            self.textures.entry(path).or_insert_with_key(|path| gpu.try_load_texture(grf, path, true).ok());
+        }
+        if let Some(sprite) = [(map_looks::FIREFLY, map_looks::FIREFLY_SPRITE), (map_looks::SMOKE, map_looks::SMOKE_SPRITE)].iter().find(|look| look.0 == id) {
+            self.sprites.entry(sprite.1.to_owned()).or_insert_with(|| SpriteSet::at(grf, sprite.1));
+        }
+        self.prims.map_looks.play(id, at, size, &mut |range| pick(0, range - 1));
+    }
+
+    /// Runs the map looks' ticks up to `now`, the player standing at `player`, and takes their sprites' frames.
+    pub fn advance_map_looks(&mut self, gpu: &Gpu, now: Instant, player: Vector) {
+        self.map_player = player;
+        self.prims.map_looks.advance(now, player, &mut |range| pick(0, range - 1));
+        // ponytail: the firefly shows particle1's first action, frame 0.
+        if let Some(Some(sprite)) = self.sprites.get_mut(map_looks::FIREFLY_SPRITE).filter(|_| !self.prims.map_looks.fireflies.is_empty()) {
+            self.map_firefly = sprite.frame_at(gpu, 0, 0, Timing::Loop(0.0));
+        }
+        // ponytail: the smoke's frame goes on one a tick for every chimney alike; the game counts one a drawn frame
+        // for each puff, so it runs faster over 62 frames a second and waits while a chimney is out of range.
+        if let Some(Some(sprite)) = self.sprites.get_mut(map_looks::SMOKE_SPRITE).filter(|_| !self.prims.map_looks.smokes.is_empty()) {
+            let frames = sprite.frames(0).max(1);
+            let frame = self.prims.map_looks.ticks as usize % frames;
+            self.map_smoke = sprite.frame_at(gpu, 0, 0, Timing::Span((frame as f32 + 0.5) / frames as f32));
+        }
+    }
+
+    /// How many of each map look are running, for the test driver, with the squares and sprites they draw now.
+    pub fn map_look_counts(&self) -> serde_json::Value {
+        let looks = &self.prims.map_looks;
+        let mut counts: serde_json::Map<String, serde_json::Value> = looks.counts().iter().map(|&(name, count)| (name.to_owned(), count.into())).collect();
+        let squares = looks.squares(self.map_player);
+        counts.insert("squares".to_owned(), squares.len().into());
+        counts.insert("squares_ready".to_owned(), squares.iter().filter(|square| matches!(self.textures.get(&square.picture), Some(Some(_)))).count().into());
+        counts.insert("firefly_sprites".to_owned(), if self.map_firefly.is_empty() { 0 } else { looks.firefly_sprites(self.map_player).len() }.into());
+        counts.insert("smoke_sprites".to_owned(), if self.map_smoke.is_empty() { 0 } else { looks.smoke_sprites(self.map_player).len() }.into());
+        counts.into()
     }
 
     /// A cast's aura `id` on `unit` at `at`: Bash's burst (16) lasts the cast (`cast_ms`, so one under 640 ms shows only
@@ -6867,6 +6928,27 @@ impl Effects {
             quads.extend(self.prims.vortex.quads(now, self.yaw.to_degrees(), |path| self.textures.get(path).and_then(Option::as_ref), &position_of));
             // Cold Slower's snowflakes, facing the camera.
             quads.extend(self.prims.snow.quads(now, |path| self.textures.get(path).and_then(Option::as_ref)));
+            // The maps' own looks: glows, torches and flies added on, then the fireflies and the chimney smoke.
+            let looks = &self.prims.map_looks;
+            for square in looks.squares(self.map_player) {
+                if let Some(Some(texture)) = self.textures.get(&square.picture) {
+                    let [red, green, blue] = square.rgb.map(|channel| f32::from(channel) / 255.0);
+                    quads.push((texture, square.at, square.corners, [red, green, blue, square.alpha / 255.0], true, false));
+                }
+            }
+            let sprites = [
+                (map_looks::FIREFLY_SPRITE, &self.map_firefly, looks.firefly_sprites(self.map_player)),
+                (map_looks::SMOKE_SPRITE, &self.map_smoke, looks.smoke_sprites(self.map_player)),
+            ];
+            for (path, layers, draws) in sprites {
+                let Some(Some(sprite)) = self.sprites.get(path) else { continue };
+                for draw in draws {
+                    for &(key, position, size, layer_angle) in layers {
+                        let corners = QUAD_UV.map(|uv| world::sprite_corner(position, size, layer_angle + draw.turn, uv).0.map(|value| value * draw.scale));
+                        quads.push((sprite.texture(key), draw.at, corners, [1.0, 1.0, 1.0, draw.alpha / 255.0], false, false));
+                    }
+                }
+            }
             // Lope's motes and petals, facing the camera.
             quads.extend(self.prims.petals.quads(|path| self.textures.get(path).and_then(Option::as_ref)));
             // Lullaby Deep Sleep's notes, over everything (`STR_RISE` is taken off again).
