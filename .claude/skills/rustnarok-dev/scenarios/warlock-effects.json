@@ -1,0 +1,1004 @@
+{
+  "about": "A Warlock's STR world effects on a training dummy: Soul Expansion's cast pair, Crimson Rock's rock and ground mark, Hell Inferno's cast mark, its pillar pair and the four side pillars round the target, Chain Lightning's cast pair and its strike, Comet's cast pair and the comet with its ground mark on the target, Jack Frost's cast ring (gone with the cast) and a fire Tetra Vortex: the ball and ring of the cast, then the element's ground ring, burst and four sub explosions. Each is checked in the state's world_strs as it starts. Ends a Novice without skills, items or hotkey.",
+  "account": "",
+  "slot": 0,
+  "steps": [
+    {
+      "say": "@warp prt_fild08 170 360"
+    },
+    {
+      "settle": 1500
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@job 4055"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@set BaseLevel 98"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@allskill"
+    },
+    {
+      "wait": 500
+    },
+    {
+      "say": "@item 716 20"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "say": "@monster 2408 1"
+    },
+    {
+      "wait": 1500
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "skill_tab:4055"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "skill": 2202
+        },
+        {
+          "hotkey": 0
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F1"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_unit": {
+        "kind": "monster",
+        "name": "Dummy 10"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1587": 1,
+          "world_strs.1588": 1
+        }
+      }
+    },
+    {
+      "shot": "wl-soul-expansion-cast",
+      "crop": [
+        212,
+        60,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "SkillHit",
+        "pause": true,
+        "ms": 15000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 250
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1591": 1
+        }
+      }
+    },
+    {
+      "shot": "wl-soul-expansion-hit",
+      "crop": [
+        212,
+        60,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 4500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "skill_tab:4055"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "skill": 2211
+        },
+        {
+          "hotkey": 0
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F1"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_unit": {
+        "kind": "monster",
+        "name": "Dummy 10"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "SkillHit",
+        "pause": true,
+        "ms": 15000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 250
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1274": 1,
+          "world_strs.1275": 1
+        }
+      }
+    },
+    {
+      "shot": "wl-crimson-rock-hit",
+      "crop": [
+        212,
+        60,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 4500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "skill_tab:4055"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "skill": 2212
+        },
+        {
+          "hotkey": 0
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F1"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_unit": {
+        "kind": "monster",
+        "name": "Dummy 10"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1552": 1
+        }
+      }
+    },
+    {
+      "shot": "wl-hell-inferno-cast",
+      "crop": [
+        212,
+        60,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "SkillHit",
+        "pause": true,
+        "ms": 15000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 250
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1550": 1,
+          "world_strs.1551": 1,
+          "world_strs.1553": 4,
+          "world_strs.1554": 4
+        }
+      }
+    },
+    {
+      "shot": "wl-hell-inferno-hit",
+      "crop": [
+        212,
+        60,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 4500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "skill_tab:4055"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "skill": 2214
+        },
+        {
+          "hotkey": 0
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F1"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_unit": {
+        "kind": "monster",
+        "name": "Dummy 10"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1635": 1,
+          "world_strs.1636": 1
+        }
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "SkillHit",
+        "pause": true,
+        "ms": 15000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 250
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1638": 1
+        }
+      }
+    },
+    {
+      "shot": "wl-chain-lightning-hit",
+      "crop": [
+        212,
+        60,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 4500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "skill_tab:4055"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "skill": 2213
+        },
+        {
+          "hotkey": 0
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F1"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_unit": {
+        "kind": "monster",
+        "name": "Dummy 10"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1415": 1,
+          "world_strs.1421": 1
+        }
+      }
+    },
+    {
+      "shot": "wl-comet-cast",
+      "crop": [
+        212,
+        60,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "SkillHit",
+        "pause": true,
+        "ms": 15000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 800
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1413": 1,
+          "world_strs.1414": 1
+        }
+      }
+    },
+    {
+      "shot": "wl-comet-hit",
+      "crop": [
+        212,
+        60,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 4500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@useskill 2204 5 {first}"
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1446": 1
+        }
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 4500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@useskill 2222 5 {first}"
+    },
+    {
+      "wait": 4000
+    },
+    {
+      "say": "@useskill 2222 5 {first}"
+    },
+    {
+      "wait": 4000
+    },
+    {
+      "say": "@useskill 2222 5 {first}"
+    },
+    {
+      "wait": 4000
+    },
+    {
+      "say": "@useskill 2222 5 {first}"
+    },
+    {
+      "wait": 4000
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 400
+    },
+    {
+      "click_on": {
+        "button": "skill_tab:4055"
+      }
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "skill": 2217
+        },
+        {
+          "hotkey": 0
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Alt+S"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "F1"
+    },
+    {
+      "wait": 200
+    },
+    {
+      "click_unit": {
+        "kind": "monster",
+        "name": "Dummy 10"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "Casting",
+        "pause": true,
+        "ms": 8000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 600
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1261": 1,
+          "world_strs.1277": 1
+        }
+      }
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait_for": {
+        "event": "SkillUsed",
+        "pause": true,
+        "ms": 15000
+      }
+    },
+    {
+      "move": [
+        1000,
+        700
+      ]
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "step",
+        "ms": 300
+      }
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "world_strs.1270": 1,
+          "world_strs.1266": 1,
+          "world_strs.1278": 4
+        }
+      }
+    },
+    {
+      "shot": "wl-tetra-vortex-hit",
+      "crop": [
+        212,
+        60,
+        600,
+        560
+      ],
+      "threshold": 30
+    },
+    {
+      "cmd": {
+        "cmd": "clock",
+        "action": "resume"
+      }
+    },
+    {
+      "wait": 4500
+    },
+    {
+      "say": "@heal"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "state": {
+          "world_strs.1446": null
+        }
+      }
+    },
+    {
+      "say": "@killmonster2"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "drag_on": [
+        {
+          "hotkey": 0
+        },
+        {
+          "point": [
+            700,
+            500
+          ]
+        }
+      ]
+    },
+    {
+      "wait": 300
+    },
+    {
+      "expect": {
+        "hotkeys": {
+          "0": null
+        }
+      }
+    },
+    {
+      "say": "@itemreset"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@skreset"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@set BaseLevel 1"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "say": "@job 0"
+    },
+    {
+      "wait": 500
+    }
+  ]
+}

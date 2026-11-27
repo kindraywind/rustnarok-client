@@ -401,9 +401,11 @@ impl World {
         self.loaded.as_ref().map_or(0, |loaded| loaded.animation.last_key())
     }
 
-    /// Ends the picture with a cast of `cast_ms`, or after its last key if that comes first.
+    /// Ends the picture with a cast of `cast_ms`, or after its last key if that comes first; a looping one goes on to the
+    /// cast's end (Jack Frost's cast ring).
     pub fn cut_with_cast(&mut self, cast_ms: u32) {
-        self.timeline.cut = cast_ms.min(17 * (self.last_key() + 1) as u32) as i32;
+        let own = if self.row.looped { u32::MAX } else { 17 * (self.last_key() + 1) as u32 };
+        self.timeline.cut = cast_ms.min(own) as i32;
     }
 
     /// Runs the STR step, `steps` times for a fast-forward.
@@ -432,7 +434,8 @@ impl World {
         }
         match self.owner {
             Some(unit) if self.row.owner => (scene.feet)(unit).is_none(),
-            _ => self.over && !self.row.looped,
+            // A looping STR is only over when it was cut.
+            _ => self.over,
         }
     }
 
@@ -691,6 +694,9 @@ mod tests {
         let mut timeline = Timeline { looped: true, ..Timeline::default() };
         let run = steps(&mut timeline, 100, 203);
         assert_eq!((run[100], run[101], run[202]), (Step::Show(100), Step::Show(0), Step::Show(0)));
+        // A cut ends a looping one too: the cut counts down 16 a step, so a 500 ms one is over at step 32.
+        let mut timeline = Timeline { looped: true, cut: 500, ..Timeline::default() };
+        assert_eq!(steps(&mut timeline, 5, 33).iter().position(|step| *step == Step::Over), Some(32));
         // Hold keeps the last frame.
         let mut timeline = Timeline { hold: true, ..Timeline::default() };
         let run = steps(&mut timeline, 5, 9);
