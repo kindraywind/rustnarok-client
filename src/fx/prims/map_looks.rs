@@ -359,12 +359,17 @@ pub struct MapLooks {
     last: Option<Instant>,
     /// Ticks run; the smoke's sprite shows one frame for each.
     pub ticks: u32,
+    /// Looks started since the map's load.
+    pub started: usize,
 }
 
 impl MapLooks {
     /// Starts `id`'s look at `at`; `size` is the map object's first parameter (0 or less: the look's own).
+    // ponytail: a glow, a torch or a swarm lasts 18 days, as in the game, and stays where it started: one played on a
+    // unit doesn't follow it, and a second one played at a place adds to the first (the maps' own come once in hours).
     pub fn play(&mut self, id: u32, at: Vector, size: f32, rand: &mut dyn FnMut(u32) -> u32) {
         let sized = |own: f32| if size > 0.0 { size } else { own };
+        self.started += usize::from(has(id) || id == SMOKE);
         if let Some(&(_, picture, alpha, rgb, turn)) = GLOWS.iter().find(|glow| glow.0 == id) {
             let picture = format!("data\\texture\\effect\\{picture}");
             self.glows.push(Glow { picture, at, size: sized(GLOW_SIZE), alpha, rgb, turn, angle: rand(360) as i32, phase: 0, ticks: 0 });
@@ -462,8 +467,9 @@ impl MapLooks {
     }
 
     /// How many of each look are running, for the test driver.
-    pub fn counts(&self) -> [(&'static str, usize); 5] {
+    pub fn counts(&self) -> [(&'static str, usize); 6] {
         [
+            ("started", self.started),
             ("glows", self.glows.len()),
             ("torches", self.torches.len()),
             ("swarms", self.swarms.len()),
@@ -576,9 +582,13 @@ mod tests {
         fly.alpha = 120;
         fly.fade(false, 125, &mut first);
         assert_eq!((fly.alpha, fly.blink), (114, 2));
-        (0..88).for_each(|_| drop(fly.fade(false, 125, &mut none)));
+        for _ in 0..88 {
+            fly.fade(false, 125, &mut none);
+        }
         assert_eq!((fly.alpha, fly.blink), (0, 90));
-        (0..29).for_each(|_| drop(fly.fade(false, 125, &mut none)));
+        for _ in 0..29 {
+            fly.fade(false, 125, &mut none);
+        }
         assert_eq!((fly.alpha, fly.blink), (116, 119));
         fly.fade(false, 125, &mut none);
         assert_eq!(fly.blink, 0);
@@ -613,7 +623,8 @@ mod tests {
         // It flies at 0.15 to 0.49 a tick, and is gone after 140 ticks.
         assert!(distance(firefly.place(), HERE) < 14.0 + 10.0 + 0.5 * 140.0);
         assert_eq!(run(45, 0.0, 3, 139).fireflies.len(), 1);
-        assert!(run(45, 0.0, 3, 140).fireflies.is_empty());
+        let gone = run(45, 0.0, 3, 140);
+        assert!(gone.fireflies.is_empty() && gone.started == 1);
         // Up in the map's axes is down: straight ahead with no pitch is +z; a quarter pitch points up.
         assert_eq!(heading(0.0, 0.0), [0.0, -0.0, 1.0]);
         assert!((heading(0.0, 90.0)[1] + 1.0).abs() < 1e-6);
