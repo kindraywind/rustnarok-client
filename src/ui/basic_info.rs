@@ -225,12 +225,17 @@ fn zeny_grouped(zeny: i64) -> String {
 /// rounded down; none at the top level (no next, or 99999999) or past the next.
 pub fn exp_tip(exp: i64, next: i64, places: u32) -> Option<String> {
     let scale = 10_i64.pow(places + 2);
-    (next > 0 && next != 99_999_999 && exp <= next).then(|| format!("{:.*} %", places as usize, (exp * scale / next) as f64 * 100.0 / scale as f64))
+    (!top_level(next) && exp <= next).then(|| format!("{:.*} %", places as usize, (exp * scale / next) as f64 * 100.0 / scale as f64))
+}
+
+/// The top level: no next, or the 99,999,999 rathena sends there.
+fn top_level(next: i64) -> bool {
+    next <= 0 || next == 99_999_999
 }
 
 /// Base exp in percent to a tenth, rounded down; 100 at the top level.
 fn exp_percent(exp: i64, next: i64) -> f64 {
-    if next > 0 { (exp * 1000 / next) as f64 / 10.0 } else { 100.0 }
+    if top_level(next) { 100.0 } else { (exp * 1000 / next) as f64 / 10.0 }
 }
 
 /// The mini window's first line, and the shorter one when that's too wide: levels, job and base exp to a tenth.
@@ -739,7 +744,7 @@ impl BasicInfo {
             text(layer, line, layout.levels[row], BLACK);
             // At the top level there's no next: no bar.
             let next = value(next);
-            if next > 0 {
+            if !top_level(next) {
                 let corner = layout.exp_bars[row];
                 layer.sprites.push((&assets.exp_border, at(corner), EXP_SIZE));
                 layer.sprites.push((&chrome.white, at(offset(corner, [1.0, 1.0])), [EXP_INNER, EXP_SIZE[1] - 2.0]));
@@ -1047,6 +1052,8 @@ mod tests {
         assert!(!heavy(999, 2000, 50) && heavy(1000, 2000, 50) && heavy(1800, 2000, 90) && !heavy(1799, 2000, 90) && !heavy(5, 0, 50));
         assert_eq!(mini_lines(5, "Novice", 3, 25, 200)[0], "Lv. 5 / Novice / Lv. 3 / Exp. 12.5 %");
         assert_eq!(mini_lines(99, "Novice", 10, 0, 0)[1], "Lv99 / Novice / Lv10 / Exp100.0%");
+        // The top level as rathena sends it: 100 too.
+        assert_eq!(mini_lines(99, "Novice", 10, 0, 99_999_999)[1], "Lv99 / Novice / Lv10 / Exp100.0%");
     }
 
     #[test]
