@@ -1,5 +1,5 @@
 {
-  "about": "4th job windows (issue #321): a Dragon Knight (@job 4252, base level 199) with POW back at 0 and 10 trait points and some AP (our NPC's healap). The basic info window is 149 tall with three bars, HP, SP and AP, at the game's rows; the status window opens with its trait panel showing POW to CRT, their costs and P.ATK to C.RATE, and POW's \"+\" raises it by one (points drop); the bar shuts the panel. Back to a level 1 Novice; the lane reset clears the traits.",
+  "about": "4th job windows (issue #321): a Dragon Knight (@job 4252, base level 199) with POW back at 0 and 10 trait points and some AP (our NPC's healap). The basic info window is 149 tall with three bars, HP, SP and AP, at the game's rows: the AP bar empty at 0 AP, blue with some and red when full (the NPC's \"full\"), the weight and zeny as \"Weight: … | Zeny: …\"; minimised (Alt+V) it is 71 tall with three lines, HP beside the base exp and SP beside AP; the status window opens with its trait panel showing POW to CRT, their costs and P.ATK to C.RATE, and POW's \"+\" raises it by one (points drop); the bar shuts the panel. Back to a level 1 Novice; the lane reset clears the traits.",
   "account": "",
   "slot": 0,
   "steps": [
@@ -46,6 +46,32 @@
       "wait": 800
     },
     {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "expect": {
+        "state": {
+          "player.traits.ap": 0
+        },
+        "state_at_least": {
+          "player.traits.max_ap": 1
+        }
+      }
+    },
+    {
+      "shot": "fourth-basic-info-no-ap",
+      "crop": [
+        0,
+        0,
+        230,
+        170
+      ],
+      "threshold": 5
+    },
+    {
       "key": "Tab"
     },
     {
@@ -80,6 +106,69 @@
     },
     {
       "shot": "fourth-basic-info",
+      "crop": [
+        0,
+        0,
+        230,
+        170
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Alt+V"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "shot": "fourth-basic-info-mini",
+      "crop": [
+        0,
+        0,
+        230,
+        100
+      ],
+      "threshold": 5
+    },
+    {
+      "key": "Alt+V"
+    },
+    {
+      "wait": 300
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "type": "full"
+    },
+    {
+      "key": "Enter"
+    },
+    {
+      "wait": 1000
+    },
+    {
+      "move": [
+        600,
+        500
+      ]
+    },
+    {
+      "expect": {
+        "state_at_least": {
+          "player.traits.ap": 100
+        }
+      }
+    },
+    {
+      "shot": "fourth-basic-info-full-ap",
       "crop": [
         0,
         0,

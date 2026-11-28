@@ -1957,7 +1957,7 @@ impl App {
         // The basic info and chat windows are kept as they're left.
         let job = pc_job_names.get(&game.me.job).map_or("", String::as_str);
         // A window that grew (more zeny, a longer HP line) takes the hotbar's place: the bar moves out of its way.
-        if game.basic_info.update_width(font, &game.status, job) {
+        if game.basic_info.update_width(font, messages, &game.status, job) {
             game.hotkeys.clear_of(game.basic_info.bounds(), screen()[0]);
         }
         game.basic_info.save_if_changed();
