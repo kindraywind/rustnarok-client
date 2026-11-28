@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use rustnarok_client::grf::Grf;
+use rustnarok_client::messages::fill;
 use rustnarok_client::net;
 use rustnarok_client::text::Font;
 
@@ -29,10 +30,23 @@ const EXP_INNER: f32 = 110.0;
 /// The minimised lines' left margin (and the right one), and the least a centred short line keeps either side.
 const MINI_MARGIN: f32 = 9.0;
 const MINI_MIN_MARGIN: f32 = 6.0;
-/// Margins for the weight and zeny line, and the gap between them.
+/// A 4th job's minimised window: three lines from x 8 at y 20, 36 and 52, the second and third with a right half
+/// ("| Exp", "| AP") at x 136.
+const MINI_FOURTH_MARGIN: f32 = 8.0;
+const MINI_FOURTH_COLUMN: f32 = 136.0;
+const MINI_ROWS: [f32; 3] = [20.0, 36.0, 52.0];
+/// Margins for the weight and zeny line, and the gap between them (none in a 4th job's, whose zeny starts " | ").
 const WEIGHT_MARGIN: f32 = 3.0;
 const ZENY_MARGIN: f32 = 5.0;
-const WEIGHT_GAP: f32 = 10.0;
+const WEIGHT_GAP: f32 = 5.0;
+/// A 4th job's window takes its words from the messages: "Weight: %3d / %3d", "Base Lv. %d", "Job Lv. %d",
+/// "Zeny: %s", and the minimised one's "Lv", "Exp" and "J.Lv".
+const WEIGHT_MESSAGE: usize = 1992;
+const LEVEL_MESSAGES: [usize; 2] = [1995, 1996];
+const ZENY_MESSAGE: usize = 1997;
+const MINI_LEVEL_MESSAGE: usize = 3070;
+const MINI_EXP_MESSAGE: usize = 3072;
+const MINI_JOB_LEVEL_MESSAGE: usize = 3627;
 /// The menu strip under the basic info, joined to its bottom edge: the toggle bar (219 by 9) there, the menu's back 9
 /// down, and its buttons (32 by 34) from (9, 19), 42 and 43 apart, five to a row.
 const TOGGLE_AT: f32 = 0.0;
@@ -93,8 +107,6 @@ const NORMAL: Layout = Layout {
     label_messages: None,
 };
 
-// ponytail: the x places the 4th jobs' window doesn't give (levels, exp bars, the percentages) and the name and job
-// follow the 134-tall window's.
 const FOURTH: Layout = Layout {
     height: 149.0,
     mini: 71.0,
@@ -128,9 +140,19 @@ pub fn bar_fill(now: i64, most: i64) -> Option<(f32, bool)> {
     (most > 0 && (0..=most).contains(&now)).then(|| ((BAR_FULL * now as f32 / most as f32).trunc(), now * 4 < most))
 }
 
-/// A bar's percentage: "%d%%" of now·100/most, not cut at 100.
-pub fn percent_text(now: i64, most: i64) -> String {
-    format!("{}%", if most > 0 { now * 100 / most } else { 0 })
+/// The AP bar's fill: nothing at zero (not even the caps), blue up to the most, red only when full.
+pub fn ap_fill(now: i64, most: i64) -> Option<(f32, bool)> {
+    (most > 0 && now > 0 && now <= most).then(|| ((BAR_FULL * now as f32 / most as f32).trunc(), now == most))
+}
+
+/// A bar's percentage: "%d%%" of now·100/most, not cut at 100; none with no most.
+pub fn percent_text(now: i64, most: i64) -> Option<String> {
+    (most > 0).then(|| format!("{}%", now * 100 / most))
+}
+
+/// A message's words, or `fallback` where the table has none.
+fn words(messages: &[String], id: usize, fallback: &str) -> String {
+    messages.get(id).filter(|text| !text.is_empty()).map_or_else(|| fallback.to_owned(), Clone::clone)
 }
 
 /// Where the minimised window's short first line starts: centred, at least 3 from the left.
@@ -138,22 +160,42 @@ pub fn mini_line_x(window_width: f32, width: f32) -> f32 {
     ((window_width - width) / 2.0).floor().max(3.0)
 }
 
-/// The minimised window's grey box under the title bar, its bottom corners cut 3 px: (x, y, width, height) pieces.
-pub fn mini_box(width: f32, height: f32) -> Vec<[f32; 4]> {
-    let body = height - MINI_BOX_TOP - 3.0;
-    let mut pieces = vec![[0.0, MINI_BOX_TOP, width, body]];
-    pieces.extend((0..3).map(|row| {
-        let inset = row as f32 + 1.0;
-        [inset, MINI_BOX_TOP + body + row as f32, width - 2.0 * inset, 1.0]
-    }));
-    pieces
+/// The minimised window's box under the title bar, in drawing order: (grey, [x, y, width, height]) pieces. White
+/// inside a 1 px grey edge whose bottom corners are cut 3 px. The game draws the edge first and the white over it,
+/// and for a 4th job the other way round, so their corners differ by a pixel or two.
+pub fn mini_box(width: f32, height: f32, fourth: bool) -> Vec<(bool, [f32; 4])> {
+    let top = MINI_BOX_TOP;
+    let edge = [
+        (true, [0.0, top, 1.0, height - 3.0 - top]),
+        (true, [width - 1.0, top, 1.0, height - 3.0 - top]),
+        (true, [1.0, height - 3.0, 1.0, 1.0]),
+        (true, [width - 2.0, height - 3.0, 1.0, 1.0]),
+        (true, [1.0, height - 2.0, 2.0, 1.0]),
+        (true, [width - 3.0, height - 2.0, 2.0, 1.0]),
+        (true, [3.0, height - 1.0, width - 6.0, 1.0]),
+    ];
+    if fourth {
+        [(false, [1.0, top, width - 2.0, height - 18.0])].into_iter().chain(edge).collect()
+    } else {
+        edge.into_iter().chain([(false, [1.0, top, width - 2.0, height - 19.0]), (false, [2.0, height - 2.0, width - 4.0, 1.0])]).collect()
+    }
+}
+
+/// The weight and zeny line: the weight (in tenths), the zeny, and the gap between them. A 4th job's window words
+/// them from the messages and starts the zeny " | ", against the weight.
+pub fn extra_line(fourth: bool, messages: &[String], weight: i64, limit: i64, zeny: i64) -> (String, String, f32) {
+    let (weight, limit) = (weight / 10, limit / 10);
+    if fourth {
+        let zeny = fill(&words(messages, ZENY_MESSAGE, "Zeny: %s"), &[&zeny_grouped(zeny)]);
+        (fill(&words(messages, WEIGHT_MESSAGE, "Weight: %3d / %3d"), &[&weight, &limit]), format!(" | {zeny}"), 0.0)
+    } else {
+        (format!("Weight : {weight:3} / {limit:3}"), zeny_text(zeny), WEIGHT_GAP)
+    }
 }
 
 /// The window's width: wide enough that the weight and zeny line fits inside with margins on both sides, and at least 220.
-pub fn window_width(weight: i64, limit: i64, zeny: i64, font: &Font) -> f32 {
-    let weight_text = format!("Weight : {:3} / {:3}", weight / 10, limit / 10);
-    let zeny_text = zeny_text(zeny);
-    let needed = WEIGHT_MARGIN + font.width(&weight_text) + WEIGHT_GAP + font.width(&zeny_text) + ZENY_MARGIN;
+pub fn window_width((weight, zeny, gap): &(String, String, f32), font: &Font) -> f32 {
+    let needed = WEIGHT_MARGIN + font.width(weight) + gap + font.width(zeny) + ZENY_MARGIN;
     needed.ceil().max(WIDTH)
 }
 
@@ -164,6 +206,10 @@ pub fn bar_text(now: i64, most: i64) -> String {
 
 /// Zeny in comma groups.
 pub fn zeny_text(zeny: i64) -> String {
+    format!("Zeny : {}", zeny_grouped(zeny))
+}
+
+fn zeny_grouped(zeny: i64) -> String {
     let digits = zeny.unsigned_abs().to_string();
     let mut grouped = String::new();
     for (place, digit) in digits.chars().enumerate() {
@@ -172,7 +218,7 @@ pub fn zeny_text(zeny: i64) -> String {
         }
         grouped.push(digit);
     }
-    format!("Zeny : {}{grouped}", if zeny < 0 { "-" } else { "" })
+    format!("{}{grouped}", if zeny < 0 { "-" } else { "" })
 }
 
 /// The exp bar's hover text: "%.1f %%" to a tenth (or, with the Extras' exp to 0.01%, `places` 2, a hundredth),
@@ -182,19 +228,61 @@ pub fn exp_tip(exp: i64, next: i64, places: u32) -> Option<String> {
     (next > 0 && next != 99_999_999 && exp <= next).then(|| format!("{:.*} %", places as usize, (exp * scale / next) as f64 * 100.0 / scale as f64))
 }
 
+/// Base exp in percent to a tenth, rounded down; 100 at the top level.
+fn exp_percent(exp: i64, next: i64) -> f64 {
+    if next > 0 { (exp * 1000 / next) as f64 / 10.0 } else { 100.0 }
+}
+
 /// The mini window's first line, and the shorter one when that's too wide: levels, job and base exp to a tenth.
 pub fn mini_lines(base: i64, job: &str, job_level: i64, exp: i64, next: i64) -> [String; 2] {
-    let percent = if next > 0 { (exp * 1000 / next) as f64 / 10.0 } else { 100.0 };
+    let percent = exp_percent(exp, next);
     [format!("Lv.{base:2} / {job} / Lv.{job_level:2} / Exp. {percent:.1} %"), format!("Lv{base:2} / {job} / Lv{job_level:2} / Exp{percent:.1}%")]
 }
 
-/// The minimised window's second line: HP and SP (and a 4th job's AP), each red under a quarter.
-fn mini_parts(hp: (i64, i64), sp: (i64, i64), ap: Option<(i64, i64)>) -> Vec<(String, bool)> {
-    let mut parts = vec![(format!("HP {} / {}", hp.0, hp.1), hp.0 * 4 < hp.1), (" | ".to_owned(), false), (format!("SP {} / {}", sp.0, sp.1), sp.0 * 4 < sp.1)];
-    if let Some(ap) = ap {
-        parts.extend([(" | ".to_owned(), false), (format!("AP {} / {}", ap.0, ap.1), false)]);
+/// The minimised window's second line: HP and SP, each red under a quarter.
+fn mini_parts(hp: (i64, i64), sp: (i64, i64)) -> Vec<(String, bool)> {
+    vec![(format!("HP {} / {}", hp.0, hp.1), hp.0 * 4 < hp.1), (" | ".to_owned(), false), (format!("SP {} / {}", sp.0, sp.1), sp.0 * 4 < sp.1)]
+}
+
+/// A 4th job's minimised window: the levels line, then HP beside the base exp and SP beside AP.
+#[derive(Debug, PartialEq)]
+pub struct MiniFourth {
+    pub levels: String,
+    /// HP and SP, each red under a quarter.
+    pub left: [(String, bool); 2],
+    /// "| Exp 12.3%" and "| AP 0 / 200".
+    pub right: [String; 2],
+}
+
+impl MiniFourth {
+    /// Where the right halves start: the game's 136, or past a long HP or SP.
+    pub fn column(&self, font: &Font) -> f32 {
+        let left = self.left.iter().map(|(text, _)| font.width(text)).fold(0.0, f32::max);
+        (MINI_FOURTH_MARGIN + left + 4.0).ceil().max(MINI_FOURTH_COLUMN)
     }
-    parts
+
+    /// The width the three lines need, margins included.
+    pub fn width(&self, font: &Font) -> f32 {
+        let right = self.right.iter().map(|text| font.width(text)).fold(0.0, f32::max);
+        (self.column(font) + right).max(MINI_FOURTH_MARGIN + font.width(&self.levels)) + MINI_FOURTH_MARGIN
+    }
+}
+
+pub fn mini_fourth(messages: &[String], status: &HashMap<u16, i64>, job: &str) -> MiniFourth {
+    let value = |id: u16| status.get(&id).copied().unwrap_or(0);
+    let (base, job_level, exp) = (value(net::STATUS_BASE_LEVEL), value(net::STATUS_JOB_LEVEL), (value(net::STATUS_BASE_EXP), value(net::STATUS_NEXT_BASE_EXP)));
+    let [hp, sp, ap] =
+        [(net::STATUS_HP, net::STATUS_MAX_HP), (net::STATUS_SP, net::STATUS_MAX_SP), (STATUS_AP, STATUS_MAX_AP)].map(|(now, most)| (value(now), value(most)));
+    let word = |id: usize, fallback: &str| words(messages, id, fallback);
+    let [hp_word, sp_word, ap_word] = [(3068, "HP"), (3069, "SP"), (3628, "AP")].map(|(id, fallback)| word(id, fallback));
+    MiniFourth {
+        levels: format!("{} {base} / {job} / {} {job_level}", word(MINI_LEVEL_MESSAGE, "Lv"), word(MINI_JOB_LEVEL_MESSAGE, "J.Lv")),
+        left: [
+            (format!("{hp_word} {} / {}", hp.0, hp.1), hp.1 > 0 && hp.0 * 4 < hp.1),
+            (format!("{sp_word} {} / {}", sp.0, sp.1), sp.1 > 0 && sp.0 * 4 < sp.1),
+        ],
+        right: [format!("| {} {:.1}%", word(MINI_EXP_MESSAGE, "Exp"), exp_percent(exp.0, exp.1)), format!("| {ap_word} {} / {}", ap.0, ap.1)],
+    }
 }
 
 /// A bar's numbers that fit its 135 px: the game's padded "now  /  most", else without the padding, else in k and M.
@@ -361,12 +449,12 @@ pub struct Info<'a> {
 impl BasicInfo {
     /// Sizes the window to what it shows: the weight and zeny line, or minimised the levels line and the HP and SP
     /// line, with margins. Whether it grew.
-    pub fn update_width(&mut self, font: &Font, status: &HashMap<u16, i64>, job: &str) -> bool {
+    pub fn update_width(&mut self, font: &Font, messages: &[String], status: &HashMap<u16, i64>, job: &str) -> bool {
         let value = |id: u16| status.get(&id).copied().unwrap_or(0);
-        let width = if self.frame.minimized {
-            let layout = layout(self.fourth);
-            let ap = layout.ap.map(|_| (value(STATUS_AP), value(STATUS_MAX_AP)));
-            let line: f32 = mini_parts((value(net::STATUS_HP), value(net::STATUS_MAX_HP)), (value(net::STATUS_SP), value(net::STATUS_MAX_SP)), ap)
+        let width = if self.frame.minimized && self.fourth {
+            mini_fourth(messages, status, job).width(font).ceil().max(WIDTH)
+        } else if self.frame.minimized {
+            let line: f32 = mini_parts((value(net::STATUS_HP), value(net::STATUS_MAX_HP)), (value(net::STATUS_SP), value(net::STATUS_MAX_SP)))
                 .iter()
                 .map(|(part, _)| font.width(part))
                 .sum();
@@ -374,7 +462,7 @@ impl BasicInfo {
                 mini_lines(value(net::STATUS_BASE_LEVEL), job, value(net::STATUS_JOB_LEVEL), value(net::STATUS_BASE_EXP), value(net::STATUS_NEXT_BASE_EXP));
             (MINI_MARGIN * 2.0 + line).max(font.width(&short) + MINI_MIN_MARGIN).ceil().max(WIDTH)
         } else {
-            window_width(value(net::STATUS_WEIGHT), value(net::STATUS_MAX_WEIGHT), value(net::STATUS_ZENY), font)
+            window_width(&extra_line(self.fourth, messages, value(net::STATUS_WEIGHT), value(net::STATUS_MAX_WEIGHT), value(net::STATUS_ZENY)), font)
         };
         let grew = width > self.width;
         self.width = width;
@@ -548,15 +636,16 @@ impl BasicInfo {
         let text = |layer: &mut Layer<'a>, text: String, place: [f32; 2], color: [u8; 3]| layer.texts.push((text, at(place), color));
 
         if self.frame.minimized {
-            // The standard title bar over a grey box with cut corners, white inside.
+            // The standard title bar over a white box with a grey edge and cut corners.
             chrome.draw_title_bar(layer, at([0.0, 0.0]), self.width);
-            for [x, y, w, h] in mini_box(self.width, layout.mini) {
-                layer.sprites.push((&assets.mini_edge, at([x, y]), [w, h]));
+            for (grey, [x, y, w, h]) in mini_box(self.width, layout.mini, self.fourth) {
+                layer.sprites.push((if grey { &assets.mini_edge } else { &chrome.white }, at([x, y]), [w, h]));
             }
-            layer.sprites.push((&chrome.white, at([1.0, MINI_BOX_TOP]), [self.width - 2.0, layout.mini - MINI_BOX_TOP - 2.0]));
         } else {
+            // The picture is a row taller than the window (135 for 134, 150 for 149): at its own height, not squeezed,
+            // its last row under the menu's bar.
             let background = &assets.backgrounds[usize::from(self.fourth)];
-            layer.sprites.push((background, at([0.0, 0.0]), [self.width, layout.height]));
+            layer.sprites.push((background, at([0.0, 0.0]), [self.width, background.size[1].max(layout.height)]));
         }
         let minimize_button = self.minimize_button();
         for place in [BASE_BUTTON, minimize_button] {
@@ -566,6 +655,20 @@ impl BasicInfo {
         }
         let [(hp, max_hp), (sp, max_sp)] = [(value(net::STATUS_HP), value(net::STATUS_MAX_HP)), (value(net::STATUS_SP), value(net::STATUS_MAX_SP))];
         // Minimised: the name in the title, a line of levels and exp, and one of HP and SP (each red under a quarter).
+        if self.frame.minimized && self.fourth {
+            text(layer, info.name.to_owned(), MINI_NAME, BLACK);
+            let lines = mini_fourth(messages, info.status, info.job);
+            let column = lines.column(font);
+            text(layer, lines.levels, [MINI_FOURTH_MARGIN, MINI_ROWS[0]], BLACK);
+            for (((left, low), right), y) in lines.left.into_iter().zip(lines.right).zip(&MINI_ROWS[1..]) {
+                text(layer, left, [MINI_FOURTH_MARGIN, *y], if low { RED } else { BLACK });
+                text(layer, right, [column, *y], BLACK);
+            }
+            if let Some((tip, corner)) = self.draw_menu(layer, chrome, assets, info, messages, cursor) {
+                crate::window::tooltip(tooltip, chrome, font, &tip, corner, [255; 3]);
+            }
+            return;
+        }
         if self.frame.minimized {
             text(layer, info.name.to_owned(), MINI_NAME, BLACK);
             let [long, short] = mini_lines(
@@ -576,17 +679,15 @@ impl BasicInfo {
                 value(net::STATUS_NEXT_BASE_EXP),
             );
             if font.width(&long) <= self.width - MINI_MARGIN * 2.0 {
-                text(layer, long, [9.0, 20.0], BLACK);
+                text(layer, long, [MINI_MARGIN, MINI_ROWS[0]], BLACK);
             } else {
                 let x = mini_line_x(self.width, font.width(&short));
-                text(layer, short, [x, 20.0], BLACK);
+                text(layer, short, [x, MINI_ROWS[0]], BLACK);
             }
             let mut x = MINI_MARGIN;
-            // ponytail: a 4th job's AP after SP on the same line.
-            let ap = layout.ap.map(|_| (value(STATUS_AP), value(STATUS_MAX_AP)));
-            for (part, low) in mini_parts((hp, max_hp), (sp, max_sp), ap) {
+            for (part, low) in mini_parts((hp, max_hp), (sp, max_sp)) {
                 let width = font.width(&part);
-                text(layer, part, [x, 36.0], if low { RED } else { BLACK });
+                text(layer, part, [x, MINI_ROWS[1]], if low { RED } else { BLACK });
                 x += width;
             }
             if let Some((tip, corner)) = self.draw_menu(layer, chrome, assets, info, messages, cursor) {
@@ -599,8 +700,7 @@ impl BasicInfo {
         text(layer, title, TITLE, BLACK);
         text(layer, info.name.to_owned(), layout.name, BLACK);
         text(layer, info.job.to_owned(), layout.job, BLACK);
-        // HP and SP, and AP for 4th jobs, each a bar the same way.
-        // ponytail: the AP fill uses the HP and SP pieces.
+        // HP and SP, and AP for 4th jobs: the AP bar has the same pieces, filled by its own rule.
         let mut rows = vec![(layout.labels[0], layout.bars[0], hp, max_hp), (layout.labels[1], layout.bars[1], sp, max_sp)];
         if let Some((label, corner)) = layout.ap {
             rows.push((label, corner, value(STATUS_AP), value(STATUS_MAX_AP)));
@@ -611,7 +711,7 @@ impl BasicInfo {
             // Over the most, the bar isn't drawn at all: no back, no fill, no numbers.
             if now <= most {
                 layer.sprites.push((&assets.bar_back, at(corner), BAR_SIZE));
-                if let Some((width, red)) = bar_fill(now, most) {
+                if let Some((width, red)) = if bar == 2 { ap_fill(now, most) } else { bar_fill(now, most) } {
                     let [left, middle, right] = &assets.bars[usize::from(red)];
                     layer.sprites.push((left, at(corner), left.size));
                     layer.sprites.push((middle, at(offset(corner, [left.size[0], 0.0])), [width, middle.size[1]]));
@@ -620,9 +720,10 @@ impl BasicInfo {
                 let numbers = bar_text_fitting(now, most, font);
                 text(layer, numbers.clone(), [corner[0] + ((BAR_SIZE[0] - font.width(&numbers)) / 2.0).floor(), corner[1] - 2.0], BLACK);
             }
-            let percent = percent_text(now, most);
-            let x = layout.percent.unwrap_or(self.width - 20.0 - font.width(&percent));
-            text(layer, percent, [x, label[1]], BLACK);
+            if let Some(percent) = percent_text(now, most) {
+                let x = layout.percent.unwrap_or(self.width - 20.0 - font.width(&percent));
+                text(layer, percent, [x, label[1]], BLACK);
+            }
         }
 
         let levels = [
@@ -630,7 +731,12 @@ impl BasicInfo {
             (net::STATUS_JOB_LEVEL, "Job Lv.", net::STATUS_JOB_EXP, net::STATUS_NEXT_JOB_EXP),
         ];
         for (row, (level, label, exp, next)) in levels.into_iter().enumerate() {
-            text(layer, format!("{label} {}", value(level)), layout.levels[row], BLACK);
+            // A 4th job's window words them from the messages.
+            let line = match self.fourth {
+                true => fill(&words(messages, LEVEL_MESSAGES[row], &format!("{label} %d")), &[&value(level)]),
+                false => format!("{label} {}", value(level)),
+            };
+            text(layer, line, layout.levels[row], BLACK);
             // At the top level there's no next: no bar.
             let next = value(next);
             if next > 0 {
@@ -650,11 +756,10 @@ impl BasicInfo {
 
         // Weight (in tenths) turns red at the server's overweight point.
         let (weight, limit) = (value(net::STATUS_WEIGHT), value(net::STATUS_MAX_WEIGHT));
-        let zeny = zeny_text(value(net::STATUS_ZENY));
-        let weight_text = format!("Weight : {:3} / {:3}", weight / 10, limit / 10);
+        let (weight_text, zeny, gap) = extra_line(self.fourth, messages, weight, limit, value(net::STATUS_ZENY));
         let zeny_x = self.width - ZENY_MARGIN - font.width(&zeny);
         text(layer, zeny, [zeny_x, layout.extra], BLACK);
-        let weight_x = zeny_x - WEIGHT_GAP - font.width(&weight_text);
+        let weight_x = zeny_x - gap - font.width(&weight_text);
         text(layer, weight_text, [weight_x, layout.extra], if heavy(weight, limit, info.overweight) { RED } else { BLACK });
         // The bottom left strip shows the weight in percent, 19 px above it.
         let height = layout.height;
@@ -815,8 +920,12 @@ mod tests {
         assert_eq!((fourth.height, fourth.mini, fourth.labels, fourth.ap), (149.0, 71.0, [[9.0, 51.0], [9.0, 65.0]], Some(([9.0, 80.0], [35.0, 83.0]))));
         assert_eq!((fourth.levels, fourth.exp_bars, fourth.extra), ([[17.0, 99.0], [17.0, 111.0]], [[85.0, 104.0], [85.0, 116.0]], 131.0));
         assert_eq!(fourth.label_messages, Some([3068, 3069, 3628]));
-        // The AP bar fills as the others: 30 of 120 AP.
-        assert_eq!(bar_fill(30, 120), Some((31.0, false)));
+        // The AP bar: empty at zero (no caps), blue under the most, red only when full; no bar past the most.
+        assert_eq!(
+            [ap_fill(0, 200), ap_fill(30, 120), ap_fill(199, 200), ap_fill(200, 200)],
+            [None, Some((31.0, false)), Some((126.0, false)), Some((127.0, true))]
+        );
+        assert_eq!([ap_fill(5, 0), ap_fill(201, 200)], [None, None]);
         // The menu toggle follows the window's height.
         let mut window = BasicInfo::default();
         assert_eq!(window.height(), 134.0 + MENU_AT);
@@ -918,13 +1027,19 @@ mod tests {
         // Over the most: no bar; at zero only the red caps (no fill); no most: nothing.
         assert_eq!((bar_fill(41, 40), bar_fill(0, 40), bar_fill(5, 0)), (None, Some((0.0, true)), None));
         // The percentage isn't cut at 100.
-        assert_eq!([percent_text(41, 40), percent_text(0, 40), percent_text(20, 40), percent_text(5, 0)], ["102%", "0%", "50%", "0%"]);
+        assert_eq!([percent_text(41, 40), percent_text(0, 40), percent_text(20, 40)].map(Option::unwrap), ["102%", "0%", "50%"]);
+        assert_eq!(percent_text(5, 0), None, "no most: no percentage");
         // The short mini line: centred, never nearer the left than 3.
         assert_eq!((mini_line_x(WIDTH, 200.0), mini_line_x(WIDTH, 500.0)), (((WIDTH - 200.0) / 2.0).floor(), 3.0));
-        // The grey box under the title bar, its bottom corners cut 3 px.
-        let pieces = mini_box(WIDTH, 55.0);
-        assert_eq!(pieces[0], [0.0, 17.0, WIDTH, 35.0]);
-        assert_eq!(pieces[1..], [[1.0, 52.0, WIDTH - 2.0, 1.0], [2.0, 53.0, WIDTH - 4.0, 1.0], [3.0, 54.0, WIDTH - 6.0, 1.0]]);
+        // The box under the title bar: a 1 px grey edge with its bottom corners cut, then white to the row above the
+        // bottom edge.
+        let pieces = mini_box(WIDTH, 55.0, false);
+        assert_eq!(pieces[0], (true, [0.0, 17.0, 1.0, 35.0]));
+        assert_eq!(pieces[6], (true, [3.0, 54.0, WIDTH - 6.0, 1.0]));
+        assert_eq!(pieces[7..], [(false, [1.0, 17.0, WIDTH - 2.0, 36.0]), (false, [2.0, 53.0, WIDTH - 4.0, 1.0])]);
+        // A 4th job's: the white first (to the same row), the edge over it.
+        let pieces = mini_box(WIDTH, 71.0, true);
+        assert_eq!((pieces[0], pieces[7]), ((false, [1.0, 17.0, WIDTH - 2.0, 53.0]), (true, [3.0, 70.0, WIDTH - 6.0, 1.0])));
         assert_eq!(bar_text(7, 40), "  7  /   40");
         assert_eq!(zeny_text(1234567), "Zeny : 1,234,567");
         assert_eq!(zeny_text(999), "Zeny : 999");
@@ -938,26 +1053,61 @@ mod tests {
     fn window_width_grows_for_long_numbers() {
         let font = Font::load();
         // Short numbers: width is at least 220.
-        let w_short = window_width(1000, 2000, 500, &font);
+        let width = |weight, limit, zeny| window_width(&extra_line(false, &[], weight, limit, zeny), &font);
+        let w_short = width(1000, 2000, 500);
         assert_eq!(w_short, WIDTH);
 
-        // 1026 / 2630 weight and 100,000,000 zeny:
-        let w_100m = window_width(10260, 26300, 100_000_000, &font);
-        assert!(w_100m > WIDTH, "w_100m = {w_100m} should grow beyond {WIDTH}");
+        // 1026 / 2630 weight and 1,000,000,000 zeny:
+        let w_1g = width(10260, 26300, 1_000_000_000);
+        assert!(w_1g > WIDTH, "w_1g = {w_1g} should grow beyond {WIDTH}");
 
         // 5-digit weights and 2,147,483,647 zeny:
-        let w_max = window_width(999990, 999990, 2_147_483_647, &font);
-        assert!(w_max > w_100m, "w_max = {w_max} should grow beyond {w_100m}");
+        let w_max = width(999990, 999990, 2_147_483_647);
+        assert!(w_max > w_1g, "w_max = {w_max} should grow beyond {w_1g}");
 
-        // Check that with w_100m and w_max, both margins are preserved.
-        for (weight, limit, zeny, w) in [(10260, 26300, 100_000_000, w_100m), (999990, 999990, 2_147_483_647, w_max)] {
-            let weight_text = format!("Weight : {:3} / {:3}", weight / 10, limit / 10);
-            let zeny_text = zeny_text(zeny);
+        // Check that with w_1g and w_max, both margins are preserved.
+        for (weight, limit, zeny, w) in [(10260, 26300, 1_000_000_000, w_1g), (999990, 999990, 2_147_483_647, w_max)] {
+            let (weight_text, zeny_text, gap) = extra_line(false, &[], weight, limit, zeny);
             let zeny_x = w - ZENY_MARGIN - font.width(&zeny_text);
-            let weight_x = zeny_x - WEIGHT_GAP - font.width(&weight_text);
+            let weight_x = zeny_x - gap - font.width(&weight_text);
             assert!(weight_x >= WEIGHT_MARGIN, "weight_x {weight_x} should be >= {WEIGHT_MARGIN}");
             assert_eq!(zeny_x + font.width(&zeny_text), w - ZENY_MARGIN);
         }
+    }
+
+    #[test]
+    fn words_the_weight_and_zeny_line_by_job() {
+        // The weight ends 5 px before the zeny.
+        assert_eq!(extra_line(false, &[], 10260, 26300, 1_234_567), ("Weight : 1026 / 2630".to_owned(), "Zeny : 1,234,567".to_owned(), 5.0));
+        // A 4th job's: the messages' words, " | " between them and no gap.
+        assert_eq!(extra_line(true, &[], 990, 26300, 500), ("Weight:  99 / 2630".to_owned(), " | Zeny: 500".to_owned(), 0.0));
+        let mut messages = vec![String::new(); 2000];
+        messages[WEIGHT_MESSAGE] = "Peso: %3d / %3d".into();
+        messages[ZENY_MESSAGE] = "Zenys: %s".into();
+        assert_eq!(extra_line(true, &messages, 990, 26300, 500), ("Peso:  99 / 2630".to_owned(), " | Zenys: 500".to_owned(), 0.0));
+    }
+
+    #[test]
+    fn fourth_jobs_minimised_window_has_three_lines() {
+        let font = Font::load();
+        let mut status =
+            HashMap::from([(net::STATUS_BASE_LEVEL, 200), (net::STATUS_JOB_LEVEL, 50), (net::STATUS_BASE_EXP, 123), (net::STATUS_NEXT_BASE_EXP, 1000)]);
+        status.extend([(net::STATUS_HP, 900), (net::STATUS_MAX_HP, 4000), (net::STATUS_SP, 300), (net::STATUS_MAX_SP, 800), (STATUS_MAX_AP, 200)]);
+        let lines = mini_fourth(&[], &status, "Dragon Knight");
+        assert_eq!(lines.levels, "Lv 200 / Dragon Knight / J.Lv 50");
+        // HP beside the base exp, SP beside AP; HP and SP red under a quarter.
+        assert_eq!(lines.left, [("HP 900 / 4000".to_owned(), true), ("SP 300 / 800".to_owned(), false)]);
+        assert_eq!(lines.right, ["| Exp 12.3%".to_owned(), "| AP 0 / 200".to_owned()]);
+        // The right halves at 136, and the usual width is enough.
+        assert_eq!((lines.column(&font), lines.width(&font) <= WIDTH), (136.0, true));
+        // Long numbers push the right halves out and the window with them.
+        status.extend([(net::STATUS_HP, 12_345_678), (net::STATUS_MAX_HP, 12_345_678), (net::STATUS_NEXT_BASE_EXP, 0)]);
+        let long = mini_fourth(&[], &status, "Dragon Knight");
+        assert_eq!(long.right[0], "| Exp 100.0%");
+        assert!(long.column(&font) >= 8.0 + font.width(&long.left[0].0) && long.width(&font) > long.column(&font) + font.width(&long.right[0]));
+        let mut window = BasicInfo { fourth: true, ..BasicInfo::default() };
+        window.frame.minimized = true;
+        assert!(window.update_width(&font, &[], &status, "Dragon Knight") && window.width == long.width(&font).ceil());
     }
     #[test]
     fn minimised_window_grows_for_its_lines_and_bars_shrink_their_numbers() {
@@ -974,9 +1124,9 @@ mod tests {
             ])
         };
         // Small numbers fit the usual width; six-digit HP and a long job name need more, and each line then fits.
-        assert!(!window.update_width(&font, &status(535), "Novice") && window.width == WIDTH);
-        assert!(window.update_width(&font, &status(123_456), "Imperial Guard"));
-        let line = mini_parts((123_456, 123_456), (41_152, 41_152), None).iter().map(|(part, _)| font.width(part)).sum::<f32>();
+        assert!(!window.update_width(&font, &[], &status(535), "Novice") && window.width == WIDTH);
+        assert!(window.update_width(&font, &[], &status(123_456), "Imperial Guard"));
+        let line = mini_parts((123_456, 123_456), (41_152, 41_152)).iter().map(|(part, _)| font.width(part)).sum::<f32>();
         assert!(window.width >= 2.0 * MINI_MARGIN + line, "{} for a line of {line}", window.width);
         // A bar's numbers keep to its 135 px, down to k and M.
         for most in [535, 123_456, 123_456_789, 2_147_483_647] {
